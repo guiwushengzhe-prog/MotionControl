@@ -280,8 +280,9 @@ def _local_addresses() -> list[str]:
 class InputBridge:
     """Receives MotionBridge input and fans mobile poses to desktop consumers."""
 
-    def __init__(self, output) -> None:
+    def __init__(self, output, kernel=None) -> None:
         self.output = output
+        self.kernel = kernel
         self._lock = threading.RLock()
         self._peers: set[WebSocketPeer] = set()
         self._source_peers: dict[str, WebSocketPeer] = {}
@@ -289,6 +290,7 @@ class InputBridge:
         self._sensor_sources: dict[str, dict] = {}
         self._latest_pose: dict | None = None
         self._active_pose_source: str | None = None
+        self._body_mode = "phone" if kernel is None else "computer"
         self._pose_frames_with_people = 0
         self._host = "0.0.0.0"
         self._port = 8765
@@ -300,6 +302,32 @@ class InputBridge:
         with self._lock:
             self._host = str(host)
             self._port = int(port)
+
+    def set_body_mode(self, mode: str) -> None:
+        """Atomically select which body source is allowed to drive the kernel."""
+        mode = str(mode).strip().lower()
+        if mode not in {"computer", "phone"}:
+            raise ValueError("body mode must be computer or phone")
+        cleared: list[str] = []
+        with self._lock:
+            self._body_mode = mode
+            if mode != "phone":
+                for source_id in list(self._pose_sources):
+                    _, was_active = self._clear_source_locked(source_id)
+                    if was_active:
+                        cleared.append(source_id)
+        for source_id in cleared:
+            self._broadcast_pose_state(source_id, False, "source_switch")
+
+    def clear_mobile_sources(self) -> None:
+        cleared: list[str] = []
+        with self._lock:
+            for source_id in list(self._pose_sources):
+                _, was_active = self._clear_source_locked(source_id)
+                if was_active:
+                    cleared.append(source_id)
+        for source_id in cleared:
+            self._broadcast_pose_state(source_id, False, "source_switch")
 
     def phone_ws_urls(self) -> list[str]:
         addresses = _local_addresses()
@@ -345,6 +373,7 @@ class InputBridge:
         return {
             "server_host": host,
             "server_port": port,
+            "body_mode": self._body_mode,
             "phone_ws_urls": self.phone_ws_urls(),
             "mobile_pose_connected": any(item["connected"] for item in pose_sources),
             "mobile_pose_age_ms": pose_age,
@@ -434,6 +463,9 @@ class InputBridge:
 
     def _handle_pose(self, peer: WebSocketPeer, message: dict) -> None:
         _validate_pose_frame(message)
+        if self.kernel is not None and self._body_mode != "phone":
+            self._accept_input(peer)
+            return
         device_id = message["device_id"].strip()
         source_id = POSE_SOURCE_PREFIX + device_id
         received_at = time.monotonic()
@@ -466,6 +498,8 @@ class InputBridge:
             if pose_count:
                 self._pose_frames_with_people += 1
             self._latest_pose = {"message": forwarded, "received_at": received_at, "source_id": source_id, "pose_count": pose_count}
+        if self.kernel is not None:
+            self.kernel.handle_pose_message(source_id, forwarded)
         if switched_from:
             self._broadcast_pose_state(switched_from, False, "source_switch")
         if activated:
@@ -483,14 +517,28 @@ class InputBridge:
         rotation_rate = dict(message["rotation_rate"])
         acceleration = dict(message["acceleration"])
         recenter = bool(message["recenter"])
-        self.output.set_sensor_state(
-            output_source,
-            buttons,
-            left_trigger=left_trigger,
-            right_trigger=right_trigger,
-            stick_x=stick_x,
-            stick_y=stick_y,
-        )
+        if self.kernel is not None:
+            self.kernel.handle_sensor(
+                output_source,
+                buttons,
+                left_trigger=left_trigger,
+                right_trigger=right_trigger,
+                stick_x=stick_x,
+                stick_y=stick_y,
+                quaternion=quaternion,
+                rotation_rate=rotation_rate,
+                acceleration=acceleration,
+                recenter=recenter,
+            )
+        else:
+            self.output.set_sensor_state(
+                output_source,
+                buttons,
+                left_trigger=left_trigger,
+                right_trigger=right_trigger,
+                stick_x=stick_x,
+                stick_y=stick_y,
+            )
         with self._lock:
             self._source_peers[source_id] = peer
             peer.source_ids.add(source_id)
@@ -530,7 +578,10 @@ class InputBridge:
         self._pose_sources.pop(source_id, None)
         self._sensor_sources.pop(source_id, None)
         try:
-            self.output.clear_source(source_id)
+            if self.kernel is not None:
+                self.kernel.clear_source(source_id)
+            else:
+                self.output.clear_source(source_id)
         except (AttributeError, RuntimeError, OSError):
             pass
         was_active_pose = self._active_pose_source == source_id

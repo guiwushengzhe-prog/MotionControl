@@ -27,26 +27,30 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
 
 
 def test_body_relative_zones_use_both_wrists_and_both_feet():
+    kernel = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     for name in ['left_wrist','right_wrist','left_ankle','right_ankle','left_foot_index','right_foot_index']:
-        assert name in app
+        assert name in kernel
     for zone in ['leftHandUpper','leftHandLower','rightHandUpper','rightHandLower','leftFoot','rightFoot']:
-        assert zone in app
-    assert 'const handW=.36*L,handH=.30*L,out=.82*L' in app
-    assert 'const footW=.42*L,footH=.38*L,out=.78*L,up=.50*L' in app
-    assert 's.inside>=2' in app and 's.outside>=2' in app
-    assert "post('/api/output/buttons'" in app
+        assert zone in kernel
+    assert '0.36 * torso_px' in kernel
+    assert '0.42 * torso_px' in kernel
+    assert 'state["inside"] >= 2' in kernel and 'state["outside"] >= 2' in kernel
+    assert 'set_buttons, keys, source="zones"' in kernel
+    assert '/api/kernel/status' in app
+    assert 'detectForVideo' not in app
 
 
 def test_four_motion_rules_and_settings_exist():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    kernel = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     for action in ['march','calf_back','squat','hands_up']:
-        assert action in app and action in server
-    assert 'leftAngle<135&&rightAngle<135' in app
-    assert 'leftAngle<115' in app and 'rightAngle<115' in app
-    assert 'map.left_wrist.y<map.nose.y-.06*T' in app
-    assert 'motion.step.activeUntil' in app
+        assert action in kernel and action in server
+    assert 'left_angle < 135' in kernel
+    assert 'left_angle < 115' in kernel and 'right_angle < 115' in kernel
+    assert 'pose_map["left_wrist"]["y"] < pose_map["nose"]["y"] - 0.06 * torso' in kernel
+    assert 'active_until' in kernel
     assert '/api/motion/config' in server
     assert '/api/motion/state' in server
     assert 'motion_mappings.json' in server
@@ -54,10 +58,11 @@ def test_four_motion_rules_and_settings_exist():
 
 def test_head_calibration_degrades_instead_of_blocking():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    assert '部分方向区分不足' in app
+    kernel = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
+    assert '降级可用' in kernel
     assert 'setCurrentCenter' in app
-    assert 'head.calibrated=true' in app
-    assert 'torsoLength' in app
+    assert '"calibrated": True' in kernel
+    assert '_torso_length' in kernel
 
 
 def test_xbox_masks_include_abxy_and_side_buttons():
@@ -233,9 +238,10 @@ def test_game_overlay_uses_same_body_relative_zones():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     assert 'documentPictureInPicture.requestWindow' in app
     assert 'renderOverlay' in app
-    assert 'zoneRects[id]' in app
-    assert "for(const name of ['left_wrist','right_wrist','left_ankle','right_ankle'])" in app
-    assert "overlay.win.requestAnimationFrame(loop)" in app
+    assert 'renderKernelZones' in app
+    assert 'runtime?.kernel' in app
+    assert 'requestAnimationFrame' not in app
+    assert 'getUserMedia({video' not in app
 
 
 def test_previous_vosk_model_path_is_pinned():

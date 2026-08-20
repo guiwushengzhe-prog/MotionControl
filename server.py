@@ -10,6 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
 from voice_backend import VoiceService
@@ -22,7 +23,9 @@ DEFAULT_MODEL_ROOT = Path(r"I:\MotionControl-Pose-Models\models")
 MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
 
 OUTPUT = OutputManager(ROOT)
-INPUT_BRIDGE = InputBridge(OUTPUT)
+KERNEL = ControlKernel(OUTPUT)
+RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
+INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL)
 HOTKEYS = GlobalHotkeys(OUTPUT)
 VOICE = VoiceService(ROOT, OUTPUT.execute_action)
 MODEL_ROOT: Path | None = None
@@ -76,6 +79,7 @@ def save_motion_config(items):
     return motions
 
 MOTION_CONFIG = load_motion_config()
+RUNTIME.configure_motions(MOTION_CONFIG)
 
 
 def choose_model_root(cli_root: str | None) -> Path | None:
@@ -190,7 +194,12 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(data)
             return
         if route == "/api/input/status":
-            self._send_json(INPUT_BRIDGE.status())
+            data = INPUT_BRIDGE.status()
+            data["runtime"] = RUNTIME.status()
+            self._send_json(data)
+            return
+        if route == "/api/kernel/status":
+            self._send_json(RUNTIME.status())
             return
         if route == "/api/voice/status":
             self._send_json(VOICE.status())
@@ -233,10 +242,66 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 global MOTION_CONFIG
                 MOTION_CONFIG = save_motion_config(body.get("motions", []))
+                RUNTIME.configure_motions(MOTION_CONFIG)
                 OUTPUT.set_holds([], source_group="motions")
                 self._send_json({"ok": True, "motions": MOTION_CONFIG})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/input/source":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "input source is loopback-only"}, 403)
+                return
+            try:
+                source = str(body.get("source", "")).strip().lower()
+                enabled = bool(body.get("enabled", True))
+                # Close the mobile gate before stopping/starting the body source.
+                # This keeps a phone frame from racing a source transition.
+                INPUT_BRIDGE.set_body_mode("computer")
+                INPUT_BRIDGE.clear_mobile_sources()
+                if enabled:
+                    data = RUNTIME.set_source(source, start_computer=True)
+                else:
+                    data = RUNTIME.stop_body()
+                INPUT_BRIDGE.set_body_mode(source if enabled else "computer")
+                self._send_json({"ok": True, **data})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+            return
+        if route == "/api/head/calibration/start":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "head calibration is loopback-only"}, 403)
+                return
+            try:
+                KERNEL.start_calibration()
+                self._send_json({"ok": True, **RUNTIME.status()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+            return
+        if route == "/api/head/calibration/center":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "head calibration is loopback-only"}, 403)
+                return
+            try:
+                KERNEL.set_current_center()
+                self._send_json({"ok": True, **RUNTIME.status()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+            return
+        if route == "/api/head/config":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "head config is loopback-only"}, 403)
+                return
+            try:
+                KERNEL.configure_head(
+                    deadzone_x=body.get("deadzone_x"), deadzone_y=body.get("deadzone_y"),
+                    gamma=body.get("gamma"), max_percent_x=body.get("max_percent_x"),
+                    max_percent_y=body.get("max_percent_y"), enabled=body.get("enabled"),
+                    invert_x=body.get("invert_x"), invert_y=body.get("invert_y"),
+                )
+                self._send_json({"ok": True, **RUNTIME.status()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
             return
         if route == "/api/motion/state":
             if not self._is_loopback():
@@ -293,6 +358,7 @@ def main():
 
     MODEL_ROOT = choose_model_root(args.model_root)
     MODEL_PATH = resolve_full_model(MODEL_ROOT)
+    RUNTIME.configure_model(MODEL_PATH)
     INPUT_BRIDGE.configure_endpoint(args.host, args.port)
     print(f"MotionControl body zones + four motions + voice v{VERSION}")
     print("Model root:", MODEL_ROOT or "NOT FOUND")
@@ -312,6 +378,7 @@ def main():
     finally:
         OUTPUT.emergency_stop()
         INPUT_BRIDGE.close()
+        RUNTIME.close()
         HOTKEYS.close()
         OUTPUT.close()
         server.server_close()
