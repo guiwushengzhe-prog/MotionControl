@@ -190,8 +190,12 @@ def test_web_mobile_pose_uses_same_body_action_and_head_pipeline():
     # Keep this test independent from the current working directory.
     from pathlib import Path
 
-    text = (Path(__file__).resolve().parents[1] / "web" / "app.js").read_text(encoding="utf-8")
-    assert "normMobilePose" in text and "processPoseMap" in text
-    assert "updateZones(map);updateMotionDetection(map,now)" in text
-    assert "if(map)updateHead(map,now)" in text
-    assert "poseSource==='phone'" in text
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "web" / "app.js").read_text(encoding="utf-8")
+    kernel = (root / "control_kernel.py").read_text(encoding="utf-8")
+    assert "renderKernelState" in text and "/api/kernel/status" in text
+    assert "handle_pose_message" in kernel and "_update_zones_locked" in kernel
+    assert "_update_motion_locked" in kernel and "_update_head_locked" in kernel
+    assert "requestAnimationFrame" not in text
+    assert "detectForVideo" not in text
+    assert "post('/api/output/buttons'" not in text
