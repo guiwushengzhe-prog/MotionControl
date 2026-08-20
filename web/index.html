@@ -10,7 +10,7 @@
 <style>
 .viewer img,.viewer canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}
 .viewer img{z-index:1}.viewer canvas{z-index:2}
-.viewer.mirror img,.viewer.mirror canvas,.viewer.mirror .zones{transform:scaleX(-1);transform-origin:center}
+.viewer video,.viewer img,.viewer canvas,.viewer .zones{transform:scaleX(-1);transform-origin:center}
 .hint{z-index:4}.zones{z-index:3}
 .perf-panel{margin-top:9px}.perf-panel summary{cursor:pointer;font-weight:800}.perf-summary{margin-left:10px;font-size:12px;color:#b8c5d4;font-weight:400}.perf-details{white-space:pre-line;font-size:12px;color:#aebdcb;line-height:1.55;margin-top:7px}
 </style>
@@ -62,7 +62,6 @@
 <div class="title">游戏输出</div>
 <div class="controls">
 <label>头控输出<select id="outputMode"><option value="mouse">鼠标视角</option><option value="gamepad">Xbox 360 右摇杆</option></select></label>
-<label>画面<select id="mirrorSelect"><option value="no" selected>不镜像</option><option value="yes">镜像</option></select></label>
 </div>
 <div class="slider"><label>游戏速度倍率 <b id="strengthValue">160%</b></label><input id="strength" type="range" min="60" max="300" step="10" value="160"></div>
 <div class="shoulders"><div id="padLB" class="shoulder-key">LB</div><div id="padRB" class="shoulder-key">RB</div></div>
@@ -96,10 +95,10 @@
 <div class="title">头控微调</div>
 <div class="advgrid">
 <div class="tiny">水平死区 <b id="deadXValue">8%</b><input id="deadX" type="range" min="3" max="30" value="8"></div>
-<div class="tiny">垂直死区 <b id="deadYValue">12%</b><input id="deadY" type="range" min="4" max="35" value="12"></div>
+<div class="tiny">垂直死区 <b id="deadYValue">8%</b><input id="deadY" type="range" min="4" max="35" value="8"></div>
 <div class="tiny">曲线 γ <b id="gammaValue">2.2</b><input id="gamma" type="range" min="1.4" max="3.2" step="0.1" value="2.2"></div>
 <div class="tiny">水平幅度 <b id="speedXValue">60%</b><input id="speedX" type="range" min="20" max="120" step="5" value="60"></div>
-<div class="tiny">垂直幅度 <b id="speedYValue">45%</b><input id="speedY" type="range" min="15" max="100" step="5" value="45"></div>
+<div class="tiny">垂直幅度 <b id="speedYValue">60%</b><input id="speedY" type="range" min="15" max="100" step="5" value="60"></div>
 </div>
 <div class="checkrow"><label><input id="headEnable" type="checkbox" checked> 头控</label><label><input id="invertX" type="checkbox"> 左右反转</label><label><input id="invertY" type="checkbox"> 上下反转</label></div>
 </div>

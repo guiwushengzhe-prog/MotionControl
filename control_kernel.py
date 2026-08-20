@@ -122,8 +122,8 @@ class ControlKernel:
             "pitch_up": 0.0, "pitch_down": 0.0, "torso0": math.nan,
             "raw_yaw": math.nan, "raw_pitch": math.nan, "norm_x": 0.0, "norm_y": 0.0,
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
-            "deadzone_x": 0.08, "deadzone_y": 0.12, "gamma": 2.2,
-            "max_percent_x": 60.0, "max_percent_y": 45.0, "enabled": True,
+            "deadzone_x": 0.08, "deadzone_y": 0.08, "gamma": 2.2,
+            "max_percent_x": 60.0, "max_percent_y": 60.0, "enabled": True,
             "invert_x": False, "invert_y": False, "quality": "未校准",
         }
         self.sensor_sources: dict[str, dict] = {}
@@ -449,15 +449,21 @@ class ControlKernel:
 
     def _pitch_signal(self, pose_map: dict[str, dict], torso: float) -> float:
         nose = pose_map.get("nose")
-        if not nose or _score(nose) < 0.35 or not math.isfinite(torso) or torso < 0.03:
+        if not nose or _score(nose) < 0.35:
             return math.nan
         ears = pose_map.get("left_ear"), pose_map.get("right_ear")
         if all(ears) and min(_score(item) for item in ears) >= 0.35:
-            return (nose["y"] - _midpoint(*ears)["y"]) / torso
-        eyes = pose_map.get("left_eye"), pose_map.get("right_eye")
-        if all(eyes) and min(_score(item) for item in eyes) >= 0.35:
-            return (nose["y"] - _midpoint(*eyes)["y"]) / torso
-        return math.nan
+            reference, face_width = _midpoint(*ears), _distance(*ears)
+        else:
+            eyes = pose_map.get("left_eye"), pose_map.get("right_eye")
+            if not (all(eyes) and min(_score(item) for item in eyes) >= 0.35):
+                return math.nan
+            reference, face_width = _midpoint(*eyes), _distance(*eyes)
+        scales = [face_width]
+        if math.isfinite(torso) and torso >= 0.03:
+            scales.append(torso * 0.25)
+        scale = max(0.03, *(item for item in scales if math.isfinite(item) and item > 0.01))
+        return (nose["y"] - reference["y"]) / scale
 
     @staticmethod
     def _normalize_axis(raw: float, center: float, negative: float, positive: float) -> float:
@@ -546,6 +552,10 @@ class ControlKernel:
             self._update_calibration_locked(raw_yaw, raw_pitch, torso, now)
         x = self._normalize_axis(raw_yaw, self.head["yaw0"], self.head["yaw_left"], self.head["yaw_right"]) if self.head["calibrated"] else 0.0
         y = self._normalize_axis(raw_pitch, self.head["pitch0"], self.head["pitch_up"], self.head["pitch_down"]) if self.head["calibrated"] else 0.0
+        # The preview is permanently mirrored for a natural selfie view.  Pose
+        # coordinates stay canonical, so compensate the horizontal control axis
+        # exactly once here rather than flipping the kernel input.
+        x = -x
         if self.head["invert_x"]: x = -x
         if self.head["invert_y"]: y = -y
         self.head["norm_x"], self.head["norm_y"] = x, y

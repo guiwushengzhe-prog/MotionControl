@@ -37,3 +37,10 @@
 - `NativeCameraService` 现在请求 `640×480@30 FPS`、`CAP_PROP_BUFFERSIZE=1`；自动模式在首次打开时依次短测 MSMF 与 DirectShow（DirectShow 请求 MJPG），每个候选释放后再打开，选有效读帧率更高者。选定后写入 `%LOCALAPPDATA%\MotionControl\camera_backend.json`，缓存打开失败时才重新探测；也支持手动选择后端。
 - `/api/camera/config`、`/api/performance`、网页性能面板与每 5 秒 `PERF` 行均报告 backend、requested_fps、actual_capture_fps；推理仍只消费最新帧，预览线程独立。
 - 30 项既有自动测试通过。使用已验证的 MediaPipe 0.10.5 兼容 Full 模型做真实硬件验收：MSMF 2.2 秒有效读帧约 `26.83 FPS`，DirectShow+MJPG 约 `25.09 FPS`；胜者 MSMF 缓存命中后 10 秒采集约 `29.86 FPS`、推理约 `29.87 FPS`、分辨率 `640×480`、人体数 `1`、无错误。旧基线约 `16.8 FPS`，本次实际提升到接近请求的 30 FPS。由于候选短测受摄像头预热和曝光影响，日常仍应以性能面板实际值为准。
+
+## 2026-08-21：固定显示镜像与头控轴向修订
+
+- 仅修改 `F:\MotionControl-App`，未修改 `F:\switch`，本轮不打包。
+- 移除网页端“画面：不镜像/镜像”选择；电脑预览、骨架和区域固定使用显示层水平镜像，内核姿态坐标保持未镜像规范。
+- 头控水平轴在内核中只补偿一次显示镜像，避免左右反向；垂直信号改用脸部尺度归一化，并将默认垂直死区从 `12%` 调为 `8%`、幅度从 `45%` 调为 `60%`；鼠标垂直速度默认同步为 `600`。
+- 按本轮边界只做 Python/JavaScript 语法检查与必要编译；未运行浏览器、摄像头、真人、性能、游戏或自动化功能测试。便携包需待手机任务完成后重建。
