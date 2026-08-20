@@ -10,6 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from input_bridge import InputBridge
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
 from voice_backend import VoiceService
 
@@ -21,6 +22,7 @@ DEFAULT_MODEL_ROOT = Path(r"I:\MotionControl-Pose-Models\models")
 MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
 
 OUTPUT = OutputManager(ROOT)
+INPUT_BRIDGE = InputBridge(OUTPUT)
 HOTKEYS = GlobalHotkeys(OUTPUT)
 VOICE = VoiceService(ROOT, OUTPUT.execute_action)
 MODEL_ROOT: Path | None = None
@@ -153,7 +155,11 @@ class Handler(SimpleHTTPRequestHandler):
         return host in {"127.0.0.1", "::1"} or host.startswith("127.")
 
     def do_GET(self):
-        route = unquote(urlparse(self.path).path)
+        parsed = urlparse(self.path)
+        route = unquote(parsed.path)
+        if route == "/ws/input":
+            INPUT_BRIDGE.serve_websocket(self, parsed.query)
+            return
         if route == "/api/models":
             available = bool(MODEL_PATH and MODEL_PATH.is_file())
             self._send_json({
@@ -182,6 +188,9 @@ class Handler(SimpleHTTPRequestHandler):
             data = OUTPUT.status()
             data["hotkeys"] = HOTKEYS.status()
             self._send_json(data)
+            return
+        if route == "/api/input/status":
+            self._send_json(INPUT_BRIDGE.status())
             return
         if route == "/api/voice/status":
             self._send_json(VOICE.status())
@@ -276,7 +285,7 @@ class Handler(SimpleHTTPRequestHandler):
 def main():
     global MODEL_ROOT, MODEL_PATH
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--host", default="0.0.0.0", help="监听地址；默认允许局域网手机连接")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--model-root", default=None)
     ap.add_argument("--no-browser", action="store_true")
@@ -284,13 +293,15 @@ def main():
 
     MODEL_ROOT = choose_model_root(args.model_root)
     MODEL_PATH = resolve_full_model(MODEL_ROOT)
+    INPUT_BRIDGE.configure_endpoint(args.host, args.port)
     print(f"MotionControl body zones + four motions + voice v{VERSION}")
     print("Model root:", MODEL_ROOT or "NOT FOUND")
     print("MediaPipe Full:", MODEL_PATH or "NOT FOUND")
 
     HOTKEYS.start()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    url = f"http://{args.host}:{args.port}/"
+    display_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
+    url = f"http://{display_host}:{args.port}/"
     print("Open:", url)
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
@@ -300,6 +311,7 @@ def main():
         pass
     finally:
         OUTPUT.emergency_stop()
+        INPUT_BRIDGE.close()
         HOTKEYS.close()
         OUTPUT.close()
         server.server_close()

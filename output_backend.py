@@ -330,6 +330,12 @@ class VX360Gamepad:
         self.report.wButtons = mask
         self.update()
 
+    def set_triggers(self, left: float = 0.0, right: float = 0.0) -> None:
+        """Set the analogue LT/RT values used by a handheld sensor source."""
+        self.report.bLeftTrigger = round(max(0.0, min(1.0, float(left))) * 255)
+        self.report.bRightTrigger = round(max(0.0, min(1.0, float(right))) * 255)
+        self.update()
+
     def reset(self) -> None:
         self.report = XUSB_REPORT()
         self.update()
@@ -382,6 +388,7 @@ class OutputManager:
         self._button_sources: dict[str, set[str]] = {"zones": set()}
         self._keyboard_sources: dict[str, set[str]] = {}
         self._left_stick_sources: dict[str, tuple[float, float]] = {}
+        self._trigger_sources: dict[str, tuple[float, float]] = {}
         self.last_button_update = 0.0
         self.last_hold_update = 0.0
         self._lock = threading.RLock()
@@ -517,6 +524,17 @@ class OutputManager:
         if (x or y) or self._pad is not None:
             self._ensure_pad().set_left_stick(x, y)
 
+    def _refresh_triggers_locked(self) -> None:
+        left = right = 0.0
+        if self.enabled:
+            for source_left, source_right in self._trigger_sources.values():
+                left = max(left, source_left)
+                right = max(right, source_right)
+        if (left or right) or self._pad is not None:
+            setter = getattr(self._ensure_pad(), "set_triggers", None)
+            if setter is not None:
+                setter(left, right)
+
     def set_holds(self, holds, source_group: str = "motions") -> dict:
         """Replace one group's continuous keyboard/gamepad/left-stick holds."""
         prefix = str(source_group) + ":"
@@ -553,7 +571,59 @@ class OutputManager:
                 self._refresh_buttons_locked()
                 self._refresh_keyboard_locked()
                 self._refresh_left_stick_locked()
+                self._refresh_triggers_locked()
                 self.last_error = None
+            except Exception as exc:
+                self.last_error = str(exc)
+                self.enabled = False
+                self._zero_locked()
+                raise
+            return self.status()
+
+    def set_sensor_state(self, source: str, buttons, *, left_trigger: float = 0.0,
+                         right_trigger: float = 0.0, stick_x: float = 0.0,
+                         stick_y: float = 0.0) -> dict:
+        """Replace one handheld phone's current buttons, triggers and left stick."""
+        source = str(source).strip()
+        if not source:
+            raise ValueError("sensor source must not be empty")
+        names = {str(x).upper() for x in (buttons or [])}
+        invalid = [x for x in names if x not in XUSB_GAMEPAD_BUTTONS]
+        if invalid:
+            raise ValueError("unsupported Xbox buttons: " + ", ".join(sorted(invalid)))
+        left = max(0.0, min(1.0, float(left_trigger)))
+        right = max(0.0, min(1.0, float(right_trigger)))
+        x = max(-1.0, min(1.0, float(stick_x)))
+        y = max(-1.0, min(1.0, float(stick_y)))
+        with self._lock:
+            self._button_sources[source] = names
+            self._left_stick_sources[source] = (x, y)
+            self._trigger_sources[source] = (left, right)
+            try:
+                self._refresh_buttons_locked()
+                self._refresh_left_stick_locked()
+                self._refresh_triggers_locked()
+                self.last_error = None
+            except Exception as exc:
+                self.last_error = str(exc)
+                self.enabled = False
+                self._zero_locked()
+                raise
+            return self.status()
+
+    def clear_source(self, source: str) -> dict:
+        """Release all output contributed by one remote source immediately."""
+        source = str(source)
+        with self._lock:
+            self._button_sources.pop(source, None)
+            self._keyboard_sources.pop(source, None)
+            self._left_stick_sources.pop(source, None)
+            self._trigger_sources.pop(source, None)
+            try:
+                self._refresh_buttons_locked()
+                self._refresh_keyboard_locked()
+                self._refresh_left_stick_locked()
+                self._refresh_triggers_locked()
             except Exception as exc:
                 self.last_error = str(exc)
                 self.enabled = False
@@ -632,6 +702,7 @@ class OutputManager:
         self._button_sources = {"zones": set()}
         self._keyboard_sources = {}
         self._left_stick_sources = {}
+        self._trigger_sources = {}
         self.keyboard.release_all()
         self._mouse_residual_x = 0.0
         self._mouse_residual_y = 0.0
@@ -698,6 +769,7 @@ class OutputManager:
             "buttons": list(self.last_buttons),
             "keyboard_holds": sorted(set().union(*self._keyboard_sources.values())) if self._keyboard_sources else [],
             "left_stick_holds": list(self._left_stick_sources.keys()),
+            "trigger_holds": list(self._trigger_sources.keys()),
             "last_error": self.last_error,
         }
 
