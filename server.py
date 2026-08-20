@@ -35,9 +35,14 @@ MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
-INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL)
 HOTKEYS = GlobalHotkeys(OUTPUT)
-VOICE = VoiceService(ROOT, OUTPUT.execute_action)
+VOICE = VoiceService(
+    ROOT,
+    OUTPUT.execute_action,
+    emergency_stop=OUTPUT.emergency_stop,
+    clear_source=OUTPUT.clear_source,
+)
+INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
 MOTION_CONFIG_FILE = CONFIG_DIR / "motion_mappings.json"
@@ -223,17 +228,10 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         route = urlparse(self.path).path
         if route == "/api/voice/audio":
-            if not self._is_loopback():
-                self._send_json({"ok": False, "error": "voice audio is loopback-only"}, 403)
-                return
-            try:
-                n = int(self.headers.get("Content-Length", "0"))
-                if n <= 0 or n > 256 * 1024:
-                    raise ValueError("invalid audio chunk size")
-                raw = self.rfile.read(n)
-                self._send_json({"ok": True, **VOICE.ingest(raw)})
-            except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **VOICE.status()}, 400)
+            self._send_json({
+                "ok": False,
+                "error": "browser voice endpoint disabled; use the local computer microphone or /ws/input voice_text",
+            }, 410)
             return
 
         body = self._body()
@@ -245,7 +243,17 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "voice config is loopback-only"}, 403)
                 return
             try:
-                self._send_json({"ok": True, **VOICE.configure(body.get("mappings", []))})
+                self._send_json({
+                    "ok": True,
+                    **VOICE.configure(
+                        body.get("mappings", []),
+                        wake_word=body.get("wake_word") if "wake_word" in body else None,
+                        emergency_stop_phrases=(
+                            body.get("emergency_stop_phrases")
+                            if "emergency_stop_phrases" in body else None
+                        ),
+                    ),
+                })
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **VOICE.status()}, 400)
             return
@@ -273,14 +281,20 @@ class Handler(SimpleHTTPRequestHandler):
                 # This keeps a phone frame from racing a source transition.
                 INPUT_BRIDGE.set_body_mode("computer")
                 INPUT_BRIDGE.clear_mobile_sources()
+                VOICE.stop_local_microphone()
+                VOICE.disconnect()
                 if enabled:
                     data = RUNTIME.set_source(source, start_computer=True)
                 else:
                     data = RUNTIME.stop_body()
                 INPUT_BRIDGE.set_body_mode(source if enabled else "computer")
-                self._send_json({"ok": True, **data})
+                if enabled and source == "computer":
+                    voice_data = VOICE.start_local_microphone()
+                else:
+                    voice_data = VOICE.status()
+                self._send_json({"ok": True, **data, "voice": voice_data})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status(), "voice": VOICE.status()}, 400)
             return
         if route == "/api/head/calibration/start":
             if not self._is_loopback():
@@ -391,6 +405,7 @@ def main():
         pass
     finally:
         OUTPUT.emergency_stop()
+        VOICE.close()
         INPUT_BRIDGE.close()
         RUNTIME.close()
         HOTKEYS.close()

@@ -1,9 +1,19 @@
 {
+  "wake_word": "体感",
+  "emergency_stop_phrases": ["体感紧急停止"],
   "mappings": [
-    {
-      "phrase": "地图",
-      "type": "keyboard",
-      "target": "M"
-    }
+    {"phrase": "开始", "synonyms": ["启动", "继续"], "type": "keyboard", "target": "ENTER"},
+    {"phrase": "停止", "synonyms": ["暂停"], "type": "keyboard", "target": "ESC"},
+    {"phrase": "上", "synonyms": ["上移"], "type": "keyboard", "target": "UP"},
+    {"phrase": "下", "synonyms": ["下移"], "type": "keyboard", "target": "DOWN"},
+    {"phrase": "左", "synonyms": ["左移"], "type": "keyboard", "target": "LEFT"},
+    {"phrase": "右", "synonyms": ["右移"], "type": "keyboard", "target": "RIGHT"},
+    {"phrase": "加速", "synonyms": ["快一点"], "type": "keyboard", "target": "W"},
+    {"phrase": "刹车", "synonyms": ["减速"], "type": "keyboard", "target": "S"},
+    {"phrase": "攻击", "synonyms": ["打击"], "type": "keyboard", "target": "J"},
+    {"phrase": "闪避", "synonyms": ["躲避"], "type": "keyboard", "target": "SPACE"},
+    {"phrase": "确认", "synonyms": ["确定"], "type": "keyboard", "target": "ENTER"},
+    {"phrase": "返回", "synonyms": ["退回"], "type": "keyboard", "target": "ESC"},
+    {"phrase": "地图", "synonyms": ["打开地图", "显示地图"], "type": "keyboard", "target": "M"}
   ]
 }

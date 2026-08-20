@@ -1,6 +1,6 @@
 # MotionControl v0.7.4 — Local Kernel + Body-relative Zones + Four Motions
 
-继续沿用 v0.7.2 的 Full、头控、语音、悬浮窗和 Vosk 固定路径。本版重点是把复杂设置收进“设置”，主界面仍保持一屏可看。
+继续沿用 Full、头控、语音和悬浮窗。本版重点是把复杂设置收进“设置”，并让姿态、语音和输出时序都由本地服务维护。
 
 ## 本地控制内核（正式运行边界）
 
@@ -20,7 +20,7 @@
 - 游戏速度倍率
 - 身体相对区域触发状态
 - 四个动作实时状态
-- 语音开关
+- 语音状态与本地/手机来源提示
 - 游戏悬浮窗
 - F8 总输出开关 / F9 紧急停止
 
@@ -74,15 +74,20 @@
 config\motion_mappings.json
 ```
 
-## 语音模型
+## 本地语音
 
-继续固定使用之前的路径：
+- 电脑摄像头源：Python 本地服务打开电脑麦克风，用 Vosk 中文小模型离线识别；网页只显示状态，不录音、不上传。
+- 手机摄像头源：手机在已有 `/ws/input` 发送 `voice_text`（文本），电脑端再次按唤醒词和映射解析；手机不直接指定按键。
+- 手持 `sensor_frame` 不是语音来源。切换身体源、手机断线或服务退出会释放语音保持输出。
+- 默认唤醒词为“体感”，紧急命令为“体感紧急停止”。映射保存在 `config\voice_mappings.json`，可在设置中编辑。
+
+模型使用项目相对路径：
 
 ```text
-F:\switch\motionbridge\models\vosk-model-small-cn-0.22
+models\vosk-model-small-cn-0.22
 ```
 
-v0.7.3 会优先继承同级目录 v0.7.2 的 `config\voice_mappings.json`，找不到时再尝试 v0.7.1。
+依赖：`vosk`（中文离线识别）和电脑本地麦克风所需的 `sounddevice`；电脑摄像头还需要 `opencv-python`、`numpy`、`mediapipe`。缺少依赖或录音设备时服务会报告明确错误，不会显示为已运行。
 
 ## 启动
 
@@ -90,9 +95,9 @@ v0.7.3 会优先继承同级目录 v0.7.2 的 `config\voice_mappings.json`，找
 START.bat
 ```
 
-服务默认监听 `0.0.0.0:8765`，因此手机和电脑应在同一局域网。打开网页后，在“摄像头来源”选择“手机摄像头”，把页面显示的 `ws://.../ws/input` 地址填入手机端；手机姿态和手持传感器共用 `/ws/input`。电脑端只把手机的 33 点姿态转换为同一份 `currentPoseMap`，继续沿用身体区域、四动作、头控和原输出链。
+服务默认监听 `0.0.0.0:8765`，因此手机和电脑应在同一局域网。打开网页后，在“摄像头来源”选择“手机摄像头”，把页面显示的 `ws://.../ws/input` 地址填入手机端；手机姿态、`voice_text` 和手持传感器共用 `/ws/input`。电脑端只把手机的 33 点姿态转换为同一份 `currentPoseMap`，继续沿用身体区域、四动作、头控和原输出链。
 
-选择“电脑摄像头”后，点击“启动本地摄像头”即可让 Python 服务打开摄像头并运行 MediaPipe Full。当前启动 Python 必须同时具备 `opencv-python`、`numpy` 和 `mediapipe`；若缺少 `mediapipe`，服务会明确报告“本地 Python 未安装 mediapipe”，不会退回浏览器推理。
+选择“电脑摄像头”后，点击“启动本地摄像头”即可让 Python 服务打开摄像头并运行 MediaPipe Full，同时启动电脑本地麦克风语音。当前启动 Python 必须同时具备 `opencv-python`、`numpy`、`mediapipe` 和 `sounddevice`；若缺少依赖，服务会明确报告错误，不会退回浏览器推理或浏览器录音。
 
 手机断线、来源切换或超过约 300 ms 没有新帧时，身体区域、动作持续输入和头控会自动归零。手持手机的 `sensor_frame` 中 A/B/X/Y/LB/RB/LT/RT/START/BACK 和左摇杆直接进入 Xbox 输出；四元数、陀螺仪和加速度本版本只保留状态，不做复杂映射。
 

@@ -13,3 +13,10 @@
 - 手机姿态与手持 `sensor_frame` 现在直接写入 Python 内核；网页关闭不再触发 `/api/output/stop`，只有服务退出、切源、断线或超时才清理对应源。
 - 电脑摄像头正式链改为本地 OpenCV + MediaPipe Tasks VIDEO mode。当前运行环境若没有 `mediapipe`，必须显示明确依赖错误；不能用浏览器摄像头或启动参数规避。
 - 状态轮询只用于可见 UI（界面），不参与控制链；因此轮询暂停不会影响输出时序。
+
+## 2026-08-20：语音输入统一在摄像头设备侧识别
+
+- 浏览器 `getUserMedia`、`/ws/audio` 和 `/api/voice/audio` 不再是正式语音链；网页后台或关闭不应影响语音控制。
+- `computer` 身体源使用电脑本地麦克风 + Vosk 中文小模型；`phone` 身体源只接受该手机通过 `/ws/input` 发送的 `voice_text` 文本。手持 `sensor_frame` 永远不能作为语音来源。
+- 语音源切换、WebSocket 断开、看门狗超时和服务退出都要清理 `voice:<source>` 保持输出；手机文本必须在 PC 端再次经过唤醒词和可编辑映射解析，不能信任手机直接指定按键。
+- 模型路径改为相对便携目录 `models/vosk-model-small-cn-0.22`。电脑本地麦克风还需要 `sounddevice`；没有该依赖或没有录音设备时必须显示明确错误，不得伪报 `audio_ready`。
