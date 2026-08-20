@@ -650,11 +650,11 @@ class OutputManager:
                 raise
             return self.status()
 
-    def tap_gamepad(self, button: str, duration: float = 0.10) -> None:
+    def tap_gamepad(self, button: str, duration: float = 0.10, source: str | None = None) -> None:
         button = str(button).upper()
         if button not in XUSB_GAMEPAD_BUTTONS:
             raise ValueError(f"不支持的 Xbox 键：{button}")
-        source = f"voice-{time.monotonic_ns()}"
+        source = str(source).strip() if source else f"voice-{time.monotonic_ns()}"
         with self._lock:
             if not self.enabled:
                 return
@@ -665,8 +665,8 @@ class OutputManager:
             self._button_sources.pop(source, None)
             self._refresh_buttons_locked()
 
-    def tap_keyboard(self, combo: str, duration: float = 0.06) -> None:
-        source = f"voice-keyboard-{time.monotonic_ns()}"
+    def tap_keyboard(self, combo: str, duration: float = 0.06, source: str | None = None) -> None:
+        source = str(source).strip() if source else f"voice-keyboard-{time.monotonic_ns()}"
         keys = self._combo_keys(combo)
         with self._lock:
             if not self.enabled:
@@ -686,10 +686,11 @@ class OutputManager:
                 return {"executed": False, "reason": "output disabled"}
         action_type = str(action.get("type", "")).lower()
         target = str(action.get("target", "")).strip().upper()
+        source = str(action.get("source", "")).strip() or None
         if action_type == "gamepad":
-            self.tap_gamepad(target)
+            self.tap_gamepad(target, source=source)
         elif action_type == "keyboard":
-            self.tap_keyboard(target)
+            self.tap_keyboard(target, source=source)
         else:
             raise ValueError(f"不支持的输出类型：{action_type}")
         return {"executed": True, "action": f"{action_type}:{target}"}

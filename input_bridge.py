@@ -16,6 +16,7 @@ WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE_BYTES = 1024 * 1024
 POSE_SOURCE_PREFIX = "mobile_pose:"
 SENSOR_SOURCE_PREFIX = "mobile_sensor:"
+VOICE_SOURCE_PREFIX = "mobile_voice:"
 
 SENSOR_BUTTON_ALIASES = {
     "A": "A",
@@ -195,6 +196,22 @@ def _validate_pose_frame(message: dict) -> None:
         raise ValueError("inference_ms must be >= 0")
 
 
+def _validate_voice_text(message: dict) -> None:
+    if message.get("type") != "voice_text" or message.get("role") != "camera":
+        raise ValueError("voice_text requires role=camera")
+    if not isinstance(message.get("device_id"), str) or not message["device_id"].strip():
+        raise ValueError("device_id must be a non-empty string")
+    if not _is_int(message.get("sequence")) or message["sequence"] < 0:
+        raise ValueError("sequence must be an integer >= 0")
+    if not _is_number(message.get("captured_at_ms")):
+        raise ValueError("captured_at_ms must be a number")
+    text = message.get("text")
+    if not isinstance(text, str) or not text.strip() or len(text.strip()) > 96:
+        raise ValueError("voice_text text must contain 1 to 96 characters")
+    if message.get("confidence") is not None and not (0.0 <= float(message["confidence"]) <= 1.0):
+        raise ValueError("voice_text confidence must be between 0 and 1")
+
+
 def _canonical_sensor_control(control: str) -> str:
     value = str(control).strip().upper()
     canonical = SENSOR_BUTTON_ALIASES.get(value)
@@ -280,14 +297,17 @@ def _local_addresses() -> list[str]:
 class InputBridge:
     """Receives MotionBridge input and fans mobile poses to desktop consumers."""
 
-    def __init__(self, output, kernel=None) -> None:
+    def __init__(self, output, kernel=None, voice=None) -> None:
         self.output = output
         self.kernel = kernel
+        self._voice_service = voice
         self._lock = threading.RLock()
         self._peers: set[WebSocketPeer] = set()
         self._source_peers: dict[str, WebSocketPeer] = {}
         self._pose_sources: dict[str, dict] = {}
         self._sensor_sources: dict[str, dict] = {}
+        self._voice_sources: dict[str, dict] = {}
+        self._active_voice_source: str | None = None
         self._latest_pose: dict | None = None
         self._active_pose_source: str | None = None
         self._body_mode = "phone" if kernel is None else "computer"
@@ -297,6 +317,10 @@ class InputBridge:
         self._stop = threading.Event()
         self._watchdog = threading.Thread(target=self._watch_loop, name="motion-input-watchdog", daemon=True)
         self._watchdog.start()
+
+    def configure_voice(self, voice) -> None:
+        with self._lock:
+            self._voice_service = voice
 
     def configure_endpoint(self, host: str, port: int) -> None:
         with self._lock:
@@ -316,6 +340,10 @@ class InputBridge:
                     _, was_active = self._clear_source_locked(source_id)
                     if was_active:
                         cleared.append(source_id)
+                for source_id in list(self._voice_sources):
+                    owner, _ = self._clear_source_locked(source_id)
+                    if owner is not None:
+                        owner.source_ids.discard(source_id)
         for source_id in cleared:
             self._broadcast_pose_state(source_id, False, "source_switch")
 
@@ -326,6 +354,10 @@ class InputBridge:
                 _, was_active = self._clear_source_locked(source_id)
                 if was_active:
                     cleared.append(source_id)
+            for source_id in list(self._voice_sources):
+                owner, _ = self._clear_source_locked(source_id)
+                if owner is not None:
+                    owner.source_ids.discard(source_id)
         for source_id in cleared:
             self._broadcast_pose_state(source_id, False, "source_switch")
 
@@ -365,6 +397,17 @@ class InputBridge:
                 }
                 for source_id, state in self._sensor_sources.items()
             ]
+            voice_sources = [
+                {
+                    "source_id": source_id,
+                    "source_kind": "mobile_voice",
+                    "device_id": state["device_id"],
+                    "age_ms": round(max(0.0, (now - state["received_at"]) * 1000)),
+                    "connected": source_id in self._source_peers,
+                    "active": source_id == self._active_voice_source,
+                }
+                for source_id, state in self._voice_sources.items()
+            ]
             latest_pose = self._latest_pose
             active_pose_source = self._active_pose_source
             host = self._host
@@ -381,6 +424,9 @@ class InputBridge:
             "mobile_pose_sources": pose_sources,
             "handheld_connected": any(item["connected"] for item in sensor_sources),
             "handheld_sources": sensor_sources,
+            "mobile_voice_connected": any(item["connected"] for item in voice_sources),
+            "mobile_voice_sources": voice_sources,
+            "mobile_voice_source_id": self._active_voice_source,
         }
 
     def register(self, peer: WebSocketPeer) -> None:
@@ -484,6 +530,11 @@ class InputBridge:
                 old_owner, _ = self._clear_source_locked(old_source)
                 if old_owner is not None:
                     old_owner.source_ids.discard(old_source)
+                old_voice = self._active_voice_source
+                if old_voice and old_voice != VOICE_SOURCE_PREFIX + device_id:
+                    old_voice_owner, _ = self._clear_source_locked(old_voice)
+                    if old_voice_owner is not None:
+                        old_voice_owner.source_ids.discard(old_voice)
                 switched_from = old_source
             activated = self._active_pose_source != source_id
             self._active_pose_source = source_id
@@ -495,6 +546,9 @@ class InputBridge:
                 "pose_count": pose_count,
             }
             self._pose_sources[source_id] = state
+            voice_source = VOICE_SOURCE_PREFIX + device_id
+            if voice_source in self._voice_sources:
+                self._voice_sources[voice_source]["received_at"] = received_at
             if pose_count:
                 self._pose_frames_with_people += 1
             self._latest_pose = {"message": forwarded, "received_at": received_at, "source_id": source_id, "pose_count": pose_count}
@@ -553,6 +607,39 @@ class InputBridge:
             }
         self._accept_input(peer)
 
+    def _handle_voice_text(self, peer: WebSocketPeer, message: dict) -> None:
+        _validate_voice_text(message)
+        if self.kernel is not None and self._body_mode != "phone":
+            self._send_error(peer, "voice_text 仅在手机身体源激活时有效")
+            return
+        device_id = message["device_id"].strip()
+        source_id = VOICE_SOURCE_PREFIX + device_id
+        with self._lock:
+            active_pose = self._active_pose_source
+            if active_pose and active_pose != POSE_SOURCE_PREFIX + device_id:
+                self._send_error(peer, "voice_text 不是当前身体源")
+                return
+            if self._active_voice_source and self._active_voice_source != source_id:
+                self._clear_source_locked(self._active_voice_source)
+            self._active_voice_source = source_id
+            self._source_peers[source_id] = peer
+            peer.source_ids.add(source_id)
+            self._voice_sources[source_id] = {"device_id": device_id, "received_at": time.monotonic()}
+        voice = self._voice_service
+        if voice is None:
+            self._send_error(peer, "本地语音解析器未配置")
+            return
+        try:
+            _, result = voice.accept_phone_text(
+                source_id, device_id, message["text"],
+                float(message["confidence"]) if message.get("confidence") is not None else None,
+            )
+            if result and not result.get("matched", False):
+                self._send_error(peer, str(result.get("reason", "语音命令未匹配")))
+            self._accept_input(peer)
+        except (ValueError, RuntimeError) as exc:
+            self._send_error(peer, str(exc))
+
     def handle_message(self, peer: WebSocketPeer, message: dict) -> None:
         try:
             if not isinstance(message, dict):
@@ -566,6 +653,8 @@ class InputBridge:
                 self._handle_pose(peer, message)
             elif message_type == "sensor_frame":
                 self._handle_sensor(peer, message)
+            elif message_type == "voice_text":
+                self._handle_voice_text(peer, message)
             else:
                 raise ValueError(f"unknown input type: {message_type}")
         except (ValueError, TypeError) as exc:
@@ -577,8 +666,12 @@ class InputBridge:
         owner = self._source_peers.pop(source_id, None)
         self._pose_sources.pop(source_id, None)
         self._sensor_sources.pop(source_id, None)
+        voice_source = source_id in self._voice_sources
+        self._voice_sources.pop(source_id, None)
         try:
-            if self.kernel is not None:
+            if voice_source and self._voice_service is not None:
+                self._voice_service.disconnect(source_id)
+            elif self.kernel is not None:
                 self.kernel.clear_source(source_id)
             else:
                 self.output.clear_source(source_id)
@@ -587,6 +680,8 @@ class InputBridge:
         was_active_pose = self._active_pose_source == source_id
         if was_active_pose:
             self._active_pose_source = None
+        if self._active_voice_source == source_id:
+            self._active_voice_source = None
         if self._latest_pose and self._latest_pose["source_id"] == source_id:
             self._latest_pose = None
         return owner, was_active_pose
@@ -623,6 +718,14 @@ class InputBridge:
                     if now - state["received_at"] > 0.30 and self._source_peers.get(source_id) is not None
                 ]
                 for source_id in stale:
+                    owner, _ = self._clear_source_locked(source_id)
+                    if owner is not None:
+                        owner.source_ids.discard(source_id)
+                voice_stale = [
+                    source_id for source_id, state in self._voice_sources.items()
+                    if now - state["received_at"] > 1.5
+                ]
+                for source_id in voice_stale:
                     owner, _ = self._clear_source_locked(source_id)
                     if owner is not None:
                         owner.source_ids.discard(source_id)

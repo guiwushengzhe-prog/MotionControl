@@ -10,7 +10,7 @@
 </head>
 <body><div class="wrap">
 <div class="top">
-<h1>MotionControl 游戏控制 v0.7.3</h1>
+<h1>MotionControl 游戏控制 v0.7.4</h1>
 <span id="cameraPill" class="pill bad">摄像头关闭</span>
 <span id="posePill" class="pill bad">未识别人体</span>
 <span id="outputPill" class="pill bad">输出关闭</span>
@@ -61,7 +61,7 @@
 <div class="motion-chips"><span id="motionMarch" class="motion-chip">踏步</span><span id="motionCalf" class="motion-chip">小腿向后</span><span id="motionSquat" class="motion-chip">下蹲</span><span id="motionHands" class="motion-chip">双手过头</span></div>
 <div id="motionStatus" class="statusline">动作：未触发</div>
 <div id="backendStatus" class="muted">正在检查输出后端…</div>
-<div class="compact-voice"><button id="voiceBtn" class="btn safe">开启麦克风</button><div id="voiceStatus" class="statusline">语音：等待设置</div></div>
+<div class="compact-voice"><button id="voiceBtn" class="btn" disabled>语音由本地服务接收</button><div id="voiceStatus" class="statusline">语音：等待本地服务或手机文本</div></div>
 </div>
 </div>
 </div>
@@ -76,10 +76,11 @@
 </div>
 <div class="settings-section">
 <div class="title">语音映射</div>
+<div class="muted">唤醒词默认为“体感”。电脑源由本地麦克风识别；手机源只接收手机送来的语音文本。紧急停止命令：“体感紧急停止”。</div>
 <div id="voiceRows"></div>
 <div class="settings-actions"><button id="addVoiceBtn" class="btn">＋命令</button><button id="saveVoiceBtn" class="btn">保存词表</button></div>
 <div id="voiceMode" class="pill">未就绪</div>
-<div id="voiceModelPath" class="model-path" title="F:\switch\motionbridge\models\vosk-model-small-cn-0.22">模型：F:\switch\motionbridge\models\vosk-model-small-cn-0.22</div>
+<div id="voiceModelPath" class="model-path" title="models/vosk-model-small-cn-0.22">模型：models/vosk-model-small-cn-0.22</div>
 </div>
 <div class="settings-section">
 <div class="title">头控微调</div>

@@ -1,1 +1,1 @@
-F:\switch\motionbridge\models\vosk-model-small-cn-0.22
+models/vosk-model-small-cn-0.22

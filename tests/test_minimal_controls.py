@@ -213,16 +213,17 @@ def test_voice_exact_final_dispatches_custom_mapping(tmp_path):
     assert calls == [{'type':'keyboard','target':'M','source':'voice'}]
 
 
-def test_voice_api_is_loopback_only_and_audio_is_pcm_endpoint():
+def test_voice_api_uses_local_mic_or_phone_text_not_browser_audio():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert '/api/voice/status' in server
     assert '/api/voice/config' in server
     assert '/api/voice/audio' in server
-    assert 'voice audio is loopback-only' in server
+    assert 'browser voice endpoint disabled' in server
+    assert '/ws/input voice_text' in server
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    assert 'downsamplePcm16' in app
-    assert "postBinary('/api/voice/audio'" in app
-    assert 'createScriptProcessor(4096,1,1)' in app
+    assert 'getUserMedia' not in app
+    assert 'postBinary' not in app
+    assert 'createScriptProcessor' not in app
 
 
 def test_output_api_is_loopback_only_and_has_buttons_route():
@@ -246,7 +247,7 @@ def test_game_overlay_uses_same_body_relative_zones():
 
 def test_previous_vosk_model_path_is_pinned():
     path = (ROOT / 'config' / 'vosk_model_path.txt').read_text(encoding='utf-8').strip()
-    assert path == r'F:\switch\motionbridge\models\vosk-model-small-cn-0.22'
+    assert path == r'models/vosk-model-small-cn-0.22'
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     assert 'voiceModelPath' in page
 
@@ -263,3 +264,87 @@ def test_voice_mappings_migrate_from_v071_sibling(tmp_path):
     service = VoiceService(root, lambda action: {'executed': True})
     assert service.mappings == [{'phrase':'地图','type':'keyboard','target':'M'}]
     assert (root / 'config' / 'voice_mappings.json').is_file()
+
+
+def test_voice_parser_requires_wake_word_for_phone_and_clears_source(tmp_path):
+    calls = []
+    cleared = []
+    service = VoiceService(
+        tmp_path,
+        lambda action: calls.append(action) or {'executed': True},
+        clear_source=lambda source: cleared.append(source) or {},
+    )
+    service.mappings = [{'phrase': '攻击', 'type': 'keyboard', 'target': 'J'}]
+    status, result = service.accept_phone_text('mobile_voice:phone-a', 'phone-a', '攻击')
+    assert result['reason'] == 'wake_word_required'
+    assert not calls
+    assert 'bytes_received' not in status and 'rms' not in status
+    status, result = service.accept_phone_text('mobile_voice:phone-a', 'phone-a', '体感 攻击')
+    deadline = time.time() + 1
+    while not calls and time.time() < deadline:
+        time.sleep(.01)
+    assert result['matched'] is True
+    assert calls == [{'type': 'keyboard', 'target': 'J', 'source': 'voice:mobile_voice:phone-a'}]
+    service.disconnect('mobile_voice:phone-a')
+    assert 'voice:mobile_voice:phone-a' in cleared
+    assert service.status()['connected'] is False
+
+
+def test_voice_text_bridge_accepts_only_active_phone_body_source_and_releases_on_switch():
+    from input_bridge import InputBridge
+
+    class FakeVoice:
+        def __init__(self):
+            self.accepted = []
+            self.disconnected = []
+
+        def accept_phone_text(self, source_id, device_id, text, confidence=None):
+            self.accepted.append((source_id, device_id, text, confidence))
+            return {'source_kind': 'phone'}, {'matched': True}
+
+        def disconnect(self, source_id=None):
+            self.disconnected.append(source_id)
+            return {}
+
+    class FakeOutput:
+        def clear_source(self, source):
+            pass
+
+    class FakeKernel:
+        def clear_source(self, source):
+            pass
+
+    class Peer:
+        def __init__(self):
+            self.source_ids = set()
+            self.desktop = False
+            self.accepted_inputs = 0
+            self.errors = []
+
+        def send_json(self, message):
+            self.errors.append(message)
+
+        def close(self):
+            pass
+
+    voice = FakeVoice()
+    bridge = InputBridge(FakeOutput(), FakeKernel(), voice=voice)
+    peer = Peer()
+    message = {
+        'type': 'voice_text', 'role': 'camera', 'device_id': 'phone-a',
+        'sequence': 1, 'captured_at_ms': 1234, 'text': '体感 攻击', 'confidence': .9,
+    }
+    try:
+        bridge.set_body_mode('phone')
+        bridge.handle_message(peer, message)
+        assert voice.accepted == [('mobile_voice:phone-a', 'phone-a', '体感 攻击', .9)]
+        bridge.set_body_mode('computer')
+        assert voice.disconnected == ['mobile_voice:phone-a']
+        bridge.handle_message(peer, message)
+        assert len(voice.accepted) == 1
+        sensor_message = dict(message, role='sensor')
+        bridge.set_body_mode('phone')
+        bridge.handle_message(peer, sensor_message)
+        assert len(voice.accepted) == 1
+    finally:
+        bridge.close()
