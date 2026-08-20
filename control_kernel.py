@@ -11,6 +11,7 @@ import copy
 import math
 import threading
 import time
+from collections import deque
 from typing import Any
 
 
@@ -133,7 +134,19 @@ class ControlKernel:
         landmarks = poses[0].get("pose") if poses and isinstance(poses[0], dict) else None
         if not isinstance(landmarks, list) or len(landmarks) != 33:
             return None
-        return {name: _point(landmarks[index]) for index, name in enumerate(MP_NAMES) if isinstance(landmarks[index], dict)}
+        coordinates_mirrored = bool(message.get("coordinates_mirrored", False)) if isinstance(message, dict) else False
+        result = {}
+        for index, name in enumerate(MP_NAMES):
+            if not isinstance(landmarks[index], dict):
+                continue
+            point = _point(landmarks[index])
+            # The kernel's canonical space is the raw, unmirrored camera
+            # frame.  A phone that already mirrored its coordinates is
+            # normalized exactly once here; the web UI only mirrors display.
+            if coordinates_mirrored:
+                point["x"] = 1.0 - point["x"]
+            result[name] = point
+        return result
 
     def configure_motions(self, items) -> None:
         with self._lock:
@@ -629,21 +642,93 @@ class CameraUnavailable(RuntimeError):
 
 
 class NativeCameraService:
-    """Optional native OpenCV + MediaPipe Tasks camera worker."""
+    """Native OpenCV + MediaPipe camera worker with a latest-frame pipeline.
+
+    The capture path keeps the raw OpenCV frame as the canonical, unmirrored
+    camera image.  The detector and JPEG preview both consume that same frame,
+    so the normalized landmarks and the displayed image cannot drift because
+    of a second mirror or aspect-ratio transform in the kernel.
+    """
 
     def __init__(self, kernel: ControlKernel, model_path=None, camera_index: int = 0) -> None:
         self.kernel = kernel
         self.model_path = model_path
         self.camera_index = int(camera_index)
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._capture_thread: threading.Thread | None = None
+        self._inference_thread: threading.Thread | None = None
+        self._preview_thread: threading.Thread | None = None
         self._capture = None
         self._detector = None
         self.running = False
         self.last_error: str | None = None
         self.last_frame_at = 0.0
         self.frames = 0
+        self.capture_width = 0
+        self.capture_height = 0
+        self.dropped_frames = 0
+        self.skipped_frames = 0
+        self.last_pose_count = 0
+        self.last_inference_at = 0.0
+        self.last_latency_ms: float | None = None
+        self.last_inference_ms: float | None = None
+        self._latest_frame = None
+        self._latest_sequence = 0
+        self._latest_capture_at = 0.0
+        self._last_inference_sequence = 0
+        self._last_timestamp_ms = 0
+        self._preview_jpeg: bytes | None = None
+        self._preview_sequence = 0
+        self._preview_at = 0.0
+        self._capture_times: deque[float] = deque(maxlen=120)
+        self._inference_times: deque[float] = deque(maxlen=120)
+        self._inference_durations_ms: deque[float] = deque(maxlen=120)
+        self._latencies_ms: deque[float] = deque(maxlen=120)
+
+    @staticmethod
+    def _rate(times: deque[float]) -> float | None:
+        if len(times) < 2:
+            return None
+        elapsed = times[-1] - times[0]
+        return (len(times) - 1) / elapsed if elapsed > 1e-6 else None
+
+    @staticmethod
+    def _p95(values: deque[float]) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, math.ceil(len(ordered) * 0.95) - 1))
+        return ordered[index]
+
+    @staticmethod
+    def _round_or_none(value: float | None, digits: int = 1):
+        return round(value, digits) if value is not None and math.isfinite(value) else None
+
+    def _reset_runtime_locked(self) -> None:
+        self.frames = 0
+        self.capture_width = 0
+        self.capture_height = 0
+        self.dropped_frames = 0
+        self.skipped_frames = 0
+        self.last_pose_count = 0
+        self.last_inference_at = 0.0
+        self.last_latency_ms = None
+        self.last_inference_ms = None
+        self._latest_frame = None
+        self._latest_sequence = 0
+        self._latest_capture_at = 0.0
+        self._last_inference_sequence = 0
+        self._last_timestamp_ms = 0
+        self._preview_jpeg = None
+        self._preview_sequence = 0
+        self._preview_at = 0.0
+        self._capture_times.clear()
+        self._inference_times.clear()
+        self._inference_durations_ms.clear()
+        self._latencies_ms.clear()
 
     def configure_model(self, model_path) -> None:
         with self._lock:
@@ -692,25 +777,74 @@ class NativeCameraService:
                 self.last_error = f"电脑摄像头 {self.camera_index} 无法打开"
                 raise CameraUnavailable(self.last_error)
             self._capture, self._detector, self._mp = capture, detector, mp
+            self._reset_runtime_locked()
             self._stop.clear()
             self.running = True
             self.last_error = None
-            self._thread = threading.Thread(target=self._loop, name="motion-native-camera", daemon=True)
-            self._thread.start()
+            self._capture_thread = threading.Thread(target=self._capture_loop, name="motion-camera-capture", daemon=True)
+            self._inference_thread = threading.Thread(target=self._inference_loop, name="motion-camera-inference", daemon=True)
+            self._preview_thread = threading.Thread(target=self._preview_loop, name="motion-camera-preview", daemon=True)
+            self._thread = self._inference_thread
+            self._capture_thread.start()
+            self._inference_thread.start()
+            self._preview_thread.start()
             return self.status()
 
-    def _loop(self) -> None:
+    def _capture_loop(self) -> None:
         try:
             import cv2
             while not self._stop.wait(0.001):
                 ok, frame = self._capture.read()
                 if not ok:
-                    self.last_error = "电脑摄像头读取失败"
+                    with self._condition:
+                        if not self._stop.is_set():
+                            self.last_error = "电脑摄像头读取失败"
+                            self._stop.set()
+                        self._condition.notify_all()
                     break
                 height, width = frame.shape[:2]
+                captured_at = time.monotonic()
+                with self._condition:
+                    # There is deliberately only one pending frame.  Replacing
+                    # it is an observable drop, not an unbounded queue.
+                    if self._latest_frame is not None and self._latest_sequence > self._last_inference_sequence:
+                        self.dropped_frames += 1
+                    self._latest_frame = frame
+                    self._latest_sequence += 1
+                    self._latest_capture_at = captured_at
+                    self.capture_width, self.capture_height = int(width), int(height)
+                    self._capture_times.append(captured_at)
+                    self._condition.notify_all()
+        except Exception as exc:
+            with self._condition:
+                if not self._stop.is_set():
+                    self.last_error = str(exc)
+                    self._stop.set()
+                self._condition.notify_all()
+
+    def _inference_loop(self) -> None:
+        try:
+            import cv2
+            while True:
+                with self._condition:
+                    while not self._stop.is_set() and self._latest_sequence <= self._last_inference_sequence:
+                        self._condition.wait(0.10)
+                    if self._stop.is_set():
+                        break
+                    sequence = self._latest_sequence
+                    frame = self._latest_frame
+                    captured_at = self._latest_capture_at
+                    width, height = self.capture_width, self.capture_height
+                    skipped = max(0, sequence - self._last_inference_sequence - 1)
+                    self._last_inference_sequence = sequence
+                    self.skipped_frames += skipped
+                if frame is None:
+                    continue
+                started = time.perf_counter()
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
-                timestamp_ms = int(time.monotonic() * 1000)
+                timestamp_ms = max(int(captured_at * 1000), self._last_timestamp_ms + 1)
+                self._last_timestamp_ms = timestamp_ms
                 result = self._detector.detect_for_video(image, timestamp_ms)
                 landmarks = result.pose_landmarks[0] if result.pose_landmarks else None
                 pose_map = None
@@ -723,29 +857,85 @@ class NativeCameraService:
                         for index, point in enumerate(landmarks)
                     }
                 self.kernel.handle_pose_map("computer_camera", pose_map, width=width, height=height)
-                self.last_frame_at = time.monotonic()
-                self.frames += 1
+                finished = time.monotonic()
+                inference_ms = (time.perf_counter() - started) * 1000.0
+                with self._condition:
+                    self.last_frame_at = finished
+                    self.last_inference_at = finished
+                    self.last_inference_ms = inference_ms
+                    self.last_latency_ms = max(0.0, (finished - captured_at) * 1000.0)
+                    self.last_pose_count = len(result.pose_landmarks or [])
+                    self._inference_times.append(finished)
+                    self._inference_durations_ms.append(inference_ms)
+                    self._latencies_ms.append(self.last_latency_ms)
+                    self.frames += 1
         except Exception as exc:
-            self.last_error = str(exc)
-        finally:
-            with self._lock:
-                capture, detector = self._capture, self._detector
-                self._capture = self._detector = None
-                self.running = False
-            if capture is not None:
-                try: capture.release()
-                except Exception: pass
-            if detector is not None:
-                try: detector.close()
-                except Exception: pass
-            self.kernel.clear_source("computer_camera")
+            with self._condition:
+                if not self._stop.is_set():
+                    self.last_error = str(exc)
+                    self._stop.set()
+                self._condition.notify_all()
+
+    def _preview_loop(self) -> None:
+        """Encode the newest raw frame separately from detector inference."""
+        try:
+            import cv2
+            last_sequence = 0
+            next_encode_at = 0.0
+            while True:
+                with self._condition:
+                    while not self._stop.is_set() and self._latest_sequence <= last_sequence:
+                        self._condition.wait(0.10)
+                    if self._stop.is_set():
+                        break
+                    wait = next_encode_at - time.monotonic()
+                    if wait > 0:
+                        self._condition.wait(min(wait, 0.10))
+                        continue
+                    sequence = self._latest_sequence
+                    frame = self._latest_frame
+                    last_sequence = sequence
+                if frame is None:
+                    continue
+                ok, encoded = cv2.imencode(
+                    ".jpg", frame,
+                    [int(cv2.IMWRITE_JPEG_QUALITY), 78],
+                )
+                next_encode_at = time.monotonic() + (1.0 / 15.0)
+                if not ok:
+                    continue
+                with self._condition:
+                    self._preview_jpeg = encoded.tobytes()
+                    self._preview_sequence = sequence
+                    self._preview_at = time.monotonic()
+        except Exception as exc:
+            with self._condition:
+                if not self._stop.is_set():
+                    self.last_error = str(exc)
+                    self._stop.set()
+                self._condition.notify_all()
 
     def stop(self) -> dict:
         with self._lock:
-            thread = self._thread
             self._stop.set()
-        if thread and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
+            self._condition.notify_all()
+            threads = [self._capture_thread, self._inference_thread, self._preview_thread]
+        for thread in threads:
+            if thread and thread is not threading.current_thread():
+                thread.join(timeout=1.0)
+        with self._lock:
+            capture, detector = self._capture, self._detector
+            self._capture = self._detector = None
+            self._capture_thread = self._inference_thread = self._preview_thread = self._thread = None
+            self._latest_frame = None
+            self._preview_jpeg = None
+            self.running = False
+        if capture is not None:
+            try: capture.release()
+            except Exception: pass
+        if detector is not None:
+            try: detector.close()
+            except Exception: pass
         self.kernel.clear_source("computer_camera")
         return self.status()
 
@@ -755,7 +945,40 @@ class NativeCameraService:
                 "running": self.running, "camera_index": self.camera_index,
                 "frames": self.frames, "last_frame_age_ms": round(max(0.0, (time.monotonic() - self.last_frame_at) * 1000.0)) if self.last_frame_at else None,
                 "last_error": self.last_error, "model_path": str(self.model_path) if self.model_path else None,
+                "resolution": {"width": self.capture_width, "height": self.capture_height},
+                "coordinate_space": "camera_frame_normalized_unmirrored",
+                "preview_mirrored": False, "coordinates_mirrored": False,
             }
+
+    def performance(self) -> dict:
+        with self._lock:
+            now = time.monotonic()
+            resolution = {"width": self.capture_width, "height": self.capture_height}
+            return {
+                "source": "computer",
+                "model": "MediaPipe Pose Full",
+                "camera_resolution": resolution,
+                "capture_fps": self._round_or_none(self._rate(self._capture_times), 2),
+                "inference_fps": self._round_or_none(self._rate(self._inference_times), 2),
+                "inference_avg_ms": self._round_or_none(
+                    sum(self._inference_durations_ms) / len(self._inference_durations_ms)
+                    if self._inference_durations_ms else None,
+                ),
+                "inference_p95_ms": self._round_or_none(self._p95(self._inference_durations_ms)),
+                "pose_frame_age_ms": round(max(0.0, (now - self.last_inference_at) * 1000.0)) if self.last_inference_at else None,
+                "total_latency_ms": self._round_or_none(self.last_latency_ms),
+                "dropped_frames": int(self.dropped_frames),
+                "skipped_frames": int(self.skipped_frames),
+                "web_render_fps": None,
+                "recent_humans": int(self.last_pose_count),
+                "preview_ready": bool(self._preview_jpeg),
+                "running": bool(self.running),
+                "last_error": self.last_error,
+            }
+
+    def latest_preview(self) -> bytes | None:
+        with self._lock:
+            return bytes(self._preview_jpeg) if self._preview_jpeg else None
 
 
 class LocalControlRuntime:
@@ -805,6 +1028,13 @@ class LocalControlRuntime:
     def status(self) -> dict:
         with self._lock:
             return {"body_mode": self.body_mode, "camera": self.camera.status(), "kernel": self.kernel.status()}
+
+    def performance(self) -> dict:
+        with self._lock:
+            return self.camera.performance()
+
+    def latest_preview(self) -> bytes | None:
+        return self.camera.latest_preview()
 
     def close(self) -> None:
         self.camera.stop()

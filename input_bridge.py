@@ -8,6 +8,7 @@ import socket
 import struct
 import threading
 import time
+from collections import deque
 from collections.abc import Iterable
 from urllib.parse import parse_qs, urlparse
 
@@ -310,6 +311,13 @@ class InputBridge:
         self._active_voice_source: str | None = None
         self._latest_pose: dict | None = None
         self._active_pose_source: str | None = None
+        self._pose_receive_times: deque[float] = deque(maxlen=120)
+        self._pose_inference_times: deque[float] = deque(maxlen=120)
+        self._pose_last_sequence: int | None = None
+        self._pose_skipped_frames = 0
+        self._pose_last_inference_ms: float | None = None
+        self._pose_last_resolution = {"width": 0, "height": 0}
+        self._pose_last_count = 0
         self._body_mode = "phone" if kernel is None else "computer"
         self._pose_frames_with_people = 0
         self._host = "0.0.0.0"
@@ -367,6 +375,68 @@ class InputBridge:
             addresses = ["<本机局域网地址>"]
         return [f"ws://{address}:{self._port}/ws/input" for address in addresses]
 
+    @staticmethod
+    def _rate(times: deque[float]) -> float | None:
+        if len(times) < 2:
+            return None
+        elapsed = times[-1] - times[0]
+        return (len(times) - 1) / elapsed if elapsed > 1e-6 else None
+
+    @staticmethod
+    def _p95(values: deque[float]) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, math.ceil(len(ordered) * 0.95) - 1))
+        return ordered[index]
+
+    @staticmethod
+    def _round_or_none(value: float | None, digits: int = 1):
+        return round(value, digits) if value is not None and math.isfinite(value) else None
+
+    def _reset_pose_metrics_locked(self) -> None:
+        self._pose_receive_times.clear()
+        self._pose_inference_times.clear()
+        self._pose_last_sequence = None
+        self._pose_skipped_frames = 0
+        self._pose_last_inference_ms = None
+        self._pose_last_resolution = {"width": 0, "height": 0}
+        self._pose_last_count = 0
+
+    def performance(self) -> dict:
+        """Return phone-source metrics without inventing device-side values."""
+        now = time.monotonic()
+        with self._lock:
+            source_id = self._active_pose_source
+            state = self._pose_sources.get(source_id) if source_id else None
+            age_ms = round(max(0.0, (now - self._latest_pose["received_at"]) * 1000.0)) if self._latest_pose else None
+            inference_values = self._pose_inference_times
+            return {
+                "source": "phone",
+                "model": "MediaPipe Pose Full (phone reported)",
+                "camera_resolution": dict(self._pose_last_resolution),
+                # The phone protocol currently does not claim capture or
+                # inference FPS.  Network receive rate is reported separately.
+                "capture_fps": None,
+                "inference_fps": None,
+                "network_fps": self._round_or_none(self._rate(self._pose_receive_times), 2),
+                "inference_avg_ms": self._round_or_none(
+                    sum(inference_values) / len(inference_values) if inference_values else None,
+                ),
+                "inference_p95_ms": self._round_or_none(self._p95(inference_values)),
+                "phone_inference_ms": self._round_or_none(self._pose_last_inference_ms),
+                "pose_frame_age_ms": age_ms,
+                "network_age_ms": age_ms,
+                "total_latency_ms": None,
+                "dropped_frames": 0,
+                "skipped_frames": int(self._pose_skipped_frames),
+                "web_render_fps": None,
+                "recent_humans": int(self._pose_last_count),
+                "preview_ready": False,
+                "running": bool(state and source_id in self._source_peers),
+                "last_error": None,
+            }
+
     def status(self) -> dict:
         now = time.monotonic()
         with self._lock:
@@ -377,6 +447,12 @@ class InputBridge:
                     "device_id": state["device_id"],
                     "age_ms": round(max(0.0, (now - state["received_at"]) * 1000)),
                     "pose_count": state["pose_count"],
+                    "sequence": state.get("sequence"),
+                    "width": state.get("width"),
+                    "height": state.get("height"),
+                    "inference_ms": state.get("inference_ms"),
+                    "preview_mirrored": state.get("preview_mirrored", False),
+                    "coordinates_mirrored": state.get("coordinates_mirrored", False),
                     "connected": source_id in self._source_peers,
                     "active": source_id == self._active_pose_source,
                 }
@@ -537,13 +613,34 @@ class InputBridge:
                         old_voice_owner.source_ids.discard(old_voice)
                 switched_from = old_source
             activated = self._active_pose_source != source_id
+            if activated:
+                self._reset_pose_metrics_locked()
             self._active_pose_source = source_id
             self._source_peers[source_id] = peer
             peer.source_ids.add(source_id)
+            sequence = int(message["sequence"])
+            previous_sequence = self._pose_last_sequence
+            if previous_sequence is not None and sequence > previous_sequence + 1:
+                self._pose_skipped_frames += sequence - previous_sequence - 1
+            self._pose_last_sequence = sequence
+            self._pose_receive_times.append(received_at)
+            if "inference_ms" in message:
+                self._pose_last_inference_ms = float(message["inference_ms"])
+                self._pose_inference_times.append(self._pose_last_inference_ms)
+            self._pose_last_resolution = {
+                "width": int(message["width"]), "height": int(message["height"]),
+            }
+            self._pose_last_count = pose_count
             state = {
                 "device_id": device_id,
                 "received_at": received_at,
                 "pose_count": pose_count,
+                "sequence": sequence,
+                "width": int(message["width"]),
+                "height": int(message["height"]),
+                "inference_ms": self._pose_last_inference_ms,
+                "preview_mirrored": bool(message["preview_mirrored"]),
+                "coordinates_mirrored": bool(message["coordinates_mirrored"]),
             }
             self._pose_sources[source_id] = state
             voice_source = VOICE_SOURCE_PREFIX + device_id
@@ -680,6 +777,7 @@ class InputBridge:
         was_active_pose = self._active_pose_source == source_id
         if was_active_pose:
             self._active_pose_source = None
+            self._reset_pose_metrics_locked()
         if self._active_voice_source == source_id:
             self._active_voice_source = None
         if self._latest_pose and self._latest_pose["source_id"] == source_id:

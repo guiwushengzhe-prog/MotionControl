@@ -20,3 +20,10 @@
 - `computer` 身体源使用电脑本地麦克风 + Vosk 中文小模型；`phone` 身体源只接受该手机通过 `/ws/input` 发送的 `voice_text` 文本。手持 `sensor_frame` 永远不能作为语音来源。
 - 语音源切换、WebSocket 断开、看门狗超时和服务退出都要清理 `voice:<source>` 保持输出；手机文本必须在 PC 端再次经过唤醒词和可编辑映射解析，不能信任手机直接指定按键。
 - 模型路径改为相对便携目录 `models/vosk-model-small-cn-0.22`。电脑本地麦克风还需要 `sounddevice`；没有该依赖或没有录音设备时必须显示明确错误，不得伪报 `audio_ready`。
+
+## 2026-08-21：电脑摄像头画面/骨架与性能
+
+- 仅有骨架的黑色 canvas 无法证明坐标和原始画面一致；预览必须由本地服务提供，不能退回浏览器摄像头或 Base64 大 JSON。
+- MediaPipe 的 normalized 坐标以 OpenCV 读到的原始未镜像帧为规范。网页“镜像”只能同时作用于预览、canvas 和区域层；内核不能再次翻转，区域矩形也不能同时在 JS 和 CSS 各翻一次。
+- OpenCV 采集、MediaPipe 推理、JPEG 编码分线程且只保留最新帧；`dropped_frames` 和 `skipped_frames` 必须分开统计，避免推理慢时队列积压造成延迟假象。
+- `I:\MotionControl-Pose-Models` 的某个 Full task 与 Python MediaPipe 0.10.5 的 metadata normalization 不兼容；不能仅凭“文件存在”判定模型可用，也不要手改 task metadata。便携包中已验证的兼容模型可正常运行。
