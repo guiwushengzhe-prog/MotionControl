@@ -371,7 +371,7 @@ class OutputManager:
         self.mode = "mouse"
         self.enabled = False
         self.mouse_speed_x = 600.0
-        self.mouse_speed_y = 600.0
+        self.mouse_speed_y = 450.0
         self.gamepad_gain = 1.6
         self.last_error: str | None = None
         self.last_update = 0.0
