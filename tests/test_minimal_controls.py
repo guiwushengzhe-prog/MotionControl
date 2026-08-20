@@ -14,7 +14,7 @@ def test_only_full_model_is_registered():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert 'pose_landmarker_full.task' in server
     assert 'pose_landmarker_lite.task' not in server
-    assert 'VERSION = "0.7.4"' in server
+    assert 'VERSION = "0.7.6"' in server
 
 
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
@@ -56,10 +56,12 @@ def test_four_motion_rules_and_settings_exist():
     assert 'motion_mappings.json' in server
 
 
-def test_head_calibration_degrades_instead_of_blocking():
+def test_head_calibration_uses_default_until_atomic_success():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     kernel = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
-    assert '降级可用' in kernel
+    assert '当前使用：默认参数' in kernel
+    assert 'CALIBRATION_TOTAL_DURATION_S = 7.5' in kernel
+    assert 'cancel_calibration' in kernel
     assert 'setCurrentCenter' in app
     assert '"calibrated": True' in kernel
     assert '_torso_length' in kernel

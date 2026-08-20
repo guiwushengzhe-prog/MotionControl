@@ -16,7 +16,7 @@ from input_bridge import InputBridge
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
 from voice_backend import VoiceService
 
-VERSION = "0.7.4"
+VERSION = "0.7.6"
 
 
 def application_root() -> Path:
@@ -35,11 +35,18 @@ MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
-HOTKEYS = GlobalHotkeys(OUTPUT)
+
+
+def emergency_stop_all() -> dict:
+    KERNEL.cancel_calibration("紧急停止")
+    return OUTPUT.emergency_stop()
+
+
+HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
 VOICE = VoiceService(
     ROOT,
     OUTPUT.execute_action,
-    emergency_stop=OUTPUT.emergency_stop,
+    emergency_stop=emergency_stop_all,
     clear_source=OUTPUT.clear_source,
 )
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
@@ -287,13 +294,16 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/input/status":
             data = INPUT_BRIDGE.status()
             data["runtime"] = RUNTIME.status()
+            data["version"] = VERSION
             self._send_json(data)
             return
         if route == "/api/kernel/status":
-            self._send_json(RUNTIME.status())
+            self._send_json({"version": VERSION, **RUNTIME.status()})
             return
         if route == "/api/performance":
-            self._send_json(performance_snapshot())
+            data = performance_snapshot()
+            data["version"] = VERSION
+            self._send_json(data)
             return
         if route == "/api/camera/config":
             self._send_json(RUNTIME.camera_backend_config())
@@ -388,10 +398,16 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "head calibration is loopback-only"}, 403)
                 return
             try:
-                KERNEL.start_calibration()
+                RUNTIME.start_calibration()
                 self._send_json({"ok": True, **RUNTIME.status()})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+            return
+        if route == "/api/head/calibration/cancel":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "head calibration is loopback-only"}, 403)
+                return
+            self._send_json({"ok": True, **KERNEL.cancel_calibration("用户取消")})
             return
         if route == "/api/head/calibration/center":
             if not self._is_loopback():
@@ -451,7 +467,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif route == "/api/output/buttons":
                 data = OUTPUT.set_buttons(body.get("buttons", []), source="zones")
             elif route == "/api/output/stop":
-                data = OUTPUT.emergency_stop()
+                data = emergency_stop_all()
             else:
                 self._send_json({"ok": False, "error": "not found"}, 404)
                 return
@@ -479,8 +495,19 @@ def main():
     print("Model root:", MODEL_ROOT or "NOT FOUND")
     print("MediaPipe Full:", MODEL_PATH or "NOT FOUND")
 
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), Handler)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 10048 or getattr(exc, "errno", None) in {98, 10048}:
+            print(
+                f"启动失败：端口 {args.port} 已被占用，可能已有 MotionControl 实例在运行。"
+                f" 请关闭旧实例或改用 --port；当前进程不会结束其他进程。",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise SystemExit(2) from exc
+        raise
     HOTKEYS.start()
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
     display_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
     url = f"http://{display_host}:{args.port}/"
     print("Open:", url)

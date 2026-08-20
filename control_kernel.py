@@ -31,6 +31,27 @@ MP_NAMES = [
 # The reference web controller sent head-control frames at most every 28 ms.
 # Keep that cadence in the local kernel now that the browser is display-only.
 HEAD_UPDATE_INTERVAL_S = 0.028
+CALIBRATION_STAGE_DURATION_S = 1.5
+CALIBRATION_TOTAL_DURATION_S = 7.5
+CALIBRATION_POSE_TIMEOUT_S = 0.30
+CALIBRATION_STAGES = (
+    ("center", "正视"),
+    ("left", "左转"),
+    ("right", "右转"),
+    ("up", "抬头"),
+    ("down", "低头"),
+)
+
+# These are the reference-controller defaults.  They are active from startup
+# so calibration is an optional personalisation step, not a prerequisite.
+DEFAULT_HEAD_PARAMS = {
+    "yaw0": 0.0, "yaw_left": -0.10, "yaw_right": 0.10,
+    "pitch0": 0.0, "pitch_up": -0.04, "pitch_down": 0.04,
+    "torso0": math.nan,
+    "deadzone_x": 0.08, "deadzone_y": 0.12, "gamma": 2.2,
+    "max_percent_x": 60.0, "max_percent_y": 45.0,
+    "enabled": True, "invert_x": False, "invert_y": False,
+}
 
 BODY_ZONES = {
     "leftHandUpper": {"label": "Y", "button": "Y", "points": ("left_wrist",), "kind": "hand"},
@@ -103,6 +124,7 @@ class ControlKernel:
         self.width = 640
         self.height = 480
         self.latest_pose: dict[str, dict] | None = None
+        self.pose_last_valid_at = 0.0
         self.last_error: str | None = None
 
         self.zone_rects: dict[str, dict] = {}
@@ -119,20 +141,93 @@ class ControlKernel:
         self.last_motion_emit = 0.0
 
         self.head = {
-            "calibrated": False, "calibrating": False, "stage": "", "stage_started": 0.0,
-            "stage_duration": 1.5, "center_yaw": [], "center_pitch": [], "left_yaw": [],
+            "calibrated": True, "calibrating": False, "stage": "", "stage_label": "",
+            "stage_started": 0.0, "calibration_started": 0.0,
+            "stage_duration": CALIBRATION_STAGE_DURATION_S, "center_yaw": [], "center_pitch": [], "left_yaw": [],
             "right_yaw": [], "up_pitch": [], "down_pitch": [], "torso_samples": [],
-            "yaw0": 0.0, "yaw_left": 0.0, "yaw_right": 0.0, "pitch0": 0.0,
-            "pitch_up": 0.0, "pitch_down": 0.0, "torso0": math.nan,
+            "calibration_profile": "default", "calibration_message": "",
+            "quality": "当前使用：默认参数",
+            "yaw0": DEFAULT_HEAD_PARAMS["yaw0"], "yaw_left": DEFAULT_HEAD_PARAMS["yaw_left"],
+            "yaw_right": DEFAULT_HEAD_PARAMS["yaw_right"], "pitch0": DEFAULT_HEAD_PARAMS["pitch0"],
+            "pitch_up": DEFAULT_HEAD_PARAMS["pitch_up"], "pitch_down": DEFAULT_HEAD_PARAMS["pitch_down"],
+            "torso0": DEFAULT_HEAD_PARAMS["torso0"],
             "raw_yaw": math.nan, "raw_pitch": math.nan, "norm_x": 0.0, "norm_y": 0.0,
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
             "last_update": 0.0,
-            "deadzone_x": 0.08, "deadzone_y": 0.12, "gamma": 2.2,
-            "max_percent_x": 60.0, "max_percent_y": 45.0, "enabled": True,
-            "invert_x": False, "invert_y": False, "quality": "未校准",
+            "deadzone_x": DEFAULT_HEAD_PARAMS["deadzone_x"], "deadzone_y": DEFAULT_HEAD_PARAMS["deadzone_y"],
+            "gamma": DEFAULT_HEAD_PARAMS["gamma"],
+            "max_percent_x": DEFAULT_HEAD_PARAMS["max_percent_x"],
+            "max_percent_y": DEFAULT_HEAD_PARAMS["max_percent_y"],
+            "enabled": DEFAULT_HEAD_PARAMS["enabled"],
+            "invert_x": DEFAULT_HEAD_PARAMS["invert_x"], "invert_y": DEFAULT_HEAD_PARAMS["invert_y"],
         }
         self.sensor_sources: dict[str, dict] = {}
         self._thread.start()
+
+    @staticmethod
+    def _pose_map_is_valid(pose_map: dict[str, dict] | None) -> bool:
+        if not isinstance(pose_map, dict) or len(pose_map) < len(MP_NAMES):
+            return False
+        required = (
+            "nose", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
+            "left_hip", "right_hip",
+        )
+        if any(name not in pose_map for name in MP_NAMES):
+            return False
+        for name in MP_NAMES:
+            point = pose_map.get(name)
+            if not isinstance(point, dict):
+                return False
+            if not all(math.isfinite(_finite(point.get(axis), math.nan)) for axis in ("x", "y", "z")):
+                return False
+        return all(_score(pose_map[name]) >= 0.30 for name in required)
+
+    def _pose_ready_reason_locked(self, now: float | None = None) -> str | None:
+        now = time.monotonic() if now is None else now
+        if not self.active_body_source:
+            return "没有正在运行的人体来源"
+        if not self.body_last_at or now - self.body_last_at > self.watchdog_timeout:
+            return "人体来源没有持续发送姿态"
+        if not self._pose_map_is_valid(self.latest_pose):
+            return "当前没有可用的33点人体姿态"
+        if self.pose_last_valid_at and now - self.pose_last_valid_at > self.watchdog_timeout:
+            return "人体姿态已过期"
+        return None
+
+    def has_valid_pose(self) -> bool:
+        with self._lock:
+            return self._pose_ready_reason_locked() is None
+
+    def _reset_default_head_locked(self, message: str = "") -> None:
+        self.head.update({
+            **DEFAULT_HEAD_PARAMS,
+            "calibrated": True,
+            "calibrating": False,
+            "stage": "",
+            "stage_label": "",
+            "stage_started": 0.0,
+            "calibration_started": 0.0,
+            "stage_duration": CALIBRATION_STAGE_DURATION_S,
+            "calibration_profile": "default",
+            "calibration_message": message,
+            "quality": "校准未完成，已使用默认参数" if message else "当前使用：默认参数",
+            "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
+            "up_pitch": [], "down_pitch": [], "torso_samples": [],
+            "norm_x": 0.0, "norm_y": 0.0,
+            "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
+            "last_update": 0.0,
+        })
+
+    def _abort_calibration_locked(self, reason: str) -> None:
+        if not self.head["calibrating"]:
+            return
+        self._reset_default_head_locked(str(reason).strip() or "未完成")
+        self._safe_output(self.output.apply, 0.0, 0.0)
+
+    def cancel_calibration(self, reason: str = "用户取消") -> dict:
+        with self._lock:
+            self._abort_calibration_locked(reason)
+            return self.status_locked(time.monotonic())
 
     # ---------- public input/config boundary ----------
 
@@ -191,6 +286,8 @@ class ControlKernel:
             self.width = max(1, int(width))
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
+            if self._pose_map_is_valid(pose_map):
+                self.pose_last_valid_at = now
             self._process_pose_locked(pose_map, now)
             return self.status_locked(now)
 
@@ -236,13 +333,18 @@ class ControlKernel:
     def start_calibration(self) -> dict:
         with self._lock:
             now = time.monotonic()
+            reason = self._pose_ready_reason_locked(now)
+            if reason:
+                raise ValueError(f"校准需要先启动可用的人体来源：{reason}")
             self.head.update({
-                "calibrating": True, "calibrated": False, "stage": "center", "stage_started": now,
+                "calibrating": True, "stage": CALIBRATION_STAGES[0][0],
+                "stage_label": CALIBRATION_STAGES[0][1], "stage_started": now,
+                "calibration_started": now, "stage_duration": CALIBRATION_STAGE_DURATION_S,
+                "calibration_message": "",
                 "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
                 "up_pitch": [], "down_pitch": [], "torso_samples": [], "filtered_x": 0.0,
                 "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
             })
-            self._safe_output(self.output.apply, 0.0, 0.0)
             return self.status_locked(now)
 
     def set_current_center(self) -> dict:
@@ -253,7 +355,11 @@ class ControlKernel:
                 "yaw0": self.head["raw_yaw"], "pitch0": self.head["raw_pitch"],
                 "yaw_left": self.head["raw_yaw"] - 0.10, "yaw_right": self.head["raw_yaw"] + 0.10,
                 "pitch_up": self.head["raw_pitch"] - 0.04, "pitch_down": self.head["raw_pitch"] + 0.04,
-                "calibrated": True, "quality": "手动中心", "filtered_x": 0.0,
+                "calibrated": True, "calibrating": False, "calibration_profile": "personal",
+                "calibration_message": "", "quality": "当前使用：个人校准",
+                "stage": "", "stage_label": "", "stage_started": 0.0, "calibration_started": 0.0,
+                "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
+                "up_pitch": [], "down_pitch": [], "torso_samples": [], "filtered_x": 0.0,
                 "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0, "last_update": 0.0,
             })
             self._safe_output(self.output.apply, 0.0, 0.0)
@@ -490,22 +596,61 @@ class ControlKernel:
         alpha = 0.10 + 0.36 * math.sqrt(intensity)
         return current + alpha * (target - current)
 
-    def _calibration_stage(self, now: float) -> str:
-        elapsed = now - self.head["stage_started"]
-        duration = self.head["stage_duration"]
-        if elapsed < duration: return "center"
-        if elapsed < 2 * duration: return "left"
-        if elapsed < 3 * duration: return "right"
-        if elapsed < 4 * duration: return "up"
-        if elapsed < 5 * duration: return "down"
-        return "done"
+    @staticmethod
+    def _calibration_field(stage: str) -> str:
+        return {
+            "center": "center_yaw",
+            "left": "left_yaw",
+            "right": "right_yaw",
+            "up": "up_pitch",
+            "down": "down_pitch",
+        }[stage]
+
+    def _calibration_stage_ready_locked(self, stage: str) -> bool:
+        if stage == "center":
+            return bool(
+                self.head["center_yaw"]
+                and self.head["center_pitch"]
+                and self.head["torso_samples"]
+            )
+        return bool(self.head[self._calibration_field(stage)])
+
+    def _advance_calibration_locked(self, now: float) -> None:
+        if not self.head["calibrating"]:
+            return
+        started = self.head["calibration_started"]
+        elapsed = max(0.0, now - started)
+        duration = CALIBRATION_STAGE_DURATION_S
+        if elapsed >= CALIBRATION_TOTAL_DURATION_S:
+            if not self._calibration_stage_ready_locked(self.head["stage"]):
+                label = self.head.get("stage_label") or self.head["stage"]
+                self._abort_calibration_locked(f"{label}阶段没有有效样本")
+            else:
+                self._finish_calibration_locked()
+            return
+        target_index = min(len(CALIBRATION_STAGES) - 1, int(elapsed // duration))
+        current_index = next(
+            (index for index, (stage, _) in enumerate(CALIBRATION_STAGES) if stage == self.head["stage"]),
+            0,
+        )
+        while current_index < target_index and self.head["calibrating"]:
+            stage, label = CALIBRATION_STAGES[current_index]
+            if not self._calibration_stage_ready_locked(stage):
+                self._abort_calibration_locked(f"{label}阶段没有有效样本")
+                return
+            current_index += 1
+            next_stage, next_label = CALIBRATION_STAGES[current_index]
+            self.head.update({
+                "stage": next_stage,
+                "stage_label": next_label,
+                "stage_started": started + current_index * duration,
+            })
 
     def _update_calibration_locked(self, raw_yaw: float, raw_pitch: float, torso: float, now: float) -> None:
-        stage = self._calibration_stage(now)
-        self.head["stage"] = stage
-        if stage == "done":
-            self._finish_calibration_locked()
+        self._advance_calibration_locked(now)
+        if not self.head["calibrating"]:
             return
+        stage = self.head["stage"]
         if stage == "center":
             if math.isfinite(raw_yaw): self.head["center_yaw"].append(raw_yaw)
             if math.isfinite(raw_pitch): self.head["center_pitch"].append(raw_pitch)
@@ -532,19 +677,25 @@ class ControlKernel:
         return ordered[max(0, min(len(ordered) - 1, index))]
 
     def _finish_calibration_locked(self) -> None:
+        if any(not self._calibration_stage_ready_locked(stage) for stage, _ in CALIBRATION_STAGES):
+            missing = next(label for stage, label in CALIBRATION_STAGES if not self._calibration_stage_ready_locked(stage))
+            self._abort_calibration_locked(f"{missing}阶段没有有效样本")
+            return
         yaw0 = self._median(self.head["center_yaw"], self.head["raw_yaw"])
         pitch0 = self._median(self.head["center_pitch"], self.head["raw_pitch"])
         if not (math.isfinite(yaw0) and math.isfinite(pitch0)):
-            self.head.update({"calibrating": False, "calibrated": False, "quality": "未取得中心"})
+            self._abort_calibration_locked("正视阶段头部关键点无效")
             return
         yl, yr = self._median(self.head["left_yaw"]), self._median(self.head["right_yaw"])
         pu, pd = self._median(self.head["up_pitch"]), self._median(self.head["down_pitch"])
         yaw_ok = math.isfinite(yl) and math.isfinite(yr) and (yl - yaw0) * (yr - yaw0) < 0 and min(abs(yl - yaw0), abs(yr - yaw0)) >= 0.025
         pitch_ok = math.isfinite(pu) and math.isfinite(pd) and (pu - pitch0) * (pd - pitch0) < 0 and min(abs(pu - pitch0), abs(pd - pitch0)) >= 0.008
-        if not yaw_ok: yl, yr = yaw0 - 0.10, yaw0 + 0.10
+        if not yaw_ok:
+            self._abort_calibration_locked("左转/右转阶段方向幅度不足")
+            return
         if not pitch_ok:
-            sign = math.copysign(1.0, pu - pitch0) if math.isfinite(pu) and pu != pitch0 else -1.0
-            pu, pd = pitch0 + sign * 0.04, pitch0 - sign * 0.04
+            self._abort_calibration_locked("抬头/低头阶段方向幅度不足")
+            return
         nx = [abs(self._normalize_axis(value, yaw0, yl, yr)) for value in self.head["center_yaw"]]
         ny = [abs(self._normalize_axis(value, pitch0, pu, pd)) for value in self.head["center_pitch"]]
         deadzone_x = self.head["deadzone_x"]
@@ -553,15 +704,16 @@ class ControlKernel:
             deadzone_x = _clamp(self._qtile(nx, 0.99) * 1.8 + 0.02, 0.06, 0.30)
         if pitch_ok and ny:
             deadzone_y = _clamp(self._qtile(ny, 0.99) * 2.0 + 0.025, 0.08, 0.34)
-        weak = []
-        if not yaw_ok: weak.append("左右")
-        if not pitch_ok: weak.append("上下")
         self.head.update({
             "yaw0": yaw0, "yaw_left": yl, "yaw_right": yr, "pitch0": pitch0,
             "pitch_up": pu, "pitch_down": pd, "torso0": self._median(self.head["torso_samples"]),
             "deadzone_x": deadzone_x, "deadzone_y": deadzone_y,
             "calibrating": False, "calibrated": True,
-            "quality": "自动完成" if not weak else "降级：" + "、".join(weak),
+            "stage": "", "stage_label": "", "stage_started": 0.0, "calibration_started": 0.0,
+            "calibration_profile": "personal", "calibration_message": "",
+            "quality": "当前使用：个人校准",
+            "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
+            "up_pitch": [], "down_pitch": [], "torso_samples": [],
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0, "last_update": 0.0,
         })
 
@@ -601,7 +753,9 @@ class ControlKernel:
         self._safe_output(self.output.apply, 0.0, 0.0)
 
     def _clear_body_locked(self) -> None:
+        self._abort_calibration_locked("人体来源已断开")
         self.latest_pose = None
+        self.pose_last_valid_at = 0.0
         self._clear_body_outputs_locked()
 
     def _safe_output(self, function, *args, **kwargs):
@@ -621,7 +775,17 @@ class ControlKernel:
         }
         head = {
             "calibrated": bool(self.head["calibrated"]), "calibrating": bool(self.head["calibrating"]),
-            "stage": self.head["stage"], "quality": self.head["quality"],
+            "stage": self.head["stage"], "stage_label": self.head.get("stage_label", ""),
+            "quality": self.head["quality"], "calibration_profile": self.head.get("calibration_profile", "default"),
+            "calibration_message": self.head.get("calibration_message", ""),
+            "calibration_remaining_s": (
+                round(max(0.0, CALIBRATION_TOTAL_DURATION_S - (now - self.head["calibration_started"])), 1)
+                if self.head["calibrating"] else None
+            ),
+            "stage_remaining_s": (
+                round(max(0.0, self.head["stage_duration"] - (now - self.head["stage_started"])), 1)
+                if self.head["calibrating"] else None
+            ),
             "raw_yaw": self.head["raw_yaw"] if math.isfinite(self.head["raw_yaw"]) else None,
             "raw_pitch": self.head["raw_pitch"] if math.isfinite(self.head["raw_pitch"]) else None,
             "output_x": round(self.head["output_x"], 3), "output_y": round(self.head["output_y"], 3),
@@ -650,6 +814,14 @@ class ControlKernel:
         while not self._stop.wait(0.05):
             now = time.monotonic()
             with self._lock:
+                if self.head["calibrating"]:
+                    if not self.active_body_source:
+                        self._abort_calibration_locked("人体来源已断开")
+                    elif not self.pose_last_valid_at or now - self.pose_last_valid_at > CALIBRATION_POSE_TIMEOUT_S:
+                        label = self.head.get("stage_label") or self.head.get("stage") or "当前"
+                        self._abort_calibration_locked(f"{label}阶段人体姿态丢失")
+                    else:
+                        self._advance_calibration_locked(now)
                 if self.active_body_source and self.body_last_at and now - self.body_last_at > self.watchdog_timeout:
                     self._clear_body_locked()
                     self.active_body_source = None
@@ -1364,6 +1536,12 @@ class LocalControlRuntime:
             self.camera.stop()
             self.kernel.clear_body()
             return self.status()
+
+    def start_calibration(self) -> dict:
+        with self._lock:
+            if self.body_mode == "computer" and not self.camera.running:
+                raise ValueError("校准需要先启动本地摄像头")
+            return self.kernel.start_calibration()
 
     def accept_mobile_pose(self, source_id: str, message: dict) -> dict:
         with self._lock:

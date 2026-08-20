@@ -471,7 +471,12 @@ class OutputManager:
                 return
             try:
                 if self.mode == "mouse":
-                    amount_x = x * self.mouse_speed_x * dt + self._mouse_residual_x
+                    # The preview is permanently mirrored for the user; the
+                    # measured control direction needs one final sign flip at
+                    # the mouse boundary.  Do not mirror the pose or yaw math
+                    # again upstream.
+                    mouse_x = -x
+                    amount_x = mouse_x * self.mouse_speed_x * dt + self._mouse_residual_x
                     amount_y = y * self.mouse_speed_y * dt + self._mouse_residual_y
                     dx = int(amount_x)
                     dy = int(amount_y)
@@ -794,8 +799,9 @@ class GlobalHotkeys:
     VK_F8 = 0x77
     VK_F9 = 0x78
 
-    def __init__(self, output: OutputManager) -> None:
+    def __init__(self, output: OutputManager, emergency_stop=None) -> None:
         self.output = output
+        self.emergency_stop = emergency_stop or output.emergency_stop
         self.available = False
         self.last_error: str | None = None
         self._thread: threading.Thread | None = None
@@ -823,7 +829,7 @@ class GlobalHotkeys:
                     if msg.wParam == 8001:
                         self.output.toggle()
                     elif msg.wParam == 8002:
-                        self.output.emergency_stop()
+                        self.emergency_stop()
             if ok8:
                 user32.UnregisterHotKey(None, 8001)
             if ok9:

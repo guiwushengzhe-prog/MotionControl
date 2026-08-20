@@ -1,4 +1,4 @@
-# MotionControl v0.7.4 — Local Kernel + Body-relative Zones + Four Motions
+# MotionControl v0.7.6 — Local Kernel + Body-relative Zones + Four Motions
 
 继续沿用 Full、头控、语音和悬浮窗。本版重点是把复杂设置收进“设置”，并让姿态、语音和输出时序都由本地服务维护。
 
@@ -74,6 +74,10 @@
 config\motion_mappings.json
 ```
 
+## 头控校准
+
+头控启动即使用参考版默认参数，界面显示“当前使用：默认参数”；校准不是使用前提。用户主动开始后，正视、左转、右转、抬头、低头各持续 1.5 秒，总计 7.5 秒。来源停止、人体丢失、紧急停止或取消都会丢弃临时样本并恢复默认参数；五段全部有效完成后才切换为个人校准。
+
 ## 本地语音
 
 - 电脑摄像头源：Python 本地服务打开电脑麦克风，用 Vosk 中文小模型离线识别；网页只显示状态，不录音、不上传。
@@ -108,3 +112,5 @@ MediaPipe Full：
 ```text
 I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full.task
 ```
+
+如果 8765 已被旧的 MotionControl 实例占用，启动窗口会明确提示并退出当前实例；不会自动结束旧进程，可先关闭旧实例或用 `--port` 指定其他端口。
