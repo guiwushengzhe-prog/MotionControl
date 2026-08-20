@@ -1,0 +1,9 @@
+{
+  "mappings": [
+    {
+      "phrase": "地图",
+      "type": "keyboard",
+      "target": "M"
+    }
+  ]
+}
