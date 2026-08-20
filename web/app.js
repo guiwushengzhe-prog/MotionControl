@@ -28,6 +28,7 @@ const motion={
 };
 
 let detector=null, stream=null, cameraRunning=false, switching=false, lastVideoTime=-1, currentPoseMap=null;
+let poseSource='computer', mobileSocket=null, mobileConnected=false, mobileLastFrame=0, mobileSourceId='', mobileRetryTimer=null, pageClosing=false;
 let modelAvailable=false, buttonSending=false, lastButtonSend=0, lastSentButtons='';
 
 const head={
@@ -105,7 +106,8 @@ function collectCalibration(rawYaw,rawPitch,torso,now){
   $('#calStatus').textContent='校准：'+labels[stage];
 }
 async function startCalibration(){
-  if(!cameraRunning)await startCamera();if(!cameraRunning)return;
+  if(poseSource==='computer'){if(!cameraRunning)await startCamera();if(!cameraRunning)return}
+  else if(!currentPoseMap){notice('手机摄像头尚未传来有效人体姿态。');return}
   head.calibrating=true;head.calibrated=false;head.stageStarted=performance.now();head.stage='center';
   for(const k of ['centerYaw','centerPitch','leftYaw','rightYaw','upPitch','downPitch','torsoSamples'])head[k]=[];
   head.filteredX=head.filteredY=head.outputX=head.outputY=0;$('#calBtn').disabled=true;$('#calStatus').textContent='校准：正视';
@@ -239,6 +241,15 @@ async function sendButtons(force=false){
 }
 function clearZones(){for(const s of Object.values(zoneState)){s.inside=0;s.outside=0;s.pressed=false}for(const id of Object.keys(BODY_ZONES))hideZone(id);updateZoneVisual();void sendButtons(true)}
 
+// A body-source boundary is also an output safety boundary: stale zones,
+// motion holds and head-control deltas must not survive a switch or disconnect.
+function clearActivePose(now=performance.now()){
+  currentPoseMap=null;mobileLastFrame=0;head.rawYaw=NaN;head.rawPitch=NaN;head.calibrating=false;head.stage='';head.filteredX=head.filteredY=head.outputX=head.outputY=0;
+  $('#calBtn').disabled=false;
+  clearZones();updateMotionDetection(null,now);sendHead(now);renderOverlay(null);
+  $('#posePill').textContent='未识别人体';$('#posePill').className='pill bad';
+}
+
 function angleAt(a,b,c){
   if(!a||!b||!c||Math.min(a.score,b.score,c.score)<.4)return NaN;
   const w=video.videoWidth||canvas.width||640,h=video.videoHeight||canvas.height||480;
@@ -344,7 +355,7 @@ async function toggleOverlay(){
     overlay.win=pip;overlay.canvas=c;overlay.ctx=c.getContext('2d');
     pip.addEventListener('pagehide',()=>{overlay.win=overlay.canvas=overlay.ctx=null;syncOverlayButton()},{once:true});
     syncOverlayButton();renderOverlay(currentPoseMap);
-    if(!cameraRunning)await startCamera();
+    if(poseSource==='computer'&&!cameraRunning)await startCamera();
   }catch(e){overlay.win=overlay.canvas=overlay.ctx=null;syncOverlayButton();notice('悬浮窗启动失败：'+(e?.message||e))}
 }
 
@@ -358,25 +369,81 @@ async function loadModel(){
   }
 }
 function normMp(r){const lm=r.landmarks?.[0];if(!lm)return null;const map={};lm.forEach((p,i)=>map[MP_NAMES[i]]={x:p.x,y:p.y,z:p.z??0,score:p.visibility??p.presence??1});return map}
+function normMobilePose(message){
+  const lm=message?.poses?.[0]?.pose;if(!Array.isArray(lm)||lm.length!==33)return null;
+  const map={};lm.forEach((p,i)=>map[MP_NAMES[i]]={x:Number(p.x),y:Number(p.y),z:Number(p.z||0),score:Number(p.visibility??p.presence??1)});
+  if(!Object.values(map).every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&Number.isFinite(p.score)))return null;
+  return map;
+}
+function processPoseMap(map,now,source='computer'){
+  if(source==='mobile'&&poseSource!=='phone')return;
+  currentPoseMap=map;draw(map);updateZones(map);updateMotionDetection(map,now);
+  if(map)updateHead(map,now);else{head.rawYaw=head.rawPitch=NaN;head.filteredX=head.filteredY=head.outputX=head.outputY=0;sendHead(now)}
+  renderOverlay(map);$('#posePill').textContent=map?'人体已识别':'未识别人体';$('#posePill').className='pill '+(map?'ok':'bad');
+}
+function renderMobileStatus(){
+  const status=$('#mobileStatus');if(!status)return;
+  status.textContent=mobileConnected?'手机已连接':'手机未连接';status.className='pill '+(mobileConnected?'ok':'bad');
+  if(poseSource==='phone'){
+    $('#cameraPill').textContent=mobileConnected?'手机姿态输入':'等待手机姿态';$('#cameraPill').className='pill '+(mobileConnected?'ok':'warn');
+    $('#cameraBtn').textContent='手机摄像头';$('#cameraBtn').disabled=true;
+  }
+}
+function mobileWebSocketUrl(){const scheme=location.protocol==='https:'?'wss':'ws';return `${scheme}://${location.host}/ws/input?client=desktop`}
+function connectMobileSocket(){
+  if(pageClosing||mobileSocket&&(mobileSocket.readyState===WebSocket.OPEN||mobileSocket.readyState===WebSocket.CONNECTING))return;
+  try{
+    const ws=new WebSocket(mobileWebSocketUrl());mobileSocket=ws;
+    ws.addEventListener('open',()=>{mobileConnected=true;mobileRetryTimer=null;renderMobileStatus()});
+    ws.addEventListener('message',event=>{
+      let message;try{message=JSON.parse(event.data)}catch{return}
+      if(message.type==='pose_source_state'){
+        if(!message.active&&(!mobileSourceId||message.source_id===mobileSourceId)){mobileSourceId='';if(poseSource==='phone')clearActivePose()}
+        return;
+      }
+      if(message.type!=='pose_frame_v2')return;
+      const sourceId=String(message.source_id||message.device_id||'');
+      if(sourceId&&mobileSourceId&&sourceId!==mobileSourceId){mobileSourceId=sourceId;if(poseSource==='phone')clearActivePose()}
+      if(sourceId)mobileSourceId=sourceId;mobileLastFrame=performance.now();
+      if(Number(message.width)>0&&Number(message.height)>0){canvas.width=Number(message.width);canvas.height=Number(message.height)}
+      processPoseMap(normMobilePose(message),performance.now(),'mobile');renderMobileStatus();
+    });
+    ws.addEventListener('close',()=>{if(mobileSocket===ws)mobileSocket=null;mobileConnected=false;if(poseSource==='phone')clearActivePose();renderMobileStatus();if(!pageClosing&&!mobileRetryTimer)mobileRetryTimer=setTimeout(()=>{mobileRetryTimer=null;connectMobileSocket()},1000)});
+    ws.addEventListener('error',()=>{try{ws.close()}catch{}});
+  }catch{mobileConnected=false;renderMobileStatus()}
+}
+async function refreshInputStatus(){
+  try{const s=await api('/api/input/status');const url=s.phone_ws_urls?.[0]||mobileWebSocketUrl();const field=$('#phoneWsUrl');if(field)field.value=url;const active=s.mobile_pose_source_id;const fresh=Number.isFinite(s.mobile_pose_age_ms)&&s.mobile_pose_age_ms<=300;if(poseSource==='phone'&&(!fresh||(!mobileConnected&&active===null)))clearActivePose();renderMobileStatus()}catch{}
+}
 function draw(map){ctx.clearRect(0,0,canvas.width,canvas.height);if(!map)return;ctx.strokeStyle='#55ddff';ctx.fillStyle='#fff';ctx.lineWidth=3;
   for(const[a,b]of EDGES){const p=map[a],q=map[b];if(!p||!q||p.score<.3||q.score<.3)continue;ctx.beginPath();ctx.moveTo(p.x*canvas.width,p.y*canvas.height);ctx.lineTo(q.x*canvas.width,q.y*canvas.height);ctx.stroke()}
   for(const p of Object.values(map)){if(p.score<.3)continue;ctx.beginPath();ctx.arc(p.x*canvas.width,p.y*canvas.height,3,0,Math.PI*2);ctx.fill()}
 }
 async function startCamera(){
-  if(cameraRunning)return;try{
+  if(poseSource!=='computer')return;if(cameraRunning)return;try{
     if(!modelAvailable)throw new Error('I 盘未找到 pose_landmarker_full.task');switching=true;detector=await loadModel();switching=false;
     stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},frameRate:{ideal:30}},audio:false});video.srcObject=stream;await video.play();canvas.width=video.videoWidth||640;canvas.height=video.videoHeight||480;
     cameraRunning=true;$('#cameraPill').textContent='摄像头运行';$('#cameraPill').className='pill ok';$('#cameraBtn').textContent='关闭摄像头';$('#hint').style.display='none';scheduleLoop();
   }catch(e){switching=false;notice('启动失败：'+(e?.message||e))}
 }
 function stopCamera(){
-  cameraRunning=false;currentPoseMap=null;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;try{detector?.close?.()}catch{}detector=null;ctx.clearRect(0,0,canvas.width,canvas.height);clearZones();updateMotionDetection(null,performance.now());renderOverlay(null);
+  cameraRunning=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;try{detector?.close?.()}catch{}detector=null;clearActivePose();ctx.clearRect(0,0,canvas.width,canvas.height);
   $('#cameraPill').textContent='摄像头关闭';$('#cameraPill').className='pill bad';$('#posePill').textContent='未识别人体';$('#posePill').className='pill bad';$('#cameraBtn').textContent='启动摄像头';$('#hint').style.display='block';
+}
+function setPoseSource(value){
+  const next=value==='phone'?'phone':'computer';if(next===poseSource){renderMobileStatus();return}
+  if(cameraRunning)stopCamera();else clearActivePose();poseSource=next;mobileSourceId='';
+  if(next==='phone'){
+    video.style.display='none';canvas.style.display='block';$('#hint').textContent='手机姿态输入：电脑不接收或显示手机视频';$('#hint').style.display='block';
+    $('#cameraBtn').disabled=true;connectMobileSocket();renderMobileStatus();
+  }else{
+    video.style.display='block';canvas.style.display='block';$('#hint').textContent='Full · 身体相对区域会跟着人移动';$('#hint').style.display='block';$('#cameraBtn').disabled=false;$('#cameraBtn').textContent='启动摄像头';
+    $('#cameraPill').textContent='摄像头关闭';$('#cameraPill').className='pill bad';
+  }
 }
 async function loop(){
   if(!cameraRunning)return;if(video.readyState>=2&&video.currentTime!==lastVideoTime&&!switching){lastVideoTime=video.currentTime;const now=performance.now();try{
-    const result=detector.detectForVideo(video,now),map=normMp(result);currentPoseMap=map;draw(map);updateZones(map);updateMotionDetection(map,now);if(map)updateHead(map,now);else{head.filteredX=head.filteredY=head.outputX=head.outputY=0;sendHead(now)};renderOverlay(map);
-    $('#posePill').textContent=map?'人体已识别':'未识别人体';$('#posePill').className='pill '+(map?'ok':'bad');
+    const result=detector.detectForVideo(video,now),map=normMp(result);processPoseMap(map,now,'computer');
   }catch(e){notice('推理失败：'+(e?.message||e))}}
   scheduleLoop();
 }
@@ -448,7 +515,7 @@ function syncControlLabels(){
 }
 async function init(){
   try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('未找到 MediaPipe Pose Full：'+(d.model_root||'I:\\MotionControl-Pose-Models\\models'))}catch(e){notice('服务器连接失败：'+e.message)}
-  syncControlLabels();updateZoneVisual();renderMotionStatus();await refreshOutput();await refreshVoice();await refreshMotionConfig();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshOutput,700);setInterval(refreshVoice,900);
+  syncControlLabels();updateZoneVisual();renderMotionStatus();renderMobileStatus();connectMobileSocket();await refreshInputStatus();await refreshOutput();await refreshVoice();await refreshMotionConfig();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshInputStatus,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);
 }
 
 $('#cameraBtn').addEventListener('click',()=>cameraRunning?stopCamera():startCamera());
@@ -456,6 +523,7 @@ $('#overlayBtn').addEventListener('click',toggleOverlay);
 $('#outputBtn').addEventListener('click',()=>setOutput(!output.enabled));
 $('#stopBtn').addEventListener('click',()=>emergencyStop(true));
 $('#calBtn').addEventListener('click',startCalibration);$('#centerBtn').addEventListener('click',setCurrentCenter);
+$('#poseSource').addEventListener('change',e=>setPoseSource(e.target.value));
 $('#mirrorSelect').addEventListener('change',()=>{viewer.classList.toggle('mirror',$('#mirrorSelect').value==='yes');clearZones();renderOverlay(currentPoseMap)});
 $('#outputMode').addEventListener('change',async()=>{output.mode=$('#outputMode').value;try{const r=await post('/api/output/config',outputPayload(output.enabled));output.server=r;renderOutput(r);sendButtons(true);sendMotionState(true)}catch(e){notice('输出模式切换失败：'+(e?.message||e))}});
 $('#strength').addEventListener('input',syncControlLabels);$('#strength').addEventListener('change',()=>post('/api/output/config',outputPayload(output.enabled)).then(r=>{output.server=r;renderOutput(r)}).catch(e=>notice(e.message)));
@@ -469,6 +537,6 @@ $('#settingsBtn').addEventListener('click',()=>{$('#settingsMask').classList.add
 $('#closeSettingsBtn').addEventListener('click',()=>{$('#settingsMask').classList.remove('open');$('#settingsMask').setAttribute('aria-hidden','true')});
 $('#settingsMask').addEventListener('click',e=>{if(e.target===$('#settingsMask'))$('#closeSettingsBtn').click()});
 $('#saveMotionBtn').addEventListener('click',()=>saveMotionConfig().then(()=>notice('四个动作映射已保存。')).catch(e=>notice('动作设置保存失败：'+(e?.message||e))));
-window.addEventListener('beforeunload',()=>{try{navigator.sendBeacon('/api/output/stop',new Blob(['{}'],{type:'application/json'}))}catch{}if(stream)stream.getTracks().forEach(t=>t.stop());try{overlay.win?.close()}catch{}stopVoice()});
+window.addEventListener('beforeunload',()=>{pageClosing=true;try{navigator.sendBeacon('/api/output/stop',new Blob(['{}'],{type:'application/json'}))}catch{}if(stream)stream.getTracks().forEach(t=>t.stop());try{mobileSocket?.close()}catch{}try{overlay.win?.close()}catch{}stopVoice()});
 
 init();
