@@ -28,6 +28,10 @@ MP_NAMES = [
     "right_heel", "left_foot_index", "right_foot_index",
 ]
 
+# The reference web controller sent head-control frames at most every 28 ms.
+# Keep that cadence in the local kernel now that the browser is display-only.
+HEAD_UPDATE_INTERVAL_S = 0.028
+
 BODY_ZONES = {
     "leftHandUpper": {"label": "Y", "button": "Y", "points": ("left_wrist",), "kind": "hand"},
     "leftHandLower": {"label": "X", "button": "X", "points": ("left_wrist",), "kind": "hand"},
@@ -122,8 +126,9 @@ class ControlKernel:
             "pitch_up": 0.0, "pitch_down": 0.0, "torso0": math.nan,
             "raw_yaw": math.nan, "raw_pitch": math.nan, "norm_x": 0.0, "norm_y": 0.0,
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
-            "deadzone_x": 0.08, "deadzone_y": 0.08, "gamma": 2.2,
-            "max_percent_x": 60.0, "max_percent_y": 60.0, "enabled": True,
+            "last_update": 0.0,
+            "deadzone_x": 0.08, "deadzone_y": 0.12, "gamma": 2.2,
+            "max_percent_x": 60.0, "max_percent_y": 45.0, "enabled": True,
             "invert_x": False, "invert_y": False, "quality": "未校准",
         }
         self.sensor_sources: dict[str, dict] = {}
@@ -249,7 +254,7 @@ class ControlKernel:
                 "yaw_left": self.head["raw_yaw"] - 0.10, "yaw_right": self.head["raw_yaw"] + 0.10,
                 "pitch_up": self.head["raw_pitch"] - 0.04, "pitch_down": self.head["raw_pitch"] + 0.04,
                 "calibrated": True, "quality": "手动中心", "filtered_x": 0.0,
-                "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
+                "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0, "last_update": 0.0,
             })
             self._safe_output(self.output.apply, 0.0, 0.0)
             return self.status_locked(time.monotonic())
@@ -449,21 +454,15 @@ class ControlKernel:
 
     def _pitch_signal(self, pose_map: dict[str, dict], torso: float) -> float:
         nose = pose_map.get("nose")
-        if not nose or _score(nose) < 0.35:
+        if not nose or _score(nose) < 0.35 or not math.isfinite(torso) or torso < 0.03:
             return math.nan
         ears = pose_map.get("left_ear"), pose_map.get("right_ear")
         if all(ears) and min(_score(item) for item in ears) >= 0.35:
-            reference, face_width = _midpoint(*ears), _distance(*ears)
-        else:
-            eyes = pose_map.get("left_eye"), pose_map.get("right_eye")
-            if not (all(eyes) and min(_score(item) for item in eyes) >= 0.35):
-                return math.nan
-            reference, face_width = _midpoint(*eyes), _distance(*eyes)
-        scales = [face_width]
-        if math.isfinite(torso) and torso >= 0.03:
-            scales.append(torso * 0.25)
-        scale = max(0.03, *(item for item in scales if math.isfinite(item) and item > 0.01))
-        return (nose["y"] - reference["y"]) / scale
+            return (nose["y"] - _midpoint(*ears)["y"]) / torso
+        eyes = pose_map.get("left_eye"), pose_map.get("right_eye")
+        if all(eyes) and min(_score(item) for item in eyes) >= 0.35:
+            return (nose["y"] - _midpoint(*eyes)["y"]) / torso
+        return math.nan
 
     @staticmethod
     def _normalize_axis(raw: float, center: float, negative: float, positive: float) -> float:
@@ -523,6 +522,15 @@ class ControlKernel:
         ordered = sorted(values)
         return ordered[len(ordered) // 2]
 
+    @staticmethod
+    def _qtile(values: list[float], probability: float, default: float = math.nan) -> float:
+        """Match the reference JavaScript Math.round quantile index."""
+        if not values:
+            return default
+        ordered = sorted(values)
+        index = int(math.floor((len(ordered) - 1) * probability + 0.5))
+        return ordered[max(0, min(len(ordered) - 1, index))]
+
     def _finish_calibration_locked(self) -> None:
         yaw0 = self._median(self.head["center_yaw"], self.head["raw_yaw"])
         pitch0 = self._median(self.head["center_pitch"], self.head["raw_pitch"])
@@ -537,11 +545,24 @@ class ControlKernel:
         if not pitch_ok:
             sign = math.copysign(1.0, pu - pitch0) if math.isfinite(pu) and pu != pitch0 else -1.0
             pu, pd = pitch0 + sign * 0.04, pitch0 - sign * 0.04
+        nx = [abs(self._normalize_axis(value, yaw0, yl, yr)) for value in self.head["center_yaw"]]
+        ny = [abs(self._normalize_axis(value, pitch0, pu, pd)) for value in self.head["center_pitch"]]
+        deadzone_x = self.head["deadzone_x"]
+        deadzone_y = self.head["deadzone_y"]
+        if yaw_ok and nx:
+            deadzone_x = _clamp(self._qtile(nx, 0.99) * 1.8 + 0.02, 0.06, 0.30)
+        if pitch_ok and ny:
+            deadzone_y = _clamp(self._qtile(ny, 0.99) * 2.0 + 0.025, 0.08, 0.34)
+        weak = []
+        if not yaw_ok: weak.append("左右")
+        if not pitch_ok: weak.append("上下")
         self.head.update({
             "yaw0": yaw0, "yaw_left": yl, "yaw_right": yr, "pitch0": pitch0,
             "pitch_up": pu, "pitch_down": pd, "torso0": self._median(self.head["torso_samples"]),
-            "calibrating": False, "calibrated": True, "quality": "自动完成" if yaw_ok and pitch_ok else "降级可用",
-            "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
+            "deadzone_x": deadzone_x, "deadzone_y": deadzone_y,
+            "calibrating": False, "calibrated": True,
+            "quality": "自动完成" if not weak else "降级：" + "、".join(weak),
+            "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0, "last_update": 0.0,
         })
 
     def _update_head_locked(self, pose_map: dict[str, dict], now: float) -> None:
@@ -552,10 +573,6 @@ class ControlKernel:
             self._update_calibration_locked(raw_yaw, raw_pitch, torso, now)
         x = self._normalize_axis(raw_yaw, self.head["yaw0"], self.head["yaw_left"], self.head["yaw_right"]) if self.head["calibrated"] else 0.0
         y = self._normalize_axis(raw_pitch, self.head["pitch0"], self.head["pitch_up"], self.head["pitch_down"]) if self.head["calibrated"] else 0.0
-        # The preview is permanently mirrored for a natural selfie view.  Pose
-        # coordinates stay canonical, so compensate the horizontal control axis
-        # exactly once here rather than flipping the kernel input.
-        x = -x
         if self.head["invert_x"]: x = -x
         if self.head["invert_y"]: y = -y
         self.head["norm_x"], self.head["norm_y"] = x, y
@@ -564,7 +581,9 @@ class ControlKernel:
         self.head["filtered_x"] = self._filter_axis(self.head["filtered_x"], tx, x, self.head["deadzone_x"], self.head["max_percent_x"])
         self.head["filtered_y"] = self._filter_axis(self.head["filtered_y"], ty, y, self.head["deadzone_y"], self.head["max_percent_y"])
         self.head["output_x"], self.head["output_y"] = self.head["filtered_x"], self.head["filtered_y"]
-        self._safe_output(self.output.apply, self.head["output_x"] / 100.0, self.head["output_y"] / 100.0)
+        if getattr(self.output, "enabled", True) and now - self.head["last_update"] >= HEAD_UPDATE_INTERVAL_S:
+            self.head["last_update"] = now
+            self._safe_output(self.output.apply, self.head["output_x"] / 100.0, self.head["output_y"] / 100.0)
 
     # ---------- safety/status ----------
 
