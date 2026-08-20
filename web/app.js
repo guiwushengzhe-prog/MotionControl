@@ -24,7 +24,7 @@ const BODY_ZONES = {leftHandUpper:{label:'Y',button:'Y'},leftHandLower:{label:'X
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=false, modelAvailable=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null};
-const head={deadzoneX:.08,deadzoneY:.12,gamma:2.2,maxPercentX:60,maxPercentY:45,enabled:true,invertX:false,invertY:false};
+const head={deadzoneX:.08,deadzoneY:.08,gamma:2.2,maxPercentX:60,maxPercentY:60,enabled:true,invertX:false,invertY:false};
 const motion={config:[]};
 const voice={status:null};
 const overlay={win:null,canvas:null,ctx:null};
@@ -35,11 +35,7 @@ function notice(t){$('#notice').textContent=t;$('#notice').style.display=t?'bloc
 async function api(path,opt){const r=await fetch(path,opt);if(!r.ok)throw new Error(`${r.status} ${await r.text()}`);return r.json()}
 async function post(path,data){return api(path,{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify(data)})}
 
-function applyViewerTransform(){
-  viewer.classList.toggle('mirror',$('#mirrorSelect').value==='yes');
-}
-
-function visualPoint(p){return{x:$('#mirrorSelect').value==='yes'?1-p.x:p.x,y:p.y}}
+function visualPoint(p){return{x:1-p.x,y:p.y}}
 function draw(map){
   ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);if(!map)return;
   ctx.strokeStyle='#55ddff';ctx.fillStyle='#fff';ctx.lineWidth=3;
@@ -51,8 +47,8 @@ function renderKernelZones(zones={}){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
     el.classList.toggle('active',!!state?.pressed);el.textContent=def.label;
     const rect=state?.rect;if(!rect){el.style.display='none';continue}
-    // The .mirror class transforms preview, skeleton and zones as one group.
-    // Do not mirror this rectangle a second time in JavaScript.
+    // CSS applies the fixed display mirror to preview, skeleton and zones as
+    // one group. Do not mirror this rectangle a second time in JavaScript.
     el.style.display='grid';el.style.left=(rect.x1*100)+'%';el.style.top=(rect.y1*100)+'%';el.style.width=((rect.x2-rect.x1)*100)+'%';el.style.height=((rect.y2-rect.y1)*100)+'%';
   }
 }
@@ -121,7 +117,7 @@ async function refreshPreview(){
   finally{perfUi.previewBusy=false}
 }
 
-function outputPayload(enabled=output.enabled){const gain=clamp(output.strength,60,300)/100;return{mode:output.mode,enabled,mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain}}
+function outputPayload(enabled=output.enabled){const gain=clamp(output.strength,60,300)/100;return{mode:output.mode,enabled,mouse_speed_x:600*gain,mouse_speed_y:600*gain,gamepad_gain:gain}}
 function renderOutput(s=output.server){const on=!!(s?.enabled??output.enabled);output.enabled=on;output.mode=s?.mode||output.mode;$('#outputMode').value=output.mode;$('#outputPill').textContent=on?'输出开启':'输出关闭';$('#outputPill').className='pill '+(on?'ok':'bad');$('#outputBtn').textContent=on?'关闭输出 F8':'开启输出 F8';if(!s){$('#backendStatus').textContent='正在检查输出后端…';return}$('#backendStatus').textContent=`${s.mouse_available?'鼠标可用':'鼠标不可用'} · ${s.gamepad_connected?'Xbox 已连接':'Xbox 未连接'}`+(s.last_error?' · '+s.last_error:'')}
 async function refreshOutput(){try{output.server=await api('/api/output-status');renderOutput(output.server)}catch{}}
 async function setOutput(enabled){try{output.server=await post('/api/output/config',outputPayload(enabled));renderOutput(output.server)}catch(e){notice('输出开启失败：'+(e?.message||e));renderOutput()}}
@@ -149,7 +145,7 @@ async function refreshVoice(){try{voice.status=await api('/api/voice/status');re
 
 function syncControlLabels(){head.deadzoneX=Number($('#deadX').value)/100;head.deadzoneY=Number($('#deadY').value)/100;head.gamma=Number($('#gamma').value);head.maxPercentX=Number($('#speedX').value);head.maxPercentY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;$('#deadXValue').textContent=Math.round(head.deadzoneX*100)+'%';$('#deadYValue').textContent=Math.round(head.deadzoneY*100)+'%';$('#gammaValue').textContent=head.gamma.toFixed(1);$('#speedXValue').textContent=head.maxPercentX+'%';$('#speedYValue').textContent=head.maxPercentY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){syncControlLabels();try{renderKernelState(await post('/api/head/config',{deadzone_x:head.deadzoneX,deadzone_y:head.deadzoneY,gamma:head.gamma,max_percent_x:head.maxPercentX,max_percent_y:head.maxPercentY,enabled:head.enabled,invert_x:head.invertX,invert_y:head.invertY}))}catch(e){notice('头控设置保存失败：'+(e?.message||e))}}
-async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到 MediaPipe Full task：'+(d.model_root||'I:\\MotionControl-Pose-Models\\models'))}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();applyViewerTransform();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshMotionConfig();await refreshCameraConfig();await refreshPerformance();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
+async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到 MediaPipe Full task：'+(d.model_root||'I:\\MotionControl-Pose-Models\\models'))}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshMotionConfig();await refreshCameraConfig();await refreshPerformance();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
 
 $('#cameraBtn').addEventListener('click', toggleLocalCamera);
 $('#overlayBtn').addEventListener('click', toggleOverlay);
@@ -166,10 +162,6 @@ $('#cameraBackend').addEventListener('change', async e => {
     notice('采集后端切换失败：' + (error?.message || error));
     await refreshCameraConfig();
   }
-});
-$('#mirrorSelect').addEventListener('change', () => {
-  applyViewerTransform();
-  void refreshKernel();
 });
 $('#outputMode').addEventListener('change', async () => {
   output.mode = $('#outputMode').value;
