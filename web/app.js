@@ -91,7 +91,8 @@ function renderPerformance(data){
   const resolutionText=typeof resolution==='object'?`${resolution.width||0}×${resolution.height||0}`:String(resolution);
   const lines=[
     `来源：${data.source||'—'} · 模型：${data.model||'—'}`,
-    `分辨率：${resolutionText} · 采集 FPS：${formatPerf(data.capture_fps)} · 推理 FPS：${formatPerf(data.inference_fps)}`,
+    `分辨率：${resolutionText} · 后端：${data.backend_name||data.backend||'—'} · 请求：${formatPerf(data.requested_fps)} FPS`,
+    `采集 FPS：${formatPerf(data.capture_fps)}（实际：${formatPerf(data.actual_capture_fps)}） · 推理 FPS：${formatPerf(data.inference_fps)}`,
     `推理平均/P95：${formatPerf(data.inference_avg_ms,' ms')} / ${formatPerf(data.inference_p95_ms,' ms')}`,
     `姿态年龄/总延迟：${formatPerf(data.pose_frame_age_ms,' ms')} / ${formatPerf(data.total_latency_ms,' ms')}`,
     `网络 FPS/年龄：${formatPerf(data.network_fps)} / ${formatPerf(data.network_age_ms,' ms')}`,
@@ -106,6 +107,7 @@ function measureRenderFps(){
   return Math.round((perfUi.renderTimes.length-1)/((perfUi.renderTimes.at(-1)-perfUi.renderTimes[0])/1000));
 }
 async function refreshPerformance(){try{renderPerformance(await api('/api/performance'))}catch{}}
+async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference}catch{}}
 async function refreshPreview(){
   if(!cameraPreview||perfUi.previewBusy||sourceMode!=='computer'||!cameraRunning||document.visibilityState!=='visible')return;
   perfUi.previewBusy=true;
@@ -147,7 +149,7 @@ async function refreshVoice(){try{voice.status=await api('/api/voice/status');re
 
 function syncControlLabels(){head.deadzoneX=Number($('#deadX').value)/100;head.deadzoneY=Number($('#deadY').value)/100;head.gamma=Number($('#gamma').value);head.maxPercentX=Number($('#speedX').value);head.maxPercentY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;$('#deadXValue').textContent=Math.round(head.deadzoneX*100)+'%';$('#deadYValue').textContent=Math.round(head.deadzoneY*100)+'%';$('#gammaValue').textContent=head.gamma.toFixed(1);$('#speedXValue').textContent=head.maxPercentX+'%';$('#speedYValue').textContent=head.maxPercentY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){syncControlLabels();try{renderKernelState(await post('/api/head/config',{deadzone_x:head.deadzoneX,deadzone_y:head.deadzoneY,gamma:head.gamma,max_percent_x:head.maxPercentX,max_percent_y:head.maxPercentY,enabled:head.enabled,invert_x:head.invertX,invert_y:head.invertY}))}catch(e){notice('头控设置保存失败：'+(e?.message||e))}}
-async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到 MediaPipe Full task：'+(d.model_root||'I:\\MotionControl-Pose-Models\\models'))}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();applyViewerTransform();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshMotionConfig();await refreshPerformance();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
+async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到 MediaPipe Full task：'+(d.model_root||'I:\\MotionControl-Pose-Models\\models'))}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();applyViewerTransform();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshMotionConfig();await refreshCameraConfig();await refreshPerformance();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
 
 $('#cameraBtn').addEventListener('click', toggleLocalCamera);
 $('#overlayBtn').addEventListener('click', toggleOverlay);
@@ -156,6 +158,15 @@ $('#stopBtn').addEventListener('click', () => emergencyStop(true));
 $('#calBtn').addEventListener('click', startCalibration);
 $('#centerBtn').addEventListener('click', setCurrentCenter);
 $('#poseSource').addEventListener('change', e => setSource(e.target.value, true));
+$('#cameraBackend').addEventListener('change', async e => {
+  try {
+    await post('/api/camera/config', {backend: e.target.value});
+    notice('采集后端已保存；下次启动摄像头生效。');
+  } catch (error) {
+    notice('采集后端切换失败：' + (error?.message || error));
+    await refreshCameraConfig();
+  }
+});
 $('#mirrorSelect').addEventListener('change', () => {
   applyViewerTransform();
   void refreshKernel();
