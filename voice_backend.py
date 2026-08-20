@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -25,15 +26,17 @@ def find_vosk_model(root: Path) -> Path | None:
         try:
             text = cfg.read_text(encoding="utf-8-sig").strip().strip('"')
             if text:
-                candidates.append(Path(text))
+                configured = Path(text)
+                candidates.append(configured if configured.is_absolute() else root / configured)
         except OSError:
             pass
-    candidates.extend([
-        root / "models" / "vosk-model-small-cn-0.22",
-        Path(r"F:\switch\models\vosk-model-small-cn-0.22"),
-        Path(r"F:\switch\motionbridge\models\vosk-model-small-cn-0.22"),
-        Path(r"F:\switch\motionbridge\data\models\vosk-model-small-cn-0.22"),
-    ])
+    candidates.append(root / "models" / "vosk-model-small-cn-0.22")
+    if not getattr(sys, "frozen", False):
+        candidates.extend([
+            Path(r"F:\switch\models\vosk-model-small-cn-0.22"),
+            Path(r"F:\switch\motionbridge\models\vosk-model-small-cn-0.22"),
+            Path(r"F:\switch\motionbridge\data\models\vosk-model-small-cn-0.22"),
+        ])
     for path in candidates:
         try:
             if path.is_dir():

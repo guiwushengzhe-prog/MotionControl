@@ -1,4 +1,4 @@
-# MotionControl v0.7.3 — Body-relative Zones + Four Motions
+# MotionControl v0.7.4 — Local Kernel + Body-relative Zones + Four Motions
 
 继续沿用 v0.7.2 的 Full、头控、语音、悬浮窗和 Vosk 固定路径。本版重点是把复杂设置收进“设置”，主界面仍保持一屏可看。
 

@@ -4,6 +4,7 @@ import argparse
 import json
 import mimetypes
 import os
+import sys
 import threading
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -15,8 +16,17 @@ from input_bridge import InputBridge
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
 from voice_backend import VoiceService
 
-VERSION = "0.7.3"
-ROOT = Path(__file__).resolve().parent
+VERSION = "0.7.4"
+
+
+def application_root() -> Path:
+    """Return the source root or the portable executable directory."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+ROOT = application_root()
 WEB_DIR = ROOT / "web"
 CONFIG_DIR = ROOT / "config"
 DEFAULT_MODEL_ROOT = Path(r"I:\MotionControl-Pose-Models\models")
@@ -89,11 +99,15 @@ def choose_model_root(cli_root: str | None) -> Path | None:
     env = os.environ.get("POSE_MODEL_ROOT", "").strip().strip('"')
     if env:
         candidates.append(Path(env))
+    # A frozen onedir build carries its own models beside the executable.
+    # Prefer that copy over development-machine configuration paths.
+    candidates.append(ROOT / "models")
     cfg = CONFIG_DIR / "model_root.txt"
     if cfg.exists():
         text = cfg.read_text(encoding="utf-8-sig").strip().strip('"')
         if text:
-            candidates.append(Path(text))
+            configured = Path(text)
+            candidates.append(configured if configured.is_absolute() else ROOT / configured)
     candidates.append(DEFAULT_MODEL_ROOT)
     for p in candidates:
         try:
