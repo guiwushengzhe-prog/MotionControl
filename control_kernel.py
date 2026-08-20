@@ -8,10 +8,13 @@ signals, and are written directly to :class:`OutputManager`.
 from __future__ import annotations
 
 import copy
+import json
 import math
+import os
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 
@@ -650,10 +653,27 @@ class NativeCameraService:
     of a second mirror or aspect-ratio transform in the kernel.
     """
 
+    BACKEND_AUTO = "auto"
+    BACKEND_MSMF = "msmf"
+    BACKEND_DSHOW = "dshow"
+    REQUESTED_WIDTH = 640
+    REQUESTED_HEIGHT = 480
+    REQUESTED_FPS = 30
+    PROBE_SECONDS = 2.5
+
     def __init__(self, kernel: ControlKernel, model_path=None, camera_index: int = 0) -> None:
         self.kernel = kernel
         self.model_path = model_path
         self.camera_index = int(camera_index)
+        self.backend_preference = self.BACKEND_AUTO
+        self.selected_backend: str | None = None
+        self.selected_backend_name: str | None = None
+        self.selected_fourcc: str | None = None
+        self.requested_width = self.REQUESTED_WIDTH
+        self.requested_height = self.REQUESTED_HEIGHT
+        self.requested_fps = self.REQUESTED_FPS
+        self.actual_capture_fps: float | None = None
+        self._last_probe_results: list[dict] = []
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._stop = threading.Event()
@@ -687,6 +707,103 @@ class NativeCameraService:
         self._inference_times: deque[float] = deque(maxlen=120)
         self._inference_durations_ms: deque[float] = deque(maxlen=120)
         self._latencies_ms: deque[float] = deque(maxlen=120)
+
+    @staticmethod
+    def _normalize_backend(value: str | None) -> str:
+        value = str(value or "auto").strip().lower()
+        aliases = {
+            "automatic": "auto", "default": "auto", "ms": "msmf",
+            "mediafoundation": "msmf", "directshow": "dshow", "ds": "dshow",
+        }
+        value = aliases.get(value, value)
+        return value if value in {"auto", "msmf", "dshow"} else "auto"
+
+    @staticmethod
+    def _backend_display_name(backend: str | None) -> str | None:
+        return {"auto": "Auto", "msmf": "MSMF", "dshow": "DirectShow"}.get(backend, backend)
+
+    @staticmethod
+    def _decode_fourcc(value) -> str | None:
+        try:
+            value = int(value)
+            if value <= 0:
+                return None
+            text = "".join(chr((value >> (8 * i)) & 0xFF) for i in range(4))
+            return text if all(32 <= ord(ch) < 127 for ch in text) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _valid_frame(frame) -> bool:
+        return frame is not None and getattr(frame, "size", 0) > 0 and len(getattr(frame, "shape", ())) >= 2
+
+    def _backend_cache_path(self) -> Path:
+        """Keep hardware-specific selection outside the source tree/portable package."""
+        root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        return root / "MotionControl" / "camera_backend.json"
+
+    def _load_backend_cache(self) -> dict:
+        path = self._backend_cache_path()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if int(data.get("camera_index", -1)) != self.camera_index:
+                return {}
+            backend = self._normalize_backend(data.get("backend"))
+            if backend == "auto":
+                return {}
+            data["backend"] = backend
+            return data
+        except Exception:
+            return {}
+
+    def _save_backend_cache(self, actual_capture_fps: float | None = None) -> None:
+        if not self.selected_backend or self.selected_backend in {self.BACKEND_AUTO, "default"}:
+            return
+        path = self._backend_cache_path()
+        data = {
+            "camera_index": self.camera_index,
+            "backend": self.selected_backend,
+            "fourcc": self.selected_fourcc,
+            "requested_width": self.requested_width,
+            "requested_height": self.requested_height,
+            "requested_fps": self.requested_fps,
+            "actual_capture_fps": self._round_or_none(actual_capture_fps or self.actual_capture_fps, 2),
+            "saved_at_unix": round(time.time(), 3),
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp = path.with_suffix(path.suffix + ".tmp")
+            temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp, path)
+        except OSError:
+            # A cache is an optimization only; capture must still work if the
+            # profile directory is read-only.
+            pass
+
+    def configure_backend(self, preference: str | None) -> dict:
+        preference = self._normalize_backend(preference)
+        with self._lock:
+            if self.running and preference != self.backend_preference:
+                raise CameraUnavailable("摄像头运行中不能切换采集后端，请先停止摄像头")
+            self.backend_preference = preference
+            return self.backend_config()
+
+    def backend_config(self) -> dict:
+        with self._lock:
+            cache = self._load_backend_cache()
+            return {
+                "preference": self.backend_preference,
+                "selected_backend": self.selected_backend,
+                "selected_backend_name": self._backend_display_name(self.selected_backend_name),
+                "fourcc": self.selected_fourcc,
+                "requested_width": self.requested_width,
+                "requested_height": self.requested_height,
+                "requested_fps": self.requested_fps,
+                "actual_capture_fps": self._round_or_none(self.actual_capture_fps, 2),
+                "cache_path": str(self._backend_cache_path()),
+                "cached": bool(cache),
+                "probe_results": list(self._last_probe_results),
+            }
 
     @staticmethod
     def _rate(times: deque[float]) -> float | None:
@@ -753,6 +870,188 @@ class NativeCameraService:
         )
         return mp, vision.PoseLandmarker.create_from_options(options)
 
+    @staticmethod
+    def _backend_api(cv2, backend: str):
+        if backend == NativeCameraService.BACKEND_MSMF:
+            return getattr(cv2, "CAP_MSMF", 0)
+        if backend == NativeCameraService.BACKEND_DSHOW:
+            return getattr(cv2, "CAP_DSHOW", 0)
+        return 0
+
+    def _open_capture(self, cv2, backend: str, fourcc: str | None = None):
+        """Open one camera candidate, configure it, and validate its first frame."""
+        if backend == self.BACKEND_DSHOW and not fourcc:
+            fourcc = "MJPG"
+        api = self._backend_api(cv2, backend)
+        capture = cv2.VideoCapture(self.camera_index, api)
+        if not capture.isOpened():
+            try:
+                capture.release()
+            except Exception:
+                pass
+            return None
+        try:
+            # DSHOW is substantially more reliable at this size when MJPG is
+            # requested; MSMF is left to negotiate its native format.
+            if backend == self.BACKEND_DSHOW and fourcc:
+                capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.requested_width)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.requested_height)
+            capture.set(cv2.CAP_PROP_FPS, self.requested_fps)
+            # This property is advisory on MSMF and may simply return False.
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            ok, frame = capture.read()
+            if not ok or not self._valid_frame(frame):
+                capture.release()
+                return None
+            actual_fourcc = fourcc or self._decode_fourcc(capture.get(cv2.CAP_PROP_FOURCC))
+            return capture, frame, actual_fourcc
+        except Exception:
+            try:
+                capture.release()
+            except Exception:
+                pass
+            return None
+
+    def _probe_backend(self, cv2, backend: str, duration_s: float) -> dict:
+        requested_fourcc = "MJPG" if backend == self.BACKEND_DSHOW else None
+        opened = self._open_capture(cv2, backend, requested_fourcc)
+        if opened is None:
+            return {
+                "backend": backend,
+                "backend_name": self._backend_display_name(backend),
+                "fourcc": requested_fourcc,
+                "opened": False,
+                "valid_frames": 0,
+                "elapsed_s": 0.0,
+                "read_fps": None,
+                "resolution": None,
+                "error": "open_or_first_frame_failed",
+            }
+        capture, first_frame, actual_fourcc = opened
+        # Measure read cadence after the first valid frame.  Camera backend
+        # negotiation/open latency is reported separately by elapsed_s in the
+        # failure case and must not make a healthy backend look slower.
+        started = time.perf_counter()
+        count = 1
+        resolution = {
+            "width": int(first_frame.shape[1]),
+            "height": int(first_frame.shape[0]),
+        }
+        deadline = started + max(0.5, float(duration_s))
+        try:
+            while time.perf_counter() < deadline:
+                ok, frame = capture.read()
+                if ok and self._valid_frame(frame):
+                    count += 1
+                    resolution = {"width": int(frame.shape[1]), "height": int(frame.shape[0])}
+        finally:
+            try:
+                capture.release()
+            except Exception:
+                pass
+        elapsed = max(1e-6, time.perf_counter() - started)
+        return {
+            "backend": backend,
+            "backend_name": self._backend_display_name(backend),
+            "fourcc": actual_fourcc,
+            "opened": True,
+            "valid_frames": count,
+            "elapsed_s": round(elapsed, 3),
+            "read_fps": round((count - 1) / elapsed, 2),
+            "resolution": resolution,
+            "error": None,
+        }
+
+    def _probe_candidates(self, cv2, duration_s: float | None = None) -> list[dict]:
+        duration_s = self.PROBE_SECONDS if duration_s is None else max(0.5, float(duration_s))
+        # Keep the comparison deterministic.  Each camera handle is released
+        # before the next backend is opened, so Windows cannot share a stale
+        # capture buffer between candidates.
+        candidates = [self.BACKEND_MSMF, self.BACKEND_DSHOW]
+        results = [self._probe_backend(cv2, backend, duration_s) for backend in candidates]
+        self._last_probe_results = results
+        return results
+
+    def benchmark_backends(self, duration_s: float = PROBE_SECONDS) -> list[dict]:
+        """Run a short real read-FPS comparison without starting inference."""
+        with self._lock:
+            if self.running:
+                raise CameraUnavailable("摄像头运行中不能进行采集后端测速")
+            try:
+                import cv2
+            except Exception as exc:
+                raise CameraUnavailable("本地 Python 未安装 opencv-python；无法测速摄像头后端") from exc
+            return self._probe_candidates(cv2, duration_s)
+
+    def _select_capture(self, cv2):
+        preference = self.backend_preference
+        cache = self._load_backend_cache() if preference == self.BACKEND_AUTO else {}
+        if cache:
+            cached_backend = self._normalize_backend(cache.get("backend"))
+            opened = self._open_capture(cv2, cached_backend, cache.get("fourcc"))
+            if opened is not None:
+                capture, first_frame, actual_fourcc = opened
+                self.selected_backend = cached_backend
+                self.selected_backend_name = cached_backend
+                self.selected_fourcc = actual_fourcc
+                self.actual_capture_fps = None
+                return capture, first_frame
+
+        if preference != self.BACKEND_AUTO:
+            opened = self._open_capture(
+                cv2, preference, "MJPG" if preference == self.BACKEND_DSHOW else None,
+            )
+            if opened is None:
+                raise CameraUnavailable(f"电脑摄像头 {self.camera_index} 的 {self._backend_display_name(preference)} 无法打开")
+            capture, first_frame, actual_fourcc = opened
+            self.selected_backend = preference
+            self.selected_backend_name = preference
+            self.selected_fourcc = actual_fourcc
+            self.actual_capture_fps = None
+            return capture, first_frame
+
+        results = self._probe_candidates(cv2)
+        valid = [item for item in results if item.get("opened") and item.get("valid_frames", 0) > 0]
+        if not valid:
+            # Preserve the old OpenCV default as a final fallback for cameras
+            # where a backend-specific probe cannot negotiate a stream.
+            opened = self._open_capture(cv2, "default", None)
+            if opened is None:
+                raise CameraUnavailable(f"电脑摄像头 {self.camera_index} 无法打开")
+            capture, first_frame, actual_fourcc = opened
+            self.selected_backend = "default"
+            self.selected_backend_name = "default"
+            self.selected_fourcc = actual_fourcc
+            self.actual_capture_fps = None
+            return capture, first_frame
+        valid.sort(key=lambda item: float(item.get("read_fps") or 0.0), reverse=True)
+        winner = valid[0]
+        opened = None
+        for candidate in valid:
+            backend = candidate["backend"]
+            opened = self._open_capture(cv2, backend, candidate.get("fourcc"))
+            if opened is not None:
+                winner = candidate
+                break
+        if opened is None:
+            opened = self._open_capture(cv2, "default", None)
+            if opened is None:
+                raise CameraUnavailable(f"电脑摄像头 {self.camera_index} 的候选后端复开失败")
+            capture, first_frame, actual_fourcc = opened
+            self.selected_backend = "default"
+            self.selected_backend_name = "default"
+            self.selected_fourcc = actual_fourcc
+            self.actual_capture_fps = None
+            return capture, first_frame
+        capture, first_frame, actual_fourcc = opened
+        self.selected_backend = backend
+        self.selected_backend_name = backend
+        self.selected_fourcc = actual_fourcc
+        self.actual_capture_fps = float(winner.get("read_fps")) if winner.get("read_fps") else None
+        self._save_backend_cache(self.actual_capture_fps)
+        return capture, first_frame
+
     def start(self) -> dict:
         with self._lock:
             if self.running:
@@ -762,22 +1061,30 @@ class NativeCameraService:
             except Exception as exc:
                 self.last_error = "本地 Python 未安装 opencv-python；电脑摄像头内核无法启动"
                 raise CameraUnavailable(self.last_error) from exc
+            detector = None
             try:
                 mp, detector = self._create_detector()
-                capture = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW if hasattr(cv2, "CAP_DSHOW") else 0)
+                capture, first_frame = self._select_capture(cv2)
             except CameraUnavailable as exc:
+                if detector is not None:
+                    try:
+                        detector.close()
+                    except Exception:
+                        pass
                 self.last_error = str(exc)
                 raise
             except Exception as exc:
                 self.last_error = str(exc)
+                try:
+                    detector.close()
+                except Exception:
+                    pass
                 raise CameraUnavailable(f"电脑摄像头内核初始化失败：{exc}") from exc
-            if not capture.isOpened():
-                capture.release()
-                detector.close()
-                self.last_error = f"电脑摄像头 {self.camera_index} 无法打开"
-                raise CameraUnavailable(self.last_error)
             self._capture, self._detector, self._mp = capture, detector, mp
             self._reset_runtime_locked()
+            # The first frame was consumed only for backend validation.  It is
+            # intentionally not pushed into the inference path so all timing
+            # starts at the same boundary for every backend.
             self._stop.clear()
             self.running = True
             self.last_error = None
@@ -814,6 +1121,7 @@ class NativeCameraService:
                     self._latest_capture_at = captured_at
                     self.capture_width, self.capture_height = int(width), int(height)
                     self._capture_times.append(captured_at)
+                    self.actual_capture_fps = self._rate(self._capture_times)
                     self._condition.notify_all()
         except Exception as exc:
             with self._condition:
@@ -924,6 +1232,7 @@ class NativeCameraService:
             if thread and thread is not threading.current_thread():
                 thread.join(timeout=1.0)
         with self._lock:
+            self._save_backend_cache(self.actual_capture_fps)
             capture, detector = self._capture, self._detector
             self._capture = self._detector = None
             self._capture_thread = self._inference_thread = self._preview_thread = self._thread = None
@@ -946,6 +1255,12 @@ class NativeCameraService:
                 "frames": self.frames, "last_frame_age_ms": round(max(0.0, (time.monotonic() - self.last_frame_at) * 1000.0)) if self.last_frame_at else None,
                 "last_error": self.last_error, "model_path": str(self.model_path) if self.model_path else None,
                 "resolution": {"width": self.capture_width, "height": self.capture_height},
+                "backend_preference": self.backend_preference,
+                "backend": self.selected_backend,
+                "backend_name": self._backend_display_name(self.selected_backend_name),
+                "fourcc": self.selected_fourcc,
+                "requested_fps": self.requested_fps,
+                "actual_capture_fps": self._round_or_none(self.actual_capture_fps, 2),
                 "coordinate_space": "camera_frame_normalized_unmirrored",
                 "preview_mirrored": False, "coordinates_mirrored": False,
             }
@@ -959,6 +1274,11 @@ class NativeCameraService:
                 "model": "MediaPipe Pose Full",
                 "camera_resolution": resolution,
                 "capture_fps": self._round_or_none(self._rate(self._capture_times), 2),
+                "backend": self.selected_backend,
+                "backend_name": self._backend_display_name(self.selected_backend_name),
+                "fourcc": self.selected_fourcc,
+                "requested_fps": self.requested_fps,
+                "actual_capture_fps": self._round_or_none(self.actual_capture_fps, 2),
                 "inference_fps": self._round_or_none(self._rate(self._inference_times), 2),
                 "inference_avg_ms": self._round_or_none(
                     sum(self._inference_durations_ms) / len(self._inference_durations_ms)
@@ -991,6 +1311,12 @@ class LocalControlRuntime:
 
     def configure_model(self, model_path) -> None:
         self.camera.configure_model(model_path)
+
+    def configure_camera_backend(self, preference: str | None) -> dict:
+        return self.camera.configure_backend(preference)
+
+    def camera_backend_config(self) -> dict:
+        return self.camera.backend_config()
 
     def set_source(self, source: str, *, start_computer: bool = True) -> dict:
         source = str(source).strip().lower()

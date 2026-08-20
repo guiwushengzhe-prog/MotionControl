@@ -27,3 +27,9 @@
 - MediaPipe 的 normalized 坐标以 OpenCV 读到的原始未镜像帧为规范。网页“镜像”只能同时作用于预览、canvas 和区域层；内核不能再次翻转，区域矩形也不能同时在 JS 和 CSS 各翻一次。
 - OpenCV 采集、MediaPipe 推理、JPEG 编码分线程且只保留最新帧；`dropped_frames` 和 `skipped_frames` 必须分开统计，避免推理慢时队列积压造成延迟假象。
 - `I:\MotionControl-Pose-Models` 的某个 Full task 与 Python MediaPipe 0.10.5 的 metadata normalization 不兼容；不能仅凭“文件存在”判定模型可用，也不要手改 task metadata。便携包中已验证的兼容模型可正常运行。
+
+## 2026-08-21：Windows camera backend probing
+
+- `CAP_PROP_FPS=30` 只是请求值，实际 read cadence 必须在真实 `read()` 上测；`CAP_PROP_BUFFERSIZE=1` 在 MSMF 可能被忽略，不能把 `get()` 回读值当作成功证据。
+- 后端打开/协商时间不能混入读帧 FPS：短测从第一张有效帧之后开始计时，并在每个候选释放句柄后再测下一个。DirectShow 请求 MJPG 可能打开成功但读帧极慢，因此同时检查有效帧数和实际 read FPS。
+- 硬件选择缓存放在 `%LOCALAPPDATA%\MotionControl\camera_backend.json`，不进入 Git/便携包；缓存只作加速，复开失败必须回到 MSMF/DirectShow 探测。

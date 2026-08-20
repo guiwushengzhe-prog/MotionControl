@@ -99,6 +99,8 @@ START.bat
 
 选择“电脑摄像头”后，点击“启动本地摄像头”即可让 Python 服务打开摄像头并运行 MediaPipe Full，同时启动电脑本地麦克风语音。当前启动 Python 必须同时具备 `opencv-python`、`numpy`、`mediapipe` 和 `sounddevice`；若缺少依赖，服务会明确报告错误，不会退回浏览器推理或浏览器录音。
 
+Windows 摄像头采集默认请求 `640×480@30 FPS`，并把缓冲区压到 1 帧以减少延迟。首次启动会在释放设备后分别短测 MSMF（Media Foundation）和 DirectShow，选择实际有效读帧率更高者；结果缓存到用户目录 `%LOCALAPPDATA%\MotionControl\camera_backend.json`，下次直接复用，打开失败才重新探测。主界面“摄像头来源”旁可以选择“自动 / MSMF / DirectShow”；运行中的摄像头需先停止后切换。性能面板和服务端 `PERF` 行会同时显示后端、请求 FPS 与实际采集 FPS。
+
 手机断线、来源切换或超过约 300 ms 没有新帧时，身体区域、动作持续输入和头控会自动归零。手持手机的 `sensor_frame` 中 A/B/X/Y/LB/RB/LT/RT/START/BACK 和左摇杆直接进入 Xbox 输出；四元数、陀螺仪和加速度本版本只保留状态，不做复杂映射。
 
 MediaPipe Full：

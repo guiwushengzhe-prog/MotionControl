@@ -138,7 +138,14 @@ def resolve_full_model(root: Path | None) -> Path | None:
 def performance_snapshot() -> dict:
     """Combine the active source's machine-readable camera/input metrics."""
     if RUNTIME.body_mode == "phone":
-        return INPUT_BRIDGE.performance()
+        data = INPUT_BRIDGE.performance()
+        # Keep the schema stable when the active source is a phone; camera
+        # backend fields are intentionally unknown rather than fabricated.
+        data.setdefault("backend", None)
+        data.setdefault("backend_name", None)
+        data.setdefault("requested_fps", None)
+        data.setdefault("actual_capture_fps", None)
+        return data
     return RUNTIME.performance()
 
 
@@ -159,7 +166,10 @@ def performance_line() -> str:
         "PERF "
         f"source={data.get('source', '-')} "
         f"res={resolution_text} "
+        f"backend={data.get('backend_name') or data.get('backend', '-')} "
+        f"requested={_format_perf(data.get('requested_fps'), 'fps')} "
         f"capture={_format_perf(data.get('capture_fps'), 'fps')} "
+        f"actual_capture={_format_perf(data.get('actual_capture_fps'), 'fps')} "
         f"infer={_format_perf(data.get('inference_fps'), 'fps')} "
         f"infer_ms={_format_perf(data.get('inference_avg_ms'), 'ms')} "
         f"p95={_format_perf(data.get('inference_p95_ms'), 'ms')} "
@@ -285,6 +295,9 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/performance":
             self._send_json(performance_snapshot())
             return
+        if route == "/api/camera/config":
+            self._send_json(RUNTIME.camera_backend_config())
+            return
         if route == "/api/voice/status":
             self._send_json(VOICE.status())
             return
@@ -360,6 +373,15 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json({"ok": True, **data, "voice": voice_data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status(), "voice": VOICE.status()}, 400)
+            return
+        if route == "/api/camera/config":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "camera config is loopback-only"}, 403)
+                return
+            try:
+                self._send_json({"ok": True, **RUNTIME.configure_camera_backend(body.get("backend", body.get("preference", "auto")))})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.camera_backend_config()}, 400)
             return
         if route == "/api/head/calibration/start":
             if not self._is_loopback():
