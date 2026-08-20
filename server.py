@@ -135,6 +135,55 @@ def resolve_full_model(root: Path | None) -> Path | None:
         return None
 
 
+def performance_snapshot() -> dict:
+    """Combine the active source's machine-readable camera/input metrics."""
+    if RUNTIME.body_mode == "phone":
+        return INPUT_BRIDGE.performance()
+    return RUNTIME.performance()
+
+
+def _format_perf(value, suffix: str = "") -> str:
+    if value is None:
+        return "-"
+    return f"{value}{suffix}"
+
+
+def performance_line() -> str:
+    data = performance_snapshot()
+    resolution = data.get("camera_resolution") or {}
+    if isinstance(resolution, dict):
+        resolution_text = f"{resolution.get('width', 0)}x{resolution.get('height', 0)}"
+    else:
+        resolution_text = str(resolution)
+    return (
+        "PERF "
+        f"source={data.get('source', '-')} "
+        f"res={resolution_text} "
+        f"capture={_format_perf(data.get('capture_fps'), 'fps')} "
+        f"infer={_format_perf(data.get('inference_fps'), 'fps')} "
+        f"infer_ms={_format_perf(data.get('inference_avg_ms'), 'ms')} "
+        f"p95={_format_perf(data.get('inference_p95_ms'), 'ms')} "
+        f"age={_format_perf(data.get('pose_frame_age_ms'), 'ms')} "
+        f"latency={_format_perf(data.get('total_latency_ms'), 'ms')} "
+        f"humans={data.get('recent_humans', '-')} "
+        f"drop={data.get('dropped_frames', 0)} skip={data.get('skipped_frames', 0)}"
+    )
+
+
+def performance_logger(stop_event: threading.Event) -> None:
+    quiet_ticks = 0
+    while not stop_event.wait(5.0):
+        data = performance_snapshot()
+        active = bool(data.get("running")) or bool(data.get("preview_ready")) or data.get("recent_humans", 0)
+        if not active:
+            quiet_ticks += 1
+            if quiet_ticks % 3:
+                continue
+        else:
+            quiet_ticks = 0
+        print(performance_line(), flush=True)
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
@@ -198,6 +247,19 @@ class Handler(SimpleHTTPRequestHandler):
                 }],
             })
             return
+        if route == "/api/camera/preview.jpg":
+            preview = RUNTIME.latest_preview()
+            if not preview:
+                self.send_error(404, "camera preview unavailable")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(preview)))
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.end_headers()
+            self.wfile.write(preview)
+            return
         if route == "/api/model/mp-full":
             if MODEL_PATH is None:
                 self.send_error(404, "MediaPipe Full model unavailable")
@@ -219,6 +281,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if route == "/api/kernel/status":
             self._send_json(RUNTIME.status())
+            return
+        if route == "/api/performance":
+            self._send_json(performance_snapshot())
             return
         if route == "/api/voice/status":
             self._send_json(VOICE.status())
@@ -397,6 +462,9 @@ def main():
     display_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
     url = f"http://{display_host}:{args.port}/"
     print("Open:", url)
+    perf_stop = threading.Event()
+    perf_thread = threading.Thread(target=performance_logger, args=(perf_stop,), name="motion-performance-log", daemon=True)
+    perf_thread.start()
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
@@ -404,6 +472,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        perf_stop.set()
+        perf_thread.join(timeout=1.0)
         OUTPUT.emergency_stop()
         VOICE.close()
         INPUT_BRIDGE.close()

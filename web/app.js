@@ -2,10 +2,24 @@ const $ = s => document.querySelector(s);
 const canvas = $('#canvas');
 const ctx = canvas.getContext('2d');
 const viewer = $('#viewer');
+const cameraPreview = $('#cameraPreview');
 
 // The browser is a display/configuration client. Pose inference, zones,
 // action debouncing, head control and watchdog timing live in Python.
-const EDGES = [['left_shoulder','right_shoulder'],['left_shoulder','left_elbow'],['left_elbow','left_wrist'],['right_shoulder','right_elbow'],['right_elbow','right_wrist'],['left_shoulder','left_hip'],['right_shoulder','right_hip'],['left_hip','right_hip'],['left_hip','left_knee'],['left_knee','left_ankle'],['right_hip','right_knee'],['right_knee','right_ankle']];
+// MediaPipe Pose 33 canonical names and connections. The service emits
+// normalized points in raw camera orientation; the display mirror below is
+// applied to preview, skeleton and zones together, never to kernel input.
+const EDGES = [
+  ['nose','left_eye_inner'],['left_eye_inner','left_eye'],['left_eye','left_eye_outer'],['left_eye_outer','left_ear'],
+  ['nose','right_eye_inner'],['right_eye_inner','right_eye'],['right_eye','right_eye_outer'],['right_eye_outer','right_ear'],
+  ['mouth_left','mouth_right'],['left_shoulder','right_shoulder'],['left_shoulder','left_elbow'],['left_elbow','left_wrist'],
+  ['left_wrist','left_pinky'],['left_wrist','left_index'],['left_wrist','left_thumb'],['right_shoulder','right_elbow'],
+  ['right_elbow','right_wrist'],['right_wrist','right_pinky'],['right_wrist','right_index'],['right_wrist','right_thumb'],
+  ['left_shoulder','left_hip'],['right_shoulder','right_hip'],['left_hip','right_hip'],['left_hip','left_knee'],
+  ['left_knee','left_ankle'],['left_ankle','left_heel'],['left_heel','left_foot_index'],['left_ankle','left_foot_index'],
+  ['right_hip','right_knee'],['right_knee','right_ankle'],['right_ankle','right_heel'],['right_heel','right_foot_index'],
+  ['right_ankle','right_foot_index'],
+];
 const BODY_ZONES = {leftHandUpper:{label:'Y',button:'Y'},leftHandLower:{label:'X',button:'X'},rightHandUpper:{label:'B',button:'B'},rightHandLower:{label:'A',button:'A'},leftFoot:{label:'LB',button:'LB'},rightFoot:{label:'RB',button:'RB'}};
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=false, modelAvailable=false;
@@ -14,16 +28,20 @@ const head={deadzoneX:.08,deadzoneY:.12,gamma:2.2,maxPercentX:60,maxPercentY:45,
 const motion={config:[]};
 const voice={status:null};
 const overlay={win:null,canvas:null,ctx:null};
+const perfUi={latest:null,renderTimes:[],previewBusy:false,previewTimer:null};
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function notice(t){$('#notice').textContent=t;$('#notice').style.display=t?'block':'none'}
 async function api(path,opt){const r=await fetch(path,opt);if(!r.ok)throw new Error(`${r.status} ${await r.text()}`);return r.json()}
 async function post(path,data){return api(path,{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify(data)})}
 
+function applyViewerTransform(){
+  viewer.classList.toggle('mirror',$('#mirrorSelect').value==='yes');
+}
+
 function visualPoint(p){return{x:$('#mirrorSelect').value==='yes'?1-p.x:p.x,y:p.y}}
-function visualRect(r){return $('#mirrorSelect').value==='yes'?{x1:1-r.x2,x2:1-r.x1,y1:r.y1,y2:r.y2}:r}
 function draw(map){
-  ctx.clearRect(0,0,canvas.width,canvas.height);if(!map)return;
+  ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);if(!map)return;
   ctx.strokeStyle='#55ddff';ctx.fillStyle='#fff';ctx.lineWidth=3;
   for(const[a,b]of EDGES){const p=map[a],q=map[b];if(!p||!q||p.score<.3||q.score<.3)continue;ctx.beginPath();ctx.moveTo(p.x*canvas.width,p.y*canvas.height);ctx.lineTo(q.x*canvas.width,q.y*canvas.height);ctx.stroke()}
   for(const p of Object.values(map)){if(p.score<.3)continue;ctx.beginPath();ctx.arc(p.x*canvas.width,p.y*canvas.height,3,0,Math.PI*2);ctx.fill()}
@@ -33,12 +51,15 @@ function renderKernelZones(zones={}){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
     el.classList.toggle('active',!!state?.pressed);el.textContent=def.label;
     const rect=state?.rect;if(!rect){el.style.display='none';continue}
-    const v=visualRect(rect);el.style.display='grid';el.style.left=(v.x1*100)+'%';el.style.top=(v.y1*100)+'%';el.style.width=((v.x2-v.x1)*100)+'%';el.style.height=((v.y2-v.y1)*100)+'%';
+    // The .mirror class transforms preview, skeleton and zones as one group.
+    // Do not mirror this rectangle a second time in JavaScript.
+    el.style.display='grid';el.style.left=(rect.x1*100)+'%';el.style.top=(rect.y1*100)+'%';el.style.width=((rect.x2-rect.x1)*100)+'%';el.style.height=((rect.y2-rect.y1)*100)+'%';
   }
 }
 function renderKernelState(runtime){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
-  currentPoseMap=k.pose||null;canvas.width=Number(k.width)||640;canvas.height=Number(k.height)||480;draw(currentPoseMap);renderKernelZones(k.zones||{});
+  const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
+  currentPoseMap=k.pose||null;canvas.width=frameWidth;canvas.height=frameHeight;viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
   const keys=new Set(k.buttons||[]);for(const id of ['A','B','X','Y','LB','RB'])$(`#pad${id}`)?.classList.toggle('active',keys.has(id));
   $('#buttonStatus').textContent=keys.size?'身体区域：'+[...keys].join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
   const active=new Set(k.motions||[]),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头']};
@@ -48,12 +69,55 @@ function renderKernelState(runtime){
   if(hs.calibrated!==undefined)$('#calStatus').textContent=hs.calibrating?`校准：${hs.stage||''}`:(hs.calibrated?(hs.quality||'校准完成'):'未校准');
   if(Number.isFinite(hs.deadzone_x)){$('#deadX').value=Math.round(hs.deadzone_x*100);$('#deadY').value=Math.round(hs.deadzone_y*100);$('#gamma').value=hs.gamma;$('#speedX').value=hs.max_percent_x;$('#speedY').value=hs.max_percent_y;$('#headEnable').checked=!!hs.enabled;$('#invertX').checked=!!hs.invert_x;$('#invertY').checked=!!hs.invert_y;syncControlLabels()}
   const camera=runtime?.camera||{};cameraRunning=!!camera.running;$('#poseSource').value=sourceMode;$('#cameraBtn').disabled=sourceMode==='phone';$('#cameraBtn').textContent=sourceMode==='phone'?'手机姿态由本地服务接收':(cameraRunning?'停止本地摄像头':'启动本地摄像头');
+  if(cameraPreview){
+    const showPreview=sourceMode==='computer'&&cameraRunning;
+    cameraPreview.style.display=showPreview?'block':'none';
+    if(!showPreview) cameraPreview.removeAttribute('src');
+  }
   $('#cameraPill').textContent=sourceMode==='phone'?'手机姿态源':(cameraRunning?'本地摄像头运行':'本地摄像头未启动');$('#cameraPill').className='pill '+(sourceMode==='phone'||cameraRunning?'ok':'bad');
   $('#posePill').textContent=currentPoseMap?'人体已识别':'未识别人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');renderOverlay(currentPoseMap);
 }
 function renderInputStatus(status){const connected=!!(status?.mobile_pose_connected||status?.handheld_connected),pill=$('#mobileStatus');pill.textContent=connected?'手机已连接':'手机未连接';pill.className='pill '+(connected?'ok':'bad');const field=$('#phoneWsUrl');if(field)field.value=status?.phone_ws_urls?.[0]||'连接服务器后显示'}
 async function refreshKernel(){try{renderKernelState(await api('/api/kernel/status'))}catch{}}
 async function refreshInput(){try{renderInputStatus(await api('/api/input/status'))}catch{}}
+
+function formatPerf(value,suffix=''){return value===null||value===undefined||value===''?'—':`${value}${suffix}`}
+function renderPerformance(data){
+  if(!data)return;
+  perfUi.latest=data;
+  const summary=`FPS ${formatPerf(data.capture_fps)} / 推理 ${formatPerf(data.inference_fps)} · 延迟 ${formatPerf(data.total_latency_ms,' ms')} · 人体 ${formatPerf(data.recent_humans)}`;
+  $('#perfSummary').textContent=summary;
+  const resolution=data.camera_resolution||{};
+  const resolutionText=typeof resolution==='object'?`${resolution.width||0}×${resolution.height||0}`:String(resolution);
+  const lines=[
+    `来源：${data.source||'—'} · 模型：${data.model||'—'}`,
+    `分辨率：${resolutionText} · 采集 FPS：${formatPerf(data.capture_fps)} · 推理 FPS：${formatPerf(data.inference_fps)}`,
+    `推理平均/P95：${formatPerf(data.inference_avg_ms,' ms')} / ${formatPerf(data.inference_p95_ms,' ms')}`,
+    `姿态年龄/总延迟：${formatPerf(data.pose_frame_age_ms,' ms')} / ${formatPerf(data.total_latency_ms,' ms')}`,
+    `网络 FPS/年龄：${formatPerf(data.network_fps)} / ${formatPerf(data.network_age_ms,' ms')}`,
+    `网页渲染 FPS：${formatPerf(perfUi.renderTimes.length?measureRenderFps() : null)} · 跳帧：${data.dropped_frames??0} / 跳过：${data.skipped_frames??0}`,
+    `最近人体数：${formatPerf(data.recent_humans)} · 预览：${data.preview_ready?'已就绪':'—'}`,
+  ];
+  $('#perfDetails').textContent=lines.join('\n');
+}
+function measureRenderFps(){
+  const now=performance.now();perfUi.renderTimes=perfUi.renderTimes.filter(t=>now-t<2000);
+  if(perfUi.renderTimes.length<2)return null;
+  return Math.round((perfUi.renderTimes.length-1)/((perfUi.renderTimes.at(-1)-perfUi.renderTimes[0])/1000));
+}
+async function refreshPerformance(){try{renderPerformance(await api('/api/performance'))}catch{}}
+async function refreshPreview(){
+  if(!cameraPreview||perfUi.previewBusy||sourceMode!=='computer'||!cameraRunning||document.visibilityState!=='visible')return;
+  perfUi.previewBusy=true;
+  try{
+    const response=await fetch(`/api/camera/preview.jpg?t=${Date.now()}`,{cache:'no-store'});
+    if(!response.ok)return;
+    const blob=await response.blob(),url=URL.createObjectURL(blob),old=cameraPreview.src;
+    cameraPreview.onload=()=>{perfUi.renderTimes.push(performance.now());if(old?.startsWith('blob:'))URL.revokeObjectURL(old)};
+    cameraPreview.src=url;
+  }catch{}
+  finally{perfUi.previewBusy=false}
+}
 
 function outputPayload(enabled=output.enabled){const gain=clamp(output.strength,60,300)/100;return{mode:output.mode,enabled,mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain}}
 function renderOutput(s=output.server){const on=!!(s?.enabled??output.enabled);output.enabled=on;output.mode=s?.mode||output.mode;$('#outputMode').value=output.mode;$('#outputPill').textContent=on?'输出开启':'输出关闭';$('#outputPill').className='pill '+(on?'ok':'bad');$('#outputBtn').textContent=on?'关闭输出 F8':'开启输出 F8';if(!s){$('#backendStatus').textContent='正在检查输出后端…';return}$('#backendStatus').textContent=`${s.mouse_available?'鼠标可用':'鼠标不可用'} · ${s.gamepad_connected?'Xbox 已连接':'Xbox 未连接'}`+(s.last_error?' · '+s.last_error:'')}
@@ -83,7 +147,7 @@ async function refreshVoice(){try{voice.status=await api('/api/voice/status');re
 
 function syncControlLabels(){head.deadzoneX=Number($('#deadX').value)/100;head.deadzoneY=Number($('#deadY').value)/100;head.gamma=Number($('#gamma').value);head.maxPercentX=Number($('#speedX').value);head.maxPercentY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;$('#deadXValue').textContent=Math.round(head.deadzoneX*100)+'%';$('#deadYValue').textContent=Math.round(head.deadzoneY*100)+'%';$('#gammaValue').textContent=head.gamma.toFixed(1);$('#speedXValue').textContent=head.maxPercentX+'%';$('#speedYValue').textContent=head.maxPercentY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){syncControlLabels();try{renderKernelState(await post('/api/head/config',{deadzone_x:head.deadzoneX,deadzone_y:head.deadzoneY,gamma:head.gamma,max_percent_x:head.maxPercentX,max_percent_y:head.maxPercentY,enabled:head.enabled,invert_x:head.invertX,invert_y:head.invertY}))}catch(e){notice('头控设置保存失败：'+(e?.message||e))}}
-async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到 MediaPipe Full task：'+(d.model_root||'I:\\MotionControl-Pose-Models\\models'))}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshMotionConfig();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900)}
+async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到 MediaPipe Full task：'+(d.model_root||'I:\\MotionControl-Pose-Models\\models'))}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();applyViewerTransform();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshMotionConfig();await refreshPerformance();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
 
 $('#cameraBtn').addEventListener('click', toggleLocalCamera);
 $('#overlayBtn').addEventListener('click', toggleOverlay);
@@ -93,7 +157,7 @@ $('#calBtn').addEventListener('click', startCalibration);
 $('#centerBtn').addEventListener('click', setCurrentCenter);
 $('#poseSource').addEventListener('change', e => setSource(e.target.value, true));
 $('#mirrorSelect').addEventListener('change', () => {
-  viewer.classList.toggle('mirror', $('#mirrorSelect').value === 'yes');
+  applyViewerTransform();
   void refreshKernel();
 });
 $('#outputMode').addEventListener('change', async () => {
