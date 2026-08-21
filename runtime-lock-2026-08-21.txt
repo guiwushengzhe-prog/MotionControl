@@ -1,0 +1,55 @@
+================================================================================
+MotionControl-App  Runtime Lock
+Generated: 2026-08-21
+Branch: head-control-v2-signal-fix-20260821
+Baseline commit: 7f6507328a8e716a7e92a10bb5892a4b9c09943d
+================================================================================
+
+[Python]
+  Interpreter (sandbox used for code review): 3.13.13
+  Actual runtime interpreter: TO BE VERIFIED on target machine
+  NOTE: None of the system Python installations (C:\Python313,
+        Python312) have mediapipe/opencv properly installed at the
+        time of this lock file generation. The project likely uses a
+        dedicated virtual environment. Run `pip freeze` in the actual
+        runtime venv to capture exact versions.
+
+[Core Dependencies - expected, verify with pip freeze]
+  mediapipe:    TO BE VERIFIED  (required for NativeCameraService)
+  opencv-python: TO BE VERIFIED (cv2, required for camera capture)
+  numpy:        TO BE VERIFIED  (Python312 has numpy 2.4.3 but DLL broken)
+  vosk:         TO BE VERIFIED  (voice backend, model in models/vosk-model-small-cn-0.22)
+  websockets:   TO BE VERIFIED  (InputBridge WebSocket server)
+  flask:        TO BE VERIFIED  (HTTP server, if used)
+
+[MediaPipe Pose Model]
+  Model name:     pose_landmarker_full.task
+  Config path:    config/model_root.txt -> I:\MotionControl-Pose-Models\models
+  Resolved path:  I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full.task
+  File size:      9,399,936 bytes
+  SHA256:         F0D8086050426E969DFE570E980E456EEB93B2B0842A02EF5EF5345D7B7980DA
+  Model variant:  Full (MediaPipe Pose Landmarker Full, 33 keypoints)
+  Source:         Google MediaPipe official
+
+[Vosk Voice Model]
+  Model path:     models/vosk-model-small-cn-0.22/
+  Config:         config/vosk_model_path.txt
+  Size:           ~68 MB (am/final.mdl 15.9MB + graph/HCLr.fst 16.2MB + graph/Gr.fst 26.1MB + ivector/*)
+
+[Head Control Signal Version]
+  signal_version: head-control-v2
+  pitch fusion:   0.70 * face_ratio + 0.30 * z_ratio
+  face pair lock: eyes preferred, ears fallback, 0.9s reselect timeout
+  center capture: 0.5s warmup + 1.8s target + 5.0s wall limit + MAD median
+
+[OS]
+  Platform:       Windows
+  Architecture:   x64 (Intel i9-14650HX)
+
+================================================================================
+VERIFICATION REQUIRED:
+Before running benchmarks, execute in the actual runtime venv:
+  python --version
+  pip freeze | findstr /i "mediapipe opencv numpy vosk websocket flask"
+And confirm the model SHA256 above matches the deployed file.
+================================================================================
