@@ -17,7 +17,7 @@ from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, Global
 from voice_backend import VoiceService
 
 # Product version.  The wire protocol remains pose_frame_v2.
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 
 
 def application_root() -> Path:
