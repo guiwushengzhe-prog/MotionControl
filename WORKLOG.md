@@ -172,3 +172,14 @@
 - 兼容模型已用正式 Python 完成一次 `PoseLandmarker` create/close 成功确认；待重启服务后做一次最小真实摄像头启动确认。
 
 最小链路已完成：重启后的 0.9.3 服务实际使用版本化兼容副本，摄像头在 MSMF、640×480 下启动成功，`last_error=null`、实际读帧约 22.8–24.0 FPS；随后已停止摄像头，最终状态为 `running=false`，输出仍关闭。
+
+## 2026-08-22：Vosk 与语音校准命令
+
+- 参考包 `requirements-voice.txt` 与历史便携构建均锁定 `vosk==0.3.45`。正式 Python 仅安装该包及其必要导入依赖（`requests`、`srt`、`tqdm`、`websockets` 等），没有升级/重装 MediaPipe、OpenCV、NumPy 或 sounddevice，也没有使用 `.pylibs`。
+- 正式环境验证：Vosk 0.3.45 从 `F:\MotionControl\MediaPipe\.venv\Lib\site-packages\vosk\__init__.py` 导入；模型 `F:\MotionControl-App\models\vosk-model-small-cn-0.22` 真实加载成功；服务 `/api/voice/status` 为 `model_ready=true`、grammar、80 条支持词、无 unsupported。
+- `开始校准` 已作为 `system:HEAD_CALIBRATION_START` 加入默认词库；`体感开始校准` 与 `体感 开始校准` 经过同一唤醒词解析。服务端外围回调在执行前检查精确语音源仍在线，并确认电脑摄像头或手机姿态源仍是当前身体源，然后调用现有 `RUNTIME.start_calibration()`；头控核心未改。
+
+## 2026-08-22：摄像头性能短基线复测
+
+- 真实摄像头、输出关闭、MSMF、640×480、兼容 Full 模型：修改前短基线约 29.75–30.34 capture/inference FPS，推理平均 15.0–19.2 ms，P95 23.2–33.0 ms，总延迟 15–16 ms；期间无新增 drop/skip（旧累计值为 655）。
+- 本轮没有发现可安全获得收益的重复转换、排队或预览阻塞问题，因此没有修改 `NativeCameraService` 性能代码，也没有降低输入质量或更换模型。重启后同口径短复测约 29.86 FPS、平均 12.6 ms、P95 14.1 ms，属于短测波动范围；摄像头随后已关闭，输出仍关闭。

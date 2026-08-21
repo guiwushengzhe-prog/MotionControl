@@ -126,3 +126,5 @@
 - `HeadController` 的 profile 信号版本为 `head-control-v4.3-reference-video-tuned`，旧 `head_profile.json` 会因版本不符自动回退，不可手工套用。
 - `F:\MotionControl-App\.pylibs` 未被源码或启动脚本引用；正式 MediaPipe/OpenCV 来源是 `F:\MotionControl\MediaPipe\.venv`，临时库保留待后续明确清理。
 - 2026-08-22：MediaPipe Tasks 1.0.0 对当前 I 盘原始 Full task 报 `NormalizationOptions` metadata 错误，文件存在不等于可加载。不得手改 `.task` metadata，也不能用 `.pylibs` 隐式替代；应保留原始文件并选用已验证、版本化的兼容副本。
+- 2026-08-22：Vosk 系统命令不能只加入 grammar。`开始校准` 必须作为受限 `system` mapping，通过本地回调再次检查精确语音源和当前身体源后调用既有校准 API；不能交给 OutputManager 当普通键盘动作，也不能让断开的语音线程继续执行。
+- 2026-08-22：当前 MSMF/640×480/兼容 Full 已接近 30 FPS 请求上限，短基线没有证明外围改动能安全提速；不要为了好看的利用率改变模型、输入质量或头控参数。
