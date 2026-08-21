@@ -17,7 +17,7 @@ from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, Global
 from voice_backend import VoiceService
 
 # Product version.  The wire protocol remains pose_frame_v2.
-VERSION = "0.8.1"
+VERSION = "0.9.3"
 
 
 def application_root() -> Path:
@@ -435,9 +435,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             try:
                 KERNEL.configure_head(
-                    deadzone_x=body.get("deadzone_x"), deadzone_y=body.get("deadzone_y"),
-                    gamma=body.get("gamma"), max_percent_x=body.get("max_percent_x"),
-                    max_percent_y=body.get("max_percent_y"), enabled=body.get("enabled"),
+                    algorithm=body.get("algorithm"),
+                    deadzone=body.get("deadzone"),
+                    sensitivity_x=body.get("sensitivity_x"),
+                    sensitivity_y=body.get("sensitivity_y"),
+                    enabled=body.get("enabled"),
                     invert_x=body.get("invert_x"), invert_y=body.get("invert_y"),
                 )
                 self._send_json({"ok": True, **RUNTIME.status()})

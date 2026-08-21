@@ -119,4 +119,9 @@
 
 - `coordinates_mirrored` 只在 `pose_map_from_message()` 反一次；raw yaw 经过 `_normalize_v2_yaw()` 统一映射为内部水平语义，再由 `invert_x`（仅用户显式设置）决定是否主动反向，`OutputManager.apply()` 和 Xbox RX 不再重复翻转。临时加入的 `invert_yaw` 补丁已移除，避免二次反号。
 - 真人采集工具必须使用正式 Full task 和真实摄像头；输出包含 raw yaw/pitch 分量、normalized yaw/pitch、output x/y 和 face pair，默认落到 `output/head-control-v2-real-signal-*.json`。不使用合成姿态或真实鼠标输出。
+
+## 2026-08-22：reference-video-tuned 头控融合边界
+
+- 参考 `head_control.py` 是不可修改的头控/自动校准核心；当前工程只能在 `control_kernel.py`、`server.py`、网页和采集工具边界做接口适配。不得把旧 head-control-v2 的 face pair、face/z 融合、五段锚点或 gamma 参数重新混入。
+- `HeadController` 的 profile 信号版本为 `head-control-v4.3-reference-video-tuned`，旧 `head_profile.json` 会因版本不符自动回退，不可手工套用。
 - `F:\MotionControl-App\.pylibs` 未被源码或启动脚本引用；正式 MediaPipe/OpenCV 来源是 `F:\MotionControl\MediaPipe\.venv`，临时库保留待后续明确清理。

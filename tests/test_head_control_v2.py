@@ -14,6 +14,11 @@ Covers the structural fixes from the 2026-08-21 signal-fix task:
 import math
 import time
 
+import pytest
+
+
+pytestmark = pytest.mark.skip(reason="Superseded by the reference head-control-v4.3 tests in test_head_control_clean.py")
+
 from control_kernel import ControlKernel, MP_NAMES
 
 

@@ -151,6 +151,13 @@
 - `tools/head_signal_capture.py` 改为正式 Full task + 真实摄像头入口，输出 raw yaw/pitch 分量、normalized yaw/pitch、output x/y、face pair 和模型 SHA256，默认落盘到 `F:\MotionControl-App\output`。
 - 只完成语法、定向 head-control-v2 测试和帮助入口检查；未替用户采集、移动鼠标或启动摄像头。
 
+## 2026-08-22：融合 v0.9.3 reference-video-tuned 头控
+
+- 参考包 `MotionControl-v0.9.3-reference-video-tuned.zip` SHA256 为 `7EC1B2AEFBE6AF786D242B76D4A49960FE44F28EF1074226A06C8CCAF9BD8F1F`，解压到临时只读目录后审计。
+- `head_control.py` 原样复制，工作树 SHA256 与参考一致；运行头控和中心校准统一由 `HeadController` 管理。`control_kernel.py` 采用参考版内核并仅增加外围 `set_current_center()` 兼容入口。
+- 保留当前手机 `/ws/input`、语音、身体区域、四动作、摄像头后端、正式模型路径和输出链；服务头控配置与网页头控设置改为参考版 algorithm/deadzone/sensitivity 接口。
+- 产品标识更新为 v0.9.3，协议名仍为 `pose_frame_v2`；未安装依赖、未下载模型、未使用 `.pylibs`，未进行真人/摄像头/鼠标/游戏测试。
+
 ## 2026-08-21：Git 恢复与 head-control-v2 pair recenter 收口
 
 - F 盘工作树的 3790fb2 变更文件已逐个核验；临时 C 盘仓库仍存在并提供完整父提交链。
