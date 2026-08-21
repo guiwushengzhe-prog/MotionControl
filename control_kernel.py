@@ -36,6 +36,7 @@ CALIBRATION_STAGE_DURATION_S = 1.5
 CALIBRATION_TOTAL_DURATION_S = 12.5
 CALIBRATION_TRANSITION_DURATION_S = 0.60
 CALIBRATION_POSE_TIMEOUT_S = 0.30
+CALIBRATION_DIAGNOSTIC_MAX_VALUES = 512
 CALIBRATION_STAGES = (
     ("center", "正视"),
     ("left", "左转"),
@@ -152,6 +153,8 @@ class ControlKernel:
             "stage_transition_until": 0.0, "stage_transition_message": "",
             "calibration_profile": "default", "calibration_message": "",
             "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
+            "calibration_diag": self._new_calibration_diagnostic(),
+            "last_calibration_diagnostic": None,
             "quality": "当前使用：默认参数",
             "yaw0": DEFAULT_HEAD_PARAMS["yaw0"], "yaw_left": DEFAULT_HEAD_PARAMS["yaw_left"],
             "yaw_right": DEFAULT_HEAD_PARAMS["yaw_right"], "pitch0": DEFAULT_HEAD_PARAMS["pitch0"],
@@ -200,6 +203,34 @@ class ControlKernel:
         if not isinstance(point, dict) or _score(point) < minimum_score:
             return False
         return all(math.isfinite(_finite(point.get(axis), math.nan)) for axis in ("x", "y"))
+
+    @staticmethod
+    def _new_calibration_diagnostic() -> dict:
+        """Create the in-memory, bounded diagnostic state for one retry.
+
+        The values are signal summaries rather than pose frames: this keeps
+        the persistent record small while making an unsuccessful real retry
+        explainable (valid/invalid counts, pause reasons, and pitch/yaw
+        distributions).
+        """
+        return {
+            "started_at_unix": time.time(),
+            "stage_attempts": [],
+            "current": None,
+            "final_check": None,
+        }
+
+    @staticmethod
+    def _diagnostic_stats(values: list[float] | None) -> dict:
+        finite = sorted(float(value) for value in (values or []) if math.isfinite(float(value)))
+        if not finite:
+            return {"count": 0, "min": None, "max": None, "median": None}
+        return {
+            "count": len(finite),
+            "min": finite[0],
+            "max": finite[-1],
+            "median": finite[len(finite) // 2],
+        }
 
     @classmethod
     def _calibration_pose_is_valid(cls, pose_map: dict[str, dict] | None) -> bool:
@@ -253,6 +284,111 @@ class ControlKernel:
         with self._lock:
             return self._pose_ready_reason_locked() is None
 
+    def _calibration_diag_current_locked(self) -> dict | None:
+        diag = self.head.get("calibration_diag")
+        current = diag.get("current") if isinstance(diag, dict) else None
+        return current if isinstance(current, dict) else None
+
+    def _record_calibration_frame_locked(
+        self, *, valid: bool, reason: str = "", missing_parts=None,
+        raw_yaw: float = math.nan, raw_pitch: float = math.nan,
+    ) -> None:
+        current = self._calibration_diag_current_locked()
+        if current is None:
+            return
+        if valid:
+            current["valid_frames"] += 1
+            if math.isfinite(raw_yaw) and len(current["yaw_values"]) < CALIBRATION_DIAGNOSTIC_MAX_VALUES:
+                current["yaw_values"].append(float(raw_yaw))
+            if math.isfinite(raw_pitch) and len(current["pitch_values"]) < CALIBRATION_DIAGNOSTIC_MAX_VALUES:
+                current["pitch_values"].append(float(raw_pitch))
+            return
+        current["invalid_frames"] += 1
+        reason = str(reason or "未说明").strip() or "未说明"
+        current["pause_reasons"][reason] = current["pause_reasons"].get(reason, 0) + 1
+        for part in dict.fromkeys(str(x) for x in (missing_parts or []) if str(x)):
+            current["missing_parts"][part] = current["missing_parts"].get(part, 0) + 1
+
+    def _finalize_calibration_diag_stage_locked(self, completed: bool, reason: str = "") -> None:
+        diag = self.head.get("calibration_diag")
+        current = diag.get("current") if isinstance(diag, dict) else None
+        if not isinstance(current, dict):
+            return
+        entry = {
+            "stage": current["stage"],
+            "label": current["label"],
+            "started_at_unix": current["started_at_unix"],
+            "ended_at_unix": time.time(),
+            "valid_frames": current["valid_frames"],
+            "invalid_frames": current["invalid_frames"],
+            "valid_s": round(float(self.head.get("stage_valid_s") or 0.0), 3),
+            "completed": bool(completed),
+            "reason": str(reason or ""),
+            "pause_reasons": dict(current["pause_reasons"]),
+            "missing_parts": dict(current["missing_parts"]),
+            "yaw": self._diagnostic_stats(current["yaw_values"]),
+            "pitch": self._diagnostic_stats(current["pitch_values"]),
+        }
+        diag["stage_attempts"].append(entry)
+        diag["current"] = None
+
+    def _set_calibration_final_check_locked(
+        self, yaw0: float, yl: float, yr: float,
+        pitch0: float, pu: float, pd: float,
+        yaw_ok: bool, pitch_ok: bool,
+    ) -> None:
+        diag = self.head.get("calibration_diag")
+        if not isinstance(diag, dict):
+            return
+        diag["final_check"] = {
+            "center_yaw": self._diagnostic_stats(self.head.get("center_yaw")),
+            "left_yaw": self._diagnostic_stats(self.head.get("left_yaw")),
+            "right_yaw": self._diagnostic_stats(self.head.get("right_yaw")),
+            "center_pitch": self._diagnostic_stats(self.head.get("center_pitch")),
+            "up_pitch": self._diagnostic_stats(self.head.get("up_pitch")),
+            "down_pitch": self._diagnostic_stats(self.head.get("down_pitch")),
+            "yaw_center_median": yaw0 if math.isfinite(yaw0) else None,
+            "yaw_left_median": yl if math.isfinite(yl) else None,
+            "yaw_right_median": yr if math.isfinite(yr) else None,
+            "pitch_center_median": pitch0 if math.isfinite(pitch0) else None,
+            "pitch_up_median": pu if math.isfinite(pu) else None,
+            "pitch_down_median": pd if math.isfinite(pd) else None,
+            "yaw_threshold": 0.025,
+            "pitch_threshold": 0.008,
+            "yaw_ok": bool(yaw_ok),
+            "pitch_ok": bool(pitch_ok),
+            "yaw_left_delta": (yl - yaw0) if math.isfinite(yl) and math.isfinite(yaw0) else None,
+            "yaw_right_delta": (yr - yaw0) if math.isfinite(yr) and math.isfinite(yaw0) else None,
+            "pitch_up_delta": (pu - pitch0) if math.isfinite(pu) and math.isfinite(pitch0) else None,
+            "pitch_down_delta": (pd - pitch0) if math.isfinite(pd) and math.isfinite(pitch0) else None,
+            "pitch_span": (
+                abs(pu - pd) if math.isfinite(pu) and math.isfinite(pd) else None
+            ),
+        }
+
+    def _persist_calibration_diagnostic_locked(self, event: str, reason: str = "") -> None:
+        diag = self.head.get("calibration_diag")
+        if not isinstance(diag, dict):
+            return
+        summary = {
+            "recorded_at_unix": time.time(),
+            "event": str(event),
+            "reason": str(reason or ""),
+            "started_at_unix": diag.get("started_at_unix"),
+            "stage_attempts": copy.deepcopy(diag.get("stage_attempts") or []),
+            "final_check": copy.deepcopy(diag.get("final_check")),
+        }
+        self.head["last_calibration_diagnostic"] = copy.deepcopy(summary)
+        root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        path = root / "MotionControl" / "calibration_diagnostics.jsonl"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(summary, ensure_ascii=False, separators=(",", ":")) + "\n")
+        except OSError as exc:
+            # Diagnostics must never interfere with control or calibration.
+            self.head["calibration_diag_error"] = str(exc)
+
     def _reset_default_head_locked(self, message: str = "") -> None:
         self.head.update({
             **DEFAULT_HEAD_PARAMS,
@@ -272,6 +408,7 @@ class ControlKernel:
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
             "stage_transition_until": 0.0, "stage_transition_message": "",
             "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
+            "calibration_diag": self._new_calibration_diagnostic(),
             "norm_x": 0.0, "norm_y": 0.0,
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
             "last_update": 0.0,
@@ -287,6 +424,8 @@ class ControlKernel:
     def _abort_calibration_locked(self, reason: str) -> None:
         if not self.head["calibrating"]:
             return
+        self._finalize_calibration_diag_stage_locked(False, reason)
+        self._persist_calibration_diagnostic_locked("aborted", reason)
         self._reset_default_head_locked(str(reason).strip() or "未完成")
         self._safe_output(self.output.apply, 0.0, 0.0)
 
@@ -433,6 +572,7 @@ class ControlKernel:
                 "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
                 "stage_transition_until": 0.0, "stage_transition_message": "",
                 "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
+                "calibration_diag": self._new_calibration_diagnostic(),
                 "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
                 "up_pitch": [], "down_pitch": [], "torso_samples": [], "filtered_x": 0.0,
                 "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
@@ -709,6 +849,21 @@ class ControlKernel:
 
     def _begin_calibration_stage_locked(self, index: int, now: float) -> None:
         stage, label = CALIBRATION_STAGES[index]
+        diag = self.head.get("calibration_diag")
+        if not isinstance(diag, dict):
+            diag = self._new_calibration_diagnostic()
+            self.head["calibration_diag"] = diag
+        diag["current"] = {
+            "stage": stage,
+            "label": label,
+            "started_at_unix": time.time(),
+            "valid_frames": 0,
+            "invalid_frames": 0,
+            "pause_reasons": {},
+            "missing_parts": {},
+            "yaw_values": [],
+            "pitch_values": [],
+        }
         self.head.update({
             "stage": stage,
             "stage_label": label,
@@ -730,6 +885,7 @@ class ControlKernel:
         )
         label = CALIBRATION_STAGES[index][1]
         next_label = CALIBRATION_STAGES[index + 1][1] if index + 1 < len(CALIBRATION_STAGES) else "应用个人参数"
+        self._finalize_calibration_diag_stage_locked(True)
         self.head.update({
             "stage_valid_s": CALIBRATION_STAGE_DURATION_S,
             "stage_last_sample_at": 0.0,
@@ -789,9 +945,14 @@ class ControlKernel:
             if not math.isfinite(raw_pitch):
                 reason, missing = "脸部点不清楚，请正对摄像头", ["脸部"]
         if not sample_valid:
+            self._record_calibration_frame_locked(
+                valid=False, reason=reason or "请保持姿势", missing_parts=missing,
+                raw_yaw=raw_yaw, raw_pitch=raw_pitch,
+            )
             self._set_calibration_pause_locked(reason or "请保持姿势", missing)
             return
 
+        self._record_calibration_frame_locked(valid=True, raw_yaw=raw_yaw, raw_pitch=raw_pitch)
         self.head["stage_pause_reason"] = ""
         self.head["stage_missing_parts"] = []
         last = float(self.head.get("stage_last_sample_at") or 0.0)
@@ -847,6 +1008,10 @@ class ControlKernel:
     def _finish_calibration_locked(self, now: float | None = None) -> None:
         now = time.monotonic() if now is None else now
         if any(not self._calibration_stage_ready_locked(stage) for stage, _ in CALIBRATION_STAGES):
+            self._set_calibration_final_check_locked(
+                math.nan, math.nan, math.nan, math.nan, math.nan, math.nan, False, False,
+            )
+            self._persist_calibration_diagnostic_locked("final_check_incomplete", "阶段样本不完整")
             missing = next(label for stage, label in CALIBRATION_STAGES if not self._calibration_stage_ready_locked(stage))
             index = next(index for index, (_, label) in enumerate(CALIBRATION_STAGES) if label == missing)
             self._restart_calibration_stage_locked(index, f"{missing}阶段还需要有效样本", [missing])
@@ -854,16 +1019,23 @@ class ControlKernel:
         yaw0 = self._median(self.head["center_yaw"], self.head["raw_yaw"])
         pitch0 = self._median(self.head["center_pitch"], self.head["raw_pitch"])
         if not (math.isfinite(yaw0) and math.isfinite(pitch0)):
+            self._set_calibration_final_check_locked(
+                yaw0, math.nan, math.nan, pitch0, math.nan, math.nan, False, False,
+            )
+            self._persist_calibration_diagnostic_locked("final_check_incomplete", "正视阶段信号无效")
             self._restart_calibration_stage_locked(0, "脸部点不清楚，请正对摄像头", ["脸部"])
             return
         yl, yr = self._median(self.head["left_yaw"]), self._median(self.head["right_yaw"])
         pu, pd = self._median(self.head["up_pitch"]), self._median(self.head["down_pitch"])
         yaw_ok = math.isfinite(yl) and math.isfinite(yr) and (yl - yaw0) * (yr - yaw0) < 0 and min(abs(yl - yaw0), abs(yr - yaw0)) >= 0.025
         pitch_ok = math.isfinite(pu) and math.isfinite(pd) and (pu - pitch0) * (pd - pitch0) < 0 and min(abs(pu - pitch0), abs(pd - pitch0)) >= 0.008
+        self._set_calibration_final_check_locked(yaw0, yl, yr, pitch0, pu, pd, yaw_ok, pitch_ok)
         if not yaw_ok:
+            self._persist_calibration_diagnostic_locked("final_check_failed", "左右转幅度还不够")
             self._restart_calibration_stage_locked(1, "左右转幅度还不够，请按提示缓慢转头", ["左右转"])
             return
         if not pitch_ok:
+            self._persist_calibration_diagnostic_locked("final_check_failed", "上下点头幅度还不够")
             self._restart_calibration_stage_locked(3, "上下点头幅度还不够，请按提示缓慢抬头和低头", ["上下转头"])
             return
         nx = [abs(self._normalize_axis(value, yaw0, yl, yr)) for value in self.head["center_yaw"]]
@@ -874,6 +1046,7 @@ class ControlKernel:
             deadzone_x = _clamp(self._qtile(nx, 0.99) * 1.8 + 0.02, 0.06, 0.30)
         if pitch_ok and ny:
             deadzone_y = _clamp(self._qtile(ny, 0.99) * 2.0 + 0.025, 0.08, 0.34)
+        self._persist_calibration_diagnostic_locked("success", "")
         self.head.update({
             "yaw0": yaw0, "yaw_left": yl, "yaw_right": yr, "pitch0": pitch0,
             "pitch_up": pu, "pitch_down": pd, "torso0": self._median(self.head["torso_samples"]),
@@ -982,6 +1155,7 @@ class ControlKernel:
             "calibration_notice": self.head.get("calibration_notice", ""),
             "calibration_notice_text": self.head.get("calibration_notice_text", ""),
             "calibration_notice_remaining_s": round(max(0.0, notice_until - now), 1),
+            "last_calibration_diagnostic": copy.deepcopy(self.head.get("last_calibration_diagnostic")),
             "raw_yaw": self.head["raw_yaw"] if math.isfinite(self.head["raw_yaw"]) else None,
             "raw_pitch": self.head["raw_pitch"] if math.isfinite(self.head["raw_pitch"]) else None,
             "output_x": round(self.head["output_x"], 3), "output_y": round(self.head["output_y"], 3),
