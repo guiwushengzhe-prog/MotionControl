@@ -32,6 +32,11 @@ WEB_DIR = ROOT / "web"
 CONFIG_DIR = ROOT / "config"
 DEFAULT_MODEL_ROOT = Path(r"I:\MotionControl-Pose-Models\models")
 MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
+# MediaPipe Tasks 1.0.x rejects the older formal task's missing normalization
+# metadata. This versioned sibling is a known-good local copy; the original
+# MODEL_RELATIVE file remains untouched and is only the fallback when the
+# compatibility copy is absent.
+MODEL_COMPAT_RELATIVE = Path("mediapipe") / "pose_landmarker_full_compatible_075.task"
 
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
@@ -134,6 +139,9 @@ def choose_model_root(cli_root: str | None) -> Path | None:
 def resolve_full_model(root: Path | None) -> Path | None:
     if root is None:
         return None
+    compatible = root / MODEL_COMPAT_RELATIVE
+    if compatible.is_file():
+        return compatible.resolve()
     direct = root / MODEL_RELATIVE
     if direct.is_file():
         return direct.resolve()

@@ -163,3 +163,10 @@
 - F 盘工作树的 3790fb2 变更文件已逐个核验；临时 C 盘仓库仍存在并提供完整父提交链。
 - 为避开 F 盘 `.git/objects` 的历史写入问题，保留原 `.git` 备份后，将完整 Git 元数据放到 `I:\MotionControl-App\_git`，F 盘工作树使用 separate-git-dir 指针。
 - 发现旧实现的 pair reselect 只设置等待标志；现在切换 eyes/ears 后复用现有 center capture，直到新中心成功前输出保持零，并新增回归测试覆盖该安全边界。
+## 2026-08-22：0.9.3 电脑摄像头模型兼容性修复
+
+- 用户真人点击电脑摄像头后真实返回：`Input tensor has type float32: it requires specifying NormalizationOptions metadata to preprocess input images.`；原始证据保存于 `output/camera-model-compat-failure-2026-08-22.json`。
+- 正式环境仍为 `F:\MotionControl\MediaPipe\.venv\Scripts\python.exe`、Python 3.11.11、MediaPipe 1.0.0、OpenCV 5.0.0；未安装/升级依赖，未使用 `.pylibs`。
+- 参考包 WORKLOG/PITFALLS 已记录同一兼容性问题及已验证副本。使用本机已有 `F:\MotionControl-build-075\isolated-075\models\mediapipe\pose_landmarker_full.task`（SHA256 `5134A3AAD27A58B93DA0088D431F366DA362B44E3CCFBE3462B3827A839011B1`），复制为版本化 `I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full_compatible_075.task`；原始 `pose_landmarker_full.task`（SHA256 `F0D8086050426E969DFE570E980E456EEB93B2B0842A02EF5EF5345D7B7980DA`）未覆盖。
+- `server.resolve_full_model()` 仅增加外围候选优先级：存在兼容副本时优先，否则回退原始文件；头控/自动校正核心未修改。
+- 兼容模型已用正式 Python 完成一次 `PoseLandmarker` create/close 成功确认；待重启服务后做一次最小真实摄像头启动确认。

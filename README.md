@@ -117,4 +117,12 @@ MediaPipe Full：
 I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full.task
 ```
 
+当前正式 Python/MediaPipe 环境优先使用同目录的已验证兼容副本：
+
+```text
+I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full_compatible_075.task
+```
+
+原始 `pose_landmarker_full.task` 保留不覆盖；服务找不到兼容副本时才回退到原始文件。
+
 如果 8765 已被旧的 MotionControl 实例占用，启动窗口会明确提示并退出当前实例；不会自动结束旧进程，可先关闭旧实例或用 `--port` 指定其他端口。
