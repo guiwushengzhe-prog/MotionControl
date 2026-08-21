@@ -117,3 +117,9 @@
 ## 2026-08-21：0.8.1 手机版本对齐
 
 - 手机实际安装版本为 0.8.1，PC 产品标识同步升为 `0.8.1`；`pose_frame_v2` 协议和 `head-shoulder-v2` 信号版本不变，未修改手机端或便携构建。
+
+## 2026-08-21：0.8.1 手机姿态边缘坐标接收修复
+
+- `pose landmarks are invalid` 在 PC 接收层只有一处直接抛出：33 点姿态中任一点不是对象、缺少/含非有限 `x/y/z/visibility`，或旧逻辑把 normalized image `x/y`（以及 visibility）限制在 `[0,1]`。点数错误会先抛出 `each pose must contain exactly 33 landmarks`；`world_pose` 和手部有各自的错误文本，不会触发这条消息。
+- 软件任务约定的 `F:\switch\output\pose-frame-rejected-081.json` 在本次修复前尚未出现，因此没有伪造具体数值；真实错误与旧 `[0,1]` 边界条件一致。
+- 新逻辑保留有限性和 visibility `[0,1]` 校验，对 `x/y/z` 使用绝对值 `<=10` 的防损坏界限，不在接收层裁剪坐标；原值继续交给内核关系计算，显示层再负责裁剪。
