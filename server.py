@@ -16,7 +16,7 @@ from input_bridge import InputBridge
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
 from voice_backend import VoiceService
 
-VERSION = "0.7.6"
+VERSION = "0.7.7"
 
 
 def application_root() -> Path:

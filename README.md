@@ -1,4 +1,4 @@
-# MotionControl v0.7.6 — Local Kernel + Body-relative Zones + Four Motions
+# MotionControl v0.7.7 — Local Kernel + Body-relative Zones + Four Motions
 
 继续沿用 Full、头控、语音和悬浮窗。本版重点是把复杂设置收进“设置”，并让姿态、语音和输出时序都由本地服务维护。
 

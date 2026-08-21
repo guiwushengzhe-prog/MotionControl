@@ -182,14 +182,44 @@ class ControlKernel:
                 return False
         return all(_score(pose_map[name]) >= 0.30 for name in required)
 
+    @staticmethod
+    def _point_has_xy(point: dict | None, minimum_score: float) -> bool:
+        """Return whether one point used by head control is usable.
+
+        Calibration must not be gated by unrelated low-visibility landmarks.
+        The head formulas only need finite nose/face coordinates and a stable
+        shoulder/hip torso scale, so this check deliberately ignores all other
+        MediaPipe points.
+        """
+        if not isinstance(point, dict) or _score(point) < minimum_score:
+            return False
+        return all(math.isfinite(_finite(point.get(axis), math.nan)) for axis in ("x", "y"))
+
+    @classmethod
+    def _calibration_pose_is_valid(cls, pose_map: dict[str, dict] | None) -> bool:
+        """Check only the landmarks consumed by the yaw/pitch calibration math."""
+        if not isinstance(pose_map, dict):
+            return False
+        if not cls._point_has_xy(pose_map.get("nose"), 0.35):
+            return False
+        face_complete = any(
+            all(cls._point_has_xy(pose_map.get(name), 0.35) for name in group)
+            for group in (("left_ear", "right_ear"), ("left_eye", "right_eye"))
+        )
+        torso_complete = all(
+            cls._point_has_xy(pose_map.get(name), 0.30)
+            for name in ("left_shoulder", "right_shoulder", "left_hip", "right_hip")
+        )
+        return face_complete and torso_complete
+
     def _pose_ready_reason_locked(self, now: float | None = None) -> str | None:
         now = time.monotonic() if now is None else now
         if not self.active_body_source:
             return "没有正在运行的人体来源"
         if not self.body_last_at or now - self.body_last_at > self.watchdog_timeout:
             return "人体来源没有持续发送姿态"
-        if not self._pose_map_is_valid(self.latest_pose):
-            return "当前没有可用的33点人体姿态"
+        if not self._calibration_pose_is_valid(self.latest_pose):
+            return "当前头控关键点不足（鼻、双眼/双耳、肩髋）"
         if self.pose_last_valid_at and now - self.pose_last_valid_at > self.watchdog_timeout:
             return "人体姿态已过期"
         return None
@@ -286,7 +316,11 @@ class ControlKernel:
             self.width = max(1, int(width))
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
-            if self._pose_map_is_valid(pose_map):
+            if self.head["calibrating"] and not self._calibration_pose_is_valid(pose_map):
+                self._abort_calibration_locked("校准所需鼻、双眼/双耳或肩髋关键点不足")
+            # Calibration/watchdog validity follows the exact head-control
+            # inputs, not visibility of unrelated body landmarks.
+            if self._calibration_pose_is_valid(pose_map):
                 self.pose_last_valid_at = now
             self._process_pose_locked(pose_map, now)
             return self.status_locked(now)
