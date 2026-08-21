@@ -1,4 +1,4 @@
-# MotionControl v0.7.9 — Local Kernel + Body-relative Zones + Four Motions
+# MotionControl v0.7.10 — Local Kernel + Body-relative Zones + Four Motions
 
 继续沿用 Full、头控、语音和悬浮窗。本版重点是把复杂设置收进“设置”，并让姿态、语音和输出时序都由本地服务维护。
 
@@ -77,6 +77,8 @@ config\motion_mappings.json
 ## 头控校准
 
 头控启动即使用参考版默认参数，界面显示“当前使用：默认参数”；校准不是使用前提。用户主动开始后先准备 5 秒（不采样），再正视、左转、右转、抬头、低头各累计 1.5 秒有效样本。关键点暂时不足时暂停当前阶段，不清除已完成阶段；只有用户取消、切源、停止摄像头或退出才终止。五段全部有效完成后才切换为个人校准。
+
+每次校准结束后只保存信号摘要诊断（阶段有效/无效帧、暂停原因、yaw/pitch min/max/median 和最终阈值比较）到 `%LOCALAPPDATA%\MotionControl\calibration_diagnostics.jsonl`，不保存视频或完整姿态帧。
 
 ## 本地语音
 

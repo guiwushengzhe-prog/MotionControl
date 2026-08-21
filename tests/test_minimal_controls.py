@@ -14,7 +14,7 @@ def test_only_full_model_is_registered():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert 'pose_landmarker_full.task' in server
     assert 'pose_landmarker_lite.task' not in server
-    assert 'VERSION = "0.7.9"' in server
+    assert 'VERSION = "0.7.10"' in server
 
 
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
