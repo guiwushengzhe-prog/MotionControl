@@ -67,7 +67,9 @@ HEAD_SIGNAL_VERSION = "head-control-v2"
 # until it has been continuously unavailable for this long.  Switching pair
 # without a recenter would reuse a center measured on different geometry.
 FACE_PAIR_RESELECT_TIMEOUT_S = 0.9
-# Short center rebuild after a pair switch; finite, not the old five-stage.
+# Kept for status/backward compatibility. Pair switches now reuse the normal
+# center capture (warm-up + finite collection target + wall limit) instead of
+# treating this value as a fixed delay.
 FACE_PAIR_RECENTER_DURATION_S = 1.2
 CALIBRATION_STAGES = (
     ("center", "正视"),
@@ -185,6 +187,7 @@ class ControlKernel:
             "signal_version": HEAD_SIGNAL_VERSION, "face_pair": "",
             "face_pair_unavailable_since": 0.0, "face_pair_valid": False,
             "head_recenter_required": False, "face_pair_recenter_until": 0.0,
+            "center_capture_kind": "",
             "stage_started": 0.0, "calibration_started": 0.0,
             "stage_duration": CALIBRATION_STAGE_DURATION_S, "stage_deadline": 0.0,
             "center_yaw": [], "center_pitch": [], "center_pitch_face": [],
@@ -498,6 +501,9 @@ class ControlKernel:
             "calibration_message": message,
             "quality": "校准已取消，当前使用默认参数" if message else "当前使用：默认参数",
             "face_pair": "",
+            "face_pair_unavailable_since": 0.0, "face_pair_valid": False,
+            "head_recenter_required": False, "face_pair_recenter_until": 0.0,
+            "center_capture_kind": "",
             "center_yaw": [], "center_pitch": [], "center_pitch_face": [],
             "center_pitch_z": [], "center_warmup_until": 0.0,
             "center_collected_s": 0.0,
@@ -516,6 +522,8 @@ class ControlKernel:
             "calibration_axis_results": {"yaw": "default", "pitch": "default"},
             "calibration_timeouts": [],
             "center_capture_pending": False,
+            "yaw_center": math.nan, "pitch_face_center": math.nan,
+            "pitch_z_center": math.nan,
             "raw_pitch_face": math.nan, "raw_pitch_z": math.nan,
             "norm_x": 0.0, "norm_y": 0.0,
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
@@ -556,10 +564,26 @@ class ControlKernel:
             return
         fallback = copy.deepcopy(self.head.get("calibration_fallback") or {})
         fallback_profile = str(self.head.get("calibration_fallback_profile") or "default")
+        capture_kind = str(self.head.get("center_capture_kind") or "manual")
+        active_pair = str(self.head.get("face_pair") or "")
         self._finalize_calibration_diag_stage_locked(False, reason)
         self._persist_calibration_diagnostic_locked("aborted", reason)
         self._reset_default_head_locked(str(reason).strip() or "未完成")
-        if fallback_profile in {"personal", "mixed", "existing_personal"}:
+        if capture_kind == "pair_recenter":
+            # The old center belongs to the previous pair and is unsafe for
+            # the new geometry. Keep the new pair in a neutral safe state;
+            # the next explicit center capture can atomically restore output.
+            self.head.update({
+                "face_pair": active_pair, "face_pair_valid": bool(active_pair),
+                "calibration_profile": "default",
+                "quality": "点对中心未完成，保持安全零输出",
+                "calibration_message": f"{str(reason).strip() or '未完成'}，请重新设置中心",
+                "calibration_axis_results": {"yaw": "default", "pitch": "default"},
+                "center_capture_pending": False,
+                "head_recenter_required": True,
+                "center_capture_kind": "",
+            })
+        elif fallback_profile in {"personal", "mixed", "existing_personal"}:
             for key in self._head_profile_keys():
                 if key in fallback:
                     self.head[key] = fallback[key]
@@ -662,7 +686,7 @@ class ControlKernel:
                 # automatic center capture. A loaded personal profile disables
                 # this; the user can always invoke the same capture manually.
                 if self.head.get("center_capture_pending") and not self.head.get("calibrating"):
-                    self._start_center_capture_locked(now)
+                    self._start_center_capture_locked(now, kind="startup")
             self._process_pose_locked(pose_map, now)
             return self.status_locked(now)
 
@@ -705,7 +729,9 @@ class ControlKernel:
             self.body_last_at = 0.0
             return self.status_locked(time.monotonic())
 
-    def _start_center_capture_locked(self, now: float | None = None) -> None:
+    def _start_center_capture_locked(
+        self, now: float | None = None, *, kind: str = "manual", reason: str = ""
+    ) -> None:
         now = time.monotonic() if now is None else now
         profile_keys = (
             "yaw0", "yaw_left", "yaw_right", "pitch0", "pitch_up", "pitch_down",
@@ -721,7 +747,10 @@ class ControlKernel:
             "stage_deadline": now + CENTER_WALL_LIMIT_S,
             "center_warmup_until": now + CENTER_WARMUP_S,
             "center_collected_s": 0.0,
-            "calibration_message": "",
+            "calibration_message": str(reason or ""),
+            "center_capture_kind": str(kind or "manual"),
+            "head_recenter_required": str(kind or "manual") == "pair_recenter",
+            "face_pair_recenter_until": 0.0,
             "stage_valid_s": 0.0, "stage_required_s": CENTER_COLLECTION_TARGET_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
             "stage_transition_until": 0.0, "stage_transition_message": "",
@@ -751,7 +780,7 @@ class ControlKernel:
 
     def start_calibration(self) -> dict:
         with self._lock:
-            self._start_center_capture_locked(time.monotonic())
+            self._start_center_capture_locked(time.monotonic(), kind="manual")
             return self.status_locked(time.monotonic())
 
     def set_current_center(self) -> dict:
@@ -764,10 +793,15 @@ class ControlKernel:
                 "yaw_right": self.head["raw_yaw"] + self.head.get("yaw_range", HEAD_DEFAULT_YAW_RANGE),
                 "pitch_up": self.head["raw_pitch"] - self.head.get("pitch_range", HEAD_DEFAULT_PITCH_RANGE),
                 "pitch_down": self.head["raw_pitch"] + self.head.get("pitch_range", HEAD_DEFAULT_PITCH_RANGE),
+                "yaw_center": self.head["raw_yaw"],
+                "pitch_face_center": self.head.get("raw_pitch_face", math.nan),
+                "pitch_z_center": self.head.get("raw_pitch_z", math.nan),
                 "calibrated": True, "calibrating": False, "calibration_profile": "personal",
                 "calibration_message": "", "quality": "当前使用：个人校准",
                 "signal_version": HEAD_SIGNAL_VERSION,
                 "center_capture_pending": False,
+                "head_recenter_required": False, "face_pair_recenter_until": 0.0,
+                "center_capture_kind": "",
                 "stage": "", "stage_label": "", "stage_started": 0.0, "calibration_started": 0.0,
                 "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
                 "up_pitch": [], "down_pitch": [], "shoulder_scale_samples": [], "filtered_x": 0.0,
@@ -962,14 +996,12 @@ class ControlKernel:
         """
         now = time.monotonic() if now is None else now
         pair = self.head.get("face_pair", "")
+        had_locked_pair = pair in {"eyes", "ears"}
         if pair in {"eyes", "ears"}:
             available = self._face_pair_available(pose_map, pair)
             self.head["face_pair_valid"] = bool(available)
             if available:
                 self.head["face_pair_unavailable_since"] = 0.0
-                # If we were in a recenter window and it has elapsed, clear it.
-                if self.head.get("head_recenter_required") and now >= self.head.get("face_pair_recenter_until", 0.0):
-                    self.head["head_recenter_required"] = False
                 return pair
             # Locked pair is unavailable this frame.
             since = float(self.head.get("face_pair_unavailable_since") or 0.0)
@@ -997,11 +1029,16 @@ class ControlKernel:
         self.head["face_pair"] = new_pair
         self.head["face_pair_valid"] = True
         self.head["face_pair_unavailable_since"] = 0.0
-        # A freshly selected pair always requires a short recenter before
-        # output resumes, unless no calibrated center exists yet.
-        if self.head.get("calibrated"):
+        # A previously locked pair changing geometry requires a real center
+        # capture.  A first-ever pair selection is handled by the normal
+        # startup center capture and must not start a second capture.
+        if had_locked_pair and self.head.get("calibrated"):
             self.head["head_recenter_required"] = True
-            self.head["face_pair_recenter_until"] = now + FACE_PAIR_RECENTER_DURATION_S
+            self._start_center_capture_locked(
+                now,
+                kind="pair_recenter",
+                reason="脸部关键点组已切换，正在重新设置中心",
+            )
         return new_pair
 
     def _shoulder_width(self, pose_map: dict[str, dict]) -> float:
@@ -1496,6 +1533,7 @@ class ControlKernel:
         now = time.monotonic() if now is None else now
         fallback = self.head.get("calibration_fallback") or {}
         fallback_profile = str(self.head.get("calibration_fallback_profile") or "default")
+        capture_kind = str(self.head.get("center_capture_kind") or "manual")
 
         def fallback_value(key: str):
             value = fallback.get(key)
@@ -1530,6 +1568,18 @@ class ControlKernel:
             quality = "当前使用：个人校准"
             reason = "中心已记录"
             event = "center_capture_success"
+        elif capture_kind == "pair_recenter":
+            # A pair-specific center cannot safely fall back to the old pair's
+            # personal center. Keep the new pair in a neutral default state
+            # and require an explicit/next center capture before output.
+            yaw0, pitch0 = DEFAULT_HEAD_PARAMS["yaw0"], DEFAULT_HEAD_PARAMS["pitch0"]
+            measured_pitch_face = math.nan
+            measured_pitch_z = math.nan
+            profile = "default"
+            axis_results = {"yaw": "default", "pitch": "default"}
+            quality = "点对中心未完成，保持安全零输出"
+            reason = "新脸部点对中心样本不足"
+            event = "pair_recenter_fallback"
         else:
             yaw0, pitch0 = fallback_value("yaw0"), fallback_value("pitch0")
             measured_pitch_face = math.nan
@@ -1564,7 +1614,8 @@ class ControlKernel:
             "shoulder_scale0": fallback_value("shoulder_scale0"),
             "calibrating": False, "calibrated": True,
             "stage": "", "stage_label": "", "stage_started": 0.0, "calibration_started": 0.0,
-            "stage_deadline": 0.0, "calibration_profile": profile, "calibration_message": "",
+            "stage_deadline": 0.0, "calibration_profile": profile,
+            "calibration_message": "" if capture_ok else reason,
             "calibration_axis_results": axis_results, "quality": quality,
             "stage_valid_s": valid_s, "stage_required_s": CALIBRATION_CENTER_DURATION_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
@@ -1579,6 +1630,9 @@ class ControlKernel:
             "calibration_fallback": None, "calibration_fallback_profile": "default",
             "calibration_fallback_axis_results": {"yaw": "default", "pitch": "default"},
             "center_capture_pending": False,
+            "head_recenter_required": capture_kind == "pair_recenter" and not capture_ok,
+            "face_pair_recenter_until": 0.0,
+            "center_capture_kind": "",
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0, "last_update": 0.0,
         })
         self._persist_head_profile_locked()
@@ -1645,6 +1699,7 @@ class ControlKernel:
             "face_pair": "", "face_pair_unavailable_since": 0.0,
             "face_pair_valid": False, "head_recenter_required": False,
             "face_pair_recenter_until": 0.0,
+            "center_capture_kind": "",
         })
         self._safe_output(self.output.set_buttons, [], source="zones")
         self._safe_output(self.output.set_holds, [], source_group="motions")
@@ -1678,6 +1733,10 @@ class ControlKernel:
             "face_pair": self.head.get("face_pair", ""),
             "face_pair_valid": bool(self.head.get("face_pair_valid", False)),
             "head_recenter_required": bool(self.head.get("head_recenter_required", False)),
+            "center_capture_kind": self.head.get("center_capture_kind", ""),
+            "yaw_center": self.head["yaw_center"] if math.isfinite(self.head.get("yaw_center", math.nan)) else None,
+            "pitch_face_center": self.head["pitch_face_center"] if math.isfinite(self.head.get("pitch_face_center", math.nan)) else None,
+            "pitch_z_center": self.head["pitch_z_center"] if math.isfinite(self.head.get("pitch_z_center", math.nan)) else None,
             "stage": self.head["stage"], "stage_label": self.head.get("stage_label", ""),
             "quality": self.head["quality"], "calibration_profile": self.head.get("calibration_profile", "default"),
             "calibration_message": self.head.get("calibration_message", ""),

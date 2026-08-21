@@ -201,6 +201,47 @@ def test_b_pair_reselection_sets_recenter_flag():
         kernel.close()
 
 
+def test_b_pair_reselection_stays_zero_until_new_center_capture_finishes():
+    """Changing eyes -> ears must not reuse the old eyes center."""
+    output = FakeOutput()
+    kernel = ControlKernel(output, watchdog_timeout=10.0)
+    try:
+        # Treat the initial eyes pair as an already calibrated session.  This
+        # isolates the pair-switch behavior from the ordinary startup capture.
+        kernel.head.update({
+            "center_capture_pending": False,
+            "calibrating": False,
+            "calibrated": True,
+            "head_recenter_required": False,
+        })
+        kernel.handle_pose_map("test:cam", base_pose())
+        assert kernel.head["face_pair"] == "eyes"
+
+        # Expire the locked eyes pair, then present ears only.  The kernel must
+        # start the shared center-capture path for the new pair and keep output
+        # neutral while its warm-up/collection is incomplete.
+        kernel.head["face_pair_unavailable_since"] = time.monotonic() - 2.0
+        kernel.handle_pose_map("test:cam", pose_ears_only())
+        assert kernel.head["face_pair"] == "ears"
+        assert kernel.head["center_capture_kind"] == "pair_recenter"
+        assert kernel.head["head_recenter_required"] is True
+        assert output.axes == (0.0, 0.0)
+
+        # Even after the legacy delay would have elapsed, one valid frame is
+        # not enough to complete the new center capture.  No non-zero output
+        # may leak through with the old eyes center.
+        kernel.head["center_warmup_until"] = time.monotonic() - 1.0
+        kernel.head["stage_last_sample_at"] = 0.0
+        kernel.handle_pose_map("test:cam", pose_ears_only())
+        assert kernel.head["calibrating"] is True
+        assert kernel.head["head_recenter_required"] is True
+        assert kernel.head["output_x"] == 0.0
+        assert kernel.head["output_y"] == 0.0
+        assert output.axes == (0.0, 0.0)
+    finally:
+        kernel.close()
+
+
 # ---------------------------------------------------------------------------
 # C. Center capture: warm-up + median + MAD
 # ---------------------------------------------------------------------------
