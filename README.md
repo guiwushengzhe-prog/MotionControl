@@ -80,6 +80,8 @@ config\motion_mappings.json
 
 每次校准结束后只保存信号摘要诊断（阶段有效/无效帧、暂停原因、yaw/pitch min/max/median 和最终阈值比较）到 `%LOCALAPPDATA%\MotionControl\calibration_diagnostics.jsonl`，不保存视频或完整姿态帧。
 
+0.7.10 的头控信号版本为 `head-shoulder-v2`：yaw 使用固定脸部点对的鼻尖距离比，pitch 使用“鼻尖 − 同一脸部点对中点”的垂直差除以双肩宽；脸部点对在一个人体来源期间锁定为双眼或双耳，避免逐帧换公式。双髋不再是头控必需点。
+
 ## 本地语音
 
 - 电脑摄像头源：Python 本地服务打开电脑麦克风，用 Vosk 中文小模型离线识别；网页只显示状态，不录音、不上传。
