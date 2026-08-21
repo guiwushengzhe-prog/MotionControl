@@ -101,3 +101,10 @@
 - 真实失败快照 `output/head-calibration-latest-real-failure-v2.json` 显示正视/左右/上下阶段均有约 1.5 秒有效样本、无效帧为 0；旧实现却在最终检查要求 up/down 必须位于 center 两侧。一次真实记录中 center pitch `0.0532203`、up `0.0586480`、down `0.0562097`，因此 `pitch_order_correct=false`，用户重复动作后又被重启到旧阶段，形成“卡住”体验。
 - 头控改为 `head-face-v3`：鼻子 + 双眼或双耳是必需点，肩/髋/手/脚不再阻塞 yaw/pitch。pitch 使用同一脸部几何尺度，不再因髋点缺失变成 NaN；眼点不可用时才使用耳点估计眼宽。
 - 校准阶段现在有 5 秒准备、每段累计 1.5 秒有效样本和 6 秒墙钟上限。阶段超时不重启整条流程，而是记录轴级回退（已有个人值或默认值）并继续；最终总是有限结束并原子保存选中的 profile。诊断仍只写信号摘要，不保存视频/完整姿态。
+
+## 2026-08-21：head-control-v2 设计切换
+
+- 旧五段校准和肩髋尺度会把弱俯仰信号放大成“永远校不完”；按设计改为 3 秒中心记录，默认参数从启动即生效，中心有效样本不足时只回退已有个人值/默认值。
+- v2 的 pitch 是脸部垂直比例 70% 与 MediaPipe z 30% 的固定融合，脸部尺度统一使用眼距或半耳距乘 5.0；双髋不再参与 yaw/pitch，避免上半身出画导致 raw pitch 为空。
+- yaw/pitch 的方向只在 _normalize_v2_yaw/_normalize_v2_pitch 定义一次，OutputManager 不再叠加全局反号；手柄 y 只在 XInput 边界做坐标约定转换。
+- 旧个人 profile 必须检查 signal_version，不能把 head-face-v3/head-shoulder-v2 数值套到 head-control-v2；未完成真人验证前，不把语法检查当作方向或灵敏度验收。
