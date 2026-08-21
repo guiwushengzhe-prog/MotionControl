@@ -107,3 +107,9 @@
 - 手机姿态仍由 `/ws/input` 进入同一 `ControlKernel`，不在电脑重复运行 MediaPipe；断线/切源沿用 300 ms watchdog 和原子释放。页面从 `/api/input/status` 显示实际私有局域网地址，当前只读发现为 `ws://192.168.1.35:8765/ws/input`。
 - 只读核对发现 8765 由已知旧 0.7.10 进程占用，未结束未知进程；Windows 防火墙未发现 MotionControl 专用规则，本轮未改防火墙。
 - 本轮只做 Python/JavaScript 语法检查、必要编译和 `git diff --check`；未操作摄像头、校准、游戏或输出。
+
+## 2026-08-21：0.8.0 真实联调启动
+
+- 便携 EXE 首次启动失败的根因是组装目录沿用了早期构建的 `_internal`，而新 EXE 的 `pyi_rth_pkgres` 需要 `jaraco/text/Lorem ipsum.txt`；按主任务优先级停止继续修包，未把该 EXE 交给用户使用。
+- 使用完整 Python 3.11 固定依赖环境直接运行当前源码 `server.py`，`--host 0.0.0.0 --port 8765`，MediaPipe Full 模型来自已验证资源目录；当前联调 PID 为 `28924`，服务日志在 `F:\MotionControl-build-075\live-0.8.0-source`。
+- 只读确认页面标题/API/kernel/input 均为 `0.8.0`，头控信号为 `head-shoulder-v2`，模型可用，输出 `/api/output-status.enabled=false`；未启动摄像头、校准、游戏或输出。
