@@ -33,15 +33,19 @@ MP_NAMES = [
 HEAD_UPDATE_INTERVAL_S = 0.028
 CALIBRATION_PREPARE_DURATION_S = 5.0
 CALIBRATION_STAGE_DURATION_S = 1.5
-CALIBRATION_TOTAL_DURATION_S = 12.5
+# Each sampling stage has a finite wall-clock budget. Valid samples still
+# accumulate for 1.5 s, but a bad/partial pose can no longer block forever.
+CALIBRATION_STAGE_WALL_LIMIT_S = 6.0
 CALIBRATION_TRANSITION_DURATION_S = 0.60
+CALIBRATION_TOTAL_DURATION_S = CALIBRATION_PREPARE_DURATION_S + 5 * CALIBRATION_STAGE_WALL_LIMIT_S + 4 * CALIBRATION_TRANSITION_DURATION_S
 CALIBRATION_POSE_TIMEOUT_S = 0.30
 CALIBRATION_DIAGNOSTIC_MAX_VALUES = 512
 # A calibration endpoint only needs to be measurably different from the
 # neutral anchor. The personal dead-zone still protects runtime output.
 CALIBRATION_MIN_AXIS_SEPARATION = 0.0005
 CALIBRATION_GUIDANCE_DELTA = 0.005
-HEAD_SIGNAL_VERSION = "head-shoulder-v2"
+HEAD_FACE_SCALE_MULTIPLIER = 5.0
+HEAD_SIGNAL_VERSION = "head-face-v3"
 CALIBRATION_STAGES = (
     ("center", "正视"),
     ("left", "左转"),
@@ -55,13 +59,12 @@ CALIBRATION_STAGES = (
 DEFAULT_HEAD_PARAMS = {
     "signal_version": HEAD_SIGNAL_VERSION,
     "yaw0": 0.0, "yaw_left": -0.10, "yaw_right": 0.10,
-    # v2 pitch is (nose - selected face midpoint) / shoulder width.  A
-    # neutral webcam pose is around 0.15 in this scale; these defaults are
-    # deliberately expressed in that new signal space, not the old hip-based
-    # torso space.
+    # v3 pitch is (nose - available eye/ear midpoint) divided by a stable
+    # face-width estimate (eye width, or half ear width) times 5.  The scale
+    # keeps the existing default range useful without requiring shoulders.
     "pitch0": 0.15, "pitch_up": 0.08, "pitch_down": 0.22,
     "shoulder_scale0": math.nan,
-    "deadzone_x": 0.08, "deadzone_y": 0.12, "gamma": 2.2,
+    "deadzone_x": 0.08, "deadzone_y": 0.08, "gamma": 2.2,
     "max_percent_x": 60.0, "max_percent_y": 45.0,
     "enabled": True, "invert_x": False, "invert_y": False,
 }
@@ -157,7 +160,8 @@ class ControlKernel:
             "calibrated": True, "calibrating": False, "stage": "", "stage_label": "",
             "signal_version": HEAD_SIGNAL_VERSION, "face_pair": "",
             "stage_started": 0.0, "calibration_started": 0.0,
-            "stage_duration": CALIBRATION_STAGE_DURATION_S, "center_yaw": [], "center_pitch": [], "left_yaw": [],
+            "stage_duration": CALIBRATION_STAGE_DURATION_S, "stage_deadline": 0.0,
+            "center_yaw": [], "center_pitch": [], "left_yaw": [],
             "right_yaw": [], "up_pitch": [], "down_pitch": [], "shoulder_scale_samples": [],
             "stage_valid_s": 0.0, "stage_required_s": CALIBRATION_STAGE_DURATION_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
@@ -168,6 +172,10 @@ class ControlKernel:
             "calibration_profile": "default", "calibration_message": "",
             "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
             "calibration_diag": self._new_calibration_diagnostic(),
+            "calibration_fallback": None, "calibration_fallback_profile": "default",
+            "calibration_fallback_axis_results": {"yaw": "default", "pitch": "default"},
+            "calibration_axis_results": {"yaw": "pending", "pitch": "pending"},
+            "calibration_timeouts": [],
             "last_calibration_diagnostic": None,
             "quality": "当前使用：默认参数",
             "yaw0": DEFAULT_HEAD_PARAMS["yaw0"], "yaw_left": DEFAULT_HEAD_PARAMS["yaw_left"],
@@ -184,6 +192,10 @@ class ControlKernel:
             "enabled": DEFAULT_HEAD_PARAMS["enabled"],
             "invert_x": DEFAULT_HEAD_PARAMS["invert_x"], "invert_y": DEFAULT_HEAD_PARAMS["invert_y"],
         }
+        # Personal profiles are versioned by HEAD_SIGNAL_VERSION.  A profile
+        # from the former shoulder/hip-derived signal is ignored and the
+        # matching default profile remains active until the user recalibrates.
+        self._load_head_profile_locked()
         self.sensor_sources: dict[str, dict] = {}
         self._thread.start()
 
@@ -210,9 +222,8 @@ class ControlKernel:
         """Return whether one point used by head control is usable.
 
         Calibration must not be gated by unrelated low-visibility landmarks.
-        The head formulas only need finite nose/face coordinates and a stable
-        shoulder-width scale, so this check deliberately ignores hips and all
-        other unrelated MediaPipe points.
+        The head formulas only need finite nose/face coordinates. Shoulders,
+        hips and all other unrelated MediaPipe points never gate this check.
         """
         if not isinstance(point, dict) or _score(point) < minimum_score:
             return False
@@ -265,24 +276,17 @@ class ControlKernel:
         if not cls._point_has_xy(pose_map.get("nose"), 0.35):
             missing.append("鼻")
         pair = preferred_face_pair if preferred_face_pair in {"eyes", "ears"} else ""
-        if pair:
-            if not cls._face_pair_available(pose_map, pair):
-                missing.append("双眼" if pair == "eyes" else "双耳")
-        elif not (cls._face_pair_available(pose_map, "eyes") or cls._face_pair_available(pose_map, "ears")):
+        pair_available = cls._face_pair_available(pose_map, pair) if pair else False
+        if not pair_available:
+            pair_available = cls._face_pair_available(pose_map, "eyes") or cls._face_pair_available(pose_map, "ears")
+        if not pair_available:
             missing.append("双眼或双耳")
-        if not (
-            cls._point_has_xy(pose_map.get("left_shoulder"), 0.30)
-            and cls._point_has_xy(pose_map.get("right_shoulder"), 0.30)
-        ):
-            missing.append("双肩")
         if not missing:
             return {"valid": True, "reason": "", "missing_parts": [], "face_pair": pair or "auto"}
-        if "双肩" in missing:
-            reason = "请再退后，确保头和双肩入镜"
-        elif "鼻" in missing or any(part in missing for part in ("双眼", "双耳", "双眼或双耳")):
+        if "鼻" in missing or any(part in missing for part in ("双眼", "双耳", "双眼或双耳")):
             reason = "脸部点不清楚，请正对摄像头"
         else:
-            reason = "请保持头部和双肩在画面内"
+            reason = "请保持鼻子和一组眼/耳点在画面内"
         return {"valid": False, "reason": reason, "missing_parts": missing, "face_pair": pair or "auto"}
 
     def _pose_ready_reason_locked(self, now: float | None = None) -> str | None:
@@ -292,7 +296,7 @@ class ControlKernel:
         if not self.body_last_at or now - self.body_last_at > self.watchdog_timeout:
             return "人体来源没有持续发送姿态"
         if not self._calibration_pose_is_valid(self.latest_pose, self.head.get("face_pair", "")):
-            return "当前头控关键点不足（鼻、双眼/双耳、双肩）"
+            return "当前头控关键点不足（鼻、双眼或双耳）"
         if self.pose_last_valid_at and now - self.pose_last_valid_at > self.watchdog_timeout:
             return "人体姿态已过期"
         return None
@@ -452,6 +456,7 @@ class ControlKernel:
             "stage_started": 0.0,
             "calibration_started": 0.0,
             "stage_duration": CALIBRATION_STAGE_DURATION_S,
+            "stage_deadline": 0.0,
             "calibration_profile": "default",
             "calibration_message": message,
             "quality": "校准已取消，当前使用默认参数" if message else "当前使用：默认参数",
@@ -466,6 +471,10 @@ class ControlKernel:
             "stage_signal_progress": 0.0,
             "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
             "calibration_diag": self._new_calibration_diagnostic(),
+            "calibration_fallback": None, "calibration_fallback_profile": "default",
+            "calibration_fallback_axis_results": {"yaw": "default", "pitch": "default"},
+            "calibration_axis_results": {"yaw": "default", "pitch": "default"},
+            "calibration_timeouts": [],
             "norm_x": 0.0, "norm_y": 0.0,
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
             "last_update": 0.0,
@@ -640,6 +649,12 @@ class ControlKernel:
     def start_calibration(self) -> dict:
         with self._lock:
             now = time.monotonic()
+            fallback_keys = (
+                "yaw0", "yaw_left", "yaw_right", "pitch0", "pitch_up", "pitch_down",
+                "deadzone_x", "deadzone_y", "gamma", "max_percent_x", "max_percent_y",
+                "enabled", "invert_x", "invert_y", "shoulder_scale0",
+            )
+            fallback = {key: copy.deepcopy(self.head.get(key)) for key in fallback_keys}
             self.head.update({
                 # Starting calibration never gates on a camera, source, pose,
                 # or visibility.  Defaults remain active until all five
@@ -647,6 +662,7 @@ class ControlKernel:
                 "calibrating": True, "stage": "prepare", "stage_label": "准备",
                 "stage_started": now, "calibration_started": now,
                 "stage_duration": CALIBRATION_PREPARE_DURATION_S,
+                "stage_deadline": now + CALIBRATION_PREPARE_DURATION_S,
                 "calibration_message": "",
                 "stage_valid_s": 0.0, "stage_required_s": CALIBRATION_PREPARE_DURATION_S,
                 "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
@@ -656,6 +672,13 @@ class ControlKernel:
                 "stage_signal_progress": 0.0,
                 "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
                 "calibration_diag": self._new_calibration_diagnostic(),
+                "calibration_fallback": fallback,
+                "calibration_fallback_profile": self.head.get("calibration_profile", "default"),
+                "calibration_fallback_axis_results": copy.deepcopy(
+                    self.head.get("calibration_axis_results") or {"yaw": "default", "pitch": "default"}
+                ),
+                "calibration_axis_results": {"yaw": "pending", "pitch": "pending"},
+                "calibration_timeouts": [],
                 "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
                 "up_pitch": [], "down_pitch": [], "shoulder_scale_samples": [], "filtered_x": 0.0,
                 "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
@@ -879,15 +902,39 @@ class ControlKernel:
         return width if math.isfinite(width) and width >= 0.05 else math.nan
 
     def _face_pair_points(self, pose_map: dict[str, dict]) -> tuple[dict, dict] | None:
-        pair = self.head.get("face_pair", "") or self._ensure_face_pair_locked(pose_map)
-        names = ("left_eye", "right_eye") if pair == "eyes" else ("left_ear", "right_ear")
-        left, right = pose_map.get(names[0]), pose_map.get(names[1])
-        if not (
-            self._point_has_xy(left, 0.35)
-            and self._point_has_xy(right, 0.35)
-        ):
+        preferred = self.head.get("face_pair", "") or self._ensure_face_pair_locked(pose_map)
+        pairs = [preferred] + [item for item in ("eyes", "ears") if item != preferred]
+        for pair in pairs:
+            names = ("left_eye", "right_eye") if pair == "eyes" else ("left_ear", "right_ear")
+            left, right = pose_map.get(names[0]), pose_map.get(names[1])
+            if self._point_has_xy(left, 0.35) and self._point_has_xy(right, 0.35):
+                return left, right
+        return None
+
+    def _face_geometry(self, pose_map: dict[str, dict]) -> tuple[dict, float, str] | None:
+        """Return a stable face midpoint and scale from whichever pair exists.
+
+        Eye width is the canonical scale. When only ears are visible, half the
+        ear width estimates eye width, so switching pair does not multiply the
+        pitch signal by a second arbitrary factor. Shoulders are intentionally
+        optional and never gate head control.
+        """
+        eye_pair = (
+            pose_map.get("left_eye"), pose_map.get("right_eye")
+        ) if isinstance(pose_map, dict) else (None, None)
+        ear_pair = (
+            pose_map.get("left_ear"), pose_map.get("right_ear")
+        ) if isinstance(pose_map, dict) else (None, None)
+        eye_ok = self._point_has_xy(eye_pair[0], 0.35) and self._point_has_xy(eye_pair[1], 0.35)
+        ear_ok = self._point_has_xy(ear_pair[0], 0.35) and self._point_has_xy(ear_pair[1], 0.35)
+        if eye_ok:
+            midpoint, width, pair = _midpoint(eye_pair[0], eye_pair[1]), _distance(eye_pair[0], eye_pair[1]), "eyes"
+        elif ear_ok:
+            midpoint, width, pair = _midpoint(ear_pair[0], ear_pair[1]), _distance(ear_pair[0], ear_pair[1]) * 0.5, "ears"
+        else:
             return None
-        return left, right
+        scale = width * HEAD_FACE_SCALE_MULTIPLIER
+        return (midpoint, scale, pair) if math.isfinite(scale) and scale >= 0.05 else None
 
     def _torso_length(self, pose_map: dict[str, dict]) -> float:
         points = [pose_map.get(name) for name in ("left_shoulder", "right_shoulder", "left_hip", "right_hip")]
@@ -897,27 +944,29 @@ class ControlKernel:
 
     def _yaw_signal(self, pose_map: dict[str, dict]) -> float:
         nose = pose_map.get("nose")
-        if not nose or _score(nose) < 0.35 or not math.isfinite(self._shoulder_width(pose_map)):
+        if not nose or _score(nose) < 0.35:
             return math.nan
-        pair = self._face_pair_points(pose_map)
-        if pair is None:
-            return math.nan
-        left, right = pair
-        dl, dr = _distance(nose, left), _distance(nose, right)
-        if dl <= 0.003 or dr <= 0.003:
-            return math.nan
-        return math.log((dl + 1e-4) / (dr + 1e-4))
+        values = []
+        for names in (("left_eye", "right_eye"), ("left_ear", "right_ear")):
+            left, right = pose_map.get(names[0]), pose_map.get(names[1])
+            if not (self._point_has_xy(left, 0.35) and self._point_has_xy(right, 0.35)):
+                continue
+            dl, dr = _distance(nose, left), _distance(nose, right)
+            if dl > 0.003 and dr > 0.003:
+                values.append(math.log((dl + 1e-4) / (dr + 1e-4)))
+        return sum(values) / len(values) if values else math.nan
 
     def _pitch_signal(self, pose_map: dict[str, dict], shoulder_width: float) -> float:
         nose = pose_map.get("nose")
-        if not nose or _score(nose) < 0.35 or not math.isfinite(shoulder_width) or shoulder_width < 0.05:
+        if not nose or _score(nose) < 0.35:
             return math.nan
-        pair = self._face_pair_points(pose_map)
-        if pair is None:
+        geometry = self._face_geometry(pose_map)
+        if geometry is None:
             return math.nan
-        # v2 uses one fixed face pair and one shoulder-width normalization for
-        # every frame. Hips are intentionally not part of this signal.
-        return (nose["y"] - _midpoint(*pair)["y"]) / shoulder_width
+        midpoint, scale, _ = geometry
+        # v3 uses one face-derived scale for every frame. The shoulder argument
+        # is retained for call-site compatibility but never gates this signal.
+        return (nose["y"] - midpoint["y"]) / scale
 
     @staticmethod
     def _normalize_axis(raw: float, center: float, left_anchor: float, right_anchor: float) -> float:
@@ -974,7 +1023,6 @@ class ControlKernel:
             return bool(
                 self.head["center_yaw"]
                 and self.head["center_pitch"]
-                and self.head["shoulder_scale_samples"]
             )
         return bool(self.head[self._calibration_field(stage)])
 
@@ -999,7 +1047,8 @@ class ControlKernel:
             "stage": stage,
             "stage_label": label,
             "stage_started": now,
-            "stage_duration": CALIBRATION_STAGE_DURATION_S,
+            "stage_duration": CALIBRATION_STAGE_WALL_LIMIT_S,
+            "stage_deadline": now + CALIBRATION_STAGE_WALL_LIMIT_S,
             "stage_valid_s": 0.0,
             "stage_required_s": CALIBRATION_STAGE_DURATION_S,
             "stage_last_sample_at": 0.0,
@@ -1036,7 +1085,7 @@ class ControlKernel:
             return
         started = self.head["calibration_started"]
         if self.head.get("stage") == "prepare":
-            if now - started < CALIBRATION_PREPARE_DURATION_S:
+            if now < float(self.head.get("stage_deadline") or (started + CALIBRATION_PREPARE_DURATION_S)):
                 return
             self._begin_calibration_stage_locked(0, started + CALIBRATION_PREPARE_DURATION_S)
             return
@@ -1052,6 +1101,54 @@ class ControlKernel:
                 self._begin_calibration_stage_locked(index + 1, now)
             else:
                 self._finish_calibration_locked(now)
+            return
+        deadline = float(self.head.get("stage_deadline") or 0.0)
+        if deadline and now >= deadline:
+            self._timeout_calibration_stage_locked(now)
+
+    def _timeout_calibration_stage_locked(self, now: float) -> None:
+        """Finish a stalled stage with an explicit per-axis fallback."""
+        stage = self.head.get("stage")
+        if stage not in {item[0] for item in CALIBRATION_STAGES}:
+            return
+        index = next(index for index, (name, _) in enumerate(CALIBRATION_STAGES) if name == stage)
+        fields = {
+            "center": ("center_yaw", "center_pitch", "shoulder_scale_samples"),
+            "left": ("left_yaw",), "right": ("right_yaw",),
+            "up": ("up_pitch",), "down": ("down_pitch",),
+        }[stage]
+        self._finalize_calibration_diag_stage_locked(False, "阶段超时")
+        for field in fields:
+            self.head[field] = []
+        axes = ["yaw"] if stage in {"left", "right"} else ["pitch"] if stage in {"up", "down"} else ["yaw", "pitch"]
+        timeouts = list(self.head.get("calibration_timeouts") or [])
+        for axis in axes:
+            if axis not in timeouts:
+                timeouts.append(axis)
+        self.head["calibration_timeouts"] = timeouts
+        label = next(label for name, label in CALIBRATION_STAGES if name == stage)
+        next_label = CALIBRATION_STAGES[index + 1][1] if index + 1 < len(CALIBRATION_STAGES) else "应用结果"
+        fallback_axes = self.head.get("calibration_fallback_axis_results") or {}
+        axis = "yaw" if stage in {"left", "right"} else "pitch" if stage in {"up", "down"} else "both"
+        if axis == "both":
+            source_label = "已有个人值" if all(
+                fallback_axes.get(item) in {"personal", "existing_personal", "fallback_personal"}
+                for item in ("yaw", "pitch")
+            ) else "默认值"
+        else:
+            source_label = (
+                "已有个人值"
+                if fallback_axes.get(axis) in {"personal", "existing_personal", "fallback_personal"}
+                else "默认值"
+            )
+        self.head.update({
+            "stage_pause_reason": "",
+            "stage_missing_parts": [],
+            "stage_valid_s": 0.0,
+            "stage_last_sample_at": 0.0,
+            "stage_transition_until": now + CALIBRATION_TRANSITION_DURATION_S,
+            "stage_transition_message": f"{label}超时，该轴采用{source_label}，准备{next_label}",
+        })
 
     def _update_calibration_locked(
         self, raw_yaw: float, raw_pitch: float, shoulder_width: float,
@@ -1067,10 +1164,8 @@ class ControlKernel:
         reason, missing = diagnostics["reason"], diagnostics["missing_parts"]
         sample_valid = bool(diagnostics["valid"])
         if stage == "center":
-            sample_valid = sample_valid and math.isfinite(raw_yaw) and math.isfinite(raw_pitch) and math.isfinite(shoulder_width)
-            if not math.isfinite(shoulder_width):
-                reason, missing = "请再退后，确保头和双肩入镜", ["双肩"]
-            elif not (math.isfinite(raw_yaw) and math.isfinite(raw_pitch)):
+            sample_valid = sample_valid and math.isfinite(raw_yaw) and math.isfinite(raw_pitch)
+            if not (math.isfinite(raw_yaw) and math.isfinite(raw_pitch)):
                 reason, missing = "脸部点不清楚，请正对摄像头", ["脸部"]
         elif stage in {"left", "right"}:
             sample_valid = sample_valid and math.isfinite(raw_yaw)
@@ -1101,7 +1196,8 @@ class ControlKernel:
         if stage == "center":
             self.head["center_yaw"].append(raw_yaw)
             self.head["center_pitch"].append(raw_pitch)
-            self.head["shoulder_scale_samples"].append(shoulder_width)
+            if math.isfinite(shoulder_width):
+                self.head["shoulder_scale_samples"].append(shoulder_width)
         elif stage == "left":
             self.head["left_yaw"].append(raw_yaw)
         elif stage == "right":
@@ -1147,77 +1243,144 @@ class ControlKernel:
         self._begin_calibration_stage_locked(index, time.monotonic())
         self._set_calibration_pause_locked(reason, missing_parts)
 
+    @staticmethod
+    def _head_profile_keys() -> tuple[str, ...]:
+        return (
+            "yaw0", "yaw_left", "yaw_right", "pitch0", "pitch_up", "pitch_down",
+            "deadzone_x", "deadzone_y", "gamma", "max_percent_x", "max_percent_y",
+            "enabled", "invert_x", "invert_y", "shoulder_scale0",
+        )
+
+    def _head_profile_path(self) -> Path:
+        root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        return root / "MotionControl" / "head_profile.json"
+
+    def _load_head_profile_locked(self) -> None:
+        """Load only an atomically-written profile for this signal version."""
+        path = self._head_profile_path()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("signal_version") != HEAD_SIGNAL_VERSION:
+                return
+            params = payload.get("params")
+            if not isinstance(params, dict):
+                return
+            if not all(key in params for key in self._head_profile_keys()):
+                return
+            self.head.update({key: params[key] for key in self._head_profile_keys()})
+            self.head.update({
+                "calibrated": True,
+                "calibrating": False,
+                "calibration_profile": payload.get("calibration_profile", "personal"),
+                "calibration_axis_results": payload.get("axis_results") or {"yaw": "personal", "pitch": "personal"},
+                "quality": payload.get("quality", "当前使用：个人校准"),
+            })
+        except (OSError, ValueError, TypeError):
+            return
+
+    def _persist_head_profile_locked(self) -> None:
+        """Atomically persist the chosen personal/default axis parameters."""
+        path = self._head_profile_path()
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        payload = {
+            "signal_version": HEAD_SIGNAL_VERSION,
+            "saved_at_unix": time.time(),
+            "calibration_profile": self.head.get("calibration_profile", "default"),
+            "axis_results": copy.deepcopy(self.head.get("calibration_axis_results") or {}),
+            "quality": self.head.get("quality", ""),
+            "params": {key: self.head.get(key) for key in self._head_profile_keys()},
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError as exc:
+            self.head["calibration_profile_error"] = str(exc)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _finish_calibration_locked(self, now: float | None = None) -> None:
         now = time.monotonic() if now is None else now
-        if any(not self._calibration_stage_ready_locked(stage) for stage, _ in CALIBRATION_STAGES):
-            self._set_calibration_final_check_locked(
-                math.nan, math.nan, math.nan, math.nan, math.nan, math.nan, False, False,
-            )
-            self._persist_calibration_diagnostic_locked("final_check_incomplete", "阶段样本不完整")
-            missing = next(label for stage, label in CALIBRATION_STAGES if not self._calibration_stage_ready_locked(stage))
-            index = next(index for index, (_, label) in enumerate(CALIBRATION_STAGES) if label == missing)
-            self._restart_calibration_stage_locked(index, f"{missing}阶段还需要有效样本", [missing])
-            return
-        yaw0 = self._median(self.head["center_yaw"], self.head["raw_yaw"])
-        pitch0 = self._median(self.head["center_pitch"], self.head["raw_pitch"])
-        if not (math.isfinite(yaw0) and math.isfinite(pitch0)):
-            self._set_calibration_final_check_locked(
-                yaw0, math.nan, math.nan, pitch0, math.nan, math.nan, False, False,
-            )
-            self._persist_calibration_diagnostic_locked("final_check_incomplete", "正视阶段信号无效")
-            self._restart_calibration_stage_locked(0, "脸部点不清楚，请正对摄像头", ["脸部"])
-            return
+        # A timed-out center stage has no calibration center.  Do not use the
+        # last live frame as a substitute, otherwise a directional stage could
+        # accidentally create a personal axis around an unmeasured center.
+        yaw0 = self._median(self.head["center_yaw"])
+        pitch0 = self._median(self.head["center_pitch"])
         yl, yr = self._median(self.head["left_yaw"]), self._median(self.head["right_yaw"])
         pu, pd = self._median(self.head["up_pitch"]), self._median(self.head["down_pitch"])
         yaw_check = self._calibration_axis_check(yaw0, yl, yr)
         pitch_check = self._calibration_axis_check(pitch0, pu, pd)
         yaw_ok, pitch_ok = yaw_check["ok"], pitch_check["ok"]
         self._set_calibration_final_check_locked(yaw0, yl, yr, pitch0, pu, pd, yaw_ok, pitch_ok)
-        if not yaw_ok:
-            reason = (
-                "左右转方向次序未形成，请按提示分别向左、向右转头"
-                if not yaw_check["ordered"]
-                else "左右转信号几乎没有差异，请再转一些"
-            )
-            self._persist_calibration_diagnostic_locked("final_check_failed", reason)
-            self._restart_calibration_stage_locked(1, reason, ["左右转"])
-            return
-        if not pitch_ok:
-            reason = (
-                "抬头/低头方向次序未形成，请按提示分别抬头、低头"
-                if not pitch_check["ordered"]
-                else "抬头/低头信号几乎没有差异，请再抬高或低一些"
-            )
-            self._persist_calibration_diagnostic_locked("final_check_failed", reason)
-            self._restart_calibration_stage_locked(3, reason, ["上下转头"])
-            return
-        nx = [abs(self._normalize_axis(value, yaw0, yl, yr)) for value in self.head["center_yaw"]]
-        ny = [abs(self._normalize_axis(value, pitch0, pu, pd)) for value in self.head["center_pitch"]]
-        deadzone_x = self.head["deadzone_x"]
-        deadzone_y = self.head["deadzone_y"]
-        if yaw_ok and nx:
-            deadzone_x = _clamp(self._qtile(nx, 0.99) * 1.8 + 0.02, 0.06, 0.30)
-        if pitch_ok and ny:
-            deadzone_y = _clamp(self._qtile(ny, 0.99) * 2.0 + 0.025, 0.08, 0.34)
-        self._persist_calibration_diagnostic_locked("success", "")
+        fallback = self.head.get("calibration_fallback") or {}
+        fallback_axes = self.head.get("calibration_fallback_axis_results") or {}
+
+        def fallback_value(key: str):
+            value = fallback.get(key)
+            if key in {"enabled", "invert_x", "invert_y"}:
+                return bool(value) if value is not None else bool(DEFAULT_HEAD_PARAMS[key])
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                value = math.nan
+            return value if math.isfinite(value) else DEFAULT_HEAD_PARAMS[key]
+
+        def previous_axis(axis: str) -> str:
+            value = str(fallback_axes.get(axis) or "default")
+            return "existing_personal" if value in {"personal", "existing_personal", "fallback_personal"} else "default"
+
+        def axis_result(axis: str, ok: bool) -> str:
+            return "personal" if ok else previous_axis(axis)
+
+        yaw_result = axis_result("yaw", yaw_ok)
+        pitch_result = axis_result("pitch", pitch_ok)
+        nx = [abs(self._normalize_axis(value, yaw0, yl, yr)) for value in self.head["center_yaw"]] if yaw_ok else []
+        ny = [abs(self._normalize_axis(value, pitch0, pu, pd)) for value in self.head["center_pitch"]] if pitch_ok else []
+        deadzone_x = _clamp(self._qtile(nx, 0.99) * 1.8 + 0.02, 0.06, 0.30) if nx else fallback_value("deadzone_x")
+        deadzone_y = _clamp(self._qtile(ny, 0.99) * 2.0 + 0.025, 0.08, 0.34) if ny else fallback_value("deadzone_y")
+        axis_results = {"yaw": yaw_result, "pitch": pitch_result}
+        profile = "personal" if yaw_result == "personal" and pitch_result == "personal" else (
+            "default" if yaw_result == "default" and pitch_result == "default" else "mixed"
+        )
+        axis_text = {
+            "personal": "个人值", "existing_personal": "已有个人值", "default": "默认值",
+        }
+        reason = f"左右{axis_text[yaw_result]}，上下{axis_text[pitch_result]}"
+        event = "success" if yaw_result == "personal" and pitch_result == "personal" else "success_with_fallback"
+        # Persist the full diagnostic while all stage arrays and final-check
+        # values are still present.  A failed axis is a normal, bounded result,
+        # not a reason to restart the already completed calibration forever.
+        self._persist_calibration_diagnostic_locked(event, reason)
         self.head.update({
             "signal_version": HEAD_SIGNAL_VERSION,
-            "yaw0": yaw0, "yaw_left": yl, "yaw_right": yr, "pitch0": pitch0,
-            "pitch_up": pu, "pitch_down": pd, "shoulder_scale0": self._median(self.head["shoulder_scale_samples"]),
+            "yaw0": yaw0 if yaw_ok else fallback_value("yaw0"),
+            "yaw_left": yl if yaw_ok else fallback_value("yaw_left"),
+            "yaw_right": yr if yaw_ok else fallback_value("yaw_right"),
+            "pitch0": pitch0 if pitch_ok else fallback_value("pitch0"),
+            "pitch_up": pu if pitch_ok else fallback_value("pitch_up"),
+            "pitch_down": pd if pitch_ok else fallback_value("pitch_down"),
+            "shoulder_scale0": self._median(self.head["shoulder_scale_samples"], fallback_value("shoulder_scale0")),
             "deadzone_x": deadzone_x, "deadzone_y": deadzone_y,
             "calibrating": False, "calibrated": True,
             "stage": "", "stage_label": "", "stage_started": 0.0, "calibration_started": 0.0,
-            "calibration_profile": "personal", "calibration_message": "",
-            "quality": "当前使用：个人校准",
+            "stage_deadline": 0.0,
+            "calibration_profile": profile, "calibration_message": "",
+            "calibration_axis_results": axis_results,
+            "quality": f"校准完成（{reason}）",
             "stage_valid_s": CALIBRATION_STAGE_DURATION_S, "stage_required_s": CALIBRATION_STAGE_DURATION_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
             "stage_transition_until": 0.0, "stage_transition_message": "",
-            "calibration_notice": "success", "calibration_notice_text": "校准成功，已使用个人参数",
+            "calibration_notice": "success", "calibration_notice_text": f"校准完成（{reason}）",
             "calibration_notice_until": now + 2.0,
             "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
             "up_pitch": [], "down_pitch": [], "shoulder_scale_samples": [],
+            "calibration_fallback": None, "calibration_fallback_profile": "default",
+            "calibration_fallback_axis_results": {"yaw": "default", "pitch": "default"},
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0, "last_update": 0.0,
         })
+        self._persist_head_profile_locked()
 
     def _update_head_locked(self, pose_map: dict[str, dict], now: float) -> None:
         if self.head.get("signal_version") != HEAD_SIGNAL_VERSION:
@@ -1292,6 +1455,11 @@ class ControlKernel:
             "stage": self.head["stage"], "stage_label": self.head.get("stage_label", ""),
             "quality": self.head["quality"], "calibration_profile": self.head.get("calibration_profile", "default"),
             "calibration_message": self.head.get("calibration_message", ""),
+            "calibration_axis_results": copy.deepcopy(self.head.get("calibration_axis_results") or {}),
+            "calibration_timeouts": list(self.head.get("calibration_timeouts") or []),
+            "calibration_fallback_axis_results": copy.deepcopy(
+                self.head.get("calibration_fallback_axis_results") or {}
+            ),
             "calibration_elapsed_s": (
                 round(max(0.0, now - self.head["calibration_started"]), 1)
                 if self.head["calibrating"] else None
@@ -1317,6 +1485,11 @@ class ControlKernel:
             "stage_missing_parts": list(self.head.get("stage_missing_parts") or []),
             "stage_transition_message": self.head.get("stage_transition_message", ""),
             "stage_transition_remaining_s": round(max(0.0, float(self.head.get("stage_transition_until") or 0.0) - now), 1),
+            "stage_wall_limit_s": CALIBRATION_PREPARE_DURATION_S if self.head.get("stage") == "prepare" else CALIBRATION_STAGE_WALL_LIMIT_S,
+            "stage_wall_remaining_s": (
+                round(max(0.0, float(self.head.get("stage_deadline") or 0.0) - now), 1)
+                if self.head["calibrating"] else None
+            ),
             "stage_signal_value": self.head.get("stage_signal_value"),
             "stage_signal_center": self.head.get("stage_signal_center"),
             "stage_signal_delta": self.head.get("stage_signal_delta"),
