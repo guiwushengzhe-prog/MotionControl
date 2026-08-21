@@ -125,3 +125,4 @@
 - 参考 `head_control.py` 是不可修改的头控/自动校准核心；当前工程只能在 `control_kernel.py`、`server.py`、网页和采集工具边界做接口适配。不得把旧 head-control-v2 的 face pair、face/z 融合、五段锚点或 gamma 参数重新混入。
 - `HeadController` 的 profile 信号版本为 `head-control-v4.3-reference-video-tuned`，旧 `head_profile.json` 会因版本不符自动回退，不可手工套用。
 - `F:\MotionControl-App\.pylibs` 未被源码或启动脚本引用；正式 MediaPipe/OpenCV 来源是 `F:\MotionControl\MediaPipe\.venv`，临时库保留待后续明确清理。
+- 2026-08-22：MediaPipe Tasks 1.0.0 对当前 I 盘原始 Full task 报 `NormalizationOptions` metadata 错误，文件存在不等于可加载。不得手改 `.task` metadata，也不能用 `.pylibs` 隐式替代；应保留原始文件并选用已验证、版本化的兼容副本。
