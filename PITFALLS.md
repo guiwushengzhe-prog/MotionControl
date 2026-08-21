@@ -108,3 +108,9 @@
 - v2 的 pitch 是脸部垂直比例 70% 与 MediaPipe z 30% 的固定融合，脸部尺度统一使用眼距或半耳距乘 5.0；双髋不再参与 yaw/pitch，避免上半身出画导致 raw pitch 为空。
 - yaw/pitch 的方向只在 _normalize_v2_yaw/_normalize_v2_pitch 定义一次，OutputManager 不再叠加全局反号；手柄 y 只在 XInput 边界做坐标约定转换。
 - 旧个人 profile 必须检查 signal_version，不能把 head-face-v3/head-shoulder-v2 数值套到 head-control-v2；未完成真人验证前，不把语法检查当作方向或灵敏度验收。
+
+## 2026-08-21：脸部点对切换必须重新采中心
+
+- 仅等待固定 `1.2s` 不能算 recenter：如果 eyes 已经有中心，随后切换到 ears，继续使用旧 eyes 中心会让新几何下的 yaw/pitch 偏置并可能漏出非零输出。
+- 现在 pair 从 eyes/ears 切换后复用同一套有限 center capture（`0.5s` warm-up、`1.8s` 有效目标、`5.0s` 墙钟上限），期间输出强制归零；只有新中心采集成功才清除 `head_recenter_required`。
+- 新 pair 的中心采集超时或取消不会回退到旧 pair 的个人中心，而是保留安全默认/零输出，等待下一次中心采集；旧 eyes 中心不再跨 pair 复用。
