@@ -114,3 +114,9 @@
 - 仅等待固定 `1.2s` 不能算 recenter：如果 eyes 已经有中心，随后切换到 ears，继续使用旧 eyes 中心会让新几何下的 yaw/pitch 偏置并可能漏出非零输出。
 - 现在 pair 从 eyes/ears 切换后复用同一套有限 center capture（`0.5s` warm-up、`1.8s` 有效目标、`5.0s` 墙钟上限），期间输出强制归零；只有新中心采集成功才清除 `head_recenter_required`。
 - 新 pair 的中心采集超时或取消不会回退到旧 pair 的个人中心，而是保留安全默认/零输出，等待下一次中心采集；旧 eyes 中心不再跨 pair 复用。
+
+## 2026-08-21：head-control-v2 方向链审查与真人采集工具
+
+- `coordinates_mirrored` 只在 `pose_map_from_message()` 反一次；raw yaw 经过 `_normalize_v2_yaw()` 统一映射为内部水平语义，再由 `invert_x`（仅用户显式设置）决定是否主动反向，`OutputManager.apply()` 和 Xbox RX 不再重复翻转。临时加入的 `invert_yaw` 补丁已移除，避免二次反号。
+- 真人采集工具必须使用正式 Full task 和真实摄像头；输出包含 raw yaw/pitch 分量、normalized yaw/pitch、output x/y 和 face pair，默认落到 `output/head-control-v2-real-signal-*.json`。不使用合成姿态或真实鼠标输出。
+- `F:\MotionControl-App\.pylibs` 未被源码或启动脚本引用；正式 MediaPipe/OpenCV 来源是 `F:\MotionControl\MediaPipe\.venv`，临时库保留待后续明确清理。

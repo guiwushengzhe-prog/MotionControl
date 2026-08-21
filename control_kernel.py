@@ -353,6 +353,9 @@ class ControlKernel:
     def _record_calibration_frame_locked(
         self, *, valid: bool, reason: str = "", missing_parts=None,
         raw_yaw: float = math.nan, raw_pitch: float = math.nan,
+        raw_pitch_face: float = math.nan, raw_pitch_z: float = math.nan,
+        normalized_pitch: float = math.nan, output_y: float = math.nan,
+        face_pair: str = "",
     ) -> None:
         current = self._calibration_diag_current_locked()
         if current is None:
@@ -363,6 +366,16 @@ class ControlKernel:
                 current["yaw_values"].append(float(raw_yaw))
             if math.isfinite(raw_pitch) and len(current["pitch_values"]) < CALIBRATION_DIAGNOSTIC_MAX_VALUES:
                 current["pitch_values"].append(float(raw_pitch))
+            if math.isfinite(raw_pitch_face) and len(current["pitch_face_values"]) < CALIBRATION_DIAGNOSTIC_MAX_VALUES:
+                current["pitch_face_values"].append(float(raw_pitch_face))
+            if math.isfinite(raw_pitch_z) and len(current["pitch_z_values"]) < CALIBRATION_DIAGNOSTIC_MAX_VALUES:
+                current["pitch_z_values"].append(float(raw_pitch_z))
+            if math.isfinite(normalized_pitch) and len(current["normalized_pitch_values"]) < CALIBRATION_DIAGNOSTIC_MAX_VALUES:
+                current["normalized_pitch_values"].append(float(normalized_pitch))
+            if math.isfinite(output_y) and len(current["output_y_values"]) < CALIBRATION_DIAGNOSTIC_MAX_VALUES:
+                current["output_y_values"].append(float(output_y))
+            if face_pair and len(current["face_pair_values"]) < CALIBRATION_DIAGNOSTIC_MAX_VALUES:
+                current["face_pair_values"].append(str(face_pair))
             return
         current["invalid_frames"] += 1
         reason = str(reason or "未说明").strip() or "未说明"
@@ -389,6 +402,15 @@ class ControlKernel:
             "missing_parts": dict(current["missing_parts"]),
             "yaw": self._diagnostic_stats(current["yaw_values"]),
             "pitch": self._diagnostic_stats(current["pitch_values"]),
+            "pitch_face": self._diagnostic_stats(current.get("pitch_face_values")),
+            "pitch_z": self._diagnostic_stats(current.get("pitch_z_values")),
+            "normalized_pitch": self._diagnostic_stats(current.get("normalized_pitch_values")),
+            "output_y": self._diagnostic_stats(current.get("output_y_values")),
+            "face_pair": (
+                max(set(current.get("face_pair_values", [])),
+                    key=current.get("face_pair_values", []).count)
+                if current.get("face_pair_values") else ""
+            ),
         }
         diag["stage_attempts"].append(entry)
         diag["current"] = None
@@ -776,6 +798,9 @@ class ControlKernel:
                 "stage": "center", "label": "设置中心", "started_at_unix": time.time(),
                 "valid_frames": 0, "invalid_frames": 0, "pause_reasons": {},
                 "missing_parts": {}, "yaw_values": [], "pitch_values": [],
+                "pitch_face_values": [], "pitch_z_values": [],
+                "normalized_pitch_values": [], "output_y_values": [],
+                "face_pair_values": [],
             }
 
     def start_calibration(self) -> dict:
@@ -1346,6 +1371,9 @@ class ControlKernel:
             self._record_calibration_frame_locked(
                 valid=False, reason="正在准备，请保持正视", missing_parts=[],
                 raw_yaw=raw_yaw, raw_pitch=raw_pitch,
+                raw_pitch_face=float(self.head.get("raw_pitch_face", math.nan)),
+                raw_pitch_z=float(self.head.get("raw_pitch_z", math.nan)),
+                face_pair=str(self.head.get("face_pair", "")),
             )
             return
         diagnostics = self._calibration_pose_diagnostics(pose_map, self.head.get("face_pair", ""))
@@ -1357,11 +1385,27 @@ class ControlKernel:
             self._record_calibration_frame_locked(
                 valid=False, reason=reason or "请保持姿势", missing_parts=missing,
                 raw_yaw=raw_yaw, raw_pitch=raw_pitch,
+                raw_pitch_face=float(self.head.get("raw_pitch_face", math.nan)),
+                raw_pitch_z=float(self.head.get("raw_pitch_z", math.nan)),
+                face_pair=str(self.head.get("face_pair", "")),
             )
             self._set_calibration_pause_locked(reason or "请保持姿势", missing)
             return
 
-        self._record_calibration_frame_locked(valid=True, raw_yaw=raw_yaw, raw_pitch=raw_pitch)
+        # Compute normalized pitch for diagnostics even though output is held
+        # at zero during calibration.
+        diag_norm_pitch = self._normalize_v2_pitch(
+            raw_pitch, self.head["pitch0"],
+            self.head.get("pitch_range", HEAD_DEFAULT_PITCH_RANGE),
+        ) if math.isfinite(raw_pitch) else math.nan
+        self._record_calibration_frame_locked(
+            valid=True, raw_yaw=raw_yaw, raw_pitch=raw_pitch,
+            raw_pitch_face=float(self.head.get("raw_pitch_face", math.nan)),
+            raw_pitch_z=float(self.head.get("raw_pitch_z", math.nan)),
+            normalized_pitch=diag_norm_pitch,
+            output_y=0.0,
+            face_pair=str(self.head.get("face_pair", "")),
+        )
         self.head["stage_pause_reason"] = ""
         self.head["stage_missing_parts"] = []
         last = float(self.head.get("stage_last_sample_at") or 0.0)
@@ -1789,6 +1833,8 @@ class ControlKernel:
             "raw_pitch_face": self.head["raw_pitch_face"] if math.isfinite(self.head.get("raw_pitch_face", math.nan)) else None,
             "raw_pitch_z": self.head["raw_pitch_z"] if math.isfinite(self.head.get("raw_pitch_z", math.nan)) else None,
             "raw_pitch_fused": self.head["raw_pitch"] if math.isfinite(self.head["raw_pitch"]) else None,
+            "normalized_x": round(float(self.head.get("norm_x") or 0.0), 4),
+            "normalized_y": round(float(self.head.get("norm_y") or 0.0), 4),
             "output_x": round(self.head["output_x"], 3), "output_y": round(self.head["output_y"], 3),
             "deadzone_x": self.head["deadzone_x"], "deadzone_y": self.head["deadzone_y"],
             "gamma": self.head["gamma"], "max_percent_x": self.head["max_percent_x"],

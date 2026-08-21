@@ -145,6 +145,12 @@
 - 默认 raw 范围为 yaw 0.20、pitch 0.04，死区默认 8%、gamma 1.5；启动即可控制。第一次有效姿态或用户手动操作会记录 3 秒中心，至少 1 秒有效样本才替换个人中心，否则保留已有个人值/默认值。
 - 旧版本个人 profile 按 signal_version 拒绝加载并提示重新设置中心；诊断继续只追加摘要 JSONL。当前仅完成源码修改，真人方向、摄像头和游戏输出留给用户验收。
 
+## 2026-08-21：head-control-v2 方向链与真人采集准备
+
+- 审计 dd00313 后的未提交修改，移除只在输出末端补符号的 `invert_yaw`；保留 `coordinates_mirrored` 单次归一化、`_normalize_v2_yaw` 唯一水平方向映射和用户显式 `invert_x`。
+- `tools/head_signal_capture.py` 改为正式 Full task + 真实摄像头入口，输出 raw yaw/pitch 分量、normalized yaw/pitch、output x/y、face pair 和模型 SHA256，默认落盘到 `F:\MotionControl-App\output`。
+- 只完成语法、定向 head-control-v2 测试和帮助入口检查；未替用户采集、移动鼠标或启动摄像头。
+
 ## 2026-08-21：Git 恢复与 head-control-v2 pair recenter 收口
 
 - F 盘工作树的 3790fb2 变更文件已逐个核验；临时 C 盘仓库仍存在并提供完整父提交链。
