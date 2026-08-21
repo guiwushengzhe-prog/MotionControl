@@ -88,6 +88,7 @@ config\motion_mappings.json
 - 手机摄像头源：手机在已有 `/ws/input` 发送 `voice_text`（文本），电脑端再次按唤醒词和映射解析；手机不直接指定按键。
 - 手持 `sensor_frame` 不是语音来源。切换身体源、手机断线或服务退出会释放语音保持输出。
 - 默认唤醒词为“体感”，紧急命令为“体感紧急停止”。映射保存在 `config\voice_mappings.json`，可在设置中编辑。
+- 系统命令“体感 开始校准”（也可紧凑说“体感开始校准”）会调用现有头控中心校准入口；它不是 Enter 键映射。执行前服务会再次确认当前身体源仍在线，语音断开或来源切换不会继续执行。
 
 模型使用项目相对路径：
 
@@ -95,7 +96,7 @@ config\motion_mappings.json
 models\vosk-model-small-cn-0.22
 ```
 
-依赖：`vosk`（中文离线识别）和电脑本地麦克风所需的 `sounddevice`；电脑摄像头还需要 `opencv-python`、`numpy`、`mediapipe`。缺少依赖或录音设备时服务会报告明确错误，不会显示为已运行。
+依赖：`vosk==0.3.45`（中文离线识别）和电脑本地麦克风所需的 `sounddevice`；电脑摄像头还需要 `opencv-python`、`numpy`、`mediapipe`。缺少依赖或录音设备时服务会报告明确错误，不会显示为已运行。
 
 ## 启动
 

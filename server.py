@@ -14,7 +14,7 @@ from urllib.parse import unquote, urlparse
 from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
-from voice_backend import VoiceService
+from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService
 
 # Product version.  The wire protocol remains pose_frame_v2.
 VERSION = "0.9.3"
@@ -49,9 +49,32 @@ def emergency_stop_all() -> dict:
 
 
 HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
+
+
+def execute_voice_action(action: dict) -> dict:
+    """Keep system voice commands at the local control-kernel boundary."""
+    if str(action.get("type", "")).lower() != "system":
+        return OUTPUT.execute_action(action)
+    target = str(action.get("target", "")).strip().upper()
+    if target != SYSTEM_HEAD_CALIBRATION_START:
+        return {"executed": False, "reason": f"不支持的系统语音命令：{target}"}
+    if not VOICE.source_is_active(action.get("voice_source_id")):
+        return {"executed": False, "reason": "语音源已断开，未执行头控校准"}
+    if RUNTIME.body_mode == "computer":
+        if not RUNTIME.camera.status().get("running"):
+            return {"executed": False, "reason": "电脑身体源未启动，未执行头控校准"}
+    elif RUNTIME.body_mode == "phone":
+        if not KERNEL.status().get("active_body_source"):
+            return {"executed": False, "reason": "手机身体源尚未提供姿态，未执行头控校准"}
+    else:
+        return {"executed": False, "reason": "当前没有可用身体源，未执行头控校准"}
+    RUNTIME.start_calibration()
+    return {"executed": True, "system_action": target}
+
+
 VOICE = VoiceService(
     ROOT,
-    OUTPUT.execute_action,
+    execute_voice_action,
     emergency_stop=emergency_stop_all,
     clear_source=OUTPUT.clear_source,
 )

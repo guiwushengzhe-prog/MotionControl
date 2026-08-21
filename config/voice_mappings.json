@@ -2,6 +2,7 @@
   "wake_word": "体感",
   "emergency_stop_phrases": ["体感紧急停止"],
   "mappings": [
+    {"phrase": "开始校准", "synonyms": ["校准头控", "自动校准"], "type": "system", "target": "HEAD_CALIBRATION_START"},
     {"phrase": "开始", "synonyms": ["启动", "继续"], "type": "keyboard", "target": "ENTER"},
     {"phrase": "停止", "synonyms": ["暂停"], "type": "keyboard", "target": "ESC"},
     {"phrase": "上", "synonyms": ["上移", "向上", "往上"], "type": "keyboard", "target": "UP"},

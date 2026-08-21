@@ -17,6 +17,7 @@ from output_backend import KEY_CODES, XUSB_GAMEPAD_BUTTONS, KeyboardOutput
 
 DEFAULT_WAKE_WORD = "体感"
 DEFAULT_EMERGENCY_STOP = "体感紧急停止"
+SYSTEM_HEAD_CALIBRATION_START = "HEAD_CALIBRATION_START"
 VOICE_TIMEOUT_SECONDS = 1.5
 MAX_AUDIO_FRAME_BYTES = 256 * 1024
 
@@ -257,6 +258,9 @@ class VoiceService:
                 if invalid:
                     raise ValueError("不支持的键盘键：" + ", ".join(invalid))
                 target = "+".join(parts)
+            elif action_type == "system":
+                if target != SYSTEM_HEAD_CALIBRATION_START:
+                    raise ValueError(f"暂不支持的系统命令：{target}")
             else:
                 raise ValueError(f"未知输出类型：{action_type}")
             item = {"phrase": phrase, "type": action_type, "target": target}
@@ -445,6 +449,9 @@ class VoiceService:
             return {"matched": False, "reason": "command_not_in_mapping"}
         action = {"type": match["type"], "target": match["target"]}
         action["source"] = f"voice:{source_id}" if source_id else "voice"
+        if match["type"] == "system":
+            action["voice_source_id"] = source_id
+            action["voice_source_kind"] = self.source_kind
         self.last_command = match["phrase"]
         self.last_action = f'{match["type"]}:{match["target"]}'
 
@@ -568,6 +575,11 @@ class VoiceService:
             self.source_kind = None
             self.last_partial = ""
             return self.status()
+
+    def source_is_active(self, source_id: str | None) -> bool:
+        """Check the exact voice source before a deferred system action runs."""
+        with self._lock:
+            return bool(source_id and self.connected and self.source_id == str(source_id))
 
     def status(self) -> dict:
         now = time.monotonic()
