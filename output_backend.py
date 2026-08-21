@@ -471,12 +471,11 @@ class OutputManager:
                 return
             try:
                 if self.mode == "mouse":
-                    # The preview is permanently mirrored for the user; the
-                    # measured control direction needs one final sign flip at
-                    # the mouse boundary.  Do not mirror the pose or yaw math
-                    # again upstream.
-                    mouse_x = -x
-                    amount_x = mouse_x * self.mouse_speed_x * dt + self._mouse_residual_x
+                    # X has already been assigned by the labeled
+                    # left/center/right head anchors in ControlKernel.  Keep
+                    # this boundary source/mirror agnostic: no second global
+                    # sign flip belongs here.
+                    amount_x = x * self.mouse_speed_x * dt + self._mouse_residual_x
                     amount_y = y * self.mouse_speed_y * dt + self._mouse_residual_y
                     dx = int(amount_x)
                     dy = int(amount_y)

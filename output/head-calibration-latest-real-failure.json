@@ -1,0 +1,1720 @@
+{
+  "captured_at": "2026-08-21T16:11:49.6337825+08:00",
+  "source": "read-only runtime snapshot before restart",
+  "kernel_status": {
+    "version": "0.8.1",
+    "body_mode": "phone",
+    "camera": {
+      "running": false,
+      "camera_index": 0,
+      "frames": 0,
+      "last_frame_age_ms": null,
+      "last_error": null,
+      "model_path": "F:\\MotionControl-build-075\\live-0.7.10-release\\models\\mediapipe\\pose_landmarker_full.task",
+      "resolution": {
+        "width": 0,
+        "height": 0
+      },
+      "backend_preference": "auto",
+      "backend": null,
+      "backend_name": null,
+      "fourcc": null,
+      "requested_fps": 30,
+      "actual_capture_fps": null,
+      "coordinate_space": "camera_frame_normalized_unmirrored",
+      "preview_mirrored": false,
+      "coordinates_mirrored": false
+    },
+    "kernel": {
+      "active_body_source": "mobile_pose:camera-8b5a179e-20d9-4712-9f04-354566436324",
+      "pose_age_ms": 62,
+      "width": 540,
+      "height": 960,
+      "pose": {
+        "nose": {
+          "x": 0.27926015853881836,
+          "y": 0.2688383460044861,
+          "z": -1.4035027027130127,
+          "score": 0.9989336133003235
+        },
+        "left_eye_inner": {
+          "x": 0.3100604712963104,
+          "y": 0.20640666782855988,
+          "z": -1.383859634399414,
+          "score": 0.9980537295341492
+        },
+        "left_eye": {
+          "x": 0.34783217310905457,
+          "y": 0.19884651899337769,
+          "z": -1.3841164112091064,
+          "score": 0.9982097148895264
+        },
+        "left_eye_outer": {
+          "x": 0.38999298214912415,
+          "y": 0.1915847659111023,
+          "z": -1.3824191093444824,
+          "score": 0.9980658292770386
+        },
+        "right_eye_inner": {
+          "x": 0.23002846539020538,
+          "y": 0.22757968306541443,
+          "z": -1.288650631904602,
+          "score": 0.998068630695343
+        },
+        "right_eye": {
+          "x": 0.20462894439697266,
+          "y": 0.2356618344783783,
+          "z": -1.285865068435669,
+          "score": 0.9982067942619324
+        },
+        "right_eye_outer": {
+          "x": 0.18214480578899384,
+          "y": 0.24362602829933167,
+          "z": -1.287799596786499,
+          "score": 0.9984754323959351
+        },
+        "left_ear": {
+          "x": 0.5095449090003967,
+          "y": 0.2108401507139206,
+          "z": -1.0457801818847656,
+          "score": 0.998797595500946
+        },
+        "right_ear": {
+          "x": 0.21828000247478485,
+          "y": 0.27258026599884033,
+          "z": -0.5731775760650635,
+          "score": 0.9982588291168213
+        },
+        "mouth_left": {
+          "x": 0.38048243522644043,
+          "y": 0.30940619111061096,
+          "z": -1.2639639377593994,
+          "score": 0.9992607235908508
+        },
+        "mouth_right": {
+          "x": 0.28605377674102783,
+          "y": 0.3280070126056671,
+          "z": -1.1330177783966064,
+          "score": 0.9987465739250183
+        },
+        "left_shoulder": {
+          "x": 0.9225224256515503,
+          "y": 0.4784383177757263,
+          "z": -0.8643635511398315,
+          "score": 0.9946243166923523
+        },
+        "right_shoulder": {
+          "x": 0.21642151474952698,
+          "y": 0.5503886938095093,
+          "z": -0.11367466300725937,
+          "score": 0.9979403018951416
+        },
+        "left_elbow": {
+          "x": 1.0082213878631592,
+          "y": 0.8749852180480957,
+          "z": -1.0454899072647095,
+          "score": 0.7982669472694397
+        },
+        "right_elbow": {
+          "x": -0.0173201821744442,
+          "y": 0.8940760493278503,
+          "z": -0.9566017985343933,
+          "score": 0.9335606098175049
+        },
+        "left_wrist": {
+          "x": 0.8052585124969482,
+          "y": 1.008417010307312,
+          "z": -1.270480990409851,
+          "score": 0.3615674078464508
+        },
+        "right_wrist": {
+          "x": 0.0651359111070633,
+          "y": 0.5720928907394409,
+          "z": -2.415208339691162,
+          "score": 0.9672105312347412
+        },
+        "left_pinky": {
+          "x": 0.757735013961792,
+          "y": 1.0756806135177612,
+          "z": -1.348962426185608,
+          "score": 0.21803660690784454
+        },
+        "right_pinky": {
+          "x": 0.10454190522432327,
+          "y": 0.4783022403717041,
+          "z": -2.6155383586883545,
+          "score": 0.8872782588005066
+        },
+        "left_index": {
+          "x": 0.7498448491096497,
+          "y": 1.0863863229751587,
+          "z": -1.2663236856460571,
+          "score": 0.2568041682243347
+        },
+        "right_index": {
+          "x": 0.11192808300256729,
+          "y": 0.43336883187294006,
+          "z": -2.3832321166992188,
+          "score": 0.8810847401618958
+        },
+        "left_thumb": {
+          "x": 0.7477465271949768,
+          "y": 1.059664249420166,
+          "z": -1.234237551689148,
+          "score": 0.27026763558387756
+        },
+        "right_thumb": {
+          "x": 0.1259334832429886,
+          "y": 0.47053924202919006,
+          "z": -2.364257335662842,
+          "score": 0.8621739745140076
+        },
+        "left_hip": {
+          "x": 0.8997129797935486,
+          "y": 1.0094424486160278,
+          "z": -0.27640384435653687,
+          "score": 0.1880379468202591
+        },
+        "right_hip": {
+          "x": 0.4513140022754669,
+          "y": 1.050347089767456,
+          "z": 0.28107208013534546,
+          "score": 0.3559218943119049
+        },
+        "left_knee": {
+          "x": 0.9350638389587402,
+          "y": 1.4747722148895264,
+          "z": -0.21473392844200134,
+          "score": 0.02258661389350891
+        },
+        "right_knee": {
+          "x": 0.3808749318122864,
+          "y": 1.4788929224014282,
+          "z": 0.18675021827220917,
+          "score": 0.05746332183480263
+        },
+        "left_ankle": {
+          "x": 0.956874668598175,
+          "y": 1.84795343875885,
+          "z": 1.210541009902954,
+          "score": 0.001954658655449748
+        },
+        "right_ankle": {
+          "x": 0.5694124102592468,
+          "y": 1.8541009426116943,
+          "z": 1.2766766548156738,
+          "score": 0.0037623606622219086
+        },
+        "left_heel": {
+          "x": 1.0103790760040283,
+          "y": 1.9069182872772217,
+          "z": 1.3151586055755615,
+          "score": 0.001664196839556098
+        },
+        "right_heel": {
+          "x": 0.6107923984527588,
+          "y": 1.9094619750976562,
+          "z": 1.3646934032440186,
+          "score": 0.0030058827251195908
+        },
+        "left_foot_index": {
+          "x": 0.8383435606956482,
+          "y": 1.9846298694610596,
+          "z": 0.5089763402938843,
+          "score": 0.001713601523078978
+        },
+        "right_foot_index": {
+          "x": 0.5754880905151367,
+          "y": 2.0277655124664307,
+          "z": 0.5848283767700195,
+          "score": 0.0032764007337391376
+        }
+      },
+      "zones": {
+        "leftHandUpper": {
+          "rect": null,
+          "pressed": false
+        },
+        "leftHandLower": {
+          "rect": null,
+          "pressed": false
+        },
+        "rightHandUpper": {
+          "rect": null,
+          "pressed": false
+        },
+        "rightHandLower": {
+          "rect": null,
+          "pressed": false
+        },
+        "leftFoot": {
+          "rect": null,
+          "pressed": false
+        },
+        "rightFoot": {
+          "rect": null,
+          "pressed": false
+        }
+      },
+      "buttons": [],
+      "motions": [],
+      "head": {
+        "calibrated": true,
+        "calibrating": false,
+        "signal_version": "head-shoulder-v2",
+        "face_pair": "eyes",
+        "stage": "",
+        "stage_label": "",
+        "quality": "校准已取消，当前使用默认参数",
+        "calibration_profile": "default",
+        "calibration_message": "用户取消",
+        "calibration_elapsed_s": null,
+        "calibration_remaining_s": null,
+        "stage_remaining_s": null,
+        "stage_valid_s": 0.0,
+        "stage_required_s": 1.5,
+        "stage_paused": false,
+        "stage_pause_reason": "",
+        "stage_missing_parts": [],
+        "stage_transition_message": "",
+        "stage_transition_remaining_s": 0.0,
+        "calibration_notice": "",
+        "calibration_notice_text": "",
+        "calibration_notice_remaining_s": 0.0,
+        "last_calibration_diagnostic": {
+          "recorded_at_unix": 1787299650.7680743,
+          "event": "aborted",
+          "reason": "用户取消",
+          "signal_version": "head-shoulder-v2",
+          "face_pair": "",
+          "started_at_unix": 1787299610.9642322,
+          "stage_attempts": [
+            {
+              "stage": "center",
+              "label": "正视",
+              "started_at_unix": 1787299615.9510012,
+              "ended_at_unix": 1787299617.4831026,
+              "valid_frames": 43,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 43,
+                "min": -0.004885438877534473,
+                "max": 0.1299972596490888,
+                "median": 0.10099365440470018
+              },
+              "pitch": {
+                "count": 43,
+                "min": 0.04621717933923176,
+                "max": 0.049113487477848605,
+                "median": 0.047787854215089534
+              }
+            },
+            {
+              "stage": "left",
+              "label": "左转",
+              "started_at_unix": 1787299618.1055858,
+              "ended_at_unix": 1787299619.6343553,
+              "valid_frames": 42,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 42,
+                "min": -1.0072941139005596,
+                "max": 0.09728070103495387,
+                "median": -0.6282518872349332
+              },
+              "pitch": {
+                "count": 42,
+                "min": 0.047087859424774246,
+                "max": 0.049998314982298134,
+                "median": 0.04877370084903919
+              }
+            },
+            {
+              "stage": "right",
+              "label": "右转",
+              "started_at_unix": 1787299620.2355638,
+              "ended_at_unix": 1787299621.7844603,
+              "valid_frames": 41,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 41,
+                "min": -0.5384956769810328,
+                "max": 0.8909280772521707,
+                "median": 0.02898194638658075
+              },
+              "pitch": {
+                "count": 41,
+                "min": 0.04628399024767094,
+                "max": 0.05660433728772762,
+                "median": 0.047517114178983265
+              }
+            },
+            {
+              "stage": "up",
+              "label": "抬头",
+              "started_at_unix": 1787299622.3973649,
+              "ended_at_unix": 1787299623.9357798,
+              "valid_frames": 42,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 42,
+                "min": -0.020602368605801467,
+                "max": 0.3914902744792359,
+                "median": 0.12435438194295338
+              },
+              "pitch": {
+                "count": 42,
+                "min": 0.03123111266658375,
+                "max": 0.05212306754049257,
+                "median": 0.048370431901076746
+              }
+            },
+            {
+              "stage": "down",
+              "label": "低头",
+              "started_at_unix": 1787299624.5358973,
+              "ended_at_unix": 1787299626.0882792,
+              "valid_frames": 42,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 42,
+                "min": -0.003954866010310897,
+                "max": 0.19398395117206363,
+                "median": 0.06967324169962884
+              },
+              "pitch": {
+                "count": 42,
+                "min": 0.022171752281547726,
+                "max": 0.05672275811265392,
+                "median": 0.0460931797887174
+              }
+            },
+            {
+              "stage": "left",
+              "label": "左转",
+              "started_at_unix": 1787299626.717419,
+              "ended_at_unix": 1787299628.2386312,
+              "valid_frames": 42,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 42,
+                "min": -0.8051416356223681,
+                "max": 0.07220648746034045,
+                "median": 0.03546512012339583
+              },
+              "pitch": {
+                "count": 42,
+                "min": 0.046271348024417035,
+                "max": 0.05808834097234283,
+                "median": 0.05011873702447875
+              }
+            },
+            {
+              "stage": "right",
+              "label": "右转",
+              "started_at_unix": 1787299628.8488,
+              "ended_at_unix": 1787299630.3860807,
+              "valid_frames": 44,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 44,
+                "min": -0.7159362491262382,
+                "max": 0.9009126925574941,
+                "median": -0.04670328074271457
+              },
+              "pitch": {
+                "count": 44,
+                "min": 0.04754188075446133,
+                "max": 0.053960596571741966,
+                "median": 0.04976669878711093
+              }
+            },
+            {
+              "stage": "up",
+              "label": "抬头",
+              "started_at_unix": 1787299630.997796,
+              "ended_at_unix": 1787299632.5340898,
+              "valid_frames": 43,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 43,
+                "min": 0.04014923178433052,
+                "max": 0.787367770322943,
+                "median": 0.13118259332915663
+              },
+              "pitch": {
+                "count": 43,
+                "min": 0.03347679203856695,
+                "max": 0.054912610895512706,
+                "median": 0.04874258488743457
+              }
+            },
+            {
+              "stage": "down",
+              "label": "低头",
+              "started_at_unix": 1787299633.1404526,
+              "ended_at_unix": 1787299634.6886144,
+              "valid_frames": 43,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 43,
+                "min": -0.04543302578360435,
+                "max": 0.06879559030175117,
+                "median": 0.028092972640807436
+              },
+              "pitch": {
+                "count": 43,
+                "min": 0.029311374258586494,
+                "max": 0.05473597658258349,
+                "median": 0.048943477594199855
+              }
+            },
+            {
+              "stage": "left",
+              "label": "左转",
+              "started_at_unix": 1787299635.3137252,
+              "ended_at_unix": 1787299636.8392663,
+              "valid_frames": 41,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 41,
+                "min": -0.07078843159923641,
+                "max": 0.010901588263294355,
+                "median": -0.03175174025320333
+              },
+              "pitch": {
+                "count": 41,
+                "min": 0.04907941563662054,
+                "max": 0.060331999436671696,
+                "median": 0.05278264866112566
+              }
+            },
+            {
+              "stage": "right",
+              "label": "右转",
+              "started_at_unix": 1787299637.4503255,
+              "ended_at_unix": 1787299638.983111,
+              "valid_frames": 42,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 42,
+                "min": -0.5536192834569534,
+                "max": 0.9000516451140975,
+                "median": -0.040291751033126245
+              },
+              "pitch": {
+                "count": 42,
+                "min": 0.04528013464021397,
+                "max": 0.0491280272934473,
+                "median": 0.04736905505072639
+              }
+            },
+            {
+              "stage": "up",
+              "label": "抬头",
+              "started_at_unix": 1787299639.5942745,
+              "ended_at_unix": 1787299641.166162,
+              "valid_frames": 41,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 41,
+                "min": -0.07227020431652788,
+                "max": 0.36713237053763453,
+                "median": 0.07152178706978676
+              },
+              "pitch": {
+                "count": 41,
+                "min": 0.03533113892683581,
+                "max": 0.04744338180842718,
+                "median": 0.04622894776918207
+              }
+            },
+            {
+              "stage": "down",
+              "label": "低头",
+              "started_at_unix": 1787299641.778273,
+              "ended_at_unix": 1787299643.290457,
+              "valid_frames": 41,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 41,
+                "min": -0.1534945639488063,
+                "max": 0.03236486746607149,
+                "median": -0.0014526845167369999
+              },
+              "pitch": {
+                "count": 41,
+                "min": 0.03456350209084019,
+                "max": 0.05821349279762679,
+                "median": 0.05598335305207736
+              }
+            },
+            {
+              "stage": "left",
+              "label": "左转",
+              "started_at_unix": 1787299643.9116166,
+              "ended_at_unix": 1787299645.452519,
+              "valid_frames": 42,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 42,
+                "min": -0.06832914690673349,
+                "max": 0.18090257371257915,
+                "median": 0.0721864855415074
+              },
+              "pitch": {
+                "count": 42,
+                "min": 0.045762461406809896,
+                "max": 0.051185743983241,
+                "median": 0.04695460040439201
+              }
+            },
+            {
+              "stage": "right",
+              "label": "右转",
+              "started_at_unix": 1787299646.0597928,
+              "ended_at_unix": 1787299647.5906582,
+              "valid_frames": 42,
+              "invalid_frames": 0,
+              "valid_s": 1.5,
+              "completed": true,
+              "reason": "",
+              "pause_reasons": {},
+              "missing_parts": {},
+              "yaw": {
+                "count": 42,
+                "min": -0.09695698404894382,
+                "max": 0.4041534951994544,
+                "median": 0.10168999622815332
+              },
+              "pitch": {
+                "count": 42,
+                "min": 0.04733596943920157,
+                "max": 0.07924112165788627,
+                "median": 0.057812173665662714
+              }
+            },
+            {
+              "stage": "up",
+              "label": "抬头",
+              "started_at_unix": 1787299648.202967,
+              "ended_at_unix": 1787299650.7680743,
+              "valid_frames": 37,
+              "invalid_frames": 1,
+              "valid_s": 1.219,
+              "completed": false,
+              "reason": "用户取消",
+              "pause_reasons": {
+                "脸部点不清楚，请正对摄像头": 1
+              },
+              "missing_parts": {
+                "脸部": 1
+              },
+              "yaw": {
+                "count": 37,
+                "min": -0.8601259860790798,
+                "max": 0.4173440949098195,
+                "median": -0.04747064773460888
+              },
+              "pitch": {
+                "count": 37,
+                "min": 0.04874293922908712,
+                "max": 0.08864115281819532,
+                "median": 0.06941717419024909
+              }
+            }
+          ],
+          "final_check": {
+            "center_yaw": {
+              "count": 43,
+              "min": -0.004885438877534473,
+              "max": 0.1299972596490888,
+              "median": 0.10099365440470018
+            },
+            "left_yaw": {
+              "count": 41,
+              "min": -0.07078843159923641,
+              "max": 0.010901588263294355,
+              "median": -0.03175174025320333
+            },
+            "right_yaw": {
+              "count": 127,
+              "min": -0.7159362491262382,
+              "max": 0.9009126925574941,
+              "median": -0.032428059568573066
+            },
+            "center_pitch": {
+              "count": 43,
+              "min": 0.04621717933923176,
+              "max": 0.049113487477848605,
+              "median": 0.047787854215089534
+            },
+            "up_pitch": {
+              "count": 126,
+              "min": 0.03123111266658375,
+              "max": 0.054912610895512706,
+              "median": 0.047149410279458015
+            },
+            "down_pitch": {
+              "count": 126,
+              "min": 0.022171752281547726,
+              "max": 0.05821349279762679,
+              "median": 0.04954728936818565
+            },
+            "yaw_center_median": 0.10099365440470018,
+            "yaw_left_median": -0.03175174025320333,
+            "yaw_right_median": -0.032428059568573066,
+            "pitch_center_median": 0.047787854215089534,
+            "pitch_up_median": 0.047149410279458015,
+            "pitch_down_median": 0.04954728936818565,
+            "yaw_threshold": 0.025,
+            "pitch_threshold": 0.008,
+            "yaw_ok": false,
+            "pitch_ok": false,
+            "yaw_left_delta": -0.1327453946579035,
+            "yaw_right_delta": -0.13342171397327324,
+            "pitch_up_delta": -0.0006384439356315191,
+            "pitch_down_delta": 0.0017594351530961158,
+            "pitch_span": 0.002397879088727635
+          }
+        },
+        "raw_yaw": 0.18188150002568415,
+        "raw_pitch": 0.07267860851961676,
+        "output_x": 60.0,
+        "output_y": -45.0,
+        "deadzone_x": 0.08,
+        "deadzone_y": 0.12,
+        "gamma": 2.2,
+        "max_percent_x": 60.0,
+        "max_percent_y": 45.0,
+        "enabled": true,
+        "invert_x": false,
+        "invert_y": false
+      },
+      "handheld_sources": {},
+      "last_error": null
+    }
+  },
+  "input_status": {
+    "server_host": "0.0.0.0",
+    "server_port": 8765,
+    "lan_ipv4": "192.168.1.35",
+    "body_mode": "phone",
+    "phone_ws_urls": [
+      "ws://192.168.1.35:8765/ws/input"
+    ],
+    "mobile_pose_connected": true,
+    "mobile_pose_age_ms": 0,
+    "mobile_pose_source_id": "mobile_pose:camera-8b5a179e-20d9-4712-9f04-354566436324",
+    "mobile_pose_sources": [
+      {
+        "source_id": "mobile_pose:camera-8b5a179e-20d9-4712-9f04-354566436324",
+        "source_kind": "mobile_pose",
+        "device_id": "camera-8b5a179e-20d9-4712-9f04-354566436324",
+        "age_ms": 0,
+        "pose_count": 1,
+        "sequence": 89243,
+        "width": 540,
+        "height": 960,
+        "inference_ms": 29.799999952316284,
+        "preview_mirrored": true,
+        "coordinates_mirrored": false,
+        "connected": true,
+        "active": true
+      }
+    ],
+    "handheld_connected": false,
+    "handheld_sources": [],
+    "mobile_voice_connected": false,
+    "mobile_voice_sources": [],
+    "mobile_voice_source_id": null,
+    "runtime": {
+      "body_mode": "phone",
+      "camera": {
+        "running": false,
+        "camera_index": 0,
+        "frames": 0,
+        "last_frame_age_ms": null,
+        "last_error": null,
+        "model_path": "F:\\MotionControl-build-075\\live-0.7.10-release\\models\\mediapipe\\pose_landmarker_full.task",
+        "resolution": {
+          "width": 0,
+          "height": 0
+        },
+        "backend_preference": "auto",
+        "backend": null,
+        "backend_name": null,
+        "fourcc": null,
+        "requested_fps": 30,
+        "actual_capture_fps": null,
+        "coordinate_space": "camera_frame_normalized_unmirrored",
+        "preview_mirrored": false,
+        "coordinates_mirrored": false
+      },
+      "kernel": {
+        "active_body_source": "mobile_pose:camera-8b5a179e-20d9-4712-9f04-354566436324",
+        "pose_age_ms": 0,
+        "width": 540,
+        "height": 960,
+        "pose": {
+          "nose": {
+            "x": 0.27927184104919434,
+            "y": 0.26967155933380127,
+            "z": -1.6749399900436401,
+            "score": 0.9990915060043335
+          },
+          "left_eye_inner": {
+            "x": 0.30985555052757263,
+            "y": 0.20598499476909637,
+            "z": -1.6780869960784912,
+            "score": 0.9982814788818359
+          },
+          "left_eye": {
+            "x": 0.3477919399738312,
+            "y": 0.19816841185092926,
+            "z": -1.6776729822158813,
+            "score": 0.9984577894210815
+          },
+          "left_eye_outer": {
+            "x": 0.38997596502304077,
+            "y": 0.19109387695789337,
+            "z": -1.680850863456726,
+            "score": 0.9982869029045105
+          },
+          "right_eye_inner": {
+            "x": 0.22943861782550812,
+            "y": 0.2286086529493332,
+            "z": -1.5622389316558838,
+            "score": 0.9983157515525818
+          },
+          "right_eye": {
+            "x": 0.20353105664253235,
+            "y": 0.2370334416627884,
+            "z": -1.5589052438735962,
+            "score": 0.9984670281410217
+          },
+          "right_eye_outer": {
+            "x": 0.180323988199234,
+            "y": 0.24558250606060028,
+            "z": -1.5603859424591064,
+            "score": 0.9986793398857117
+          },
+          "left_ear": {
+            "x": 0.5096336603164673,
+            "y": 0.2104635238647461,
+            "z": -1.4043779373168945,
+            "score": 0.9989498257637024
+          },
+          "right_ear": {
+            "x": 0.2106422632932663,
+            "y": 0.27581849694252014,
+            "z": -0.8245713710784912,
+            "score": 0.9985040426254272
+          },
+          "mouth_left": {
+            "x": 0.3808949887752533,
+            "y": 0.31037837266921997,
+            "z": -1.5479538440704346,
+            "score": 0.9993156790733337
+          },
+          "mouth_right": {
+            "x": 0.28581172227859497,
+            "y": 0.3302772343158722,
+            "z": -1.3872816562652588,
+            "score": 0.9988685250282288
+          },
+          "left_shoulder": {
+            "x": 0.9220377802848816,
+            "y": 0.4786320626735687,
+            "z": -1.1981494426727295,
+            "score": 0.9945241808891296
+          },
+          "right_shoulder": {
+            "x": 0.21374200284481049,
+            "y": 0.5497146844863892,
+            "z": -0.31118136644363403,
+            "score": 0.9980264902114868
+          },
+          "left_elbow": {
+            "x": 0.9979605674743652,
+            "y": 0.8675684928894043,
+            "z": -1.3570396900177002,
+            "score": 0.8060641288757324
+          },
+          "right_elbow": {
+            "x": -0.02823236770927906,
+            "y": 0.8953455686569214,
+            "z": -0.9503368139266968,
+            "score": 0.9380472302436829
+          },
+          "left_wrist": {
+            "x": 0.7061982750892639,
+            "y": 0.9798908233642578,
+            "z": -1.5189573764801025,
+            "score": 0.3802546262741089
+          },
+          "right_wrist": {
+            "x": 0.07284397631883621,
+            "y": 0.5550687909126282,
+            "z": -2.3722805976867676,
+            "score": 0.9699546098709106
+          },
+          "left_pinky": {
+            "x": 0.7037363052368164,
+            "y": 1.0703251361846924,
+            "z": -1.5911824703216553,
+            "score": 0.2269013524055481
+          },
+          "right_pinky": {
+            "x": 0.09905986487865448,
+            "y": 0.4625399112701416,
+            "z": -2.5584917068481445,
+            "score": 0.8935468792915344
+          },
+          "left_index": {
+            "x": 0.6319486498832703,
+            "y": 1.019985556602478,
+            "z": -1.5102849006652832,
+            "score": 0.2664768695831299
+          },
+          "right_index": {
+            "x": 0.11393807828426361,
+            "y": 0.41919082403182983,
+            "z": -2.343928337097168,
+            "score": 0.886414110660553
+          },
+          "left_thumb": {
+            "x": 0.6491347551345825,
+            "y": 1.0051926374435425,
+            "z": -1.4763737916946411,
+            "score": 0.2774347960948944
+          },
+          "right_thumb": {
+            "x": 0.1330041140317917,
+            "y": 0.4510418474674225,
+            "z": -2.317858934402466,
+            "score": 0.8668522238731384
+          },
+          "left_hip": {
+            "x": 0.8823743462562561,
+            "y": 1.0060535669326782,
+            "z": -0.30555039644241333,
+            "score": 0.19923162460327148
+          },
+          "right_hip": {
+            "x": 0.43643489480018616,
+            "y": 1.008905053138733,
+            "z": 0.3089785575866699,
+            "score": 0.378828227519989
+          },
+          "left_knee": {
+            "x": 0.9111579060554504,
+            "y": 1.4619970321655273,
+            "z": -0.5810001492500305,
+            "score": 0.026222728192806244
+          },
+          "right_knee": {
+            "x": 0.3453437089920044,
+            "y": 1.4516305923461914,
+            "z": -0.2660062909126282,
+            "score": 0.07171537727117538
+          },
+          "left_ankle": {
+            "x": 0.9429066777229309,
+            "y": 1.8513691425323486,
+            "z": 0.5511685013771057,
+            "score": 0.0020472961477935314
+          },
+          "right_ankle": {
+            "x": 0.5515921115875244,
+            "y": 1.8641347885131836,
+            "z": 0.6370919346809387,
+            "score": 0.0043319473043084145
+          },
+          "left_heel": {
+            "x": 0.9972158670425415,
+            "y": 1.9132236242294312,
+            "z": 0.6167112588882446,
+            "score": 0.0018129220698028803
+          },
+          "right_heel": {
+            "x": 0.5981557369232178,
+            "y": 1.923619270324707,
+            "z": 0.7058835625648499,
+            "score": 0.0034420350566506386
+          },
+          "left_foot_index": {
+            "x": 0.7967516779899597,
+            "y": 1.9841665029525757,
+            "z": -0.23690584301948547,
+            "score": 0.001780992024578154
+          },
+          "right_foot_index": {
+            "x": 0.5175883173942566,
+            "y": 2.0219759941101074,
+            "z": -0.061709702014923096,
+            "score": 0.0038594778161495924
+          }
+        },
+        "zones": {
+          "leftHandUpper": {
+            "rect": null,
+            "pressed": false
+          },
+          "leftHandLower": {
+            "rect": null,
+            "pressed": false
+          },
+          "rightHandUpper": {
+            "rect": null,
+            "pressed": false
+          },
+          "rightHandLower": {
+            "rect": null,
+            "pressed": false
+          },
+          "leftFoot": {
+            "rect": null,
+            "pressed": false
+          },
+          "rightFoot": {
+            "rect": null,
+            "pressed": false
+          }
+        },
+        "buttons": [],
+        "motions": [],
+        "head": {
+          "calibrated": true,
+          "calibrating": false,
+          "signal_version": "head-shoulder-v2",
+          "face_pair": "eyes",
+          "stage": "",
+          "stage_label": "",
+          "quality": "校准已取消，当前使用默认参数",
+          "calibration_profile": "default",
+          "calibration_message": "用户取消",
+          "calibration_elapsed_s": null,
+          "calibration_remaining_s": null,
+          "stage_remaining_s": null,
+          "stage_valid_s": 0.0,
+          "stage_required_s": 1.5,
+          "stage_paused": false,
+          "stage_pause_reason": "",
+          "stage_missing_parts": [],
+          "stage_transition_message": "",
+          "stage_transition_remaining_s": 0.0,
+          "calibration_notice": "",
+          "calibration_notice_text": "",
+          "calibration_notice_remaining_s": 0.0,
+          "last_calibration_diagnostic": {
+            "recorded_at_unix": 1787299650.7680743,
+            "event": "aborted",
+            "reason": "用户取消",
+            "signal_version": "head-shoulder-v2",
+            "face_pair": "",
+            "started_at_unix": 1787299610.9642322,
+            "stage_attempts": [
+              {
+                "stage": "center",
+                "label": "正视",
+                "started_at_unix": 1787299615.9510012,
+                "ended_at_unix": 1787299617.4831026,
+                "valid_frames": 43,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 43,
+                  "min": -0.004885438877534473,
+                  "max": 0.1299972596490888,
+                  "median": 0.10099365440470018
+                },
+                "pitch": {
+                  "count": 43,
+                  "min": 0.04621717933923176,
+                  "max": 0.049113487477848605,
+                  "median": 0.047787854215089534
+                }
+              },
+              {
+                "stage": "left",
+                "label": "左转",
+                "started_at_unix": 1787299618.1055858,
+                "ended_at_unix": 1787299619.6343553,
+                "valid_frames": 42,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 42,
+                  "min": -1.0072941139005596,
+                  "max": 0.09728070103495387,
+                  "median": -0.6282518872349332
+                },
+                "pitch": {
+                  "count": 42,
+                  "min": 0.047087859424774246,
+                  "max": 0.049998314982298134,
+                  "median": 0.04877370084903919
+                }
+              },
+              {
+                "stage": "right",
+                "label": "右转",
+                "started_at_unix": 1787299620.2355638,
+                "ended_at_unix": 1787299621.7844603,
+                "valid_frames": 41,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 41,
+                  "min": -0.5384956769810328,
+                  "max": 0.8909280772521707,
+                  "median": 0.02898194638658075
+                },
+                "pitch": {
+                  "count": 41,
+                  "min": 0.04628399024767094,
+                  "max": 0.05660433728772762,
+                  "median": 0.047517114178983265
+                }
+              },
+              {
+                "stage": "up",
+                "label": "抬头",
+                "started_at_unix": 1787299622.3973649,
+                "ended_at_unix": 1787299623.9357798,
+                "valid_frames": 42,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 42,
+                  "min": -0.020602368605801467,
+                  "max": 0.3914902744792359,
+                  "median": 0.12435438194295338
+                },
+                "pitch": {
+                  "count": 42,
+                  "min": 0.03123111266658375,
+                  "max": 0.05212306754049257,
+                  "median": 0.048370431901076746
+                }
+              },
+              {
+                "stage": "down",
+                "label": "低头",
+                "started_at_unix": 1787299624.5358973,
+                "ended_at_unix": 1787299626.0882792,
+                "valid_frames": 42,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 42,
+                  "min": -0.003954866010310897,
+                  "max": 0.19398395117206363,
+                  "median": 0.06967324169962884
+                },
+                "pitch": {
+                  "count": 42,
+                  "min": 0.022171752281547726,
+                  "max": 0.05672275811265392,
+                  "median": 0.0460931797887174
+                }
+              },
+              {
+                "stage": "left",
+                "label": "左转",
+                "started_at_unix": 1787299626.717419,
+                "ended_at_unix": 1787299628.2386312,
+                "valid_frames": 42,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 42,
+                  "min": -0.8051416356223681,
+                  "max": 0.07220648746034045,
+                  "median": 0.03546512012339583
+                },
+                "pitch": {
+                  "count": 42,
+                  "min": 0.046271348024417035,
+                  "max": 0.05808834097234283,
+                  "median": 0.05011873702447875
+                }
+              },
+              {
+                "stage": "right",
+                "label": "右转",
+                "started_at_unix": 1787299628.8488,
+                "ended_at_unix": 1787299630.3860807,
+                "valid_frames": 44,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 44,
+                  "min": -0.7159362491262382,
+                  "max": 0.9009126925574941,
+                  "median": -0.04670328074271457
+                },
+                "pitch": {
+                  "count": 44,
+                  "min": 0.04754188075446133,
+                  "max": 0.053960596571741966,
+                  "median": 0.04976669878711093
+                }
+              },
+              {
+                "stage": "up",
+                "label": "抬头",
+                "started_at_unix": 1787299630.997796,
+                "ended_at_unix": 1787299632.5340898,
+                "valid_frames": 43,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 43,
+                  "min": 0.04014923178433052,
+                  "max": 0.787367770322943,
+                  "median": 0.13118259332915663
+                },
+                "pitch": {
+                  "count": 43,
+                  "min": 0.03347679203856695,
+                  "max": 0.054912610895512706,
+                  "median": 0.04874258488743457
+                }
+              },
+              {
+                "stage": "down",
+                "label": "低头",
+                "started_at_unix": 1787299633.1404526,
+                "ended_at_unix": 1787299634.6886144,
+                "valid_frames": 43,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 43,
+                  "min": -0.04543302578360435,
+                  "max": 0.06879559030175117,
+                  "median": 0.028092972640807436
+                },
+                "pitch": {
+                  "count": 43,
+                  "min": 0.029311374258586494,
+                  "max": 0.05473597658258349,
+                  "median": 0.048943477594199855
+                }
+              },
+              {
+                "stage": "left",
+                "label": "左转",
+                "started_at_unix": 1787299635.3137252,
+                "ended_at_unix": 1787299636.8392663,
+                "valid_frames": 41,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 41,
+                  "min": -0.07078843159923641,
+                  "max": 0.010901588263294355,
+                  "median": -0.03175174025320333
+                },
+                "pitch": {
+                  "count": 41,
+                  "min": 0.04907941563662054,
+                  "max": 0.060331999436671696,
+                  "median": 0.05278264866112566
+                }
+              },
+              {
+                "stage": "right",
+                "label": "右转",
+                "started_at_unix": 1787299637.4503255,
+                "ended_at_unix": 1787299638.983111,
+                "valid_frames": 42,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 42,
+                  "min": -0.5536192834569534,
+                  "max": 0.9000516451140975,
+                  "median": -0.040291751033126245
+                },
+                "pitch": {
+                  "count": 42,
+                  "min": 0.04528013464021397,
+                  "max": 0.0491280272934473,
+                  "median": 0.04736905505072639
+                }
+              },
+              {
+                "stage": "up",
+                "label": "抬头",
+                "started_at_unix": 1787299639.5942745,
+                "ended_at_unix": 1787299641.166162,
+                "valid_frames": 41,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 41,
+                  "min": -0.07227020431652788,
+                  "max": 0.36713237053763453,
+                  "median": 0.07152178706978676
+                },
+                "pitch": {
+                  "count": 41,
+                  "min": 0.03533113892683581,
+                  "max": 0.04744338180842718,
+                  "median": 0.04622894776918207
+                }
+              },
+              {
+                "stage": "down",
+                "label": "低头",
+                "started_at_unix": 1787299641.778273,
+                "ended_at_unix": 1787299643.290457,
+                "valid_frames": 41,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 41,
+                  "min": -0.1534945639488063,
+                  "max": 0.03236486746607149,
+                  "median": -0.0014526845167369999
+                },
+                "pitch": {
+                  "count": 41,
+                  "min": 0.03456350209084019,
+                  "max": 0.05821349279762679,
+                  "median": 0.05598335305207736
+                }
+              },
+              {
+                "stage": "left",
+                "label": "左转",
+                "started_at_unix": 1787299643.9116166,
+                "ended_at_unix": 1787299645.452519,
+                "valid_frames": 42,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 42,
+                  "min": -0.06832914690673349,
+                  "max": 0.18090257371257915,
+                  "median": 0.0721864855415074
+                },
+                "pitch": {
+                  "count": 42,
+                  "min": 0.045762461406809896,
+                  "max": 0.051185743983241,
+                  "median": 0.04695460040439201
+                }
+              },
+              {
+                "stage": "right",
+                "label": "右转",
+                "started_at_unix": 1787299646.0597928,
+                "ended_at_unix": 1787299647.5906582,
+                "valid_frames": 42,
+                "invalid_frames": 0,
+                "valid_s": 1.5,
+                "completed": true,
+                "reason": "",
+                "pause_reasons": {},
+                "missing_parts": {},
+                "yaw": {
+                  "count": 42,
+                  "min": -0.09695698404894382,
+                  "max": 0.4041534951994544,
+                  "median": 0.10168999622815332
+                },
+                "pitch": {
+                  "count": 42,
+                  "min": 0.04733596943920157,
+                  "max": 0.07924112165788627,
+                  "median": 0.057812173665662714
+                }
+              },
+              {
+                "stage": "up",
+                "label": "抬头",
+                "started_at_unix": 1787299648.202967,
+                "ended_at_unix": 1787299650.7680743,
+                "valid_frames": 37,
+                "invalid_frames": 1,
+                "valid_s": 1.219,
+                "completed": false,
+                "reason": "用户取消",
+                "pause_reasons": {
+                  "脸部点不清楚，请正对摄像头": 1
+                },
+                "missing_parts": {
+                  "脸部": 1
+                },
+                "yaw": {
+                  "count": 37,
+                  "min": -0.8601259860790798,
+                  "max": 0.4173440949098195,
+                  "median": -0.04747064773460888
+                },
+                "pitch": {
+                  "count": 37,
+                  "min": 0.04874293922908712,
+                  "max": 0.08864115281819532,
+                  "median": 0.06941717419024909
+                }
+              }
+            ],
+            "final_check": {
+              "center_yaw": {
+                "count": 43,
+                "min": -0.004885438877534473,
+                "max": 0.1299972596490888,
+                "median": 0.10099365440470018
+              },
+              "left_yaw": {
+                "count": 41,
+                "min": -0.07078843159923641,
+                "max": 0.010901588263294355,
+                "median": -0.03175174025320333
+              },
+              "right_yaw": {
+                "count": 127,
+                "min": -0.7159362491262382,
+                "max": 0.9009126925574941,
+                "median": -0.032428059568573066
+              },
+              "center_pitch": {
+                "count": 43,
+                "min": 0.04621717933923176,
+                "max": 0.049113487477848605,
+                "median": 0.047787854215089534
+              },
+              "up_pitch": {
+                "count": 126,
+                "min": 0.03123111266658375,
+                "max": 0.054912610895512706,
+                "median": 0.047149410279458015
+              },
+              "down_pitch": {
+                "count": 126,
+                "min": 0.022171752281547726,
+                "max": 0.05821349279762679,
+                "median": 0.04954728936818565
+              },
+              "yaw_center_median": 0.10099365440470018,
+              "yaw_left_median": -0.03175174025320333,
+              "yaw_right_median": -0.032428059568573066,
+              "pitch_center_median": 0.047787854215089534,
+              "pitch_up_median": 0.047149410279458015,
+              "pitch_down_median": 0.04954728936818565,
+              "yaw_threshold": 0.025,
+              "pitch_threshold": 0.008,
+              "yaw_ok": false,
+              "pitch_ok": false,
+              "yaw_left_delta": -0.1327453946579035,
+              "yaw_right_delta": -0.13342171397327324,
+              "pitch_up_delta": -0.0006384439356315191,
+              "pitch_down_delta": 0.0017594351530961158,
+              "pitch_span": 0.002397879088727635
+            }
+          },
+          "raw_yaw": 0.1827796167917014,
+          "raw_pitch": 0.07314794426563152,
+          "output_x": 60.0,
+          "output_y": -45.0,
+          "deadzone_x": 0.08,
+          "deadzone_y": 0.12,
+          "gamma": 2.2,
+          "max_percent_x": 60.0,
+          "max_percent_y": 45.0,
+          "enabled": true,
+          "invert_x": false,
+          "invert_y": false
+        },
+        "handheld_sources": {},
+        "last_error": null
+      }
+    },
+    "version": "0.8.1"
+  },
+  "output_status": {
+    "enabled": false,
+    "mode": "mouse",
+    "mouse_available": true,
+    "keyboard_available": true,
+    "mouse_speed_x": 960.0,
+    "mouse_speed_y": 720.0,
+    "gamepad_gain": 1.6,
+    "vigem_dll": "F:\\switch\\motionbridge\\outputs\\native\\x64\\ViGEmClient.dll",
+    "vigembus_running": true,
+    "gamepad_connected": false,
+    "last_value": 0.0,
+    "last_x": 0.0,
+    "last_y": 0.0,
+    "buttons": [],
+    "keyboard_holds": [],
+    "left_stick_holds": [],
+    "trigger_holds": [],
+    "last_error": null,
+    "hotkeys": {
+      "available": true,
+      "last_error": null
+    }
+  },
+  "body_source": "phone",
+  "diagnostic_paths": "C:\\Users\\Lenovo\\AppData\\Local\\MotionControl\\calibration_diagnostics.jsonlF:\\MotionControl-App\\output\\calibration_failure_diagnostic_20260821_132722.json",
+  "diagnostic_contents": {
+    "C:\\Users\\Lenovo\\AppData\\Local\\MotionControl\\calibration_diagnostics.jsonlF:\\MotionControl-App\\output\\calibration_failure_diagnostic_20260821_132722.json": null
+  },
+  "log_tails": {
+    "F:\\MotionControl-build-075\\live-0.8.1-source\\server.out.txt": [
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.1ms p95=29.7ms age=15ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.3ms p95=31.3ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.8ms p95=31.1ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.7ms p95=29.9ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.4ms p95=31.3ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.0ms p95=30.4ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.2ms p95=31.0ms age=79ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.1ms p95=31.5ms age=62ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.7ms p95=32.2ms age=62ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.8ms p95=31.0ms age=63ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.9ms p95=31.0ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.7ms p95=32.3ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.0ms p95=32.1ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.8ms p95=30.8ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.6ms p95=31.3ms age=15ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.8ms p95=31.5ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.4ms p95=30.0ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.5ms p95=30.6ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.8ms p95=31.3ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.9ms p95=31.3ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.1ms p95=30.8ms age=15ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.3ms p95=30.9ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=28.3ms p95=33.3ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.5ms p95=30.2ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.3ms p95=32.3ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.6ms p95=30.1ms age=47ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=25.1ms p95=30.7ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.4ms p95=31.7ms age=32ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.6ms p95=30.8ms age=47ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.6ms p95=29.7ms age=15ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.6ms p95=30.0ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.9ms p95=30.3ms age=46ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.4ms p95=31.9ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.6ms p95=30.5ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.3ms p95=29.3ms age=32ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.9ms p95=30.8ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.3ms p95=31.9ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.5ms p95=29.8ms age=47ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.5ms p95=30.0ms age=47ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.9ms p95=31.3ms age=78ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.2ms p95=30.6ms age=47ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.5ms p95=34.3ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.7ms p95=31.1ms age=47ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=28.2ms p95=33.3ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.3ms p95=32.6ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.6ms p95=29.5ms age=32ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.1ms p95=31.3ms age=15ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=25.7ms p95=31.7ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.7ms p95=30.3ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.8ms p95=31.2ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.6ms p95=31.2ms age=15ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.3ms p95=29.2ms age=31ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.7ms p95=30.1ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.3ms p95=30.1ms age=62ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=26.6ms p95=29.6ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.5ms p95=30.8ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=27.2ms p95=30.1ms age=16ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=32.3ms p95=42.5ms age=78ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=36.3ms p95=46.1ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.1ms p95=43.6ms age=15ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=30.2ms p95=38.0ms age=32ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.4ms p95=40.5ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.5ms p95=42.0ms age=15ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.3ms p95=41.1ms age=15ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.2ms p95=39.8ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.2ms p95=39.9ms age=15ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.7ms p95=43.8ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.9ms p95=41.2ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.2ms p95=38.9ms age=0ms latency=- humans=0 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=32.3ms p95=37.4ms age=63ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=33.8ms p95=39.1ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.4ms p95=40.6ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.6ms p95=40.6ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.3ms p95=45.4ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=30.5ms p95=37.8ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=36.8ms p95=43.5ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=33.7ms p95=41.9ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.2ms p95=40.6ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.3ms p95=40.4ms age=15ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.3ms p95=40.7ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=33.6ms p95=40.1ms age=78ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=33.9ms p95=39.1ms age=32ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.4ms p95=42.8ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.7ms p95=40.5ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.5ms p95=40.1ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.6ms p95=42.7ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.5ms p95=40.2ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.4ms p95=40.9ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.6ms p95=43.5ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.1ms p95=40.1ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.3ms p95=42.1ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=37.5ms p95=46.0ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.1ms p95=40.3ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.5ms p95=42.2ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.1ms p95=41.0ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.0ms p95=42.4ms age=141ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.9ms p95=40.2ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.7ms p95=41.0ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=37.9ms p95=45.1ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.1ms p95=41.9ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.0ms p95=40.6ms age=94ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.4ms p95=39.6ms age=62ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.5ms p95=39.6ms age=94ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.1ms p95=41.4ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.5ms p95=40.5ms age=94ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=33.9ms p95=39.7ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.5ms p95=42.8ms age=47ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.4ms p95=39.8ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.7ms p95=42.3ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.4ms p95=43.0ms age=109ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.1ms p95=40.7ms age=32ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.0ms p95=41.1ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=33.0ms p95=39.5ms age=15ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=33.7ms p95=39.3ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.7ms p95=40.8ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=37.1ms p95=43.8ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=35.8ms p95=41.7ms age=31ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.7ms p95=41.7ms age=16ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.0ms p95=40.2ms age=0ms latency=- humans=1 drop=0 skip=0",
+      "PERF source=phone res=540x960 backend=None requested=- capture=- actual_capture=- infer=- infer_ms=34.4ms p95=40.2ms age=62ms latency=- humans=1 drop=0 skip=0"
+    ],
+    "F:\\MotionControl-build-075\\live-0.8.1-source\\server.err.txt": null
+  }
+}
