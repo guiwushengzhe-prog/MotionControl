@@ -24,7 +24,7 @@ const BODY_ZONES = {leftHandUpper:{label:'Y',button:'Y'},leftHandLower:{label:'X
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=false, modelAvailable=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null};
-const head={deadzoneX:.08,deadzoneY:.08,gamma:2.2,maxPercentX:60,maxPercentY:45,enabled:true,invertX:false,invertY:false};
+const head={deadzoneX:.08,deadzoneY:.08,gamma:1.5,maxPercentX:60,maxPercentY:45,enabled:true,invertX:false,invertY:false};
 const motion={config:[]};
 const voice={status:null};
 const overlay={win:null,canvas:null,ctx:null};
@@ -61,31 +61,17 @@ function renderCalibrationOverlay(hs={}){
   const stage=$('#calibrationStage'),prompt=$('#calibrationPrompt'),countdown=$('#calibrationCountdown');
   const bar=$('#calibrationProgressBar'),detail=$('#calibrationDetail'),cancel=$('#calibrationCancel');
   if(success){
-    stage.textContent='完成';prompt.textContent=hs.calibration_notice_text||'校准成功，已使用个人参数';
-    countdown.textContent='✓';bar.style.width='100%';detail.textContent=hs.quality||'当前使用：个人参数';cancel.style.display='none';return;
+    stage.textContent='完成';prompt.textContent=hs.calibration_notice_text||'中心已更新，头控可用';
+    countdown.textContent='✓';bar.style.width='100%';detail.textContent=hs.quality||'当前使用：个人校准';cancel.style.display='none';return;
   }
   cancel.style.display='block';
-  const stageNames={prepare:'准备',center:'正视',left:'左转',right:'右转',up:'抬头',down:'低头'};
-  const actions={prepare:'请退到合适位置',center:'请正视摄像头',left:'请向左转头',right:'请向右转头',up:'请抬头',down:'请低头'};
-  const key=hs.stage||'prepare',required=Number(hs.stage_required_s||1.5),valid=Number(hs.stage_valid_s||0),wallRemaining=Number(hs.stage_wall_remaining_s);
-  const paused=!!hs.stage_paused&&!!hs.stage_pause_reason,transition=hs.stage_transition_message&&Number(hs.stage_transition_remaining_s||0)>0;
-  const signalValue=Number(hs.stage_signal_value),signalDelta=Number(hs.stage_signal_delta),signalProgress=Number(hs.stage_signal_progress||0);
-  const signalText=key!=='prepare'&&Number.isFinite(signalValue)
-    ? `当前信号 ${signalValue.toFixed(4)} · 相对中心 ${signalDelta>=0?'+':''}${signalDelta.toFixed(4)} · 动作幅度参考 ${Math.round(signalProgress*100)}%`
-    : '';
-  stage.textContent=stageNames[key]||hs.stage_label||key;
-  if(transition){
-    prompt.textContent=hs.stage_transition_message;countdown.textContent=Number(hs.stage_transition_remaining_s||0).toFixed(1);
-    bar.style.width='100%';detail.textContent='下一阶段即将开始';return;
-  }
-  const wallText=key!=='prepare'&&Number.isFinite(wallRemaining)?` · 本阶段剩余 ${wallRemaining.toFixed(1)}s`:'';
-  if(paused){
-    prompt.textContent=hs.stage_pause_reason;detail.textContent=((hs.stage_missing_parts||[]).length?`需要：${hs.stage_missing_parts.join('、')}`:'请调整姿势后继续')+wallText+(signalText?` · ${signalText}`:'');
-  }else{
-    prompt.textContent=actions[key]||`请保持${stage.textContent}`;detail.textContent=(key==='prepare'?'准备阶段不采样':`有效采样 ${valid.toFixed(1)} / ${required.toFixed(1)} 秒`+wallText)+(signalText?` · ${signalText}`:'');
-  }
-  const remaining=Number(hs.stage_remaining_s||0);countdown.textContent=key==='prepare'?remaining.toFixed(1):`${valid.toFixed(1)}s`;
-  bar.style.width=`${Math.max(0,Math.min(100,key==='prepare'?(1-remaining/Math.max(required,.1))*100:(valid/Math.max(required,.1))*100))}%`;
+  const remaining=Math.max(0,Number(hs.stage_wall_remaining_s??hs.stage_remaining_s??0));
+  const valid=Number(hs.stage_valid_s||0),required=Number(hs.stage_required_s||3);
+  stage.textContent='设置中心';
+  prompt.textContent=hs.stage_paused?`请保持正视：${hs.stage_pause_reason||'等待有效脸部点'}`:'请保持正视摄像头';
+  detail.textContent=hs.stage_paused?((hs.stage_missing_parts||[]).length?`需要：${hs.stage_missing_parts.join('、')}`:'等待有效姿态'):`正在记录中心 ${valid.toFixed(1)} / ${required.toFixed(1)} 秒`;
+  countdown.textContent=remaining.toFixed(1);
+  bar.style.width=`${Math.max(0,Math.min(100,(valid/Math.max(required,.1))*100))}%`;
 }
 function renderKernelState(runtime){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
@@ -99,12 +85,12 @@ function renderKernelState(runtime){
   const hs=k.head||{};
   if(Number.isFinite(hs.output_x))$('#headStatus').textContent=hs.calibrated?`头控 ${hs.quality||'当前使用：默认参数'} · X ${Number(hs.output_x).toFixed(0)}% · Y ${Number(hs.output_y).toFixed(0)}%`:'头控：等待校准';
   if(hs.calibrated!==undefined){
-    $('#calBtn').textContent=hs.calibrating?'取消校准':'自动头控校准';
-    const progress=hs.stage_transition_message||(
-      hs.stage_paused?`暂停：${hs.stage_pause_reason||'请调整姿势'}`:
-      (hs.stage==='prepare'?`准备中 ${Number(hs.stage_remaining_s??0).toFixed(1)}s`:`有效采样 ${Number(hs.stage_valid_s||0).toFixed(1)} / ${Number(hs.stage_required_s||1.5).toFixed(1)}s`)
-    );
-    $('#calStatus').textContent=hs.calibrating?progress:(hs.calibration_message?`校准已取消，当前使用默认参数 · ${hs.calibration_message}`:(hs.quality||'当前使用：默认参数'));
+    $('#calBtn').textContent=hs.calibrating?'取消设置中心':'重新设置中心';
+    const progress=hs.calibrating?(
+      hs.stage_paused?`暂停：${hs.stage_pause_reason||'等待有效脸部点'}`:
+      `记录中心 ${Number(hs.stage_valid_s||0).toFixed(1)} / ${Number(hs.stage_required_s||3).toFixed(1)}s`
+    ):'';
+    $('#calStatus').textContent=hs.calibrating?progress:(hs.calibration_message?`${hs.quality||'当前使用：默认参数'} · ${hs.calibration_message}`:(hs.quality||'当前使用：默认参数'));
     $('#calStatus').title=hs.calibration_message||'';
     renderCalibrationOverlay(hs);
   }
@@ -170,7 +156,7 @@ async function emergencyStop(show=true){try{output.server=await post('/api/outpu
 
 async function setSource(source,enabled=true){try{const result=await post('/api/input/source',{source,enabled});sourceMode=source;renderKernelState(result);await refreshInput();notice('输入源已切换：'+(source==='phone'?'手机摄像头':'电脑摄像头'))}catch(e){notice('输入源切换失败：'+(e?.message||e));await refreshKernel()}}
 async function toggleLocalCamera(){if(sourceMode==='phone')return;try{const result=await post('/api/input/source',{source:'computer',enabled:!cameraRunning});renderKernelState(result)}catch(e){notice('本地摄像头操作失败：'+(e?.message||e));await refreshKernel()}}
-async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'校准已取消，当前使用默认参数':'校准已开始，请看全屏提示')}catch(e){notice('校准操作失败：'+(e?.message||e))}}
+async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'中心设置已取消':'请保持正视，3秒记录中心')}catch(e){notice('中心设置失败：'+(e?.message||e))}}
 async function setCurrentCenter(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('已把当前姿势设为本地头控中心。')}catch(e){notice('设置中心失败：'+(e?.message||e))}}
 
 function renderOverlay(map=currentPoseMap){if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx,w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);if(map){octx.strokeStyle='rgba(80,220,255,.92)';octx.lineWidth=Math.max(2,w/260);octx.fillStyle='rgba(255,255,255,.96)';for(const[a,b]of EDGES){const p=map[a],q=map[b];if(!p||!q||p.score<.3||q.score<.3)continue;const vp=visualPoint(p),vq=visualPoint(q);octx.beginPath();octx.moveTo(vp.x*w,vp.y*h);octx.lineTo(vq.x*w,vq.y*h);octx.stroke()}for(const p of Object.values(map)){if(p.score<.3)continue;const vp=visualPoint(p);octx.beginPath();octx.arc(vp.x*w,vp.y*h,Math.max(2.2,w/190),0,Math.PI*2);octx.fill()}}const buttons=kernelState?.buttons||[],motions=kernelState?.motions||[];const text=buttons.length?`区域 ${buttons.join('+')}`:(motions.length?`动作 ${motions.join('+')}`:(map?'未触发':'未识别人体'));octx.fillStyle='rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle='#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.fillText(`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))}

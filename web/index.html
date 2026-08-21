@@ -56,7 +56,7 @@
 <div id="hint" class="hint">Full · 身体相对区域会跟着人移动</div>
 </div>
 <div class="section">
-<div class="row"><button id="calBtn" class="btn">自动头控校准</button><button id="centerBtn" class="btn">当前姿势设为中心</button><span id="calStatus" class="pill">当前使用：默认参数</span></div>
+<div class="row"><button id="calBtn" class="btn">重新设置中心</button><button id="centerBtn" class="btn">立即设置中心</button><span id="calStatus" class="pill">当前使用：默认参数</span></div>
 <div class="statusline" id="headStatus">头控：等待校准</div>
 </div>
 <details class="section perf-panel" id="performancePanel"><summary>性能 <span id="perfSummary" class="perf-summary">FPS — / 推理 — · 延迟 — · 人体 —</span></summary><div id="perfDetails" class="perf-details">等待本地服务性能数据。</div></details>
@@ -107,9 +107,9 @@
 <div class="settings-section">
 <div class="title">头控微调</div>
 <div class="advgrid">
-<div class="tiny">水平死区 <b id="deadXValue">8%</b><input id="deadX" type="range" min="3" max="30" value="8"></div>
-<div class="tiny">垂直死区 <b id="deadYValue">12%</b><input id="deadY" type="range" min="4" max="35" value="12"></div>
-<div class="tiny">曲线 γ <b id="gammaValue">2.2</b><input id="gamma" type="range" min="1.4" max="3.2" step="0.1" value="2.2"></div>
+<div class="tiny">水平死区 <b id="deadXValue">8%</b><input id="deadX" type="range" min="0" max="8" value="8"></div>
+<div class="tiny">垂直死区 <b id="deadYValue">8%</b><input id="deadY" type="range" min="0" max="8" value="8"></div>
+<div class="tiny">曲线 γ <b id="gammaValue">1.5</b><input id="gamma" type="range" min="1.0" max="3.0" step="0.1" value="1.5"></div>
 <div class="tiny">水平幅度 <b id="speedXValue">60%</b><input id="speedX" type="range" min="20" max="120" step="5" value="60"></div>
 <div class="tiny">垂直幅度 <b id="speedYValue">45%</b><input id="speedY" type="range" min="15" max="100" step="5" value="45"></div>
 </div>
@@ -118,10 +118,10 @@
 </div></div>
 <div id="calibrationOverlay" class="calibration-overlay" hidden aria-live="assertive">
 <div class="calibration-card">
-<div class="calibration-kicker">头控校准</div>
-<div id="calibrationStage" class="calibration-stage">准备</div>
-<div id="calibrationPrompt" class="calibration-prompt">请退到合适位置</div>
-<div id="calibrationCountdown" class="calibration-countdown">5.0</div>
+<div class="calibration-kicker">头控中心</div>
+<div id="calibrationStage" class="calibration-stage">设置中心</div>
+<div id="calibrationPrompt" class="calibration-prompt">请保持正视摄像头</div>
+<div id="calibrationCountdown" class="calibration-countdown">3.0</div>
 <div class="calibration-progress"><div id="calibrationProgressBar"></div></div>
 <div id="calibrationDetail" class="calibration-detail"></div>
 <button id="calibrationCancel" class="calibration-cancel">取消校准</button>
