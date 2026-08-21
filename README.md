@@ -1,4 +1,4 @@
-# MotionControl v0.8.0 — Local Kernel + Body-relative Zones + Four Motions
+# MotionControl v0.8.1 — Local Kernel + Body-relative Zones + Four Motions
 
 继续沿用 Full、头控、语音和悬浮窗。本版重点是把复杂设置收进“设置”，并让姿态、语音和输出时序都由本地服务维护。
 
@@ -80,7 +80,7 @@ config\motion_mappings.json
 
 每次校准结束后只保存信号摘要诊断（阶段有效/无效帧、暂停原因、yaw/pitch min/max/median 和最终阈值比较）到 `%LOCALAPPDATA%\MotionControl\calibration_diagnostics.jsonl`，不保存视频或完整姿态帧。
 
-0.8.0 的头控信号版本为 `head-shoulder-v2`：yaw 使用固定脸部点对的鼻尖距离比，pitch 使用“鼻尖 − 同一脸部点对中点”的垂直差除以双肩宽；脸部点对在一个人体来源期间锁定为双眼或双耳，避免逐帧换公式。双髋不再是头控必需点。
+0.8.1 的头控信号版本为 `head-shoulder-v2`：yaw 使用固定脸部点对的鼻尖距离比，pitch 使用“鼻尖 − 同一脸部点对中点”的垂直差除以双肩宽；脸部点对在一个人体来源期间锁定为双眼或双耳，避免逐帧换公式。双髋不再是头控必需点。
 
 ## 本地语音
 
