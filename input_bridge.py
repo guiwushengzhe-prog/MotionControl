@@ -16,6 +16,11 @@ from urllib.parse import parse_qs, urlparse
 
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_MESSAGE_BYTES = 1024 * 1024
+# MediaPipe image landmarks are nominally normalized, but x/y can be just
+# outside [0, 1] when a person touches the image edge.  Keep a generous
+# finite guard against corrupted payloads without clamping coordinates here;
+# the kernel needs the original geometry and display code can clip later.
+LANDMARK_COORDINATE_ABS_LIMIT = 10.0
 POSE_SOURCE_PREFIX = "mobile_pose:"
 SENSOR_SOURCE_PREFIX = "mobile_sensor:"
 VOICE_SOURCE_PREFIX = "mobile_voice:"
@@ -151,7 +156,13 @@ def _valid_landmark(point, *, normalized: bool) -> bool:
         return False
     if not all(_is_number(point.get(name)) for name in ("x", "y", "z", "visibility")):
         return False
-    if normalized and not all(0.0 <= float(point[name]) <= 1.0 for name in ("x", "y", "visibility")):
+    if any(abs(float(point[name])) > LANDMARK_COORDINATE_ABS_LIMIT for name in ("x", "y", "z")):
+        return False
+    # Visibility remains a probability.  Image x/y are intentionally not
+    # clipped or forced into [0, 1]; edge/out-of-frame landmarks are valid
+    # input for relative pose calculations.  World landmarks use the same
+    # finite guard but never receive an image-coordinate range check.
+    if not 0.0 <= float(point["visibility"]) <= 1.0:
         return False
     return True
 
