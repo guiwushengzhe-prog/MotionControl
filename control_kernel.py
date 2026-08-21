@@ -33,6 +33,13 @@ MP_NAMES = [
 HEAD_UPDATE_INTERVAL_S = 0.028
 CALIBRATION_CENTER_DURATION_S = 3.0
 CALIBRATION_CENTER_MIN_VALID_S = 1.0
+# v2 center capture: warm-up (discard), then collect valid samples up to a
+# target, with a hard wall-clock limit.  These replace the old flat 3s timer.
+CENTER_WARMUP_S = 0.5
+CENTER_COLLECTION_TARGET_S = 1.8
+CENTER_WALL_LIMIT_S = 5.0
+# MAD-based outlier rejection threshold (median absolute deviation multiples).
+CENTER_MAD_THRESHOLD = 3.0
 # Legacy names are retained for status/client compatibility; v2 no longer has
 # a prepare/five-stage calibration state machine.
 CALIBRATION_PREPARE_DURATION_S = 0.0
@@ -56,6 +63,12 @@ HEAD_FACE_SCALE_MULTIPLIER = 5.0
 # Kept for older status fields; v2 no longer uses a directional guidance goal.
 CALIBRATION_GUIDANCE_DELTA = 0.005
 HEAD_SIGNAL_VERSION = "head-control-v2"
+# A locked face pair (eyes/ears) stays the source for both yaw and pitch
+# until it has been continuously unavailable for this long.  Switching pair
+# without a recenter would reuse a center measured on different geometry.
+FACE_PAIR_RESELECT_TIMEOUT_S = 0.9
+# Short center rebuild after a pair switch; finite, not the old five-stage.
+FACE_PAIR_RECENTER_DURATION_S = 1.2
 CALIBRATION_STAGES = (
     ("center", "正视"),
     ("left", "左转"),
@@ -170,9 +183,14 @@ class ControlKernel:
         self.head = {
             "calibrated": True, "calibrating": False, "stage": "", "stage_label": "",
             "signal_version": HEAD_SIGNAL_VERSION, "face_pair": "",
+            "face_pair_unavailable_since": 0.0, "face_pair_valid": False,
+            "head_recenter_required": False, "face_pair_recenter_until": 0.0,
             "stage_started": 0.0, "calibration_started": 0.0,
             "stage_duration": CALIBRATION_STAGE_DURATION_S, "stage_deadline": 0.0,
-            "center_yaw": [], "center_pitch": [], "left_yaw": [],
+            "center_yaw": [], "center_pitch": [], "center_pitch_face": [],
+            "center_pitch_z": [], "center_warmup_until": 0.0,
+            "center_collected_s": 0.0,
+            "left_yaw": [],
             "right_yaw": [], "up_pitch": [], "down_pitch": [], "shoulder_scale_samples": [],
             "stage_valid_s": 0.0, "stage_required_s": CALIBRATION_STAGE_DURATION_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
@@ -196,6 +214,8 @@ class ControlKernel:
             "pitch_face_weight": DEFAULT_HEAD_PARAMS["pitch_face_weight"],
             "pitch_z_weight": DEFAULT_HEAD_PARAMS["pitch_z_weight"],
             "shoulder_scale0": DEFAULT_HEAD_PARAMS["shoulder_scale0"],
+            "yaw_center": math.nan, "pitch_face_center": math.nan,
+            "pitch_z_center": math.nan,
             "raw_yaw": math.nan, "raw_pitch": math.nan,
             "raw_pitch_face": math.nan, "raw_pitch_z": math.nan,
             "norm_x": 0.0, "norm_y": 0.0,
@@ -478,7 +498,10 @@ class ControlKernel:
             "calibration_message": message,
             "quality": "校准已取消，当前使用默认参数" if message else "当前使用：默认参数",
             "face_pair": "",
-            "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
+            "center_yaw": [], "center_pitch": [], "center_pitch_face": [],
+            "center_pitch_z": [], "center_warmup_until": 0.0,
+            "center_collected_s": 0.0,
+            "left_yaw": [], "right_yaw": [],
             "up_pitch": [], "down_pitch": [], "shoulder_scale_samples": [],
             "stage_valid_s": 0.0, "stage_required_s": CALIBRATION_STAGE_DURATION_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
@@ -619,7 +642,7 @@ class ControlKernel:
             self.width = max(1, int(width))
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
-            self._ensure_face_pair_locked(pose_map)
+            self._ensure_face_pair_locked(pose_map, now)
             # The v2 center capture starts only after a valid head pose is
             # available; it records a short neutral baseline rather than
             # asking the user to perform five directional stages.
@@ -695,9 +718,11 @@ class ControlKernel:
             "calibrating": True, "stage": "center", "stage_label": "设置中心",
             "stage_started": now, "calibration_started": now,
             "stage_duration": CALIBRATION_CENTER_DURATION_S,
-            "stage_deadline": now + CALIBRATION_CENTER_DURATION_S,
+            "stage_deadline": now + CENTER_WALL_LIMIT_S,
+            "center_warmup_until": now + CENTER_WARMUP_S,
+            "center_collected_s": 0.0,
             "calibration_message": "",
-            "stage_valid_s": 0.0, "stage_required_s": CALIBRATION_CENTER_DURATION_S,
+            "stage_valid_s": 0.0, "stage_required_s": CENTER_COLLECTION_TARGET_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
             "stage_transition_until": 0.0, "stage_transition_message": "",
             "stage_signal_value": None, "stage_signal_center": None,
@@ -711,7 +736,8 @@ class ControlKernel:
             ),
             "calibration_axis_results": {"yaw": "pending", "pitch": "pending"},
             "calibration_timeouts": [], "center_capture_pending": False,
-            "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
+            "center_yaw": [], "center_pitch": [], "center_pitch_face": [],
+            "center_pitch_z": [], "left_yaw": [], "right_yaw": [],
             "up_pitch": [], "down_pitch": [], "shoulder_scale_samples": [],
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
         })
@@ -924,19 +950,59 @@ class ControlKernel:
 
     # ---------- head-control port of the browser math ----------
 
-    def _ensure_face_pair_locked(self, pose_map: dict[str, dict] | None) -> str:
-        """Lock one face pair for this body-source lifetime to prevent jumps."""
+    def _ensure_face_pair_locked(self, pose_map: dict[str, dict] | None, now: float | None = None) -> str:
+        """Lock one face pair for this head-tracking session.
+
+        Both yaw and pitch must consume the same pair.  Once locked, the pair
+        does not change frame-to-frame.  If the locked pair is unavailable for
+        longer than FACE_PAIR_RESELECT_TIMEOUT_S, the session ends and a fresh
+        pair may be selected -- but the next output must first pass a short
+        recenter so that a center measured on eyes is not silently reused on
+        ears (different geometry, scale and depth distribution).
+        """
+        now = time.monotonic() if now is None else now
         pair = self.head.get("face_pair", "")
         if pair in {"eyes", "ears"}:
-            return pair
+            available = self._face_pair_available(pose_map, pair)
+            self.head["face_pair_valid"] = bool(available)
+            if available:
+                self.head["face_pair_unavailable_since"] = 0.0
+                # If we were in a recenter window and it has elapsed, clear it.
+                if self.head.get("head_recenter_required") and now >= self.head.get("face_pair_recenter_until", 0.0):
+                    self.head["head_recenter_required"] = False
+                return pair
+            # Locked pair is unavailable this frame.
+            since = float(self.head.get("face_pair_unavailable_since") or 0.0)
+            if not since:
+                self.head["face_pair_unavailable_since"] = now
+                return pair
+            elif now - since >= FACE_PAIR_RESELECT_TIMEOUT_S:
+                # Session expired: allow re-selection, but force recenter.
+                self.head["face_pair"] = ""
+                self.head["face_pair_unavailable_since"] = 0.0
+                self.head["face_pair_valid"] = False
+                pair = ""
+            else:
+                # Still within grace window: output invalid this frame, but
+                # do NOT silently switch to the other pair.
+                return pair
+        # No active pair: select one if available.
         if self._face_pair_available(pose_map, "eyes"):
-            pair = "eyes"
+            new_pair = "eyes"
         elif self._face_pair_available(pose_map, "ears"):
-            pair = "ears"
+            new_pair = "ears"
         else:
-            pair = ""
-        self.head["face_pair"] = pair
-        return pair
+            self.head["face_pair_valid"] = False
+            return ""
+        self.head["face_pair"] = new_pair
+        self.head["face_pair_valid"] = True
+        self.head["face_pair_unavailable_since"] = 0.0
+        # A freshly selected pair always requires a short recenter before
+        # output resumes, unless no calibrated center exists yet.
+        if self.head.get("calibrated"):
+            self.head["head_recenter_required"] = True
+            self.head["face_pair_recenter_until"] = now + FACE_PAIR_RECENTER_DURATION_S
+        return new_pair
 
     def _shoulder_width(self, pose_map: dict[str, dict]) -> float:
         left, right = pose_map.get("left_shoulder"), pose_map.get("right_shoulder")
@@ -949,39 +1015,47 @@ class ControlKernel:
         return width if math.isfinite(width) and width >= 0.05 else math.nan
 
     def _face_pair_points(self, pose_map: dict[str, dict]) -> tuple[dict, dict] | None:
-        preferred = self.head.get("face_pair", "") or self._ensure_face_pair_locked(pose_map)
-        pairs = [preferred] + [item for item in ("eyes", "ears") if item != preferred]
-        for pair in pairs:
-            names = ("left_eye", "right_eye") if pair == "eyes" else ("left_ear", "right_ear")
-            left, right = pose_map.get(names[0]), pose_map.get(names[1])
-            if self._point_has_xy(left, 0.35) and self._point_has_xy(right, 0.35):
-                return left, right
+        """Return the locked pair's points, or None if unavailable.
+
+        Does NOT fall back to the other pair within a session; fallback would
+        cause per-frame switching.  Callers should treat None as an invalid
+        head-control frame.
+        """
+        pair = self.head.get("face_pair", "")
+        if pair not in {"eyes", "ears"}:
+            return None
+        names = ("left_eye", "right_eye") if pair == "eyes" else ("left_ear", "right_ear")
+        left, right = pose_map.get(names[0]), pose_map.get(names[1])
+        if self._point_has_xy(left, 0.35) and self._point_has_xy(right, 0.35):
+            return left, right
         return None
 
     def _face_geometry(self, pose_map: dict[str, dict]) -> tuple[dict, float, str] | None:
-        """Return a stable face midpoint and scale from whichever pair exists.
+        """Return a stable face midpoint and scale from the *locked* pair only.
 
-        Eye width is the canonical scale. When only ears are visible, half the
-        ear width estimates eye width, so switching pair does not multiply the
-        v2 face/depth pitch signal by a second arbitrary factor. Shoulders are
-        intentionally optional and never gate head control.
+        Eye width is the canonical scale. When only ears are visible (and ears
+        is the locked pair), half the ear width estimates eye width, so
+        switching pair does not multiply the v2 face/depth pitch signal by a
+        second arbitrary factor.  Shoulders are intentionally optional and never
+        gate head control.
+
+        This function MUST NOT independently choose eyes/ears; it consumes the
+        pair locked by _ensure_face_pair_locked.  If the locked pair is
+        unavailable it returns None and the caller treats head control as
+        invalid for this frame.
         """
-        eye_pair = (
-            pose_map.get("left_eye"), pose_map.get("right_eye")
-        ) if isinstance(pose_map, dict) else (None, None)
-        ear_pair = (
-            pose_map.get("left_ear"), pose_map.get("right_ear")
-        ) if isinstance(pose_map, dict) else (None, None)
-        eye_ok = self._point_has_xy(eye_pair[0], 0.35) and self._point_has_xy(eye_pair[1], 0.35)
-        ear_ok = self._point_has_xy(ear_pair[0], 0.35) and self._point_has_xy(ear_pair[1], 0.35)
-        if eye_ok:
-            midpoint, width, pair = _midpoint(eye_pair[0], eye_pair[1]), _distance(eye_pair[0], eye_pair[1]), "eyes"
-            midpoint["z"] = (eye_pair[0]["z"] + eye_pair[1]["z"]) / 2.0
-        elif ear_ok:
-            midpoint, width, pair = _midpoint(ear_pair[0], ear_pair[1]), _distance(ear_pair[0], ear_pair[1]) * 0.5, "ears"
-            midpoint["z"] = (ear_pair[0]["z"] + ear_pair[1]["z"]) / 2.0
-        else:
+        pair = self.head.get("face_pair", "")
+        if pair not in {"eyes", "ears"}:
             return None
+        names = ("left_eye", "right_eye") if pair == "eyes" else ("left_ear", "right_ear")
+        left, right = pose_map.get(names[0]), pose_map.get(names[1])
+        if not (self._point_has_xy(left, 0.35) and self._point_has_xy(right, 0.35)):
+            return None
+        midpoint = _midpoint(left, right)
+        width = _distance(left, right)
+        if pair == "ears":
+            width = width * 0.5
+        midpoint["z"] = (left.get("z", 0.0) + right.get("z", 0.0)) / 2.0
         scale = width * HEAD_FACE_SCALE_MULTIPLIER
         return (midpoint, scale, pair) if math.isfinite(scale) and scale >= 0.05 else None
 
@@ -992,18 +1066,26 @@ class ControlKernel:
         return _distance(_midpoint(points[0], points[1]), _midpoint(points[2], points[3]))
 
     def _yaw_signal(self, pose_map: dict[str, dict]) -> float:
+        """Yaw from nose-to-pair asymmetry using the *locked* face pair only.
+
+        Must not independently choose eyes/ears or average both; that would
+        re-introduce per-frame pair switching.  Uses the pair locked by
+        _ensure_face_pair_locked.
+        """
         nose = pose_map.get("nose")
         if not nose or _score(nose) < 0.35:
             return math.nan
-        values = []
-        for names in (("left_eye", "right_eye"), ("left_ear", "right_ear")):
-            left, right = pose_map.get(names[0]), pose_map.get(names[1])
-            if not (self._point_has_xy(left, 0.35) and self._point_has_xy(right, 0.35)):
-                continue
-            dl, dr = _distance(nose, left), _distance(nose, right)
-            if dl > 0.003 and dr > 0.003:
-                values.append(math.log((dl + 1e-4) / (dr + 1e-4)))
-        return sum(values) / len(values) if values else math.nan
+        pair = self.head.get("face_pair", "")
+        if pair not in {"eyes", "ears"}:
+            return math.nan
+        names = ("left_eye", "right_eye") if pair == "eyes" else ("left_ear", "right_ear")
+        left, right = pose_map.get(names[0]), pose_map.get(names[1])
+        if not (self._point_has_xy(left, 0.35) and self._point_has_xy(right, 0.35)):
+            return math.nan
+        dl, dr = _distance(nose, left), _distance(nose, right)
+        if dl > 0.003 and dr > 0.003:
+            return math.log((dl + 1e-4) / (dr + 1e-4))
+        return math.nan
 
     def _pitch_signal(self, pose_map: dict[str, dict], shoulder_width: float) -> float:
         nose = pose_map.get("nose")
@@ -1220,6 +1302,15 @@ class ControlKernel:
         self._advance_calibration_locked(now)
         if not self.head["calibrating"] or self.head.get("stage") != "center":
             return
+        # Warm-up: discard the first CENTER_WARMUP_S of frames so the user has
+        # time to settle into a neutral pose before measurement begins.
+        warmup_until = float(self.head.get("center_warmup_until") or 0.0)
+        if warmup_until and now < warmup_until:
+            self._record_calibration_frame_locked(
+                valid=False, reason="正在准备，请保持正视", missing_parts=[],
+                raw_yaw=raw_yaw, raw_pitch=raw_pitch,
+            )
+            return
         diagnostics = self._calibration_pose_diagnostics(pose_map, self.head.get("face_pair", ""))
         reason, missing = diagnostics["reason"], diagnostics["missing_parts"]
         sample_valid = bool(diagnostics["valid"]) and math.isfinite(raw_yaw) and math.isfinite(raw_pitch)
@@ -1238,16 +1329,29 @@ class ControlKernel:
         self.head["stage_missing_parts"] = []
         last = float(self.head.get("stage_last_sample_at") or 0.0)
         if last:
-            self.head["stage_valid_s"] = min(
-                CALIBRATION_STAGE_DURATION_S,
-                self.head["stage_valid_s"] + _clamp(now - last, 0.0, 0.20),
+            self.head["center_collected_s"] = min(
+                CENTER_COLLECTION_TARGET_S + 0.5,
+                self.head["center_collected_s"] + _clamp(now - last, 0.0, 0.20),
             )
+        self.head["stage_valid_s"] = self.head["center_collected_s"]
         self.head["stage_last_sample_at"] = now
         self.head["center_yaw"].append(raw_yaw)
         self.head["center_pitch"].append(raw_pitch)
+        # Collect the two raw pitch components separately so the center can be
+        # reconstructed per-component even if the fusion weight changes later.
+        raw_pitch_face = float(self.head.get("raw_pitch_face", math.nan))
+        raw_pitch_z = float(self.head.get("raw_pitch_z", math.nan))
+        if math.isfinite(raw_pitch_face):
+            self.head["center_pitch_face"].append(raw_pitch_face)
+        if math.isfinite(raw_pitch_z):
+            self.head["center_pitch_z"].append(raw_pitch_z)
         if math.isfinite(shoulder_width):
             self.head["shoulder_scale_samples"].append(shoulder_width)
         self._set_calibration_signal_status_locked("center", raw_yaw)
+        # Auto-finish once enough valid samples have been collected, without
+        # waiting for the full wall-clock limit.
+        if self.head["center_collected_s"] >= CENTER_COLLECTION_TARGET_S:
+            self._finish_calibration_locked(now)
 
     @staticmethod
     def _median(values: list[float], default: float = math.nan) -> float:
@@ -1255,6 +1359,30 @@ class ControlKernel:
             return default
         ordered = sorted(values)
         return ordered[len(ordered) // 2]
+
+    @classmethod
+    def _median_mad(cls, values: list[float], default: float = math.nan,
+                    threshold: float = CENTER_MAD_THRESHOLD) -> float:
+        """Median with MAD-based outlier rejection.
+
+        Computes the median, then the median absolute deviation (MAD).  Values
+        farther than threshold * MAD from the median are discarded and the
+        median recomputed.  Falls back to the plain median if MAD is zero or
+        too few samples remain.
+        """
+        if not values:
+            return default
+        med = cls._median(values)
+        if not math.isfinite(med):
+            return default
+        deviations = [abs(v - med) for v in values]
+        mad = cls._median(deviations)
+        if not math.isfinite(mad) or mad <= 1e-9:
+            return med
+        kept = [v for v in values if abs(v - med) <= threshold * mad]
+        if len(kept) < max(1, len(values) // 2):
+            return med
+        return cls._median(kept)
 
     @staticmethod
     def _qtile(values: list[float], probability: float, default: float = math.nan) -> float:
@@ -1379,15 +1507,20 @@ class ControlKernel:
                 value = math.nan
             return value if math.isfinite(value) else DEFAULT_HEAD_PARAMS[key]
 
-        valid_s = float(self.head.get("stage_valid_s") or 0.0)
+        valid_s = float(self.head.get("center_collected_s") or self.head.get("stage_valid_s") or 0.0)
         yaw_samples = self.head.get("center_yaw") or []
         pitch_samples = self.head.get("center_pitch") or []
+        pitch_face_samples = self.head.get("center_pitch_face") or []
+        pitch_z_samples = self.head.get("center_pitch_z") or []
         capture_ok = bool(
             valid_s >= CALIBRATION_CENTER_MIN_VALID_S
             and yaw_samples and pitch_samples
         )
-        measured_yaw = self._median(yaw_samples)
-        measured_pitch = self._median(pitch_samples)
+        # MAD-filtered median for robustness against brief head movements.
+        measured_yaw = self._median_mad(yaw_samples)
+        measured_pitch = self._median_mad(pitch_samples)
+        measured_pitch_face = self._median_mad(pitch_face_samples)
+        measured_pitch_z = self._median_mad(pitch_z_samples)
         capture_ok = capture_ok and math.isfinite(measured_yaw) and math.isfinite(measured_pitch)
 
         if capture_ok:
@@ -1399,6 +1532,8 @@ class ControlKernel:
             event = "center_capture_success"
         else:
             yaw0, pitch0 = fallback_value("yaw0"), fallback_value("pitch0")
+            measured_pitch_face = math.nan
+            measured_pitch_z = math.nan
             profile = "existing_personal" if fallback_profile in {"personal", "mixed", "existing_personal"} else "default"
             axis_results = {
                 "yaw": "existing_personal" if profile == "existing_personal" else "default",
@@ -1421,6 +1556,8 @@ class ControlKernel:
             "signal_version": HEAD_SIGNAL_VERSION,
             "yaw0": yaw0, "yaw_left": yaw_left, "yaw_right": yaw_right,
             "pitch0": pitch0, "pitch_up": pitch_up, "pitch_down": pitch_down,
+            "yaw_center": yaw0, "pitch_face_center": measured_pitch_face,
+            "pitch_z_center": measured_pitch_z,
             "yaw_range": yaw_range, "pitch_range": pitch_range,
             "pitch_face_weight": fallback_value("pitch_face_weight"),
             "pitch_z_weight": fallback_value("pitch_z_weight"),
@@ -1434,7 +1571,10 @@ class ControlKernel:
             "stage_transition_until": 0.0, "stage_transition_message": "",
             "calibration_notice": "success", "calibration_notice_text": f"{quality}",
             "calibration_notice_until": now + 2.0,
-            "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
+            "center_yaw": [], "center_pitch": [], "center_pitch_face": [],
+            "center_pitch_z": [], "center_warmup_until": 0.0,
+            "center_collected_s": 0.0,
+            "left_yaw": [], "right_yaw": [],
             "up_pitch": [], "down_pitch": [], "shoulder_scale_samples": [],
             "calibration_fallback": None, "calibration_fallback_profile": "default",
             "calibration_fallback_axis_results": {"yaw": "default", "pitch": "default"},
@@ -1446,7 +1586,9 @@ class ControlKernel:
     def _update_head_locked(self, pose_map: dict[str, dict], now: float) -> None:
         if self.head.get("signal_version") != HEAD_SIGNAL_VERSION:
             self._reset_default_head_locked("头控参数版本已更新，请重新校准")
-        self._ensure_face_pair_locked(pose_map)
+        self._ensure_face_pair_locked(pose_map, now)
+        pair_valid = bool(self.head.get("face_pair_valid"))
+        recentering = bool(self.head.get("head_recenter_required"))
         shoulder_width = self._shoulder_width(pose_map)
         raw_yaw, raw_pitch = self._yaw_signal(pose_map), self._pitch_signal(pose_map, shoulder_width)
         self.head["raw_yaw"], self.head["raw_pitch"] = raw_yaw, raw_pitch
@@ -1455,7 +1597,15 @@ class ControlKernel:
         # Keep the existing/default head parameters active before and after a
         # center capture, but hold output neutral while the center is being
         # measured. Calibration itself must never move the cursor.
-        if self.head["calibrated"] and not self.head["calibrating"]:
+        # Also hold output neutral when the locked face pair is invalid this
+        # frame, or while a post-pair-switch recenter window is active.
+        signals_valid = (
+            pair_valid
+            and not recentering
+            and math.isfinite(raw_yaw)
+            and math.isfinite(raw_pitch)
+        )
+        if self.head["calibrated"] and not self.head["calibrating"] and signals_valid:
             x = self._normalize_v2_yaw(raw_yaw, self.head["yaw0"], self.head.get("yaw_range", HEAD_DEFAULT_YAW_RANGE))
             y = self._normalize_v2_pitch(raw_pitch, self.head["pitch0"], self.head.get("pitch_range", HEAD_DEFAULT_PITCH_RANGE))
         else:
@@ -1465,8 +1615,14 @@ class ControlKernel:
         self.head["norm_x"], self.head["norm_y"] = x, y
         tx = self._curve_axis(x, self.head["deadzone_x"], self.head["max_percent_x"]) if self.head["enabled"] else 0.0
         ty = self._curve_axis(y, self.head["deadzone_y"], self.head["max_percent_y"]) if self.head["enabled"] else 0.0
-        self.head["filtered_x"] = self._filter_axis(self.head["filtered_x"], tx, x, self.head["deadzone_x"], self.head["max_percent_x"])
-        self.head["filtered_y"] = self._filter_axis(self.head["filtered_y"], ty, y, self.head["deadzone_y"], self.head["max_percent_y"])
+        # When pair is invalid or recentering, reset filters to zero rather
+        # than letting stale values decay out slowly.
+        if not signals_valid:
+            self.head["filtered_x"] = 0.0
+            self.head["filtered_y"] = 0.0
+        else:
+            self.head["filtered_x"] = self._filter_axis(self.head["filtered_x"], tx, x, self.head["deadzone_x"], self.head["max_percent_x"])
+            self.head["filtered_y"] = self._filter_axis(self.head["filtered_y"], ty, y, self.head["deadzone_y"], self.head["max_percent_y"])
         self.head["output_x"], self.head["output_y"] = self.head["filtered_x"], self.head["filtered_y"]
         if getattr(self.output, "enabled", True) and now - self.head["last_update"] >= HEAD_UPDATE_INTERVAL_S:
             self.head["last_update"] = now
@@ -1486,7 +1642,9 @@ class ControlKernel:
             "raw_yaw": math.nan, "raw_pitch": math.nan,
             "raw_pitch_face": math.nan, "raw_pitch_z": math.nan,
             "filtered_x": 0.0, "filtered_y": 0.0, "output_x": 0.0, "output_y": 0.0,
-            "face_pair": "",
+            "face_pair": "", "face_pair_unavailable_since": 0.0,
+            "face_pair_valid": False, "head_recenter_required": False,
+            "face_pair_recenter_until": 0.0,
         })
         self._safe_output(self.output.set_buttons, [], source="zones")
         self._safe_output(self.output.set_holds, [], source_group="motions")
@@ -1518,6 +1676,8 @@ class ControlKernel:
             "calibrated": bool(self.head["calibrated"]), "calibrating": bool(self.head["calibrating"]),
             "signal_version": self.head.get("signal_version", HEAD_SIGNAL_VERSION),
             "face_pair": self.head.get("face_pair", ""),
+            "face_pair_valid": bool(self.head.get("face_pair_valid", False)),
+            "head_recenter_required": bool(self.head.get("head_recenter_required", False)),
             "stage": self.head["stage"], "stage_label": self.head.get("stage_label", ""),
             "quality": self.head["quality"], "calibration_profile": self.head.get("calibration_profile", "default"),
             "calibration_message": self.head.get("calibration_message", ""),
@@ -1569,6 +1729,7 @@ class ControlKernel:
             "raw_pitch": self.head["raw_pitch"] if math.isfinite(self.head["raw_pitch"]) else None,
             "raw_pitch_face": self.head["raw_pitch_face"] if math.isfinite(self.head.get("raw_pitch_face", math.nan)) else None,
             "raw_pitch_z": self.head["raw_pitch_z"] if math.isfinite(self.head.get("raw_pitch_z", math.nan)) else None,
+            "raw_pitch_fused": self.head["raw_pitch"] if math.isfinite(self.head["raw_pitch"]) else None,
             "output_x": round(self.head["output_x"], 3), "output_y": round(self.head["output_y"], 3),
             "deadzone_x": self.head["deadzone_x"], "deadzone_y": self.head["deadzone_y"],
             "gamma": self.head["gamma"], "max_percent_x": self.head["max_percent_x"],
@@ -1611,11 +1772,14 @@ class ControlKernel:
                                 self._set_calibration_pause_locked(diagnostics["reason"], diagnostics["missing_parts"])
                 if self.active_body_source and self.body_last_at and now - self.body_last_at > self.watchdog_timeout:
                     if self.head["calibrating"]:
-                        self.latest_pose = None
-                        self.pose_last_valid_at = 0.0
+                        # Watchdog semantics are identical during calibration:
+                        # a stale body source must be released immediately, and
+                        # the in-progress center capture aborted.  Holding an
+                        # expired source alive to "pause calibration" would let
+                        # a later frame from a different person resume capture.
+                        self._clear_body_locked()
+                        self.active_body_source = None
                         self.body_last_at = 0.0
-                        self._clear_body_outputs_locked()
-                        self._set_calibration_pause_locked("未检测到人体，请进入画面", ["人体"])
                     else:
                         self._clear_body_locked()
                         self.active_body_source = None
