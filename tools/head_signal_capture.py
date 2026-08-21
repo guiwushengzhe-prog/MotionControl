@@ -1,227 +1,174 @@
 #!/usr/bin/env python3
-"""Head-control-v2 real-person signal capture tool.
+"""Real-person A/B signal capture for head-control-v4.3-reference-video-tuned.
 
-Collects raw head-tracking signals across five guided segments and writes a
-diagnostic JSON file.  This is a *diagnostic* tool, not part of the runtime
-control loop.  It helps verify that yaw/pitch signals are continuous and that
-the face-pair lock does not jump.
+The tool talks to an already-running MotionControl service.  It does not load
+MediaPipe, open a second camera, or synthesize pose frames, so it works with
+both the computer-camera and phone-pose source.
 
-Usage (real camera only):
-    python tools/head_signal_capture.py
-    python tools/head_signal_capture.py --duration 3 --output output/my_signals.json
-
-Segments (guided by on-screen prompts):
-    1. front  - look straight ahead
-    2. up     - tilt head up
-    3. down   - tilt head down
-    4. left   - turn head left
-    5. right  - turn head right
-
-Output JSON contains per-segment median/min/max/sample_count for:
-    raw_yaw, raw_pitch_face, raw_pitch_z, raw_pitch_fused,
-    normalized_yaw, normalized_pitch, output_x, output_y, face_pair
+Examples:
+    python tools/head_signal_capture.py --algorithm pnp
+    python tools/head_signal_capture.py --algorithm ratio
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
-import os
-import sys
 import time
 from pathlib import Path
+from urllib import request
 
-# Ensure project root is on sys.path so control_kernel can be imported.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from control_kernel import ControlKernel  # noqa: E402
-
-
-DEFAULT_MODEL_PATH = Path(
-    os.environ.get(
-        "MOTIONCONTROL_FULL_MODEL",
-        r"I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full.task",
-    )
+SEGMENTS = (
+    ("front", "正视前方"),
+    ("up", "抬头"),
+    ("down", "低头"),
+    ("left", "左转"),
+    ("right", "右转"),
+    ("body_forward", "头保持正视，身体稍向前靠"),
+    ("body_side", "头保持正视，身体稍向一侧移动"),
 )
-
-
-SEGMENTS = [
-    ("front", "正视前方", 3.0),
-    ("up", "抬头", 3.0),
-    ("down", "低头", 3.0),
-    ("left", "左转", 3.0),
-    ("right", "右转", 3.0),
-]
-
 SIGNAL_FIELDS = (
-    "raw_yaw", "raw_pitch_face", "raw_pitch_z", "raw_pitch_fused",
-    "normalized_yaw", "normalized_pitch", "output_x", "output_y",
+    "raw_yaw", "raw_pitch", "raw_roll",
+    "filtered_yaw", "filtered_pitch",
+    "normalized_x", "normalized_y",
+    "output_x", "output_y", "confidence",
 )
 
 
-class _CaptureOutput:
-    """Minimal output backend that records head stick values."""
-
-    def __init__(self):
-        self.axes = (0.0, 0.0)
-        self.enabled = True
-
-    def set_buttons(self, buttons, **kwargs):
-        pass
-
-    def set_holds(self, holds, **kwargs):
-        pass
-
-    def apply(self, x, y):
-        self.axes = (x, y)
-
-    def set_sensor_state(self, source, buttons, **kwargs):
-        pass
-
-    def clear_source(self, source):
-        pass
+def _get(base: str, route: str) -> dict:
+    with request.urlopen(base.rstrip("/") + route, timeout=3.0) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
-def _median(values):
+def _post(base: str, route: str, body: dict) -> dict:
+    raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = request.Request(
+        base.rstrip("/") + route,
+        data=raw,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    with request.urlopen(req, timeout=3.0) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _head(snapshot: dict) -> dict:
+    return ((snapshot.get("kernel") or {}).get("head") or {})
+
+
+def _median(values: list[float]) -> float:
+    values = sorted(v for v in values if math.isfinite(v))
     if not values:
         return math.nan
-    ordered = sorted(values)
-    return ordered[len(ordered) // 2]
+    m = len(values) // 2
+    return values[m] if len(values) % 2 else (values[m - 1] + values[m]) * 0.5
 
 
-def _stats(values):
-    finite = [v for v in values if math.isfinite(v)]
-    if not finite:
-        return {"median": None, "min": None, "max": None, "sample_count": 0}
+def _stats(values: list[float]) -> dict:
+    values = [v for v in values if math.isfinite(v)]
+    if not values:
+        return {"sample_count": 0, "median": None, "min": None, "max": None}
     return {
-        "median": round(_median(finite), 6),
-        "min": round(min(finite), 6),
-        "max": round(max(finite), 6),
-        "sample_count": len(finite),
+        "sample_count": len(values),
+        "median": round(_median(values), 6),
+        "min": round(min(values), 6),
+        "max": round(max(values), 6),
     }
 
 
-def _collect_segment(kernel, label_cn, duration):
-    """Collect raw signals for one segment. Camera feeds frames in background."""
-    print(f"\n>>> {label_cn}  ({duration:.0f}s)  — 准备好后按 Enter 开始...")
-    input()
-    print(f"    采集中... {label_cn}")
-    samples = {field: [] for field in SIGNAL_FIELDS}
-    pair_counts = {}
+def _float(value) -> float:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return math.nan
+    return value if math.isfinite(value) else math.nan
+
+
+def _capture(base: str, label: str, duration: float) -> dict:
+    input(f"\n>>> {label}，准备好后按 Enter 开始 {duration:.1f}s 采集...")
+    samples = {key: [] for key in SIGNAL_FIELDS}
+    validity = {"valid": 0, "invalid": 0}
+    algorithms: dict[str, int] = {}
     start = time.monotonic()
-    last_print = 0.0
     while time.monotonic() - start < duration:
-        h = kernel.status()["head"]
-        for field in SIGNAL_FIELDS:
-            key = {
-                "normalized_yaw": "normalized_x",
-                "normalized_pitch": "normalized_y",
-            }.get(field, field)
-            val = h.get(key, math.nan)
-            try:
-                value = float(val)
-            except (TypeError, ValueError):
-                value = math.nan
-            samples[field].append(value if math.isfinite(value) else math.nan)
-        pair = h.get("face_pair", "none")
-        pair_counts[pair] = pair_counts.get(pair, 0) + 1
-        now = time.monotonic()
-        if now - last_print > 1.0:
-            elapsed = now - start
-            print(f"    {elapsed:.1f}s / {duration:.0f}s  pair={pair}")
-            last_print = now
+        snapshot = _get(base, "/api/kernel/status")
+        head = _head(snapshot)
+        algorithms[str(head.get("algorithm") or "unknown")] = algorithms.get(str(head.get("algorithm") or "unknown"), 0) + 1
+        validity["valid" if head.get("estimate_valid") else "invalid"] += 1
+        for key in SIGNAL_FIELDS:
+            samples[key].append(_float(head.get(key)))
         time.sleep(0.03)
-    result = {field: _stats(samples[field]) for field in SIGNAL_FIELDS}
-    result["face_pair_distribution"] = pair_counts
-    result["face_pair"] = (
-        max(pair_counts, key=pair_counts.get) if pair_counts else ""
-    )
+    result = {key: _stats(values) for key, values in samples.items()}
+    result["estimate_validity"] = validity
+    result["algorithm_distribution"] = algorithms
     return result
 
 
-def _build_camera(kernel, model_path: Path):
-    """Create the native camera service using the formal Full task model."""
-    try:
-        from control_kernel import NativeCameraService
-        cam = NativeCameraService(kernel, model_path=model_path)
-        cam.start()
-        # Wait briefly for first frame
-        for _ in range(30):
-            if getattr(cam, "latest_frame", None) is not None:
-                break
-            time.sleep(0.1)
-        return cam
-    except Exception as exc:
-        print(f"[WARN] Camera unavailable: {exc}")
-        print("       Signal capture requires a working camera + MediaPipe.")
-        return None
+def _capture_center(base: str, timeout: float = 6.0) -> dict:
+    _post(base, "/api/head/calibration/start", {})
+    deadline = time.monotonic() + timeout
+    last = {}
+    while time.monotonic() < deadline:
+        last = _head(_get(base, "/api/kernel/status"))
+        if not last.get("calibrating") and last.get("calibrated"):
+            return last
+        time.sleep(0.1)
+    raise RuntimeError(f"中心记录未在 {timeout:.1f}s 内完成：{last.get('estimate_error') or last.get('notice') or 'unknown'}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Head-control-v2 real signal capture")
-    parser.add_argument("--duration", type=float, default=3.0, help="Seconds per segment")
-    parser.add_argument("--output", type=str, default=None, help="Output JSON path")
-    parser.add_argument("--model", type=str, default=str(DEFAULT_MODEL_PATH), help="Formal MediaPipe Full task path")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="head-control-v4.3-reference-video-tuned 真人 A/B 信号采集")
+    parser.add_argument("--base", default="http://127.0.0.1:8765")
+    parser.add_argument("--algorithm", choices=("pnp", "ratio"), default="pnp")
+    parser.add_argument("--duration", type=float, default=3.0)
+    parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
-    output = _CaptureOutput()
-    kernel = ControlKernel(output)
-    model_path = Path(args.model).expanduser().resolve()
-    if not model_path.is_file():
-        print(f"[ERROR] MediaPipe Full task not found: {model_path}")
-        kernel.close()
-        sys.exit(1)
-    camera = _build_camera(kernel, model_path)
+    snapshot = _get(args.base, "/api/kernel/status")
+    if snapshot.get("version") != "0.9.3":
+        raise SystemExit(f"服务版本不是 0.9.3：{snapshot.get('version')!r}")
+    if not (snapshot.get("kernel") or {}).get("active_body_source"):
+        raise SystemExit("当前没有人体姿态源；先启动电脑摄像头或连接手机姿态")
 
-    if camera is None:
-        print("\n[ERROR] Cannot capture without a camera. Exiting.")
-        kernel.close()
-        sys.exit(1)
+    _post(args.base, "/api/head/config", {"algorithm": args.algorithm, "enabled": True})
+    print(f"算法：{args.algorithm}")
+    print("先记录自然正视中心；期间不会主动移动鼠标。")
+    input("自然正视后按 Enter 开始中心记录...")
+    center = _capture_center(args.base)
+    print(f"中心完成：yaw={center.get('center_yaw')} pitch={center.get('center_pitch')} 稳定区X/Y={center.get('effective_deadzone_x')}/{center.get('effective_deadzone_y')}")
 
-    print("=" * 60)
-    print("Head-control-v2 真人信号采集")
-    print("=" * 60)
-    print(f"每段时长: {args.duration:.0f}s")
-    print(f"模型: {model_path}")
-    print(f"信号字段: {', '.join(SIGNAL_FIELDS)}; face_pair")
-    print("=" * 60)
+    segments = {}
+    for key, label in SEGMENTS:
+        segments[key] = _capture(args.base, label, args.duration)
 
-    results = {}
-    for seg_id, label_cn, default_dur in SEGMENTS:
-        dur = args.duration
-        results[seg_id] = _collect_segment(kernel, label_cn, dur)
-
-    if camera:
-        camera.stop()
-    kernel.close()
-
-    # Build output filename
     if args.output:
-        out_path = Path(args.output)
+        out = Path(args.output)
     else:
-        ts = time.strftime("%Y%m%d-%H%M%S")
-        out_path = PROJECT_ROOT / "output" / f"head-control-v2-real-signal-{ts}.json"
-
-    model_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest().upper()
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        out = PROJECT_ROOT / "output" / f"head-control-v4.3-reference-video-tuned-{args.algorithm}-real-signal-{stamp}.json"
     payload = {
         "tool": "head_signal_capture.py",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "signal_version": "head-control-v2",
-        "model_path": str(model_path),
-        "model_sha256": model_sha256,
+        "service_version": snapshot.get("version"),
+        "signal_version": "head-control-v4.3-reference-video-tuned",
+        "algorithm": args.algorithm,
         "segment_duration_s": args.duration,
-        "segments": results,
+        "center": {
+            key: center.get(key)
+            for key in (
+                "center_yaw", "center_pitch", "noise_yaw", "noise_pitch",
+                "effective_deadzone_x", "effective_deadzone_y",
+            )
+        },
+        "segments": segments,
     }
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n{'=' * 60}")
-    print(f"采集完成！结果已保存到:")
-    print(f"  {out_path}")
-    print(f"{'=' * 60}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\n完成：{out}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

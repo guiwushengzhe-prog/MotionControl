@@ -1,4 +1,4 @@
-# MotionControl v0.8.1 — Local Kernel + Body-relative Zones + Four Motions
+# MotionControl v0.9.3 — Reference-video Tuned Head Control + Local Kernel
 
 继续沿用 Full、头控、语音和悬浮窗。本版重点是把复杂设置收进“设置”，并让姿态、语音和输出时序都由本地服务维护。
 
@@ -66,7 +66,7 @@
 
 - 四个动作及输出映射
 - 自定义语音词表/映射
-- 头控死区、曲线、水平/垂直幅度、反转
+- 头控算法、稳定区、水平/垂直视角速度、反转
 
 动作映射保存在：
 
@@ -76,11 +76,11 @@ config\motion_mappings.json
 
 ## 头控校准
 
-头控启动先使用默认参数，并在第一次获得有效头部姿态后自动记录约 3 秒中心；用户也可以点击“重新设置中心”。中心记录失败不会影响默认/已有个人参数，不再要求五段方向校准。
+头控核心位于 `head_control.py`，信号版本为 `head-control-v4.3-reference-video-tuned`。本版本保留参考实现的 PnP（3D 头姿）和 ratio（脸部比例）两条算法、中心采集、One Euro 滤波、噪声自适应稳定区、迟滞死区和限速输出；旧的双眼/双耳切换、face/z 融合和五段方向校准不再作为运行路径。
 
-每次校准结束后只保存信号摘要诊断（阶段有效/无效帧、暂停原因、yaw/pitch min/max/median 和最终阈值比较）到 `%LOCALAPPDATA%\MotionControl\calibration_diagnostics.jsonl`，不保存视频或完整姿态帧。
+校准是一次有限的会话级中心采集：约 1.0 秒准备，至少 2.2 秒、32 个有效样本，墙钟上限 6.0 秒；最多只跳过低置信度帧或明显跳点，不会因轻微模型抖动清空历史。墙钟到期仍有至少 20 个有效样本即可成功，失败时保留已有个人中心或安全零输出。中心和噪声使用 robust median + MAD/IQR，噪声偏大只扩大稳定区，不把正常抖动当成校准失败。
 
-0.8.1 的头控信号版本为 `head-control-v2`：yaw 使用可用双眼/双耳点对的鼻尖距离对数比；pitch 融合脸部垂直比例（70%）和 MediaPipe z 深度（30%）。中心记录完成后立即可用；默认死区为 0–8%，默认曲线 `gamma=1.5`。肩、髋、手、脚都不再是头控必需点；旧版本个人参数不会套用。
+每次校准只保存摘要到 `%LOCALAPPDATA%\MotionControl\head_profile.json` 和诊断 JSONL，不保存视频或完整姿态帧。参考调参记录见 `docs\reference\REFERENCE_VIDEO_TUNING_2026-08-21.md`。
 
 ## 本地语音
 

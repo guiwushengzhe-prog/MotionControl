@@ -14,12 +14,12 @@ def test_only_full_model_is_registered():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert 'pose_landmarker_full.task' in server
     assert 'pose_landmarker_lite.task' not in server
-    assert 'VERSION = "0.8.1"' in server
+    assert 'VERSION = "0.9.3"' in server
 
 
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
-    for required in ['身体相对区域会跟着人移动', '自动头控校准', '当前姿势设为中心', 'Xbox 360 右摇杆', '开启输出 F8', '紧急停止 F9', 'id="settingsBtn"', '四个动作与按键', '语音映射', '头控微调']:
+    for required in ['身体相对区域会跟着人移动', '开始校准', 'Xbox 360 右摇杆', '开启输出 F8', '紧急停止 F9', 'id="settingsBtn"', '四个动作与按键', '语音映射', '头控', '3D 头姿（PnP）']:
         assert required in page
     for removed in ['开始 30 秒性能测试', '静止抖动测试', '实时性能数据', 'Lite / Full 对比结果', 'modelSelect']:
         assert removed not in page
@@ -59,13 +59,13 @@ def test_four_motion_rules_and_settings_exist():
 def test_head_calibration_uses_default_until_atomic_success():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     kernel = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
-    assert '当前使用：默认参数' in kernel
-    assert 'CALIBRATION_PREPARE_DURATION_S = 5.0' in kernel
-    assert 'CALIBRATION_TOTAL_DURATION_S = 12.5' in kernel
+    head_control = (ROOT / 'head_control.py').read_text(encoding='utf-8')
+    assert 'head-control-v4.3-reference-video-tuned' in head_control
+    assert 'CENTER_PREPARE_S = 1.00' in (ROOT / 'head_control.py').read_text(encoding='utf-8')
+    assert 'CENTER_WALL_LIMIT_S = 6.00' in (ROOT / 'head_control.py').read_text(encoding='utf-8')
     assert 'cancel_calibration' in kernel
-    assert 'setCurrentCenter' in app
-    assert '"calibrated": True' in kernel
-    assert '_torso_length' in kernel
+    assert '开始校准' in (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
+    assert 'HeadController' in kernel
 
 
 def test_xbox_masks_include_abxy_and_side_buttons():
