@@ -24,7 +24,7 @@ const BODY_ZONES = {leftHandUpper:{label:'Y',button:'Y'},leftHandLower:{label:'X
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=false, modelAvailable=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null};
-const head={deadzoneX:.08,deadzoneY:.12,gamma:2.2,maxPercentX:60,maxPercentY:45,enabled:true,invertX:false,invertY:false};
+const head={deadzoneX:.08,deadzoneY:.08,gamma:2.2,maxPercentX:60,maxPercentY:45,enabled:true,invertX:false,invertY:false};
 const motion={config:[]};
 const voice={status:null};
 const overlay={win:null,canvas:null,ctx:null};
@@ -62,12 +62,12 @@ function renderCalibrationOverlay(hs={}){
   const bar=$('#calibrationProgressBar'),detail=$('#calibrationDetail'),cancel=$('#calibrationCancel');
   if(success){
     stage.textContent='完成';prompt.textContent=hs.calibration_notice_text||'校准成功，已使用个人参数';
-    countdown.textContent='✓';bar.style.width='100%';detail.textContent='当前使用：个人校准';cancel.style.display='none';return;
+    countdown.textContent='✓';bar.style.width='100%';detail.textContent=hs.quality||'当前使用：个人参数';cancel.style.display='none';return;
   }
   cancel.style.display='block';
   const stageNames={prepare:'准备',center:'正视',left:'左转',right:'右转',up:'抬头',down:'低头'};
   const actions={prepare:'请退到合适位置',center:'请正视摄像头',left:'请向左转头',right:'请向右转头',up:'请抬头',down:'请低头'};
-  const key=hs.stage||'prepare',required=Number(hs.stage_required_s||1.5),valid=Number(hs.stage_valid_s||0);
+  const key=hs.stage||'prepare',required=Number(hs.stage_required_s||1.5),valid=Number(hs.stage_valid_s||0),wallRemaining=Number(hs.stage_wall_remaining_s);
   const paused=!!hs.stage_paused&&!!hs.stage_pause_reason,transition=hs.stage_transition_message&&Number(hs.stage_transition_remaining_s||0)>0;
   const signalValue=Number(hs.stage_signal_value),signalDelta=Number(hs.stage_signal_delta),signalProgress=Number(hs.stage_signal_progress||0);
   const signalText=key!=='prepare'&&Number.isFinite(signalValue)
@@ -78,10 +78,11 @@ function renderCalibrationOverlay(hs={}){
     prompt.textContent=hs.stage_transition_message;countdown.textContent=Number(hs.stage_transition_remaining_s||0).toFixed(1);
     bar.style.width='100%';detail.textContent='下一阶段即将开始';return;
   }
+  const wallText=key!=='prepare'&&Number.isFinite(wallRemaining)?` · 本阶段剩余 ${wallRemaining.toFixed(1)}s`:'';
   if(paused){
-    prompt.textContent=hs.stage_pause_reason;detail.textContent=((hs.stage_missing_parts||[]).length?`需要：${hs.stage_missing_parts.join('、')}`:'请调整姿势后继续')+(signalText?` · ${signalText}`:'');
+    prompt.textContent=hs.stage_pause_reason;detail.textContent=((hs.stage_missing_parts||[]).length?`需要：${hs.stage_missing_parts.join('、')}`:'请调整姿势后继续')+wallText+(signalText?` · ${signalText}`:'');
   }else{
-    prompt.textContent=actions[key]||`请保持${stage.textContent}`;detail.textContent=(key==='prepare'?'准备阶段不采样':`有效采样 ${valid.toFixed(1)} / ${required.toFixed(1)} 秒`)+(signalText?` · ${signalText}`:'');
+    prompt.textContent=actions[key]||`请保持${stage.textContent}`;detail.textContent=(key==='prepare'?'准备阶段不采样':`有效采样 ${valid.toFixed(1)} / ${required.toFixed(1)} 秒`+wallText)+(signalText?` · ${signalText}`:'');
   }
   const remaining=Number(hs.stage_remaining_s||0);countdown.textContent=key==='prepare'?remaining.toFixed(1):`${valid.toFixed(1)}s`;
   bar.style.width=`${Math.max(0,Math.min(100,key==='prepare'?(1-remaining/Math.max(required,.1))*100:(valid/Math.max(required,.1))*100))}%`;
