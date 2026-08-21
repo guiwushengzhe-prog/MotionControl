@@ -2,7 +2,7 @@
 
 This diagnostic deliberately sends no synthetic pose and does not start a
 service.  The operator must already have a real person in front of the real
-computer camera, with the 0.7.10 local service running and mouse output enabled.
+computer camera, with the 0.8.0 local service running and mouse output enabled.
 The service then exercises the real ControlKernel -> OutputManager ->
 SendInput path while this script records the Windows cursor.
 """
@@ -67,7 +67,7 @@ def main() -> int:
     base = f"http://127.0.0.1:{args.port}"
     kernel = _get(base, "/api/kernel/status")
     output = _get(base, "/api/output-status")
-    if kernel.get("version") != "0.7.10":
+    if kernel.get("version") != "0.8.0":
         raise SystemExit(f"wrong service version: {kernel.get('version')!r}")
     camera = (kernel.get("camera") or {})
     if not camera.get("running") or kernel.get("body_mode") != "computer":

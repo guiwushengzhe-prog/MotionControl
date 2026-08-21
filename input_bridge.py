@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import math
 import socket
@@ -278,18 +279,26 @@ def _validate_sensor_frame(message: dict) -> tuple[set[str], float, float, float
 
 def _local_addresses() -> list[str]:
     values: set[str] = set()
+
+    def add(address: str) -> None:
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:
+            return
+        # Only advertise usable private LAN addresses.  In particular, do
+        # not put loopback/APIPA/VPN-less placeholders into the phone field.
+        if parsed.version == 4 and parsed.is_private and not parsed.is_loopback and not parsed.is_link_local:
+            values.add(str(parsed))
+
     try:
         for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            address = str(item[4][0])
-            if address and not address.startswith("127.") and address != "0.0.0.0":
-                values.add(address)
+            add(str(item[4][0]))
     except OSError:
         pass
     try:
         _, _, addresses = socket.gethostbyname_ex(socket.gethostname())
         for address in addresses:
-            if address and not address.startswith("127.") and address != "0.0.0.0":
-                values.add(address)
+            add(str(address))
     except OSError:
         pass
     return sorted(values)
@@ -374,6 +383,11 @@ class InputBridge:
         if not addresses:
             addresses = ["<本机局域网地址>"]
         return [f"ws://{address}:{self._port}/ws/input" for address in addresses]
+
+    def lan_ipv4(self) -> str | None:
+        """Return the first actual private IPv4 advertised to the phone UI."""
+        addresses = _local_addresses()
+        return addresses[0] if addresses else None
 
     @staticmethod
     def _rate(times: deque[float]) -> float | None:
@@ -492,6 +506,7 @@ class InputBridge:
         return {
             "server_host": host,
             "server_port": port,
+            "lan_ipv4": self.lan_ipv4(),
             "body_mode": self._body_mode,
             "phone_ws_urls": self.phone_ws_urls(),
             "mobile_pose_connected": any(item["connected"] for item in pose_sources),
