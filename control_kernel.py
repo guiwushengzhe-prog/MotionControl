@@ -37,6 +37,10 @@ CALIBRATION_TOTAL_DURATION_S = 12.5
 CALIBRATION_TRANSITION_DURATION_S = 0.60
 CALIBRATION_POSE_TIMEOUT_S = 0.30
 CALIBRATION_DIAGNOSTIC_MAX_VALUES = 512
+# A calibration endpoint only needs to be measurably different from the
+# neutral anchor. The personal dead-zone still protects runtime output.
+CALIBRATION_MIN_AXIS_SEPARATION = 0.0005
+CALIBRATION_GUIDANCE_DELTA = 0.005
 HEAD_SIGNAL_VERSION = "head-shoulder-v2"
 CALIBRATION_STAGES = (
     ("center", "正视"),
@@ -158,6 +162,9 @@ class ControlKernel:
             "stage_valid_s": 0.0, "stage_required_s": CALIBRATION_STAGE_DURATION_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
             "stage_transition_until": 0.0, "stage_transition_message": "",
+            "stage_signal_value": None, "stage_signal_center": None,
+            "stage_signal_delta": None, "stage_signal_goal": CALIBRATION_GUIDANCE_DELTA,
+            "stage_signal_progress": 0.0,
             "calibration_profile": "default", "calibration_message": "",
             "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
             "calibration_diag": self._new_calibration_diagnostic(),
@@ -342,6 +349,34 @@ class ControlKernel:
         diag["stage_attempts"].append(entry)
         diag["current"] = None
 
+    @staticmethod
+    def _calibration_axis_check(center: float, left: float, right: float) -> dict:
+        """Check labeled left/center/right anchors without a large magic threshold."""
+        finite = all(math.isfinite(value) for value in (center, left, right))
+        left_delta = left - center if finite else math.nan
+        right_delta = right - center if finite else math.nan
+        min_separation = (
+            min(abs(left_delta), abs(right_delta)) if finite else math.nan
+        )
+        span = abs(left - right) if finite else math.nan
+        ordered = bool(finite and left_delta * right_delta < 0.0)
+        separated = bool(
+            finite
+            and min_separation >= CALIBRATION_MIN_AXIS_SEPARATION
+            and span >= CALIBRATION_MIN_AXIS_SEPARATION
+        )
+        return {
+            "finite": finite,
+            "ordered": ordered,
+            "separated": separated,
+            "ok": bool(ordered and separated),
+            "left_delta": left_delta if finite else None,
+            "right_delta": right_delta if finite else None,
+            "min_separation": min_separation if finite else None,
+            "span": span if finite else None,
+            "minimum_separation": CALIBRATION_MIN_AXIS_SEPARATION,
+        }
+
     def _set_calibration_final_check_locked(
         self, yaw0: float, yl: float, yr: float,
         pitch0: float, pu: float, pd: float,
@@ -350,6 +385,8 @@ class ControlKernel:
         diag = self.head.get("calibration_diag")
         if not isinstance(diag, dict):
             return
+        yaw_check = self._calibration_axis_check(yaw0, yl, yr)
+        pitch_check = self._calibration_axis_check(pitch0, pu, pd)
         diag["final_check"] = {
             "center_yaw": self._diagnostic_stats(self.head.get("center_yaw")),
             "left_yaw": self._diagnostic_stats(self.head.get("left_yaw")),
@@ -363,10 +400,14 @@ class ControlKernel:
             "pitch_center_median": pitch0 if math.isfinite(pitch0) else None,
             "pitch_up_median": pu if math.isfinite(pu) else None,
             "pitch_down_median": pd if math.isfinite(pd) else None,
-            "yaw_threshold": 0.025,
-            "pitch_threshold": 0.008,
+            "yaw_threshold": CALIBRATION_MIN_AXIS_SEPARATION,
+            "pitch_threshold": CALIBRATION_MIN_AXIS_SEPARATION,
             "yaw_ok": bool(yaw_ok),
             "pitch_ok": bool(pitch_ok),
+            "yaw_order_correct": yaw_check["ordered"],
+            "pitch_order_correct": pitch_check["ordered"],
+            "yaw_min_separation": yaw_check["min_separation"],
+            "pitch_min_separation": pitch_check["min_separation"],
             "yaw_left_delta": (yl - yaw0) if math.isfinite(yl) and math.isfinite(yaw0) else None,
             "yaw_right_delta": (yr - yaw0) if math.isfinite(yr) and math.isfinite(yaw0) else None,
             "pitch_up_delta": (pu - pitch0) if math.isfinite(pu) and math.isfinite(pitch0) else None,
@@ -420,6 +461,9 @@ class ControlKernel:
             "stage_valid_s": 0.0, "stage_required_s": CALIBRATION_STAGE_DURATION_S,
             "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
             "stage_transition_until": 0.0, "stage_transition_message": "",
+            "stage_signal_value": None, "stage_signal_center": None,
+            "stage_signal_delta": None, "stage_signal_goal": CALIBRATION_GUIDANCE_DELTA,
+            "stage_signal_progress": 0.0,
             "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
             "calibration_diag": self._new_calibration_diagnostic(),
             "norm_x": 0.0, "norm_y": 0.0,
@@ -433,6 +477,28 @@ class ControlKernel:
         self.head["stage_pause_reason"] = str(reason or "请保持姿势").strip()
         self.head["stage_missing_parts"] = list(dict.fromkeys(str(x) for x in (missing_parts or []) if str(x)))
         self.head["stage_last_sample_at"] = 0.0
+
+    def _set_calibration_signal_status_locked(self, stage: str, raw_value: float) -> None:
+        """Expose the current signal and an honest, non-gating movement hint."""
+        if stage == "center":
+            center = raw_value if math.isfinite(raw_value) else math.nan
+            delta = 0.0 if math.isfinite(center) else math.nan
+        elif stage in {"left", "right"}:
+            center = self._median(self.head.get("center_yaw") or [])
+            delta = raw_value - center if math.isfinite(raw_value) and math.isfinite(center) else math.nan
+        elif stage in {"up", "down"}:
+            center = self._median(self.head.get("center_pitch") or [])
+            delta = raw_value - center if math.isfinite(raw_value) and math.isfinite(center) else math.nan
+        else:
+            return
+        progress = _clamp(abs(delta) / CALIBRATION_GUIDANCE_DELTA, 0.0, 1.0) if math.isfinite(delta) else 0.0
+        self.head.update({
+            "stage_signal_value": raw_value if math.isfinite(raw_value) else None,
+            "stage_signal_center": center if math.isfinite(center) else None,
+            "stage_signal_delta": delta if math.isfinite(delta) else None,
+            "stage_signal_goal": CALIBRATION_GUIDANCE_DELTA,
+            "stage_signal_progress": progress,
+        })
 
     def _abort_calibration_locked(self, reason: str) -> None:
         if not self.head["calibrating"]:
@@ -585,6 +651,9 @@ class ControlKernel:
                 "stage_valid_s": 0.0, "stage_required_s": CALIBRATION_PREPARE_DURATION_S,
                 "stage_last_sample_at": 0.0, "stage_pause_reason": "", "stage_missing_parts": [],
                 "stage_transition_until": 0.0, "stage_transition_message": "",
+                "stage_signal_value": None, "stage_signal_center": None,
+                "stage_signal_delta": None, "stage_signal_goal": CALIBRATION_GUIDANCE_DELTA,
+                "stage_signal_progress": 0.0,
                 "calibration_notice": "", "calibration_notice_text": "", "calibration_notice_until": 0.0,
                 "calibration_diag": self._new_calibration_diagnostic(),
                 "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
@@ -851,15 +920,29 @@ class ControlKernel:
         return (nose["y"] - _midpoint(*pair)["y"]) / shoulder_width
 
     @staticmethod
-    def _normalize_axis(raw: float, center: float, negative: float, positive: float) -> float:
-        if not math.isfinite(raw):
+    def _normalize_axis(raw: float, center: float, left_anchor: float, right_anchor: float) -> float:
+        """Map labeled left/center/right anchors to -1/0/+1 exactly once.
+
+        The raw yaw sign can change with camera-facing/mirror conventions.  The
+        calibration labels, not the numeric sign, define the output direction:
+        the left anchor is always negative and the right anchor always positive.
+        The normal path is piecewise around the center.  A nearest-anchor
+        fallback only keeps old, already-persisted profiles usable when their
+        two anchors ended up on the same numeric side.
+        """
+        if not all(math.isfinite(value) for value in (raw, center, left_anchor, right_anchor)):
             return 0.0
-        delta, neg_delta, pos_delta = raw - center, negative - center, positive - center
-        if delta * pos_delta >= 0 and abs(pos_delta) > 0.005:
-            return _clamp(abs(delta / pos_delta), 0.0, 1.5)
-        if delta * neg_delta >= 0 and abs(neg_delta) > 0.005:
-            return -_clamp(abs(delta / neg_delta), 0.0, 1.5)
-        return 0.0
+        delta = raw - center
+        left_delta, right_delta = left_anchor - center, right_anchor - center
+        if delta * left_delta >= 0.0 and abs(left_delta) > CALIBRATION_MIN_AXIS_SEPARATION:
+            return -_clamp(abs(delta / left_delta), 0.0, 1.5)
+        if delta * right_delta >= 0.0 and abs(right_delta) > CALIBRATION_MIN_AXIS_SEPARATION:
+            return _clamp(abs(delta / right_delta), 0.0, 1.5)
+        # Legacy/same-side anchors: choose the labeled anchor that is nearest
+        # to the current signal rather than applying a second global sign flip.
+        if abs(raw - left_anchor) <= abs(raw - right_anchor):
+            return -_clamp(abs(delta / left_delta), 0.0, 1.5) if abs(left_delta) > CALIBRATION_MIN_AXIS_SEPARATION else 0.0
+        return _clamp(abs(delta / right_delta), 0.0, 1.5) if abs(right_delta) > CALIBRATION_MIN_AXIS_SEPARATION else 0.0
 
     def _curve_axis(self, value: float, deadzone: float, maximum: float) -> float:
         amount = abs(value)
@@ -924,6 +1007,11 @@ class ControlKernel:
             "stage_missing_parts": [],
             "stage_transition_until": 0.0,
             "stage_transition_message": "",
+            "stage_signal_value": None,
+            "stage_signal_center": None,
+            "stage_signal_delta": None,
+            "stage_signal_goal": CALIBRATION_GUIDANCE_DELTA,
+            "stage_signal_progress": 0.0,
         })
 
     def _complete_calibration_stage_locked(self, now: float) -> None:
@@ -1022,6 +1110,9 @@ class ControlKernel:
             self.head["up_pitch"].append(raw_pitch)
         elif stage == "down":
             self.head["down_pitch"].append(raw_pitch)
+        self._set_calibration_signal_status_locked(
+            stage, raw_yaw if stage in {"center", "left", "right"} else raw_pitch,
+        )
         if self.head["stage_valid_s"] >= CALIBRATION_STAGE_DURATION_S:
             self._complete_calibration_stage_locked(now)
 
@@ -1042,14 +1133,17 @@ class ControlKernel:
         return ordered[max(0, min(len(ordered) - 1, index))]
 
     def _restart_calibration_stage_locked(self, index: int, reason: str, missing_parts=None) -> None:
-        stage, _ = CALIBRATION_STAGES[index]
+        # A retry starts a fresh anchor sequence from this stage onward.  Do
+        # not pool old right/up/down samples into a later final check; that
+        # made a completed retry look directionally inconsistent.
         fields = {
             "center": ("center_yaw", "center_pitch", "shoulder_scale_samples"),
             "left": ("left_yaw",), "right": ("right_yaw",),
             "up": ("up_pitch",), "down": ("down_pitch",),
-        }[stage]
-        for field in fields:
-            self.head[field] = []
+        }
+        for stage, _ in CALIBRATION_STAGES[index:]:
+            for field in fields[stage]:
+                self.head[field] = []
         self._begin_calibration_stage_locked(index, time.monotonic())
         self._set_calibration_pause_locked(reason, missing_parts)
 
@@ -1075,16 +1169,27 @@ class ControlKernel:
             return
         yl, yr = self._median(self.head["left_yaw"]), self._median(self.head["right_yaw"])
         pu, pd = self._median(self.head["up_pitch"]), self._median(self.head["down_pitch"])
-        yaw_ok = math.isfinite(yl) and math.isfinite(yr) and (yl - yaw0) * (yr - yaw0) < 0 and min(abs(yl - yaw0), abs(yr - yaw0)) >= 0.025
-        pitch_ok = math.isfinite(pu) and math.isfinite(pd) and (pu - pitch0) * (pd - pitch0) < 0 and min(abs(pu - pitch0), abs(pd - pitch0)) >= 0.008
+        yaw_check = self._calibration_axis_check(yaw0, yl, yr)
+        pitch_check = self._calibration_axis_check(pitch0, pu, pd)
+        yaw_ok, pitch_ok = yaw_check["ok"], pitch_check["ok"]
         self._set_calibration_final_check_locked(yaw0, yl, yr, pitch0, pu, pd, yaw_ok, pitch_ok)
         if not yaw_ok:
-            self._persist_calibration_diagnostic_locked("final_check_failed", "左右转幅度还不够")
-            self._restart_calibration_stage_locked(1, "左右转幅度还不够，请按提示缓慢转头", ["左右转"])
+            reason = (
+                "左右转方向次序未形成，请按提示分别向左、向右转头"
+                if not yaw_check["ordered"]
+                else "左右转信号几乎没有差异，请再转一些"
+            )
+            self._persist_calibration_diagnostic_locked("final_check_failed", reason)
+            self._restart_calibration_stage_locked(1, reason, ["左右转"])
             return
         if not pitch_ok:
-            self._persist_calibration_diagnostic_locked("final_check_failed", "上下点头幅度还不够")
-            self._restart_calibration_stage_locked(3, "上下点头幅度还不够，请按提示缓慢抬头和低头", ["上下转头"])
+            reason = (
+                "抬头/低头方向次序未形成，请按提示分别抬头、低头"
+                if not pitch_check["ordered"]
+                else "抬头/低头信号几乎没有差异，请再抬高或低一些"
+            )
+            self._persist_calibration_diagnostic_locked("final_check_failed", reason)
+            self._restart_calibration_stage_locked(3, reason, ["上下转头"])
             return
         nx = [abs(self._normalize_axis(value, yaw0, yl, yr)) for value in self.head["center_yaw"]]
         ny = [abs(self._normalize_axis(value, pitch0, pu, pd)) for value in self.head["center_pitch"]]
@@ -1123,8 +1228,14 @@ class ControlKernel:
         self.head["raw_yaw"], self.head["raw_pitch"] = raw_yaw, raw_pitch
         if self.head["calibrating"]:
             self._update_calibration_locked(raw_yaw, raw_pitch, shoulder_width, pose_map, now)
-        x = self._normalize_axis(raw_yaw, self.head["yaw0"], self.head["yaw_left"], self.head["yaw_right"]) if self.head["calibrated"] else 0.0
-        y = self._normalize_axis(raw_pitch, self.head["pitch0"], self.head["pitch_up"], self.head["pitch_down"]) if self.head["calibrated"] else 0.0
+        # Keep the existing/default head parameters active before and after a
+        # retry, but hold the output neutral while a personal calibration is
+        # being collected.  Calibration itself must never move the cursor.
+        if self.head["calibrated"] and not self.head["calibrating"]:
+            x = self._normalize_axis(raw_yaw, self.head["yaw0"], self.head["yaw_left"], self.head["yaw_right"])
+            y = self._normalize_axis(raw_pitch, self.head["pitch0"], self.head["pitch_up"], self.head["pitch_down"])
+        else:
+            x, y = 0.0, 0.0
         if self.head["invert_x"]: x = -x
         if self.head["invert_y"]: y = -y
         self.head["norm_x"], self.head["norm_y"] = x, y
@@ -1206,6 +1317,11 @@ class ControlKernel:
             "stage_missing_parts": list(self.head.get("stage_missing_parts") or []),
             "stage_transition_message": self.head.get("stage_transition_message", ""),
             "stage_transition_remaining_s": round(max(0.0, float(self.head.get("stage_transition_until") or 0.0) - now), 1),
+            "stage_signal_value": self.head.get("stage_signal_value"),
+            "stage_signal_center": self.head.get("stage_signal_center"),
+            "stage_signal_delta": self.head.get("stage_signal_delta"),
+            "stage_signal_goal": self.head.get("stage_signal_goal", CALIBRATION_GUIDANCE_DELTA),
+            "stage_signal_progress": round(float(self.head.get("stage_signal_progress") or 0.0), 3),
             "calibration_notice": self.head.get("calibration_notice", ""),
             "calibration_notice_text": self.head.get("calibration_notice_text", ""),
             "calibration_notice_remaining_s": round(max(0.0, notice_until - now), 1),

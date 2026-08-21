@@ -69,15 +69,19 @@ function renderCalibrationOverlay(hs={}){
   const actions={prepare:'请退到合适位置',center:'请正视摄像头',left:'请向左转头',right:'请向右转头',up:'请抬头',down:'请低头'};
   const key=hs.stage||'prepare',required=Number(hs.stage_required_s||1.5),valid=Number(hs.stage_valid_s||0);
   const paused=!!hs.stage_paused&&!!hs.stage_pause_reason,transition=hs.stage_transition_message&&Number(hs.stage_transition_remaining_s||0)>0;
+  const signalValue=Number(hs.stage_signal_value),signalDelta=Number(hs.stage_signal_delta),signalProgress=Number(hs.stage_signal_progress||0);
+  const signalText=key!=='prepare'&&Number.isFinite(signalValue)
+    ? `当前信号 ${signalValue.toFixed(4)} · 相对中心 ${signalDelta>=0?'+':''}${signalDelta.toFixed(4)} · 动作幅度参考 ${Math.round(signalProgress*100)}%`
+    : '';
   stage.textContent=stageNames[key]||hs.stage_label||key;
   if(transition){
     prompt.textContent=hs.stage_transition_message;countdown.textContent=Number(hs.stage_transition_remaining_s||0).toFixed(1);
     bar.style.width='100%';detail.textContent='下一阶段即将开始';return;
   }
   if(paused){
-    prompt.textContent=hs.stage_pause_reason;detail.textContent=(hs.stage_missing_parts||[]).length?`需要：${hs.stage_missing_parts.join('、')}`:'请调整姿势后继续';
+    prompt.textContent=hs.stage_pause_reason;detail.textContent=((hs.stage_missing_parts||[]).length?`需要：${hs.stage_missing_parts.join('、')}`:'请调整姿势后继续')+(signalText?` · ${signalText}`:'');
   }else{
-    prompt.textContent=actions[key]||`请保持${stage.textContent}`;detail.textContent=key==='prepare'?'准备阶段不采样':`有效采样 ${valid.toFixed(1)} / ${required.toFixed(1)} 秒`;
+    prompt.textContent=actions[key]||`请保持${stage.textContent}`;detail.textContent=(key==='prepare'?'准备阶段不采样':`有效采样 ${valid.toFixed(1)} / ${required.toFixed(1)} 秒`)+(signalText?` · ${signalText}`:'');
   }
   const remaining=Number(hs.stage_remaining_s||0);countdown.textContent=key==='prepare'?remaining.toFixed(1):`${valid.toFixed(1)}s`;
   bar.style.width=`${Math.max(0,Math.min(100,key==='prepare'?(1-remaining/Math.max(required,.1))*100:(valid/Math.max(required,.1))*100))}%`;
