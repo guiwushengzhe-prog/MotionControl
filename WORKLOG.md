@@ -99,3 +99,11 @@
 - 使用既有 PyInstaller 便携构建环境完成 `MotionControl-0.7.10.exe`；只出现既有 MediaPipe `model_maker` 子模块收集警告，构建成功。
 - 已通过回环 `/api/shutdown` 正常关闭 0.7.9，再启动 0.7.10；当前 PID `32188`，监听 `8765`，页面/API 均报告 `0.7.10` 与 `head-shoulder-v2`，头控默认参数已启用。
 - 未启动摄像头、未启动校准、未替用户真人测试；仅读页面/状态确认版本和初始状态。
+
+## 2026-08-21：0.8.0 手机连接收口
+
+- 仅修改 PC `F:\MotionControl-App`；手机端保持冻结，不修改 `F:\switch`。产品版本统一为 `0.8.0`，姿态协议名继续为 `pose_frame_v2`，头控算法版本继续为 `head-shoulder-v2`。
+- 静态核对手机 commit `6dab65fe4f077c81d7d0b924ad5d104c9e2d57dd`：`pose_frame_v2` 携带 33 点、`actual_model`（full/lite）、`coordinates_mirrored`、`camera_facing`、`device_id`、`sequence`、`captured_at_ms`、可选 `world_pose`/`inference_ms`；`sensor_frame` 携带四元数、旋转率、加速度、touches；`voice_text` 携带 camera role、device/sequence/timestamp/text 和可选 confidence。PC 校验与转换链均兼容，无需手机字段改动。
+- 手机姿态仍由 `/ws/input` 进入同一 `ControlKernel`，不在电脑重复运行 MediaPipe；断线/切源沿用 300 ms watchdog 和原子释放。页面从 `/api/input/status` 显示实际私有局域网地址，当前只读发现为 `ws://192.168.1.35:8765/ws/input`。
+- 只读核对发现 8765 由已知旧 0.7.10 进程占用，未结束未知进程；Windows 防火墙未发现 MotionControl 专用规则，本轮未改防火墙。
+- 本轮只做 Python/JavaScript 语法检查、必要编译和 `git diff --check`；未操作摄像头、校准、游戏或输出。
