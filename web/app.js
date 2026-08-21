@@ -67,7 +67,10 @@ function renderKernelState(runtime){
     const remaining=Number.isFinite(hs.calibration_remaining_s)?` ${Number(hs.calibration_remaining_s).toFixed(1)}s`:'';
     const stage=hs.stage_label||hs.stage||'';
     $('#calBtn').textContent=hs.calibrating?'取消校准':'自动头控校准';
-    $('#calStatus').textContent=hs.calibrating?`校准中${remaining} · ${stage}`:(hs.calibration_message?'校准未完成，已使用默认参数':(hs.quality||'当前使用：默认参数'));
+    const progress=hs.stage==='prepare'
+      ?`请退到合适位置，${Number(hs.stage_remaining_s??0).toFixed(1)}秒后开始`
+      :`校准中${remaining} · ${stage}`;
+    $('#calStatus').textContent=hs.calibrating?progress:(hs.calibration_message?'校准未完成，已使用默认参数':(hs.quality||'当前使用：默认参数'));
     $('#calStatus').title=hs.calibration_message||'';
   }
   if(Number.isFinite(hs.deadzone_x)){$('#deadX').value=Math.round(hs.deadzone_x*100);$('#deadY').value=Math.round(hs.deadzone_y*100);$('#gamma').value=hs.gamma;$('#speedX').value=hs.max_percent_x;$('#speedY').value=hs.max_percent_y;$('#headEnable').checked=!!hs.enabled;$('#invertX').checked=!!hs.invert_x;$('#invertY').checked=!!hs.invert_y;syncControlLabels()}
@@ -132,7 +135,7 @@ async function emergencyStop(show=true){try{output.server=await post('/api/outpu
 
 async function setSource(source,enabled=true){try{const result=await post('/api/input/source',{source,enabled});sourceMode=source;renderKernelState(result);await refreshInput();notice('输入源已切换：'+(source==='phone'?'手机摄像头':'电脑摄像头'))}catch(e){notice('输入源切换失败：'+(e?.message||e));await refreshKernel()}}
 async function toggleLocalCamera(){if(sourceMode==='phone')return;try{const result=await post('/api/input/source',{source:'computer',enabled:!cameraRunning});renderKernelState(result)}catch(e){notice('本地摄像头操作失败：'+(e?.message||e));await refreshKernel()}}
-async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'校准已取消，当前使用默认参数':'校准已开始（总计7.5秒）')}catch(e){notice('校准操作失败：'+(e?.message||e))}}
+async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'校准已取消，当前使用默认参数':'校准已开始（准备5秒+五段各1.5秒）')}catch(e){notice('校准操作失败：'+(e?.message||e))}}
 async function setCurrentCenter(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('已把当前姿势设为本地头控中心。')}catch(e){notice('设置中心失败：'+(e?.message||e))}}
 
 function renderOverlay(map=currentPoseMap){if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx,w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);if(map){octx.strokeStyle='rgba(80,220,255,.92)';octx.lineWidth=Math.max(2,w/260);octx.fillStyle='rgba(255,255,255,.96)';for(const[a,b]of EDGES){const p=map[a],q=map[b];if(!p||!q||p.score<.3||q.score<.3)continue;const vp=visualPoint(p),vq=visualPoint(q);octx.beginPath();octx.moveTo(vp.x*w,vp.y*h);octx.lineTo(vq.x*w,vq.y*h);octx.stroke()}for(const p of Object.values(map)){if(p.score<.3)continue;const vp=visualPoint(p);octx.beginPath();octx.arc(vp.x*w,vp.y*h,Math.max(2.2,w/190),0,Math.PI*2);octx.fill()}}const buttons=kernelState?.buttons||[],motions=kernelState?.motions||[];const text=buttons.length?`区域 ${buttons.join('+')}`:(motions.length?`动作 ${motions.join('+')}`:(map?'未触发':'未识别人体'));octx.fillStyle='rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle='#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.fillText(`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))}

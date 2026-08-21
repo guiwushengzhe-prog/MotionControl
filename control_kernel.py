@@ -31,8 +31,9 @@ MP_NAMES = [
 # The reference web controller sent head-control frames at most every 28 ms.
 # Keep that cadence in the local kernel now that the browser is display-only.
 HEAD_UPDATE_INTERVAL_S = 0.028
+CALIBRATION_PREPARE_DURATION_S = 5.0
 CALIBRATION_STAGE_DURATION_S = 1.5
-CALIBRATION_TOTAL_DURATION_S = 7.5
+CALIBRATION_TOTAL_DURATION_S = 12.5
 CALIBRATION_POSE_TIMEOUT_S = 0.30
 CALIBRATION_STAGES = (
     ("center", "正视"),
@@ -316,7 +317,14 @@ class ControlKernel:
             self.width = max(1, int(width))
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
-            if self.head["calibrating"] and not self._calibration_pose_is_valid(pose_map):
+            # The prepare stage is deliberately source/pose agnostic.  It lets
+            # the user move into position before the five timed sample stages;
+            # only those stages enforce the minimal head-control landmarks.
+            if (
+                self.head["calibrating"]
+                and self.head.get("stage") != "prepare"
+                and not self._calibration_pose_is_valid(pose_map)
+            ):
                 self._abort_calibration_locked("校准所需鼻、双眼/双耳或肩髋关键点不足")
             # Calibration/watchdog validity follows the exact head-control
             # inputs, not visibility of unrelated body landmarks.
@@ -367,13 +375,13 @@ class ControlKernel:
     def start_calibration(self) -> dict:
         with self._lock:
             now = time.monotonic()
-            reason = self._pose_ready_reason_locked(now)
-            if reason:
-                raise ValueError(f"校准需要先启动可用的人体来源：{reason}")
             self.head.update({
-                "calibrating": True, "stage": CALIBRATION_STAGES[0][0],
-                "stage_label": CALIBRATION_STAGES[0][1], "stage_started": now,
-                "calibration_started": now, "stage_duration": CALIBRATION_STAGE_DURATION_S,
+                # Starting calibration never gates on a camera, source, pose,
+                # or visibility.  Defaults remain active until all five
+                # sampling stages finish and are committed atomically.
+                "calibrating": True, "stage": "prepare", "stage_label": "准备",
+                "stage_started": now, "calibration_started": now,
+                "stage_duration": CALIBRATION_PREPARE_DURATION_S,
                 "calibration_message": "",
                 "center_yaw": [], "center_pitch": [], "left_yaw": [], "right_yaw": [],
                 "up_pitch": [], "down_pitch": [], "torso_samples": [], "filtered_x": 0.0,
@@ -655,14 +663,26 @@ class ControlKernel:
         started = self.head["calibration_started"]
         elapsed = max(0.0, now - started)
         duration = CALIBRATION_STAGE_DURATION_S
-        if elapsed >= CALIBRATION_TOTAL_DURATION_S:
+        if self.head.get("stage") == "prepare":
+            if elapsed < CALIBRATION_PREPARE_DURATION_S:
+                return
+            # The first data stage starts at the fixed wall-clock boundary,
+            # even if a watchdog tick arrives a little late.
+            self.head.update({
+                "stage": CALIBRATION_STAGES[0][0],
+                "stage_label": CALIBRATION_STAGES[0][1],
+                "stage_started": started + CALIBRATION_PREPARE_DURATION_S,
+                "stage_duration": CALIBRATION_STAGE_DURATION_S,
+            })
+        data_elapsed = max(0.0, elapsed - CALIBRATION_PREPARE_DURATION_S)
+        if data_elapsed >= len(CALIBRATION_STAGES) * duration:
             if not self._calibration_stage_ready_locked(self.head["stage"]):
                 label = self.head.get("stage_label") or self.head["stage"]
                 self._abort_calibration_locked(f"{label}阶段没有有效样本")
             else:
                 self._finish_calibration_locked()
             return
-        target_index = min(len(CALIBRATION_STAGES) - 1, int(elapsed // duration))
+        target_index = min(len(CALIBRATION_STAGES) - 1, int(data_elapsed // duration))
         current_index = next(
             (index for index, (stage, _) in enumerate(CALIBRATION_STAGES) if stage == self.head["stage"]),
             0,
@@ -677,7 +697,8 @@ class ControlKernel:
             self.head.update({
                 "stage": next_stage,
                 "stage_label": next_label,
-                "stage_started": started + current_index * duration,
+                "stage_started": started + CALIBRATION_PREPARE_DURATION_S + current_index * duration,
+                "stage_duration": CALIBRATION_STAGE_DURATION_S,
             })
 
     def _update_calibration_locked(self, raw_yaw: float, raw_pitch: float, torso: float, now: float) -> None:
@@ -685,6 +706,10 @@ class ControlKernel:
         if not self.head["calibrating"]:
             return
         stage = self.head["stage"]
+        if stage == "prepare":
+            # Preparation is a no-sampling countdown.  It must not consume
+            # stale frames or alter the currently active default parameters.
+            return
         if stage == "center":
             if math.isfinite(raw_yaw): self.head["center_yaw"].append(raw_yaw)
             if math.isfinite(raw_pitch): self.head["center_pitch"].append(raw_pitch)
@@ -849,7 +874,9 @@ class ControlKernel:
             now = time.monotonic()
             with self._lock:
                 if self.head["calibrating"]:
-                    if not self.active_body_source:
+                    if self.head.get("stage") == "prepare":
+                        self._advance_calibration_locked(now)
+                    elif not self.active_body_source:
                         self._abort_calibration_locked("人体来源已断开")
                     elif not self.pose_last_valid_at or now - self.pose_last_valid_at > CALIBRATION_POSE_TIMEOUT_S:
                         label = self.head.get("stage_label") or self.head.get("stage") or "当前"
@@ -1573,8 +1600,6 @@ class LocalControlRuntime:
 
     def start_calibration(self) -> dict:
         with self._lock:
-            if self.body_mode == "computer" and not self.camera.running:
-                raise ValueError("校准需要先启动本地摄像头")
             return self.kernel.start_calibration()
 
     def accept_mobile_pose(self, source_id: str, message: dict) -> dict:
