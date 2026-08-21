@@ -16,7 +16,7 @@ from input_bridge import InputBridge
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
 from voice_backend import VoiceService
 
-VERSION = "0.7.7"
+VERSION = "0.7.8"
 
 
 def application_root() -> Path:
@@ -246,6 +246,15 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
+        if route == "/api/shutdown":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "shutdown is loopback-only"}, 403)
+                return
+            self._send_json({"ok": True, "version": VERSION, "shutting_down": True})
+            # HTTPServer.shutdown must be called from another thread so this
+            # request can finish sending its acknowledgement first.
+            threading.Thread(target=self.server.shutdown, name="motion-shutdown", daemon=True).start()
+            return
         if route == "/ws/input":
             INPUT_BRIDGE.serve_websocket(self, parsed.query)
             return
