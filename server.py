@@ -15,9 +15,10 @@ from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraServi
 from input_bridge import InputBridge
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
 from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService
+from scene_layout import SceneLayoutManager
 
 # Product version.  The wire protocol remains pose_frame_v2.
-VERSION = "0.9.3"
+VERSION = "0.9.5"
 
 
 def application_root() -> Path:
@@ -41,6 +42,48 @@ MODEL_COMPAT_RELATIVE = Path("mediapipe") / "pose_landmarker_full_compatible_075
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
+SCENE = SceneLayoutManager(ROOT)
+if SCENE.session:
+    KERNEL.configure_scene_layout(SCENE.session)
+
+
+def _scene_apply_current() -> dict:
+    if SCENE.session:
+        KERNEL.configure_scene_layout(SCENE.session)
+    return SCENE.status()
+
+
+def _scene_capture_with_frame(frame, purpose: str) -> dict:
+    pose = KERNEL.latest_pose
+    if purpose == "capture":
+        SCENE.capture_reference(frame, pose, KERNEL.zone_rects)
+    elif purpose == "rematch":
+        result = SCENE.rematch(frame, pose)
+        if not result.get("last_result", {}).get("ok"):
+            raise ValueError(result.get("last_result", {}).get("message") or "场景重新匹配失败")
+    else:
+        raise ValueError("unknown scene purpose")
+    return _scene_apply_current()
+
+
+def _scene_capture_local(purpose: str) -> dict:
+    frame = RUNTIME.camera.latest_frame()
+    if frame is None:
+        raise RuntimeError("当前电脑摄像头没有可用画面")
+    return _scene_capture_with_frame(frame, purpose)
+
+
+def _scene_snapshot_from_phone(jpeg: bytes, purpose: str, device_id: str) -> dict:
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("处理手机截图需要 OpenCV 与 NumPy") from exc
+    frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("手机返回的 JPEG 无法解码")
+    result = _scene_capture_with_frame(frame, purpose)
+    return {"ok": True, "scene": result}
 
 
 def emergency_stop_all() -> dict:
@@ -56,20 +99,38 @@ def execute_voice_action(action: dict) -> dict:
     if str(action.get("type", "")).lower() != "system":
         return OUTPUT.execute_action(action)
     target = str(action.get("target", "")).strip().upper()
-    if target != SYSTEM_HEAD_CALIBRATION_START:
-        return {"executed": False, "reason": f"不支持的系统语音命令：{target}"}
-    if not VOICE.source_is_active(action.get("voice_source_id")):
-        return {"executed": False, "reason": "语音源已断开，未执行头控校准"}
-    if RUNTIME.body_mode == "computer":
-        if not RUNTIME.camera.status().get("running"):
-            return {"executed": False, "reason": "电脑身体源未启动，未执行头控校准"}
-    elif RUNTIME.body_mode == "phone":
-        if not KERNEL.status().get("active_body_source"):
-            return {"executed": False, "reason": "手机身体源尚未提供姿态，未执行头控校准"}
-    else:
-        return {"executed": False, "reason": "当前没有可用身体源，未执行头控校准"}
-    RUNTIME.start_calibration()
-    return {"executed": True, "system_action": target}
+    # Output start/stop
+    if target == "OUTPUT.START":
+        return {"executed": True, **OUTPUT.set_config(enabled=True)}
+    if target == "OUTPUT.STOP":
+        return {"executed": True, **OUTPUT.set_config(enabled=False)}
+    # Head center
+    if target == "HEAD.CENTER":
+        KERNEL.set_current_center()
+        return {"executed": True}
+    # Head calibrate (both naming conventions)
+    if target in {"HEAD.CALIBRATE", SYSTEM_HEAD_CALIBRATION_START}:
+        if not VOICE.source_is_active(action.get("voice_source_id")):
+            return {"executed": False, "reason": "语音源已断开，未执行头控校准"}
+        if RUNTIME.body_mode == "computer":
+            if not RUNTIME.camera.status().get("running"):
+                return {"executed": False, "reason": "电脑身体源未启动，未执行头控校准"}
+        elif RUNTIME.body_mode == "phone":
+            if not KERNEL.status().get("active_body_source"):
+                return {"executed": False, "reason": "手机身体源尚未提供姿态，未执行头控校准"}
+        else:
+            return {"executed": False, "reason": "当前没有可用身体源，未执行头控校准"}
+        RUNTIME.start_calibration()
+        return {"executed": True, "system_action": target}
+    # Scene capture/rematch
+    if target in {"SCENE.CAPTURE_REFERENCE", "SCENE.REMATCH"}:
+        purpose = "capture" if target.endswith("CAPTURE_REFERENCE") else "rematch"
+        if RUNTIME.body_mode == "phone":
+            data = INPUT_BRIDGE.request_scene_snapshot(purpose)
+            return {"executed": True, **data}
+        data = _scene_capture_local(purpose)
+        return {"executed": True, "scene": data}
+    return {"executed": False, "reason": f"不支持的系统语音命令：{target}"}
 
 
 VOICE = VoiceService(
@@ -79,15 +140,36 @@ VOICE = VoiceService(
     clear_source=OUTPUT.clear_source,
 )
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
+INPUT_BRIDGE.configure_scene_snapshot_handler(_scene_snapshot_from_phone)
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
 MOTION_CONFIG_FILE = CONFIG_DIR / "motion_mappings.json"
+VOICE_COMMAND_FILE = CONFIG_DIR / "voice_commands_v094.json"
 DEFAULT_MOTIONS = [
     {"id": "march", "name": "原地踏步", "enabled": False, "type": "gamepad_axis", "target": "LS_UP"},
     {"id": "calf_back", "name": "小腿向后（左/右）", "enabled": False, "type": "gamepad", "target": "B"},
     {"id": "squat", "name": "下蹲", "enabled": False, "type": "gamepad", "target": "X"},
     {"id": "hands_up", "name": "双手举过头顶", "enabled": False, "type": "gamepad", "target": "Y"},
 ]
+
+
+def voice_command_catalog() -> dict:
+    """Return the user-language command catalog without exposing KWS internals."""
+    try:
+        data = json.loads(VOICE_COMMAND_FILE.read_text(encoding="utf-8"))
+        commands = [
+            {
+                "id": str(item.get("id", "")),
+                "label": str(item.get("label", item.get("phrase", ""))),
+                "phrase": str(item.get("phrase", "")),
+                "kind": str(item.get("kind", "")),
+            }
+            for item in data.get("commands", [])
+            if isinstance(item, dict) and item.get("phrase")
+        ]
+    except (OSError, ValueError, TypeError):
+        commands = []
+    return {"version": VERSION, "count": len(commands), "commands": commands}
 
 def _normalize_motion_config(items):
     by_id = {str(x.get("id")): x for x in (items or []) if isinstance(x, dict)}
@@ -142,13 +224,15 @@ def choose_model_root(cli_root: str | None) -> Path | None:
         candidates.append(Path(env))
     # A frozen onedir build carries its own models beside the executable.
     # Prefer that copy over development-machine configuration paths.
-    candidates.append(ROOT / "models")
+    # Explicit config in model_root.txt takes priority over the default local
+    # models directory, which may only contain Vosk (not MediaPipe pose).
     cfg = CONFIG_DIR / "model_root.txt"
     if cfg.exists():
         text = cfg.read_text(encoding="utf-8-sig").strip().strip('"')
         if text:
             configured = Path(text)
             candidates.append(configured if configured.is_absolute() else ROOT / configured)
+    candidates.append(ROOT / "models")
     candidates.append(DEFAULT_MODEL_ROOT)
     for p in candidates:
         try:
@@ -350,7 +434,19 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(RUNTIME.camera_backend_config())
             return
         if route == "/api/voice/status":
-            self._send_json(VOICE.status())
+            self._send_json({"version": VERSION, **VOICE.status()})
+            return
+        if route == "/api/voice/commands":
+            self._send_json(voice_command_catalog())
+            return
+        if route == "/api/scene/status":
+            self._send_json({"version": VERSION, **SCENE.status()})
+            return
+        if route == "/api/scene/reference.jpg":
+            if not SCENE.reference_path.is_file():
+                self.send_error(404, "scene reference unavailable")
+                return
+            self._serve_file(SCENE.reference_path)
             return
         super().do_GET()
 
@@ -488,6 +584,26 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json({"ok": True, "active": sorted(active), **data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **OUTPUT.status()}, 400)
+            return
+        if route in {"/api/scene/capture", "/api/scene/rematch", "/api/scene/layout"}:
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "scene config is loopback-only"}, 403)
+                return
+            try:
+                if route == "/api/scene/layout":
+                    data = SCENE.update_reference_layout(body)
+                    _scene_apply_current()
+                    self._send_json({"ok": True, **data})
+                else:
+                    purpose = "capture" if route.endswith("capture") else "rematch"
+                    if RUNTIME.body_mode == "phone":
+                        data = INPUT_BRIDGE.request_scene_snapshot(purpose)
+                        self._send_json({"ok": True, **data, "scene": SCENE.status()})
+                    else:
+                        data = _scene_capture_local(purpose)
+                        self._send_json({"ok": True, **data})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **SCENE.status()}, 400)
             return
         if not route.startswith("/api/output/"):
             self._send_json({"ok": False, "error": "not found"}, 404)

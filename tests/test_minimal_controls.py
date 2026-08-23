@@ -5,7 +5,9 @@ import time
 import types
 
 from output_backend import OutputManager, XUSB_GAMEPAD_BUTTONS, GAMEPAD_AXES
-from voice_backend import VoiceService, VoskCommandRecognizer, compact_text
+from control_kernel import ControlKernel
+from voice_backend import VoiceService, compact_text
+from sherpa_kws_backend import _spoken_command_candidates
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,16 +16,27 @@ def test_only_full_model_is_registered():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert 'pose_landmarker_full.task' in server
     assert 'pose_landmarker_lite.task' not in server
-    assert 'VERSION = "0.9.3"' in server
+    assert 'VERSION = "0.9.5"' in server
 
 
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
-    for required in ['身体相对区域会跟着人移动', '开始校准', 'Xbox 360 右摇杆', '开启输出 F8', '紧急停止 F9', 'id="settingsBtn"', '四个动作与按键', '语音映射', '头控', '3D 头姿（PnP）']:
+    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    for required in ['v0.9.5', '开始体感', '站好并校准', '视角回正', 'Xbox 360 右摇杆', '紧急停止 F9', 'id="settingsBtn"', '四个动作与按键', '语音映射', '头控', '3D 头姿（PnP）', '全部 27 条命令']:
         assert required in page
+    assert '开启游戏输出' in app and '停止游戏输出' in app
     for removed in ['开始 30 秒性能测试', '静止抖动测试', '实时性能数据', 'Lite / Full 对比结果', 'modelSelect']:
         assert removed not in page
     assert 'settings-mask' in page
+
+
+def test_v095_command_catalog_has_27_user_phrases_and_yaw_only_head_ui():
+    catalog = json.loads((ROOT / 'config' / 'voice_commands_v094.json').read_text(encoding='utf-8'))
+    assert catalog['product_version'] == '0.9.5'
+    assert len(catalog['commands']) == 27
+    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    assert "开启游戏输出" in app and "停止游戏输出" in app
+    assert "· Y ${Number(hs.output_y)" not in app
 
 
 def test_body_relative_zones_use_both_wrists_and_both_feet():
@@ -35,7 +48,7 @@ def test_body_relative_zones_use_both_wrists_and_both_feet():
         assert zone in kernel
     assert '0.36 * torso_px' in kernel
     assert '0.42 * torso_px' in kernel
-    assert 'state["inside"] >= 2' in kernel and 'state["outside"] >= 2' in kernel
+    assert 'state["inside"] >= 2' in kernel and 'exit_frames = 1 if name == "lookGate" else 2' in kernel
     assert 'set_buttons, keys, source="zones"' in kernel
     assert '/api/kernel/status' in app
     assert 'detectForVideo' not in app
@@ -174,22 +187,18 @@ def test_voice_keyboard_combo_uses_same_output_gate(tmp_path):
         out.close()
 
 
-def test_vosk_grammar_is_built_directly_from_custom_phrases(tmp_path, monkeypatch):
-    calls=[]
-    class FakeModel:
-        def __init__(self, path): self.path=path
-        def vosk_model_find_word(self, value): return 1 if value in {'地图','闪避'} else -1
-    class FakeRecognizer:
-        def __init__(self, *args): calls.append(args)
-        def AcceptWaveform(self, pcm): return False
-        def PartialResult(self): return '{"partial":""}'
-    fake=types.SimpleNamespace(Model=FakeModel,KaldiRecognizer=FakeRecognizer,SetLogLevel=lambda value:None)
-    monkeypatch.setitem(sys.modules,'vosk',fake)
-    model=tmp_path/'vosk-model-small-cn-0.22'; model.mkdir()
-    rec=VoskCommandRecognizer(model,['地图','闪避'])
-    assert rec.mode == 'grammar'
-    grammar=json.loads(calls[0][2])
-    assert grammar == ['地图','闪避','[unk]']
+def test_kws_keywords_are_built_directly_from_custom_phrases():
+    pairs = _spoken_command_candidates('体感', [
+        {'phrase': '地图', 'synonyms': []},
+        {'phrase': '闪避', 'synonyms': ['躲避']},
+    ], ['体感紧急停止'])
+    spoken = [p[0] for p in pairs]
+    assert '地图' in spoken
+    assert '闪避' in spoken
+    assert '躲避' in spoken
+    assert '紧急停止' in spoken
+    # Wake word is handled by the first KWS stage, not in command candidates
+    assert '体感' not in spoken
 
 
 def test_voice_mapping_is_the_vocab_and_persists_without_model(tmp_path):
@@ -351,3 +360,83 @@ def test_voice_text_bridge_accepts_only_active_phone_body_source_and_releases_on
         assert len(voice.accepted) == 1
     finally:
         bridge.close()
+
+
+class KernelOutput:
+    enabled = True
+
+    def __init__(self):
+        self.applied = []
+
+    def apply(self, x, y):
+        self.applied.append((float(x), float(y)))
+
+    def set_buttons(self, *args, **kwargs):
+        pass
+
+    def set_holds(self, *args, **kwargs):
+        pass
+
+    def set_sensor_state(self, *args, **kwargs):
+        pass
+
+    def clear_source(self, *args, **kwargs):
+        pass
+
+
+def _head_only_pose(*, left_wrist_y=.5, right_wrist_y=.5, left_wrist_x=.2):
+    return {
+        'left_wrist': {'x': left_wrist_x, 'y': left_wrist_y, 'score': .95},
+        'right_wrist': {'x': .7, 'y': right_wrist_y, 'score': .95},
+    }
+
+
+def _stub_head_controller(kernel, pitch=.8):
+    kernel.head_controller.update = lambda *args: (.2, pitch)
+    kernel.head_controller.status = lambda now: {
+        'algorithm': 'pnp', 'calibrated': True, 'enabled': True,
+        'normalized_x': .2, 'normalized_y': pitch, 'output_x': .2,
+        'output_y': pitch,
+    }
+
+
+def test_pure_head_pitch_never_reaches_final_mouse_y():
+    output = KernelOutput()
+    kernel = ControlKernel(output)
+    try:
+        _stub_head_controller(kernel, pitch=.9)
+        with kernel._lock:
+            kernel._update_head_locked(_head_only_pose(), time.monotonic())
+        assert output.applied[-1][0] == .2
+        assert output.applied[-1][1] == 0.0
+        assert kernel.head['output_y'] == 0.0
+    finally:
+        kernel.close()
+
+
+def test_look_gate_captures_right_wrist_anchor_and_only_wrist_drives_y():
+    output = KernelOutput()
+    kernel = ControlKernel(output)
+    try:
+        _stub_head_controller(kernel, pitch=-.9)
+        kernel.configure_scene_layout({
+            'zones': {'lookGate': {'cx': .2, 'cy': .2, 'r': .15}},
+            'vertical_look': {'enabled': True, 'point': 'right_wrist', 'range_y': .18, 'deadzone': .10},
+        })
+        kernel.handle_pose_map('camera', _head_only_pose(left_wrist_y=.2, right_wrist_y=.5), width=640, height=480)
+        kernel.handle_pose_map('camera', _head_only_pose(left_wrist_y=.2, right_wrist_y=.5), width=640, height=480)
+        assert kernel.vertical_gate_active is True
+        assert kernel.vertical_wrist_anchor_y == .5
+        assert output.applied[-1][1] == 0.0
+
+        kernel.handle_pose_map('camera', _head_only_pose(left_wrist_y=.2, right_wrist_y=.7), width=640, height=480)
+        assert output.applied[-1][1] > 0.0
+        assert kernel.status()['head']['output_y'] > 0.0
+
+        kernel.handle_pose_map('camera', _head_only_pose(left_wrist_x=.9, right_wrist_y=.7), width=640, height=480)
+        kernel.handle_pose_map('camera', _head_only_pose(left_wrist_x=.9, right_wrist_y=.7), width=640, height=480)
+        assert kernel.vertical_gate_active is False
+        assert kernel.vertical_wrist_anchor_y is None
+        assert output.applied[-1][1] == 0.0
+    finally:
+        kernel.close()

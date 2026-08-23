@@ -183,3 +183,37 @@
 
 - 真实摄像头、输出关闭、MSMF、640×480、兼容 Full 模型：修改前短基线约 29.75–30.34 capture/inference FPS，推理平均 15.0–19.2 ms，P95 23.2–33.0 ms，总延迟 15–16 ms；期间无新增 drop/skip（旧累计值为 655）。
 - 本轮没有发现可安全获得收益的重复转换、排队或预览阻塞问题，因此没有修改 `NativeCameraService` 性能代码，也没有降低输入质量或更换模型。重启后同口径短复测约 29.86 FPS、平均 12.6 ms、P95 14.1 ms，属于短测波动范围；摄像头随后已关闭，输出仍关闭。
+
+## 2026-08-23：合并 v0.8.3-seven-zones 场景适配功能
+
+- 基于 Google Drive `G:\我的云端硬盘\MotionControl\v0.8.3-seven-zones\` 的 ChatGPT 交付，将 scene-adapt（固定空间区域 / 七圈推荐 / 场景重新匹配 / 垂直视角门控）功能合并到本地 v0.9.3 项目。
+- 优先采用差异合并，未粗暴覆盖。v0.8.2→v0.8.3 patch 仅修改 scene_layout.py（核心 seven-zones）、server.py、web 和测试；control_kernel.py、input_bridge.py、voice_backend.py 在 v0.8.2/v0.8.3 间完全相同。
+- 新增 `scene_layout.py`（v0.8.3 seven-zones 版本）：SceneLayoutManager 管理参考场景、7 个推荐固定圈（头顶左/右、耳外左/右、脚踢左/右、下巴左侧视角门）、ORB 特征匹配重新匹配、垂直视角配置。
+- `control_kernel.py`：新增 fixed_zones / vertical_look / vertical_gate_active / vertical_wrist_norm；新增 configure_scene_layout() 和 NativeCameraService.latest_frame()；修改 _update_zones_locked() 支持固定圆圈区域和 lookGate；修改 _update_head_locked() 实现垂直视角门控（左腕进 lookGate → 右腕控制 Y，左腕离开 → Y 快速回零，水平视角始终来自头 yaw）；status 输出 scene_mode 和 vertical 状态。
+- `server.py`：新增 SceneLayoutManager 实例和场景辅助函数；新增 GET /api/scene/status、/api/scene/reference.jpg；新增 POST /api/scene/capture、/api/scene/rematch、/api/scene/layout；扩展 execute_voice_action 支持 OUTPUT.START/STOP、HEAD.CENTER、SCENE.CAPTURE_REFERENCE/REMATCH；配置 INPUT_BRIDGE scene_snapshot_handler。
+- `input_bridge.py`：新增 scene_snapshot 协议（request_scene_snapshot 向手机发请求、_handle_scene_snapshot 处理手机回传 JPEG、configure_scene_snapshot_handler）；handle_message 新增 scene_snapshot 类型分发。
+- `voice_backend.py`：扩展系统命令白名单，支持 SCENE.CAPTURE_REFERENCE、SCENE.REMATCH、OUTPUT.START、OUTPUT.STOP、HEAD.CALIBRATE、HEAD.CENTER。
+- `web/index.html` + `web/app.js`：新增记录场景/重新匹配按钮、lookGate 视角门区域显示、固定空间区域设置面板（参考场景图、7 圈拖拽编辑器、圆圈半径/右腕上下范围/死区调节、匹配指标显示）。
+- `config/voice_mappings.json`：新增 5 条系统语音命令（截图→SCENE.CAPTURE_REFERENCE、重新匹配→SCENE.REMATCH、开始输出→OUTPUT.START、停止输出→OUTPUT.STOP、设置中心→HEAD.CENTER）。
+- 保留本机配置：vosk_model_path.txt（models/vosk-model-small-cn-0.22）、model_root.txt（I:\MotionControl-Pose-Models\models）、现有 voice_mappings 自定义词条、摄像头后端缓存、个人校准数据均未覆盖。
+- 测试结果：使用 `F:\MotionControl\MediaPipe\.venv`（含 OpenCV/MediaPipe）运行 `python -m pytest tests/ -q`：64 passed, 19 skipped, 2 failed。2 个失败均在 test_scene_layout.py，原因是测试引用旧版 ControlKernel._yaw_signal()（v0.9.3 头控已迁移到 HeadController），属于测试架构不兼容，非合并错误。详情已写入 `G:\我的云端硬盘\MotionControl\v0.8.3-seven-zones\LOCAL_AI_FEEDBACK.md`。
+- 语法检查：control_kernel.py / scene_layout.py / input_bridge.py / voice_backend.py / server.py 全部通过 py_compile；web/app.js 通过 node --check。
+- 未进行真人测试、摄像头实机测试、手机端联调或游戏输出测试。
+
+## 2026-08-23：应用 v0.8.3 测试兼容补丁并修复垂直视角状态快照
+
+- 应用 ChatGPT 提供的 `MotionControl-v0.9.3-scene-tests-HeadController-compat.patch`：在 `tests/test_scene_layout.py` 新增 `_prepare_v093_head_for_scene_test(kernel)` helper，替换两处旧版 `kernel.head[...] / kernel._yaw_signal(...)` 前置设置。该 helper 直接操作 `kernel.head_controller` 的校准状态（center_pending/calibrating/calibrated/center_yaw/center_pitch/noise_yaw/noise_pitch），再调用 `_recompute_deadzone()` 和 `_reset_filters()`，最后用 `controller.status()` 重置 `kernel.head`。未修改 `head_control.py` 或任何头控核心逻辑。
+- 应用补丁后仍有 1 个测试失败：`test_fixed_gate_enables_right_wrist_vertical_but_head_only_drives_x` 断言 `state["head"]["output_y"] > 0` 但得到 0.0。根因：`_update_head_locked()` 中垂直视角门控覆盖了传给 `output.apply()` 的 y 值，但 `status_locked()` 中 `self.head = self.head_controller.status(now)` 重新覆盖了整个 head 字典，导致 `output_y` 被重置为 HeadController 的原始值（0.0）。
+- 修复：在 `status_locked()` 中，当 `fixed_zones_enabled` 且 `vertical_look.enabled` 时，用 `vertical_wrist_norm`（gate 激活时）或 0.0（gate 未激活时）覆盖 `self.head["normalized_y"]` 和 `self.head["output_y"]`。同时在 `_update_head_locked()` 中也做了相同的状态快照同步（双保险）。此修复仅在 scene-adapt 集成层，未修改 HeadController 核心。
+- 最终测试结果：`F:\MotionControl\MediaPipe\.venv\Scripts\python.exe -m pytest tests -q` → **66 passed, 19 skipped, 0 failed**（目标达成）。
+- `tests/test_scene_layout.py` 单独运行：8 passed。
+- 语法检查：control_kernel.py / scene_layout.py / input_bridge.py / voice_backend.py / server.py / tests/test_scene_layout.py 全部通过 py_compile；web/app.js 通过 node --check。
+- 未修改 head_control.py、未降低任何测试断言、未删除任何测试。
+
+## 2026-08-24：v0.9.5 头控纵向与用户界面收敛
+
+- 头控最终输出只保留 yaw→X；HeadController 内部 pitch 仍可用于诊断，但 control kernel 不再把它传入输出 Y。公开状态的最终 `normalized_y`/`output_y` 也只反映右腕。
+- 固定场景下左腕进入 `lookGate` 后捕获右腕 Y 中心锚点，右腕相对锚点经过 range/deadzone 归一化产生纵向；门控关闭、右腕缺失或身体来源清理时立即归零并清除锚点。
+- PC 网页版本统一为 0.9.5：主按钮按“开始体感→开启游戏输出→停止游戏输出”推进；普通界面隐藏性能/模型/后端技术字段，保留高级诊断入口；新增六条常用语音大字区和从本地命令目录读取的完整 27 条命令面板。
+- 手机端产品标识升级为 0.9.5 / Android versionCode 21；Sherpa KWS、scene_snapshot、地址记忆和断线自动重连链保持不变，技术状态从普通界面隐藏。
+- 本轮不替换 MediaPipe、Sherpa、模型或输出后端；真实摄像头、真人动作、游戏联调和手机实机验收留待验收阶段。

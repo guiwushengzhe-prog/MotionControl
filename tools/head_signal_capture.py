@@ -127,8 +127,8 @@ def main() -> int:
     args = parser.parse_args()
 
     snapshot = _get(args.base, "/api/kernel/status")
-    if snapshot.get("version") != "0.9.3":
-        raise SystemExit(f"服务版本不是 0.9.3：{snapshot.get('version')!r}")
+    if snapshot.get("version") != "0.9.5":
+        raise SystemExit(f"服务版本不是 0.9.5：{snapshot.get('version')!r}")
     if not (snapshot.get("kernel") or {}).get("active_body_source"):
         raise SystemExit("当前没有人体姿态源；先启动电脑摄像头或连接手机姿态")
 

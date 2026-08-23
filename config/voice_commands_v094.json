@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "product_version": "0.9.5",
+  "model": "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20",
+  "interaction": "single_stage_full_phrase_kws",
+  "prefix": "体感",
+  "profiles": {
+    "emergency": {
+      "boosting_score": 2.0,
+      "trigger_threshold": 0.24,
+      "cooldown_ms": 0
+    },
+    "safe_system": {
+      "boosting_score": 1.7,
+      "trigger_threshold": 0.3,
+      "cooldown_ms": 700
+    },
+    "normal": {
+      "boosting_score": 1.6,
+      "trigger_threshold": 0.33,
+      "cooldown_ms": 700
+    },
+    "risky": {
+      "boosting_score": 1.5,
+      "trigger_threshold": 0.38,
+      "cooldown_ms": 900
+    }
+  },
+  "commands": [
+    {
+      "id": "system.emergency_stop",
+      "label": "紧急停止",
+      "phrase": "体感紧急停止",
+      "profile": "emergency",
+      "kind": "system",
+      "default_target": "EMERGENCY_STOP"
+    },
+    {
+      "id": "output.start",
+      "label": "开始输出",
+      "phrase": "体感开始输出",
+      "profile": "risky",
+      "kind": "system",
+      "default_target": "OUTPUT.START"
+    },
+    {
+      "id": "output.stop",
+      "label": "停止输出",
+      "phrase": "体感停止输出",
+      "profile": "safe_system",
+      "kind": "system",
+      "default_target": "OUTPUT.STOP"
+    },
+    {
+      "id": "scene.capture",
+      "label": "截图/记录场景",
+      "phrase": "体感截图",
+      "profile": "safe_system",
+      "kind": "system",
+      "default_target": "SCENE.CAPTURE_REFERENCE"
+    },
+    {
+      "id": "scene.rematch",
+      "label": "重新匹配场景",
+      "phrase": "体感重新匹配",
+      "profile": "safe_system",
+      "kind": "system",
+      "default_target": "SCENE.REMATCH"
+    },
+    {
+      "id": "head.calibrate",
+      "label": "开始头控校准",
+      "phrase": "体感开始校准",
+      "profile": "safe_system",
+      "kind": "system",
+      "default_target": "HEAD.CALIBRATE"
+    },
+    {
+      "id": "head.center",
+      "label": "设置头控中心",
+      "phrase": "体感设置中心",
+      "profile": "safe_system",
+      "kind": "system",
+      "default_target": "HEAD.CENTER"
+    },
+    {
+      "id": "ui.confirm",
+      "label": "确认",
+      "phrase": "体感确认",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "ENTER"
+    },
+    {
+      "id": "ui.back",
+      "label": "返回",
+      "phrase": "体感返回",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "ESC"
+    },
+    {
+      "id": "nav.up",
+      "label": "菜单上",
+      "phrase": "体感菜单上",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "UP"
+    },
+    {
+      "id": "nav.down",
+      "label": "菜单下",
+      "phrase": "体感菜单下",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "DOWN"
+    },
+    {
+      "id": "nav.left",
+      "label": "菜单左",
+      "phrase": "体感菜单左",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "LEFT"
+    },
+    {
+      "id": "nav.right",
+      "label": "菜单右",
+      "phrase": "体感菜单右",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "RIGHT"
+    },
+    {
+      "id": "game.accelerate",
+      "label": "加速/前进",
+      "phrase": "体感加速",
+      "profile": "risky",
+      "kind": "keyboard",
+      "default_target": "W"
+    },
+    {
+      "id": "game.left_move",
+      "label": "左移",
+      "phrase": "体感左移",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "A"
+    },
+    {
+      "id": "game.brake",
+      "label": "刹车/后退",
+      "phrase": "体感刹车",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "S"
+    },
+    {
+      "id": "game.right_move",
+      "label": "右移",
+      "phrase": "体感右移",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "D"
+    },
+    {
+      "id": "game.jump",
+      "label": "跳跃",
+      "phrase": "体感跳跃",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "SPACE"
+    },
+    {
+      "id": "game.interact",
+      "label": "互动",
+      "phrase": "体感互动",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "E"
+    },
+    {
+      "id": "game.reload",
+      "label": "换弹",
+      "phrase": "体感换弹",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "R"
+    },
+    {
+      "id": "ui.map",
+      "label": "地图",
+      "phrase": "体感地图",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "M"
+    },
+    {
+      "id": "ui.inventory",
+      "label": "背包",
+      "phrase": "体感背包",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "I"
+    },
+    {
+      "id": "game.attack",
+      "label": "攻击",
+      "phrase": "体感攻击",
+      "profile": "risky",
+      "kind": "keyboard",
+      "default_target": "J"
+    },
+    {
+      "id": "game.dodge",
+      "label": "闪避",
+      "phrase": "体感闪避",
+      "profile": "risky",
+      "kind": "keyboard",
+      "default_target": "SHIFT"
+    },
+    {
+      "id": "game.skill",
+      "label": "技能",
+      "phrase": "体感技能",
+      "profile": "risky",
+      "kind": "keyboard",
+      "default_target": "Q"
+    },
+    {
+      "id": "game.use_item",
+      "label": "使用物品",
+      "phrase": "体感使用物品",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F"
+    },
+    {
+      "id": "ui.menu",
+      "label": "打开菜单",
+      "phrase": "体感打开菜单",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "TAB"
+    }
+  ]
+}

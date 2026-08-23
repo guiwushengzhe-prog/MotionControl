@@ -109,7 +109,20 @@ class ControlKernel:
         self.last_error: str | None = None
 
         self.zone_rects: dict[str, dict] = {}
+        self.fixed_zones: dict[str, dict] = {}
+        self.fixed_zones_enabled = False
+        self.vertical_look = {
+            "enabled": False, "gate_zone_id": "lookGate", "point": "right_wrist",
+            "center_x": 0.5, "center_y": 0.5, "range_y": 0.18, "deadzone": 0.10,
+        }
+        self.vertical_gate_active = False
+        self.vertical_wrist_norm = 0.0
+        # The left-wrist lookGate is a deliberate arm/hand gate.  When it
+        # becomes active we capture the right wrist's current Y as the
+        # neutral anchor; head pitch is never allowed to reach final output.
+        self.vertical_wrist_anchor_y: float | None = None
         self.zone_state = {name: {"inside": 0, "outside": 0, "pressed": False} for name in BODY_ZONES}
+        self.zone_state["lookGate"] = {"inside": 0, "outside": 0, "pressed": False}
         self.last_zone_emit = 0.0
 
         self.motion_config: list[dict] = []
@@ -180,6 +193,38 @@ class ControlKernel:
                 invert_y=invert_y,
             )
             self.head = self.head_controller.status(time.monotonic())
+            return self.status_locked(time.monotonic())
+
+    def configure_scene_layout(self, layout: dict | None) -> dict:
+        """Apply one fixed, camera-space session layout.
+
+        The layout is already adapted by SceneLayoutManager. The kernel never
+        moves these circles with the player; they remain fixed until this
+        method is called again.
+        """
+        with self._lock:
+            zones = (layout or {}).get("zones") if isinstance(layout, dict) else None
+            self.fixed_zones = copy.deepcopy(zones) if isinstance(zones, dict) else {}
+            self.fixed_zones_enabled = bool(self.fixed_zones)
+            vertical = (layout or {}).get("vertical_look") if isinstance(layout, dict) else None
+            if isinstance(vertical, dict):
+                self.vertical_look.update({
+                    "enabled": bool(vertical.get("enabled", True)),
+                    "gate_zone_id": str(vertical.get("gate_zone_id", "lookGate")),
+                    "point": str(vertical.get("point", "right_wrist")),
+                    "center_x": _clamp(vertical.get("center_x", 0.5), 0.0, 1.0),
+                    "center_y": _clamp(vertical.get("center_y", 0.5), 0.0, 1.0),
+                    "range_y": _clamp(vertical.get("range_y", 0.18), 0.05, 0.45),
+                    "deadzone": _clamp(vertical.get("deadzone", 0.10), 0.0, 0.35),
+                })
+            else:
+                self.vertical_look["enabled"] = False
+            for state in self.zone_state.values():
+                state.update({"inside": 0, "outside": 0, "pressed": False})
+            self.vertical_gate_active = False
+            self.vertical_wrist_norm = 0.0
+            self.vertical_wrist_anchor_y = None
+            self._safe_output(self.output.set_buttons, [], source="zones")
             return self.status_locked(time.monotonic())
 
     def handle_pose_message(self, source_id: str, message: dict) -> dict:
@@ -331,12 +376,37 @@ class ControlKernel:
     def _point_in_rect(point: dict | None, rect: dict | None) -> bool:
         return bool(point and rect and _score(point) >= 0.42 and rect["x1"] <= point["x"] <= rect["x2"] and rect["y1"] <= point["y"] <= rect["y2"])
 
+    @staticmethod
+    def _point_in_circle(point: dict | None, circle: dict | None) -> bool:
+        if not point or not circle or _score(point) < 0.42:
+            return False
+        try:
+            cx, cy, radius = float(circle["cx"]), float(circle["cy"]), float(circle["r"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return math.hypot(point["x"] - cx, point["y"] - cy) <= radius
+
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
-        self.zone_rects = self._compute_body_zones(pose_map)
+        previous_gate = bool(self.vertical_gate_active)
+        if self.fixed_zones_enabled:
+            # Fixed zones live in raw camera normalized coordinates and never
+            # follow the body. Rects are generated only for legacy clients.
+            self.zone_rects = {}
+        else:
+            self.zone_rects = self._compute_body_zones(pose_map)
         changed = False
-        for name, definition in BODY_ZONES.items():
-            state = self.zone_state[name]
-            inside = any(self._point_in_rect(pose_map.get(point), self.zone_rects.get(name)) for point in definition["points"])
+        zone_names = list(BODY_ZONES) + (["lookGate"] if self.fixed_zones_enabled and "lookGate" in self.fixed_zones else [])
+        for name in zone_names:
+            state = self.zone_state.setdefault(name, {"inside": 0, "outside": 0, "pressed": False})
+            if name == "lookGate":
+                points = ("left_wrist",)
+            else:
+                points = BODY_ZONES[name]["points"]
+            if self.fixed_zones_enabled:
+                circle = self.fixed_zones.get(name)
+                inside = any(self._point_in_circle(pose_map.get(point), circle) for point in points)
+            else:
+                inside = any(self._point_in_rect(pose_map.get(point), self.zone_rects.get(name)) for point in points)
             if inside:
                 state["inside"] += 1
                 state["outside"] = 0
@@ -346,16 +416,34 @@ class ControlKernel:
             else:
                 state["outside"] += 1
                 state["inside"] = 0
-                if state["pressed"] and state["outside"] >= 2:
+                # The look gate is a safety arm, so leaving it must cut
+                # vertical output on the very first missing frame.  Body
+                # action zones retain their normal two-frame hysteresis.
+                exit_frames = 1 if name == "lookGate" else 2
+                if state["pressed"] and state["outside"] >= exit_frames:
                     state["pressed"] = False
                     changed = True
+        self.vertical_gate_active = bool(self.zone_state.get("lookGate", {}).get("pressed")) if self.fixed_zones_enabled else False
+        if not self.vertical_gate_active:
+            self.vertical_wrist_anchor_y = None
+        elif not previous_gate:
+            wrist = pose_map.get(str(self.vertical_look.get("point", "right_wrist")))
+            self.vertical_wrist_anchor_y = (
+                float(wrist["y"])
+                if wrist and _score(wrist) >= 0.42 and math.isfinite(float(wrist.get("y", math.nan)))
+                else None
+            )
         keys = self._pressed_keys_locked()
         if changed or (keys and now - self.last_zone_emit >= 0.14):
             self._safe_output(self.output.set_buttons, keys, source="zones")
             self.last_zone_emit = now
 
     def _pressed_keys_locked(self) -> list[str]:
-        return sorted({BODY_ZONES[name]["button"] for name, state in self.zone_state.items() if state["pressed"]})
+        return sorted({
+            BODY_ZONES[name]["button"]
+            for name, state in self.zone_state.items()
+            if name in BODY_ZONES and BODY_ZONES[name].get("button") and state["pressed"]
+        })
 
     # ---------- four existing motion rules ----------
 
@@ -440,8 +528,34 @@ class ControlKernel:
     def _update_head_locked(self, pose_map: dict[str, dict], now: float) -> None:
         # Clean head-control path.  Body actions and the output backend remain
         # unchanged; only head estimation/mapping is delegated to HeadController.
-        x, y = self.head_controller.update(pose_map, self.width, self.height, now)
+        x, _pitch_y = self.head_controller.update(pose_map, self.width, self.height, now)
         self.head = self.head_controller.status(now)
+        # Head yaw is the only head signal that can reach the output.  The
+        # pitch value is retained inside HeadController for diagnostics, but
+        # is intentionally discarded here.  Vertical view is exclusively the
+        # right wrist while the fixed left-wrist lookGate is active.
+        y = 0.0
+        self.vertical_wrist_norm = 0.0
+        if self.fixed_zones_enabled and bool(self.vertical_look.get("enabled")):
+            vcfg = self.vertical_look
+            wrist = pose_map.get(str(vcfg.get("point", "right_wrist")))
+            if self.vertical_gate_active and wrist and _score(wrist) >= 0.42:
+                if self.vertical_wrist_anchor_y is None:
+                    self.vertical_wrist_anchor_y = float(wrist["y"])
+                travel = max(0.05, float(vcfg.get("range_y", 0.18)))
+                raw_wrist = _clamp((float(wrist["y"]) - self.vertical_wrist_anchor_y) / travel, -1.0, 1.0)
+                deadzone = _clamp(vcfg.get("deadzone", 0.10), 0.0, 0.35)
+                if abs(raw_wrist) > deadzone:
+                    y = math.copysign((abs(raw_wrist) - deadzone) / max(1e-6, 1.0 - deadzone), raw_wrist)
+                self.vertical_wrist_norm = _clamp(y, -1.0, 1.0)
+        # Keep the public snapshot honest as well: a pitch-only movement must
+        # report zero final Y, not the discarded head-controller pitch value.
+        self.head["normalized_y"] = round(float(y), 4)
+        self.head["output_y"] = round(float(y), 3)
+        self.head["vertical_wrist_anchor_y"] = (
+            round(float(self.vertical_wrist_anchor_y), 4)
+            if self.vertical_wrist_anchor_y is not None else None
+        )
         if getattr(self.output, "enabled", True):
             self._safe_output(self.output.apply, x, y)
 
@@ -451,6 +565,9 @@ class ControlKernel:
         for state in self.zone_state.values():
             state.update({"inside": 0, "outside": 0, "pressed": False})
         self.zone_rects = {}
+        self.vertical_gate_active = False
+        self.vertical_wrist_norm = 0.0
+        self.vertical_wrist_anchor_y = None
         self.motion_active.clear()
         for state in self.motion_debounce.values():
             state.update({"active": False, "on": 0, "off": 0})
@@ -479,11 +596,28 @@ class ControlKernel:
 
     def status_locked(self, now: float) -> dict:
         pose_age = round(max(0.0, (now - self.body_last_at) * 1000.0)) if self.body_last_at else None
-        zones = {
-            name: {"rect": copy.deepcopy(self.zone_rects.get(name)), "pressed": bool(self.zone_state[name]["pressed"])}
-            for name in BODY_ZONES
-        }
+        zone_names = list(BODY_ZONES) + (["lookGate"] if self.fixed_zones_enabled and "lookGate" in self.fixed_zones else [])
+        zones = {}
+        for name in zone_names:
+            if self.fixed_zones_enabled:
+                zones[name] = {"circle": copy.deepcopy(self.fixed_zones.get(name)), "pressed": bool(self.zone_state.get(name, {}).get("pressed", False))}
+            else:
+                zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), "pressed": bool(self.zone_state[name]["pressed"])}
         self.head = self.head_controller.status(now)
+        self.head["vertical_source"] = "right_wrist" if self.fixed_zones_enabled and self.vertical_look.get("enabled") else "off"
+        self.head["vertical_gate_active"] = bool(self.vertical_gate_active)
+        self.head["vertical_wrist_norm"] = round(float(self.vertical_wrist_norm), 4)
+        self.head["vertical_wrist_anchor_y"] = (
+            round(float(self.vertical_wrist_anchor_y), 4)
+            if self.vertical_wrist_anchor_y is not None else None
+        )
+        # Always expose the final output Y, never the diagnostic pitch value.
+        self.head["normalized_y"] = round(
+            float(self.vertical_wrist_norm) if self.vertical_gate_active else 0.0, 4
+        )
+        self.head["output_y"] = round(
+            float(self.vertical_wrist_norm) if self.vertical_gate_active else 0.0, 3
+        )
         sensors = {
             source: {key: copy.deepcopy(value) for key, value in state.items() if key != "received_at"}
             | {"age_ms": round(max(0.0, (now - state["received_at"]) * 1000.0))}
@@ -498,6 +632,14 @@ class ControlKernel:
             "zones": zones,
             "buttons": self._pressed_keys_locked(),
             "motions": sorted(self.motion_active),
+            "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_legacy",
+            "vertical_look": copy.deepcopy(self.vertical_look),
+            "vertical_gate_active": bool(self.vertical_gate_active),
+            "vertical_wrist_norm": round(float(self.vertical_wrist_norm), 4),
+            "vertical_wrist_anchor_y": (
+                round(float(self.vertical_wrist_anchor_y), 4)
+                if self.vertical_wrist_anchor_y is not None else None
+            ),
             "head": copy.deepcopy(self.head),
             "handheld_sources": sensors,
             "last_error": self.last_error,
@@ -1195,6 +1337,11 @@ class NativeCameraService:
     def latest_preview(self) -> bytes | None:
         with self._lock:
             return bytes(self._preview_jpeg) if self._preview_jpeg else None
+
+    def latest_frame(self):
+        """Return the latest raw OpenCV frame (BGR) or None. Used by scene capture."""
+        with self._lock:
+            return self._latest_frame.copy() if self._latest_frame is not None else None
 
 
 class LocalControlRuntime:
