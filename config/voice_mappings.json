@@ -15,6 +15,11 @@
     {"phrase": "闪避", "synonyms": ["躲避"], "type": "keyboard", "target": "SPACE"},
     {"phrase": "确认", "synonyms": ["确定"], "type": "keyboard", "target": "ENTER"},
     {"phrase": "返回", "synonyms": ["退回"], "type": "keyboard", "target": "ESC"},
-    {"phrase": "地图", "synonyms": ["打开地图", "显示地图"], "type": "keyboard", "target": "M"}
+    {"phrase": "地图", "synonyms": ["打开地图", "显示地图"], "type": "keyboard", "target": "M"},
+    {"phrase": "截图", "synonyms": ["记录场景", "场景截图"], "type": "system", "target": "SCENE.CAPTURE_REFERENCE"},
+    {"phrase": "重新匹配", "synonyms": ["重新适配", "匹配场景"], "type": "system", "target": "SCENE.REMATCH"},
+    {"phrase": "开始输出", "synonyms": ["开启输出"], "type": "system", "target": "OUTPUT.START"},
+    {"phrase": "停止输出", "synonyms": ["关闭输出"], "type": "system", "target": "OUTPUT.STOP"},
+    {"phrase": "设置中心", "synonyms": ["立即设置中心"], "type": "system", "target": "HEAD.CENTER"}
   ]
 }

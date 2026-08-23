@@ -1,0 +1,191 @@
+{
+  "体感紧急停止": {
+    "id": "system.emergency_stop",
+    "label": "紧急停止",
+    "kind": "system",
+    "default_target": "EMERGENCY_STOP",
+    "cooldown_ms": 0
+  },
+  "体感开始输出": {
+    "id": "output.start",
+    "label": "开始输出",
+    "kind": "system",
+    "default_target": "OUTPUT.START",
+    "cooldown_ms": 900
+  },
+  "体感停止输出": {
+    "id": "output.stop",
+    "label": "停止输出",
+    "kind": "system",
+    "default_target": "OUTPUT.STOP",
+    "cooldown_ms": 700
+  },
+  "体感截图": {
+    "id": "scene.capture",
+    "label": "截图/记录场景",
+    "kind": "system",
+    "default_target": "SCENE.CAPTURE_REFERENCE",
+    "cooldown_ms": 700
+  },
+  "体感重新匹配": {
+    "id": "scene.rematch",
+    "label": "重新匹配场景",
+    "kind": "system",
+    "default_target": "SCENE.REMATCH",
+    "cooldown_ms": 700
+  },
+  "体感开始校准": {
+    "id": "head.calibrate",
+    "label": "开始头控校准",
+    "kind": "system",
+    "default_target": "HEAD.CALIBRATE",
+    "cooldown_ms": 700
+  },
+  "体感设置中心": {
+    "id": "head.center",
+    "label": "设置头控中心",
+    "kind": "system",
+    "default_target": "HEAD.CENTER",
+    "cooldown_ms": 700
+  },
+  "体感确认": {
+    "id": "ui.confirm",
+    "label": "确认",
+    "kind": "keyboard",
+    "default_target": "ENTER",
+    "cooldown_ms": 700
+  },
+  "体感返回": {
+    "id": "ui.back",
+    "label": "返回",
+    "kind": "keyboard",
+    "default_target": "ESC",
+    "cooldown_ms": 700
+  },
+  "体感菜单上": {
+    "id": "nav.up",
+    "label": "菜单上",
+    "kind": "keyboard",
+    "default_target": "UP",
+    "cooldown_ms": 700
+  },
+  "体感菜单下": {
+    "id": "nav.down",
+    "label": "菜单下",
+    "kind": "keyboard",
+    "default_target": "DOWN",
+    "cooldown_ms": 700
+  },
+  "体感菜单左": {
+    "id": "nav.left",
+    "label": "菜单左",
+    "kind": "keyboard",
+    "default_target": "LEFT",
+    "cooldown_ms": 700
+  },
+  "体感菜单右": {
+    "id": "nav.right",
+    "label": "菜单右",
+    "kind": "keyboard",
+    "default_target": "RIGHT",
+    "cooldown_ms": 700
+  },
+  "体感加速": {
+    "id": "game.accelerate",
+    "label": "加速/前进",
+    "kind": "keyboard",
+    "default_target": "W",
+    "cooldown_ms": 900
+  },
+  "体感左移": {
+    "id": "game.left_move",
+    "label": "左移",
+    "kind": "keyboard",
+    "default_target": "A",
+    "cooldown_ms": 700
+  },
+  "体感刹车": {
+    "id": "game.brake",
+    "label": "刹车/后退",
+    "kind": "keyboard",
+    "default_target": "S",
+    "cooldown_ms": 700
+  },
+  "体感右移": {
+    "id": "game.right_move",
+    "label": "右移",
+    "kind": "keyboard",
+    "default_target": "D",
+    "cooldown_ms": 700
+  },
+  "体感跳跃": {
+    "id": "game.jump",
+    "label": "跳跃",
+    "kind": "keyboard",
+    "default_target": "SPACE",
+    "cooldown_ms": 700
+  },
+  "体感互动": {
+    "id": "game.interact",
+    "label": "互动",
+    "kind": "keyboard",
+    "default_target": "E",
+    "cooldown_ms": 700
+  },
+  "体感换弹": {
+    "id": "game.reload",
+    "label": "换弹",
+    "kind": "keyboard",
+    "default_target": "R",
+    "cooldown_ms": 700
+  },
+  "体感地图": {
+    "id": "ui.map",
+    "label": "地图",
+    "kind": "keyboard",
+    "default_target": "M",
+    "cooldown_ms": 700
+  },
+  "体感背包": {
+    "id": "ui.inventory",
+    "label": "背包",
+    "kind": "keyboard",
+    "default_target": "I",
+    "cooldown_ms": 700
+  },
+  "体感攻击": {
+    "id": "game.attack",
+    "label": "攻击",
+    "kind": "keyboard",
+    "default_target": "J",
+    "cooldown_ms": 900
+  },
+  "体感闪避": {
+    "id": "game.dodge",
+    "label": "闪避",
+    "kind": "keyboard",
+    "default_target": "SHIFT",
+    "cooldown_ms": 900
+  },
+  "体感技能": {
+    "id": "game.skill",
+    "label": "技能",
+    "kind": "keyboard",
+    "default_target": "Q",
+    "cooldown_ms": 900
+  },
+  "体感使用物品": {
+    "id": "game.use_item",
+    "label": "使用物品",
+    "kind": "keyboard",
+    "default_target": "F",
+    "cooldown_ms": 700
+  },
+  "体感打开菜单": {
+    "id": "ui.menu",
+    "label": "打开菜单",
+    "kind": "keyboard",
+    "default_target": "TAB",
+    "cooldown_ms": 700
+  }
+}
