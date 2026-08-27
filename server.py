@@ -9,7 +9,7 @@ import threading
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
@@ -318,6 +318,12 @@ def performance_logger(stop_event: threading.Event) -> None:
 
 
 class Handler(SimpleHTTPRequestHandler):
+    # The UI polls several small status resources.  Persistent HTTP/1.1
+    # connections avoid a new TCP handshake/TIME_WAIT entry for every poll.
+    # All JSON/image responses below provide Content-Length; WebSocket upgrade
+    # explicitly closes the HTTP connection before taking over the socket.
+    protocol_version = "HTTP/1.1"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
@@ -418,7 +424,13 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if route == "/api/input/status":
             data = INPUT_BRIDGE.status()
-            data["runtime"] = RUNTIME.status()
+            # Keep the historical full response by default.  The browser only
+            # needs bridge/source fields while polling, so ?brief=1 avoids a
+            # second full Runtime/Kernel snapshot (including the 33-point pose)
+            # on every input-status tick.
+            brief = parse_qs(parsed.query).get("brief", ["0"])[0].strip().lower()
+            if brief not in {"1", "true", "yes"}:
+                data["runtime"] = RUNTIME.status()
             data["version"] = VERSION
             self._send_json(data)
             return
