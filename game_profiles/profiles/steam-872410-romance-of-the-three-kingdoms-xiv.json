@@ -1,0 +1,75 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-872410-romance-of-the-three-kingdoms-xiv",
+  "name": "ROMANCE OF THE THREE KINGDOMS XIV",
+  "appid": 872410,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3024074774,
+    "controller_type": "controller_xbox360",
+    "controller_type_nice": "Xbox 360",
+    "layout_title": "三国志14",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 94793701,
+    "votes": {
+      "score": 0.5135135,
+      "up": 7,
+      "down": 4
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 4,
+    "zone_total": 6,
+    "coverage_ratio": 0.667,
+    "rejected": {
+      "button_y": "binding not found",
+      "button_x": "binding not found"
+    },
+    "parser": {
+      "count": 6,
+      "supported": 6,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "rightHandUpper": {
+        "label": "Use, ,",
+        "action": {
+          "type": "mouse_button",
+          "target": "RIGHT",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump, ,",
+        "action": {
+          "type": "mouse_button",
+          "target": "LEFT",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "W",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "S",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

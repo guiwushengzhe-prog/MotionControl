@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2113850-spirit-city-lofi-sessions",
+  "name": "Spirit City: Lofi Sessions",
+  "appid": 2113850,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3218579045,
+    "controller_type": "controller_ps5",
+    "controller_type_nice": "DualSense",
+    "layout_title": "Playable controller",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 3702897,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Flashlight, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "F1",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Reload, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Use, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump, ,",
+        "action": {
+          "type": "mouse_button",
+          "target": "LEFT",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Previous Weapon, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

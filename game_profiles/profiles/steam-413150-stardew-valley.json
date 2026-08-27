@@ -1,0 +1,75 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-413150-stardew-valley",
+  "name": "Stardew Valley",
+  "appid": 413150,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 1862374497,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 752227,
+    "lifetime_playtime_seconds": 849933432,
+    "votes": {
+      "score": 0.4950495,
+      "up": 0,
+      "down": 1
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 4,
+    "zone_total": 6,
+    "coverage_ratio": 0.667,
+    "rejected": {
+      "left_bumper": "binding not found",
+      "right_bumper": "binding not found"
+    },
+    "parser": {
+      "count": 6,
+      "supported": 6,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": ", ghost_045_move_0401.png #232323 #E4E4E4",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      },
+      "leftHandLower": {
+        "label": "左手下区",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ", ghost_045_move_0400.png #232323 #E4E4E4",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "rightHandLower": {
+        "label": "右手下区",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

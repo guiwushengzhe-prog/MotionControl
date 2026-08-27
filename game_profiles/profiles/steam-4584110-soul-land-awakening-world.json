@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-4584110-soul-land-awakening-world",
+  "name": "Soul Land: Awakening World",
+  "appid": 4584110,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3741258510,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "Soul Land WIP",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 2183785,
+    "votes": {
+      "score": 0.5,
+      "up": 1,
+      "down": 1
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "mouse_button",
+          "target": "RIGHT",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": ",",
+        "action": {
+          "type": "mouse_button",
+          "target": "LEFT",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Previous Weapon, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "T",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

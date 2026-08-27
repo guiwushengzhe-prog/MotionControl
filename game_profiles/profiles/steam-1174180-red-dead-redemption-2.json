@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1174180-red-dead-redemption-2",
+  "name": "Red Dead Redemption 2",
+  "appid": 1174180,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2160443358,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 399012,
+    "lifetime_playtime_seconds": 336342414,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "On Foot: Mount Horse / Enter Vehicle / Loot / Interact / Melee Grapple | Horse: Dismount (Tap) / Hitch Horse (Hold) / Lead Horse (Tap)",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "On Foot: Jump / Take / Carry / Melee Block | Horse: Jump / Study Horse / Pat Horse",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "On Foot: Reload / Melee Attack | Horse: Hit Carried Person / Stop Leading Horse",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "On Foot: Run (Hold) / Sprint (Tap Repeatedly) | Horse: Canter (Tap) / Gallop (Hold)",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "On Foot: Weapon Wheel Menu (Hold) / Draw/Holster Weapon (Tap)",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "On Foot: Enter/Exit Cover | Horse: Slow / Brake",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

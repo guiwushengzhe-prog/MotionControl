@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2584990-shadowverse-worlds-beyond",
+  "name": "Shadowverse: Worlds Beyond",
+  "appid": 2584990,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3501476044,
+    "controller_type": "controller_neptune",
+    "controller_type_nice": "Steam Deck",
+    "layout_title": "Gamepad With Joystick and trackpad",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 2216772,
+    "votes": {
+      "score": 0.4950495,
+      "up": 0,
+      "down": 1
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1091500-cyberpunk-2077",
+  "name": "Cyberpunk 2077",
+  "appid": 1091500,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2331265396,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 515862,
+    "lifetime_playtime_seconds": 184954404,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Draw Weapon / Holster Weapon (Double-Tap) / Quick-Access Menu (Hold)",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Interact / Reload",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Crouch",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Handbrake",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Quick Scan / Scanning Mode (Hold)",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Use Combat Gadget / Aim Combat Gadget (Hold)",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

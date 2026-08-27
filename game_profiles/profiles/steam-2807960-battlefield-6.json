@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2807960-battlefield-6",
+  "name": "Battlefield™ 6",
+  "appid": 2807960,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3585602498,
+    "controller_type": "controller_ps5_edge",
+    "controller_type_nice": "DualSense Edge",
+    "layout_title": "C:\\Program Files (x86)\\Steam\\userdata\\<SteamID>\\730\\remote\\contr",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 69129403,
+    "votes": {
+      "score": 0.4919355,
+      "up": 11,
+      "down": 13
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

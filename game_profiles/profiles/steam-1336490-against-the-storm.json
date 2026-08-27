@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1336490-against-the-storm",
+  "name": "Against the Storm",
+  "appid": 1336490,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 3136358659,
+    "controller_type": "controller_neptune",
+    "controller_type_nice": "Steam Deck",
+    "layout_title": "Gamepad With Trackpad",
+    "subscriptions": 65,
+    "lifetime_playtime_seconds": 8340391,
+    "votes": {
+      "score": 0.4950495,
+      "up": 0,
+      "down": 1
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Move Building, ,",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Rotate Building, ,",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Back / Cancel, ,",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Pause, ,",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Input Modifier 2, ,",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Alternative Select, ,",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

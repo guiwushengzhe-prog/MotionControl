@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-3240220-grand-theft-auto-v-enhanced",
+  "name": "Grand Theft Auto V Enhanced",
+  "appid": 3240220,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2055647135,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 1361074,
+    "lifetime_playtime_seconds": 3301201312,
+    "votes": {
+      "score": 0.5049505,
+      "up": 1,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Enter/Exit Vehicle / Start Mini-game / Secondary Attack",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Jump / Climb / Melee Dodge / Aircraft Next Weapon",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Reload / Light Melee Attack / Phone Cancel/Hang-Up / Cinematic Camera / Aircraft Fire",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Sprint / Heavy Melee Attack / Phone Answer/Select / Duck",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Weapon Wheel / Aim Drive-by Weapon / Aircraft Yaw Left",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Take Cover / Dive / Handbrake / Aircraft Yaw Right",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

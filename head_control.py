@@ -88,6 +88,172 @@ DEADZONE_RELEASE_RATIO = 0.62
 OUTPUT_SLEW_PERCENT_PER_S = 420.0
 MAX_PNP_STEP_DEG = 35.0
 
+# v0.9.7 intent thresholds are expressed in normalized signal units per
+# second.  Pitch is deliberately more permissive than yaw (roughly 60%) so a
+# small natural nod can be used when the left-hand look gate is active, while
+# a stationary off-centre head never keeps producing camera motion.
+YAW_INTENT_ANGLE = 0.055
+YAW_INTENT_START_VELOCITY = 0.12
+YAW_INTENT_STOP_VELOCITY = 0.045
+PITCH_INTENT_ANGLE = 0.035
+PITCH_INTENT_START_VELOCITY = 0.070
+PITCH_INTENT_STOP_VELOCITY = 0.026
+
+
+class IntentAxis:
+    """Small angle + velocity + acceleration state machine.
+
+    ``TURN_*`` is emitted only while the signal is moving in the same
+    direction as its deflection.  A held deflection becomes ``HOLD`` and
+    returns zero output; a velocity reversal becomes ``RETURNING`` and also
+    returns zero immediately.  Acceleration is retained as a diagnostic and
+    auxiliary transition signal, not as a mandatory trigger.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = str(name)
+        self.reset()
+
+    def reset(self) -> None:
+        self.state = "IDLE"
+        self.previous_signal = math.nan
+        self.previous_velocity = 0.0
+        self.last_at = 0.0
+        self.velocity = 0.0
+        self.acceleration = 0.0
+        self.quiet_frames = 0
+        # A return-to-centre is a short safety lock, not a new opposite turn.
+        # Without this latch, crossing the neutral point while the filtered
+        # signal still has a tail can immediately arm the other direction.
+        self.return_latched = False
+        self.return_settle_s = 0.0
+        self.raw_stable_s = 0.0
+
+    @staticmethod
+    def _sign(value: float) -> int:
+        return 1 if value > 0 else -1 if value < 0 else 0
+
+    def step(
+        self,
+        signal: float,
+        now: float,
+        *,
+        angle_threshold: float,
+        start_velocity: float,
+        stop_velocity: float,
+        release_threshold: float,
+        stop_grace_s: float = 0.075,
+    ) -> dict:
+        signal = _finite(signal, 0.0)
+        if not self.last_at or not math.isfinite(self.previous_signal):
+            dt = 1.0 / 30.0
+            velocity = signal / dt
+            raw_delta = 0.0
+        else:
+            dt = _clamp(now - self.last_at, 1.0 / 240.0, 0.20)
+            raw_delta = signal - self.previous_signal
+            velocity = raw_delta / dt
+        acceleration = (velocity - self.previous_velocity) / max(dt, 1.0 / 240.0)
+        self.previous_signal = signal
+        self.previous_velocity = velocity
+        self.last_at = now
+        self.velocity = _clamp(velocity, -8.0, 8.0)
+        self.acceleration = _clamp(acceleration, -80.0, 80.0)
+
+        # A stopped head should stop the camera even while the filtered
+        # derivative is settling.  This uses raw *change*, not raw position,
+        # so a held off-centre head cannot cause drift.
+        if abs(raw_delta) <= 0.0025:
+            self.raw_stable_s += dt
+        else:
+            self.raw_stable_s = 0.0
+
+        direction = self._sign(signal)
+        moving = abs(self.velocity) >= float(start_velocity)
+        reversing = abs(self.velocity) >= float(stop_velocity)
+        velocity_direction = self._sign(self.velocity)
+        outside = abs(signal) >= max(float(angle_threshold), float(release_threshold))
+
+        # Once returning begins, keep output at zero until the motion itself
+        # settles.  This check intentionally precedes the neutral release
+        # branch: crossing zero must not become an opposite turn.
+        if self.return_latched:
+            settle_velocity = max(float(stop_velocity), float(stop_velocity) * 0.72)
+            if abs(self.velocity) <= settle_velocity:
+                self.return_settle_s += dt
+            else:
+                self.return_settle_s = 0.0
+            if self.return_settle_s >= max(0.07, float(stop_grace_s)):
+                self.return_latched = False
+                self.return_settle_s = 0.0
+                self.state = "IDLE" if abs(signal) <= float(release_threshold) else "HOLD"
+            else:
+                self.state = "RETURNING"
+            self.quiet_frames = 0
+            return {
+                "state": self.state,
+                "active": False,
+                "signal": signal,
+                "velocity": self.velocity,
+                "acceleration": self.acceleration,
+                "direction": 0,
+                "return_latched": self.return_latched,
+            }
+
+        if abs(signal) <= float(release_threshold):
+            self.state = "IDLE"
+            self.quiet_frames = 0
+            self.return_settle_s = 0.0
+        elif self.state == "IDLE":
+            if outside and moving and velocity_direction == direction:
+                self.state = "TURN_RIGHT" if direction > 0 else "TURN_LEFT"
+                self.quiet_frames = 0
+        elif self.state in {"TURN_LEFT", "TURN_RIGHT"}:
+            active_direction = -1 if self.state == "TURN_LEFT" else 1
+            if velocity_direction == -active_direction and reversing:
+                self.state = "RETURNING"
+                self.return_latched = True
+                self.return_settle_s = 0.0
+                self.quiet_frames = 0
+            elif velocity_direction == active_direction and moving:
+                self.quiet_frames = 0
+            elif self.raw_stable_s >= max(0.10, float(stop_grace_s)) or abs(self.velocity) < float(stop_velocity):
+                # Keep one frame of grace for the filter settling tail.  At
+                # normal 30 FPS this is ~33 ms, then a held head is silent.
+                self.quiet_frames += 1
+                if self.quiet_frames > 1:
+                    self.state = "HOLD"
+            else:
+                self.state = "RETURNING"
+                self.return_latched = True
+                self.return_settle_s = 0.0
+                self.quiet_frames = 0
+        elif self.state == "HOLD":
+            if velocity_direction == direction and moving:
+                self.state = "TURN_RIGHT" if direction > 0 else "TURN_LEFT"
+                self.quiet_frames = 0
+            elif velocity_direction == -direction and reversing:
+                self.state = "RETURNING"
+                self.return_latched = True
+                self.return_settle_s = 0.0
+                self.quiet_frames = 0
+        elif self.state == "RETURNING":
+            # Older states can enter RETURNING without the branch above (for
+            # example after a filter tail).  Treat them as latched too.
+            self.return_latched = True
+            self.return_settle_s = 0.0
+
+        active = self.state in {"TURN_LEFT", "TURN_RIGHT"}
+        return {
+            "state": self.state,
+            "active": active,
+            "signal": signal,
+            "velocity": self.velocity,
+            "acceleration": self.acceleration,
+            "direction": -1 if self.state == "TURN_LEFT" else 1 if self.state == "TURN_RIGHT" else 0,
+            "return_latched": self.return_latched,
+        }
+
 
 def _finite(value: Any, default: float = math.nan) -> float:
     try:
@@ -480,6 +646,17 @@ class HeadController:
         self.filtered_pitch = math.nan
         self.norm_x = 0.0
         self.norm_y = 0.0
+        # Filtered raw signals remain available even before a center is
+        # calibrated.  The kernel uses ``signal_pitch`` to establish a fresh
+        # temporary center when the left-hand look gate opens.
+        self.signal_yaw = math.nan
+        self.signal_pitch = math.nan
+        self.yaw_velocity = 0.0
+        self.yaw_acceleration = 0.0
+        self.pitch_velocity = 0.0
+        self.pitch_acceleration = 0.0
+        self.yaw_intent_state = "IDLE"
+        self.pitch_intent_state = "IDLE"
         self.output_x = 0.0
         self.output_y = 0.0
         self.effective_deadzone_x = float(self.config["deadzone"])
@@ -489,6 +666,8 @@ class HeadController:
         self._last_update = 0.0
         self._yaw_filter = OneEuro(1.10, 0.050, 1.0)
         self._pitch_filter = OneEuro(1.05, 0.060, 1.0)
+        self._yaw_intent = IntentAxis("yaw")
+        self._pitch_intent = IntentAxis("pitch")
         self.last_error = ""
         self.notice = ""
         self.notice_until = 0.0
@@ -504,6 +683,16 @@ class HeadController:
         self._pitch_filter.reset()
         self.filtered_yaw = math.nan
         self.filtered_pitch = math.nan
+        self.signal_yaw = math.nan
+        self.signal_pitch = math.nan
+        self.yaw_velocity = 0.0
+        self.yaw_acceleration = 0.0
+        self.pitch_velocity = 0.0
+        self.pitch_acceleration = 0.0
+        self.yaw_intent_state = "IDLE"
+        self.pitch_intent_state = "IDLE"
+        self._yaw_intent.reset()
+        self._pitch_intent.reset()
         self._axis_active_x = False
         self._axis_active_y = False
         self.output_x = self.output_y = 0.0
@@ -756,6 +945,33 @@ class HeadController:
             return 0.0, 0.0
         self.last_error = ""
 
+        span_x, span_y = self._span()
+
+        # Keep filtered raw signals alive for both calibrated horizontal
+        # control and the kernel's gated head-pitch mode.  Before calibration
+        # we still filter the absolute estimate, but never emit output.
+        if self.calibrated:
+            raw_x_for_release = _clamp((estimate.yaw - self.center_yaw) / span_x, -1.0, 1.0)
+            raw_y_for_release = _clamp((estimate.pitch - self.center_pitch) / span_y, -1.0, 1.0)
+            release_x = self.effective_deadzone_x * DEADZONE_RELEASE_RATIO
+            release_y = self.effective_deadzone_y * DEADZONE_RELEASE_RATIO
+            if abs(raw_x_for_release) <= release_x:
+                self._yaw_filter.reset()
+                filtered_yaw = self._yaw_filter.apply(self.center_yaw, now)
+            else:
+                filtered_yaw = self._yaw_filter.apply(estimate.yaw, now)
+            if abs(raw_y_for_release) <= release_y:
+                self._pitch_filter.reset()
+                filtered_pitch = self._pitch_filter.apply(self.center_pitch, now)
+            else:
+                filtered_pitch = self._pitch_filter.apply(estimate.pitch, now)
+        else:
+            filtered_yaw = self._yaw_filter.apply(estimate.yaw, now)
+            filtered_pitch = self._pitch_filter.apply(estimate.pitch, now)
+
+        self.filtered_yaw, self.filtered_pitch = filtered_yaw, filtered_pitch
+        self.signal_yaw, self.signal_pitch = filtered_yaw, filtered_pitch
+
         # A missing center never auto-starts calibration.  The player first
         # moves to the real play position and then clicks or says "开始校准".
         # Calibration is intentionally forgiving: after the short post-voice
@@ -796,45 +1012,55 @@ class HeadController:
             return 0.0, 0.0
 
         if not self.calibrated or not self.config["enabled"]:
-            self._reset_filters()
+            self._yaw_intent.reset()
+            self._pitch_intent.reset()
+            self.yaw_intent_state = self.pitch_intent_state = "IDLE"
+            self.output_x = self.output_y = 0.0
+            self.norm_x = self.norm_y = 0.0
             return 0.0, 0.0
 
-        span_x, span_y = self._span()
-        raw_x = _clamp((estimate.yaw - self.center_yaw) / span_x, -1.0, 1.0)
-        raw_y = _clamp((estimate.pitch - self.center_pitch) / span_y, -1.0, 1.0)
-
-        # A low-pass filter prevents jitter while the head is moving, but a
-        # normal low-pass also keeps a stale tail after the user has physically
-        # returned to center.  That tail feels like mouse drift.  When the RAW
-        # signal is convincingly back inside the hysteresis release zone, snap
-        # that axis to the learned center and reset only that filter.  This keeps
-        # moving response smooth while making neutral an immediate exact stop.
-        release_x = self.effective_deadzone_x * DEADZONE_RELEASE_RATIO
-        release_y = self.effective_deadzone_y * DEADZONE_RELEASE_RATIO
-        if abs(raw_x) <= release_x:
-            self._yaw_filter.reset()
-            filtered_yaw = self._yaw_filter.apply(self.center_yaw, now)
-            self._axis_active_x = False
-        else:
-            filtered_yaw = self._yaw_filter.apply(estimate.yaw, now)
-        if abs(raw_y) <= release_y:
-            self._pitch_filter.reset()
-            filtered_pitch = self._pitch_filter.apply(self.center_pitch, now)
-            self._axis_active_y = False
-        else:
-            filtered_pitch = self._pitch_filter.apply(estimate.pitch, now)
-
-        self.filtered_yaw, self.filtered_pitch = filtered_yaw, filtered_pitch
-        x = _clamp((filtered_yaw - self.center_yaw) / span_x, -1.0, 1.0)
-        y = _clamp((filtered_pitch - self.center_pitch) / span_y, -1.0, 1.0)
+        raw_x = _clamp((self.signal_yaw - self.center_yaw) / span_x, -1.0, 1.0)
+        raw_y = _clamp((self.signal_pitch - self.center_pitch) / span_y, -1.0, 1.0)
         if self.config["invert_x"]:
-            x = -x
+            raw_x = -raw_x
         if self.config["invert_y"]:
-            y = -y
-        self.norm_x, self.norm_y = x, y
+            raw_y = -raw_y
 
-        vx = self._axis_curve(x, "x")
-        vy = self._axis_curve(y, "y")
+        yaw_intent = self._yaw_intent.step(
+            raw_x, now,
+            angle_threshold=YAW_INTENT_ANGLE,
+            start_velocity=YAW_INTENT_START_VELOCITY,
+            stop_velocity=YAW_INTENT_STOP_VELOCITY,
+            release_threshold=self.effective_deadzone_x * DEADZONE_RELEASE_RATIO,
+        )
+        pitch_intent = self._pitch_intent.step(
+            raw_y, now,
+            angle_threshold=PITCH_INTENT_ANGLE,
+            start_velocity=PITCH_INTENT_START_VELOCITY,
+            stop_velocity=PITCH_INTENT_STOP_VELOCITY,
+            release_threshold=self.effective_deadzone_y * DEADZONE_RELEASE_RATIO,
+        )
+        self.yaw_velocity = yaw_intent["velocity"]
+        self.yaw_acceleration = yaw_intent["acceleration"]
+        self.pitch_velocity = pitch_intent["velocity"]
+        self.pitch_acceleration = pitch_intent["acceleration"]
+        self.yaw_intent_state = yaw_intent["state"]
+        self.pitch_intent_state = pitch_intent["state"]
+        self.norm_x, self.norm_y = raw_x, raw_y
+
+        # Intent, not angle alone, drives output.  A held off-centre head is
+        # therefore silent, and reversing direction stops the old direction
+        # before the head reaches the neutral center.
+        if yaw_intent["active"]:
+            vx = self._axis_curve(raw_x, "x")
+        else:
+            self._axis_active_x = False
+            vx = 0.0
+        if pitch_intent["active"]:
+            vy = self._axis_curve(raw_y, "y")
+        else:
+            self._axis_active_y = False
+            vy = 0.0
         target_x = vx * float(self.config["sensitivity_x"])
         target_y = vy * float(self.config["sensitivity_y"])
         dt = _clamp(now - self._last_update, 0.0, 0.08) if self._last_update else 1.0 / 30.0
@@ -905,6 +1131,22 @@ class HeadController:
             "estimate_error": self.raw.error or self.last_error or None,
             "filtered_yaw": self.filtered_yaw if math.isfinite(self.filtered_yaw) else None,
             "filtered_pitch": self.filtered_pitch if math.isfinite(self.filtered_pitch) else None,
+            "signal_yaw": self.signal_yaw if math.isfinite(self.signal_yaw) else None,
+            "signal_pitch": self.signal_pitch if math.isfinite(self.signal_pitch) else None,
+            "yaw_velocity": round(float(self.yaw_velocity), 4),
+            "yaw_acceleration": round(float(self.yaw_acceleration), 4),
+            "pitch_velocity": round(float(self.pitch_velocity), 4),
+            "pitch_acceleration": round(float(self.pitch_acceleration), 4),
+            "yaw_intent_state": self.yaw_intent_state,
+            "pitch_intent_state": self.pitch_intent_state,
+            "yaw_return_latched": bool(self._yaw_intent.return_latched),
+            "pitch_return_latched": bool(self._pitch_intent.return_latched),
+            "yaw_intent_active": self.yaw_intent_state in {"TURN_LEFT", "TURN_RIGHT"},
+            "pitch_intent_active": self.pitch_intent_state in {"TURN_LEFT", "TURN_RIGHT"},
+            "yaw_intent_angle_threshold": YAW_INTENT_ANGLE,
+            "yaw_intent_velocity_threshold": YAW_INTENT_START_VELOCITY,
+            "pitch_intent_angle_threshold": PITCH_INTENT_ANGLE,
+            "pitch_intent_velocity_threshold": PITCH_INTENT_START_VELOCITY,
             "center_yaw": self.center_yaw if self.calibrated else None,
             "center_pitch": self.center_pitch if self.calibrated else None,
             "noise_yaw": round(self.noise_yaw, 6),

@@ -1,0 +1,1096 @@
+{
+  "schema": "motioncontrol.game_profile_seeds.v1",
+  "source": "steam_top_sellers_windows_plus_priority",
+  "count": 226,
+  "games": [
+    {
+      "appid": 1174180,
+      "name": "Red Dead Redemption 2",
+      "priority": true
+    },
+    {
+      "appid": 271590,
+      "name": "Grand Theft Auto V Legacy",
+      "priority": true
+    },
+    {
+      "appid": 3240220,
+      "name": "Grand Theft Auto V Enhanced",
+      "priority": true
+    },
+    {
+      "appid": 1293830,
+      "name": "Forza Horizon 4",
+      "priority": true
+    },
+    {
+      "appid": 1551360,
+      "name": "Forza Horizon 5",
+      "priority": true
+    },
+    {
+      "appid": 2358720,
+      "name": "Black Myth: Wukong",
+      "priority": true
+    },
+    {
+      "appid": 1172470,
+      "name": "Apex Legends™"
+    },
+    {
+      "appid": 4001890,
+      "name": "How to Fish"
+    },
+    {
+      "appid": 2399830,
+      "name": "ARK: Survival Ascended"
+    },
+    {
+      "appid": 4508340,
+      "name": "NTE: Neverness to Everness"
+    },
+    {
+      "appid": 3859630,
+      "name": "METAL GEAR SOLID: MASTER COLLECTION Vol.2"
+    },
+    {
+      "appid": 3932890,
+      "name": "Escape from Tarkov"
+    },
+    {
+      "appid": 1665460,
+      "name": "eFootball™"
+    },
+    {
+      "appid": 730,
+      "name": "Counter-Strike 2"
+    },
+    {
+      "appid": 438100,
+      "name": "VRChat"
+    },
+    {
+      "appid": 3513350,
+      "name": "Wuthering Waves"
+    },
+    {
+      "appid": 4162040,
+      "name": "Zenless Zone Zero"
+    },
+    {
+      "appid": 2357570,
+      "name": "Overwatch®"
+    },
+    {
+      "appid": 1449850,
+      "name": "Yu-Gi-Oh! Master Duel"
+    },
+    {
+      "appid": 3321460,
+      "name": "Crimson Desert"
+    },
+    {
+      "appid": 4435490,
+      "name": "Call of Duty®: Modern Warfare® 4"
+    },
+    {
+      "appid": 2764370,
+      "name": "Starward"
+    },
+    {
+      "appid": 1364780,
+      "name": "Street Fighter™ 6"
+    },
+    {
+      "appid": 2161700,
+      "name": "Persona 3 Reload"
+    },
+    {
+      "appid": 2638890,
+      "name": "Onimusha: Way of the Sword"
+    },
+    {
+      "appid": 1336490,
+      "name": "Against the Storm"
+    },
+    {
+      "appid": 2584270,
+      "name": "Mortal Shell II"
+    },
+    {
+      "appid": 2139460,
+      "name": "Once Human"
+    },
+    {
+      "appid": 1478500,
+      "name": "Big Walk"
+    },
+    {
+      "appid": 4012810,
+      "name": "STEINS;GATE RE:BOOT"
+    },
+    {
+      "appid": 2111630,
+      "name": "JR EAST Train Simulator"
+    },
+    {
+      "appid": 3971650,
+      "name": "Lazy Witch's Factory"
+    },
+    {
+      "appid": 2483190,
+      "name": "Forza Horizon 6"
+    },
+    {
+      "appid": 4282500,
+      "name": "hololive Dreams"
+    },
+    {
+      "appid": 2426960,
+      "name": "Summoners War"
+    },
+    {
+      "appid": 570,
+      "name": "Dota 2"
+    },
+    {
+      "appid": 1623730,
+      "name": "Palworld"
+    },
+    {
+      "appid": 381210,
+      "name": "Dead by Daylight"
+    },
+    {
+      "appid": 3679080,
+      "name": "The Seven Deadly Sins: Origin"
+    },
+    {
+      "appid": 2584990,
+      "name": "Shadowverse: Worlds Beyond"
+    },
+    {
+      "appid": 3994120,
+      "name": "AI Pixel Battle"
+    },
+    {
+      "appid": 2868840,
+      "name": "Slay the Spire 2"
+    },
+    {
+      "appid": 2054970,
+      "name": "Dragon's Dogma 2"
+    },
+    {
+      "appid": 2288340,
+      "name": "ACE COMBAT 8: WINGS OF THEVE"
+    },
+    {
+      "appid": 2246340,
+      "name": "Monster Hunter Wilds"
+    },
+    {
+      "appid": 3092660,
+      "name": "Reverse: 1999"
+    },
+    {
+      "appid": 4025700,
+      "name": "Heartopia"
+    },
+    {
+      "appid": 218230,
+      "name": "PlanetSide 2"
+    },
+    {
+      "appid": 3856280,
+      "name": "holoVillage: Our Cozy Days"
+    },
+    {
+      "appid": 2622380,
+      "name": "ELDEN RING NIGHTREIGN"
+    },
+    {
+      "appid": 4704690,
+      "name": "MECCHA CHAMELEON"
+    },
+    {
+      "appid": 2163330,
+      "name": "Yet Another Zombie Survivors"
+    },
+    {
+      "appid": 227300,
+      "name": "Euro Truck Simulator 2"
+    },
+    {
+      "appid": 1687950,
+      "name": "Persona 5 Royal"
+    },
+    {
+      "appid": 2075800,
+      "name": "STAR WARS Zero Company™"
+    },
+    {
+      "appid": 4584110,
+      "name": "Soul Land: Awakening World"
+    },
+    {
+      "appid": 4026250,
+      "name": "Project P.I.T.T."
+    },
+    {
+      "appid": 4108000,
+      "name": "Machine Party"
+    },
+    {
+      "appid": 1778820,
+      "name": "TEKKEN 8"
+    },
+    {
+      "appid": 2379740,
+      "name": "Wizardry Variants Daphne"
+    },
+    {
+      "appid": 1607250,
+      "name": "MY HERO ULTRA RUMBLE"
+    },
+    {
+      "appid": 4080220,
+      "name": "EA SPORTS FC™ 27"
+    },
+    {
+      "appid": 4611990,
+      "name": "日本事故物件監視協会3 -Japan Stigmatized Property-"
+    },
+    {
+      "appid": 252490,
+      "name": "Rust"
+    },
+    {
+      "appid": 2288630,
+      "name": "Taiko no Tatsujin: Rhythm Festival"
+    },
+    {
+      "appid": 2074920,
+      "name": "The First Descendant"
+    },
+    {
+      "appid": 3787240,
+      "name": "MARVEL Tōkon: Fighting Souls"
+    },
+    {
+      "appid": 2694490,
+      "name": "Path of Exile 2"
+    },
+    {
+      "appid": 359550,
+      "name": "Tom Clancy's Rainbow Six Siege"
+    },
+    {
+      "appid": 251570,
+      "name": "7 Days to Die"
+    },
+    {
+      "appid": 39210,
+      "name": "FINAL FANTASY XIV Online"
+    },
+    {
+      "appid": 230410,
+      "name": "Warframe"
+    },
+    {
+      "appid": 1875830,
+      "name": "Shin Megami Tensei V: Vengeance"
+    },
+    {
+      "appid": 2836990,
+      "name": "Drunken Rogue"
+    },
+    {
+      "appid": 2622000,
+      "name": "Astral Party"
+    },
+    {
+      "appid": 3564740,
+      "name": "Where Winds Meet"
+    },
+    {
+      "appid": 2679460,
+      "name": "Metaphor: ReFantazio"
+    },
+    {
+      "appid": 2406770,
+      "name": "Bodycam"
+    },
+    {
+      "appid": 2764460,
+      "name": "Sandustry"
+    },
+    {
+      "appid": 3308670,
+      "name": "GIRLS' FRONTLINE 2: EXILIUM"
+    },
+    {
+      "appid": 1245620,
+      "name": "ELDEN RING"
+    },
+    {
+      "appid": 1643320,
+      "name": "S.T.A.L.K.E.R. 2: Heart of Chornobyl"
+    },
+    {
+      "appid": 1867240,
+      "name": "WARDOGS"
+    },
+    {
+      "appid": 3681010,
+      "name": "Nioh 3"
+    },
+    {
+      "appid": 394360,
+      "name": "Hearts of Iron IV"
+    },
+    {
+      "appid": 2429640,
+      "name": "Throne and Liberty"
+    },
+    {
+      "appid": 553850,
+      "name": "HELLDIVERS™ 2"
+    },
+    {
+      "appid": 1407200,
+      "name": "World of Tanks"
+    },
+    {
+      "appid": 2172910,
+      "name": "CAPTAIN TSUBASA 2: WORLD FIGHTERS"
+    },
+    {
+      "appid": 2058190,
+      "name": "Lost Judgment"
+    },
+    {
+      "appid": 4356430,
+      "name": "NBA 2K27"
+    },
+    {
+      "appid": 3500390,
+      "name": "Mega Man Star Force Legacy Collection"
+    },
+    {
+      "appid": 881020,
+      "name": "Granblue Fantasy: Relink"
+    },
+    {
+      "appid": 1049590,
+      "name": "Eternal Return"
+    },
+    {
+      "appid": 872410,
+      "name": "ROMANCE OF THE THREE KINGDOMS XIV"
+    },
+    {
+      "appid": 3214610,
+      "name": "Cinderia"
+    },
+    {
+      "appid": 2680010,
+      "name": "The First Berserker: Khazan"
+    },
+    {
+      "appid": 3241660,
+      "name": "R.E.P.O."
+    },
+    {
+      "appid": 1672970,
+      "name": "Minecraft Dungeons"
+    },
+    {
+      "appid": 578080,
+      "name": "PUBG: BATTLEGROUNDS"
+    },
+    {
+      "appid": 4128400,
+      "name": "eBaseball™: PRO SPIRIT"
+    },
+    {
+      "appid": 3061570,
+      "name": "Persona5: The Phantom X"
+    },
+    {
+      "appid": 2507950,
+      "name": "Delta Force"
+    },
+    {
+      "appid": 2651280,
+      "name": "Marvel's Spider-Man 2"
+    },
+    {
+      "appid": 1151340,
+      "name": "Fallout 76"
+    },
+    {
+      "appid": 1295660,
+      "name": "Sid Meier's Civilization VII"
+    },
+    {
+      "appid": 2537590,
+      "name": "Microsoft Flight Simulator 2024"
+    },
+    {
+      "appid": 1973530,
+      "name": "Limbus Company"
+    },
+    {
+      "appid": 2964090,
+      "name": "World of Warships: Legends"
+    },
+    {
+      "appid": 2918150,
+      "name": "ONE PIECE Bounty Rush"
+    },
+    {
+      "appid": 3451980,
+      "name": "Soul's Remnant"
+    },
+    {
+      "appid": 1282270,
+      "name": "Strinova"
+    },
+    {
+      "appid": 688130,
+      "name": "Pogostuck: Rage With Your Friends"
+    },
+    {
+      "appid": 3527290,
+      "name": "PEAK"
+    },
+    {
+      "appid": 3892270,
+      "name": "Gamble With Your Friends"
+    },
+    {
+      "appid": 3937550,
+      "name": "Yakuza Kiwami 3 & Dark Ties"
+    },
+    {
+      "appid": 3282300,
+      "name": "Mistfall Hunter"
+    },
+    {
+      "appid": 2950790,
+      "name": "IRON NEST: Heavy Turret Simulator"
+    },
+    {
+      "appid": 949230,
+      "name": "Cities: Skylines II"
+    },
+    {
+      "appid": 1367080,
+      "name": "MOBILE SUIT GUNDAM BATTLE OPERATION 2"
+    },
+    {
+      "appid": 255710,
+      "name": "Cities: Skylines"
+    },
+    {
+      "appid": 4131730,
+      "name": "VHOLUME"
+    },
+    {
+      "appid": 294100,
+      "name": "RimWorld"
+    },
+    {
+      "appid": 3950020,
+      "name": "Duet Night Abyss"
+    },
+    {
+      "appid": 3164330,
+      "name": "Infinity Nikki"
+    },
+    {
+      "appid": 4570720,
+      "name": "DragonSword : Awakening"
+    },
+    {
+      "appid": 1313140,
+      "name": "Cult of the Lamb"
+    },
+    {
+      "appid": 1158310,
+      "name": "Crusader Kings III"
+    },
+    {
+      "appid": 3595270,
+      "name": "Call of Duty®: Modern Warfare® III"
+    },
+    {
+      "appid": 1384160,
+      "name": "GUILTY GEAR -STRIVE-"
+    },
+    {
+      "appid": 3052450,
+      "name": "Morimens"
+    },
+    {
+      "appid": 960170,
+      "name": "DJMAX RESPECT V"
+    },
+    {
+      "appid": 1817070,
+      "name": "Marvel’s Spider-Man Remastered"
+    },
+    {
+      "appid": 3751260,
+      "name": "The Blood of Dawnwalker"
+    },
+    {
+      "appid": 3357650,
+      "name": "PRAGMATA"
+    },
+    {
+      "appid": 2072450,
+      "name": "Like a Dragon: Infinite Wealth"
+    },
+    {
+      "appid": 1909950,
+      "name": "SUPER ROBOT WARS Y"
+    },
+    {
+      "appid": 346110,
+      "name": "ARK: Survival Evolved"
+    },
+    {
+      "appid": 1868140,
+      "name": "DAVE THE DIVER"
+    },
+    {
+      "appid": 2141910,
+      "name": "Magic: The Gathering Arena"
+    },
+    {
+      "appid": 582660,
+      "name": "Black Desert"
+    },
+    {
+      "appid": 2073620,
+      "name": "Arena Breakout: Infinite"
+    },
+    {
+      "appid": 2767030,
+      "name": "Marvel Rivals"
+    },
+    {
+      "appid": 269210,
+      "name": "Hero Siege"
+    },
+    {
+      "appid": 632360,
+      "name": "Risk of Rain 2"
+    },
+    {
+      "appid": 4559140,
+      "name": "Godius Eternal War"
+    },
+    {
+      "appid": 1771300,
+      "name": "Kingdom Come: Deliverance II"
+    },
+    {
+      "appid": 4315040,
+      "name": "Hearth and Hamlet"
+    },
+    {
+      "appid": 1702010,
+      "name": "Sengoku Dynasty"
+    },
+    {
+      "appid": 4502710,
+      "name": "Stonewards"
+    },
+    {
+      "appid": 3271000,
+      "name": "SEGA FOOTBALL CLUB CHAMPIONS"
+    },
+    {
+      "appid": 3041230,
+      "name": "Windrose"
+    },
+    {
+      "appid": 648800,
+      "name": "Raft"
+    },
+    {
+      "appid": 4830660,
+      "name": "Tsugunohi -The Thread That Beckons to Heaven-"
+    },
+    {
+      "appid": 1332010,
+      "name": "Stray"
+    },
+    {
+      "appid": 1761390,
+      "name": "Hatsune Miku: Project DIVA Mega Mix+"
+    },
+    {
+      "appid": 739630,
+      "name": "Phasmophobia"
+    },
+    {
+      "appid": 413150,
+      "name": "Stardew Valley"
+    },
+    {
+      "appid": 3966510,
+      "name": "Feed the Scorchpot"
+    },
+    {
+      "appid": 1962700,
+      "name": "Subnautica 2"
+    },
+    {
+      "appid": 2807960,
+      "name": "Battlefield™ 6"
+    },
+    {
+      "appid": 3576070,
+      "name": "Sudden Attack Zero Point"
+    },
+    {
+      "appid": 1091500,
+      "name": "Cyberpunk 2077"
+    },
+    {
+      "appid": 2288350,
+      "name": "RAIDOU Remastered: The Mystery of the Soulless Army"
+    },
+    {
+      "appid": 753640,
+      "name": "Outer Wilds"
+    },
+    {
+      "appid": 1888160,
+      "name": "ARMORED CORE™ VI FIRES OF RUBICON™"
+    },
+    {
+      "appid": 4486870,
+      "name": "FEED THE AI"
+    },
+    {
+      "appid": 835570,
+      "name": "Conqueror's Blade"
+    },
+    {
+      "appid": 3751950,
+      "name": "Assassin's Creed Black Flag Resynced"
+    },
+    {
+      "appid": 2302530,
+      "name": "MementoMori"
+    },
+    {
+      "appid": 1621690,
+      "name": "Core Keeper"
+    },
+    {
+      "appid": 266410,
+      "name": "iRacing"
+    },
+    {
+      "appid": 270880,
+      "name": "American Truck Simulator"
+    },
+    {
+      "appid": 1943950,
+      "name": "Escape the Backrooms"
+    },
+    {
+      "appid": 4625810,
+      "name": "Internet Survivor Survivors"
+    },
+    {
+      "appid": 582010,
+      "name": "Monster Hunter: World"
+    },
+    {
+      "appid": 2988580,
+      "name": "Yakuza 0 Director's Cut"
+    },
+    {
+      "appid": 3117820,
+      "name": "Sultan's Game"
+    },
+    {
+      "appid": 3681610,
+      "name": "DRAGON QUEST MONSTERS: The Withered World"
+    },
+    {
+      "appid": 4132330,
+      "name": "Pizza House Simulator🍕"
+    },
+    {
+      "appid": 892970,
+      "name": "Valheim"
+    },
+    {
+      "appid": 526870,
+      "name": "Satisfactory"
+    },
+    {
+      "appid": 699130,
+      "name": "World War Z"
+    },
+    {
+      "appid": 1259790,
+      "name": "Puyo Puyo™ Tetris® 2"
+    },
+    {
+      "appid": 4005220,
+      "name": "Deep Blue Sushi"
+    },
+    {
+      "appid": 3795900,
+      "name": "FRONT MISSION 3: Remake"
+    },
+    {
+      "appid": 2142790,
+      "name": "Fields of Mistria"
+    },
+    {
+      "appid": 427520,
+      "name": "Factorio"
+    },
+    {
+      "appid": 3722330,
+      "name": "Shift At Midnight"
+    },
+    {
+      "appid": 1243830,
+      "name": "Overcooked! All You Can Eat"
+    },
+    {
+      "appid": 2993780,
+      "name": "FANTASY LIFE i: The Girl Who Steals Time"
+    },
+    {
+      "appid": 1446780,
+      "name": "MONSTER HUNTER RISE"
+    },
+    {
+      "appid": 2661300,
+      "name": "Grounded 2"
+    },
+    {
+      "appid": 2058180,
+      "name": "Judgment"
+    },
+    {
+      "appid": 105600,
+      "name": "Terraria"
+    },
+    {
+      "appid": 2001760,
+      "name": "Beast of Reincarnation"
+    },
+    {
+      "appid": 376210,
+      "name": "The Isle"
+    },
+    {
+      "appid": 2244210,
+      "name": "Echoes of Aincrad"
+    },
+    {
+      "appid": 261550,
+      "name": "Mount & Blade II: Bannerlord"
+    },
+    {
+      "appid": 4141950,
+      "name": "Kugayama Shiori's Death Diary"
+    },
+    {
+      "appid": 1142710,
+      "name": "Total War: WARHAMMER III"
+    },
+    {
+      "appid": 1790600,
+      "name": "DRAGON BALL: Sparking! ZERO"
+    },
+    {
+      "appid": 3764200,
+      "name": "Resident Evil Requiem"
+    },
+    {
+      "appid": 3812600,
+      "name": "ReStory: Chill Electronics Repairs"
+    },
+    {
+      "appid": 2113850,
+      "name": "Spirit City: Lofi Sessions"
+    },
+    {
+      "appid": 4120790,
+      "name": "The Sorting Bureau"
+    },
+    {
+      "appid": 2499860,
+      "name": "DRAGON QUEST VII Reimagined"
+    },
+    {
+      "appid": 444200,
+      "name": "World of Tanks Blitz"
+    },
+    {
+      "appid": 219990,
+      "name": "Grim Dawn"
+    },
+    {
+      "appid": 3768760,
+      "name": "007 First Light"
+    },
+    {
+      "appid": 2707930,
+      "name": "Palia"
+    },
+    {
+      "appid": 673750,
+      "name": "Super Bunny Man"
+    },
+    {
+      "appid": 2688950,
+      "name": "Planet Coaster 2"
+    },
+    {
+      "appid": 4928820,
+      "name": "Shelve the Potions!"
+    },
+    {
+      "appid": 2436940,
+      "name": "Sephiria"
+    },
+    {
+      "appid": 2800630,
+      "name": "The Smurfs - Village Party"
+    },
+    {
+      "appid": 1374490,
+      "name": "RuneScape: Dragonwilds"
+    },
+    {
+      "appid": 3196440,
+      "name": "Vacation Cafe Simulator"
+    },
+    {
+      "appid": 2526380,
+      "name": "Sword of Convallaria"
+    },
+    {
+      "appid": 1144400,
+      "name": "Senren＊Banka"
+    },
+    {
+      "appid": 4294490,
+      "name": "KOTAMON: My Sis Found A Super-Rare Card In Her Cereal Box, So I Became A Garbage Man To Find The Entire Collection And Earn $1,000,000"
+    },
+    {
+      "appid": 2285550,
+      "name": "Doloc Town"
+    },
+    {
+      "appid": 2486820,
+      "name": "Sonic Racing: CrossWorlds"
+    },
+    {
+      "appid": 2893570,
+      "name": "DRAGON QUEST I & II HD-2D Remake"
+    },
+    {
+      "appid": 2827200,
+      "name": "MIMESIS"
+    },
+    {
+      "appid": 3199170,
+      "name": "Blood Strike"
+    }
+  ],
+  "collection": {
+    "pages": [
+      {
+        "page": 1,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 2,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 3,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 4,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 5,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 6,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 7,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 8,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 9,
+        "rows": 25,
+        "ok": true
+      },
+      {
+        "page": 10,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 11,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 12,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 13,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 14,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 15,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 16,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 17,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 18,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 19,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 20,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 21,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 22,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 23,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 24,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 25,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 26,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 27,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 28,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 29,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      },
+      {
+        "page": 30,
+        "rows": 0,
+        "ok": false,
+        "error": "HTTP Error 429: Too Many Requests"
+      }
+    ],
+    "requested": 500,
+    "actual": 226,
+    "target_met": false,
+    "build_gate": false
+  }
+}

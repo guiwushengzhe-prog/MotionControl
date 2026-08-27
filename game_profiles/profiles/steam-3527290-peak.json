@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-3527290-peak",
+  "name": "PEAK",
+  "appid": 3527290,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3503632087,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "Gamepad Only",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 55409392,
+    "votes": {
+      "score": 0.52205884,
+      "up": 21,
+      "down": 15
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Emote, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Interact, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Drop / Throw, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "Q",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Sprint, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SHIFT",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Crouch, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "CTRL",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1158310-crusader-kings-iii",
+  "name": "Crusader Kings III",
+  "appid": 1158310,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2220285578,
+    "controller_type": "controller_steamcontroller_gordon",
+    "controller_type_nice": "Steam Controller (2015)",
+    "layout_title": "Gimler's Crusader Kings III",
+    "subscriptions": 17675,
+    "lifetime_playtime_seconds": 3147359947,
+    "votes": {
+      "score": 0.65254235,
+      "up": 181,
+      "down": 73
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 4,
+    "zone_total": 6,
+    "coverage_ratio": 0.667,
+    "rejected": {
+      "button_x": "unsupported keyboard target: KEYPAD_DASH",
+      "button_b": "unsupported keyboard target: KEYPAD_PLUS"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Back",
+        "action": {
+          "type": "keyboard",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "右手下区",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "左脚区",
+        "action": {
+          "type": "keyboard",
+          "target": "CTRL",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "右脚区",
+        "action": {
+          "type": "keyboard",
+          "target": "SHIFT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

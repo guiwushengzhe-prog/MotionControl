@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2507950-delta-force",
+  "name": "Delta Force",
+  "appid": 2507950,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3378369942,
+    "controller_type": "controller_ps5",
+    "controller_type_nice": "DualSense",
+    "layout_title": "Delta Force PS5",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 3278550402,
+    "votes": {
+      "score": 0.60795456,
+      "up": 164,
+      "down": 88
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Grenade / HOLD Key 6, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "G",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Reload, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Use, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump / HOLD Tap Out, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Gadget 1 / HOLD Tactical Gear, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "V",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": ",",
+        "action": {
+          "type": "mouse_button",
+          "target": "MIDDLE",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-753640-outer-wilds",
+  "name": "Outer Wilds",
+  "appid": 753640,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2194567684,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 67990,
+    "lifetime_playtime_seconds": 20030332,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Signalscope / Change Ship Log Mode",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Interact / Landing Camera",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Cancel",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Confirm / Jump / Jetpack Boost / Match Velocity / Mark Entry on HUD",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Roll Mode / Rearview Snapshot",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Translate / Signalscope Zoom / Launch/Retrieve Scout / Forward Snapshot",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

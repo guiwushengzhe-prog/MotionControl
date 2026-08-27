@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-255710-cities-skylines",
+  "name": "Cities: Skylines",
+  "appid": 255710,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 1293986904,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "Official Cities: Skylines Bindings",
+    "subscriptions": 3209,
+    "lifetime_playtime_seconds": 1032005655,
+    "votes": {
+      "score": 0.58577406,
+      "up": 90,
+      "down": 49
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Speed 3",
+        "action": {
+          "type": "keyboard",
+          "target": "3",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Speed 2",
+        "action": {
+          "type": "keyboard",
+          "target": "2",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Pause",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Speed 1",
+        "action": {
+          "type": "keyboard",
+          "target": "1",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Zoom Out",
+        "action": {
+          "type": "keyboard",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Zoom In",
+        "action": {
+          "type": "keyboard",
+          "target": "Z",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-3308670-girls-frontline-2-exilium",
+  "name": "GIRLS' FRONTLINE 2: EXILIUM",
+  "appid": 3308670,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3610004465,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "パッド操作",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 9755776,
+    "votes": {
+      "score": 0.5,
+      "up": 1,
+      "down": 1
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "射撃取り消し, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "オブジェクト操作, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "射撃決定, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "射撃, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "Q",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Previous Weapon, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

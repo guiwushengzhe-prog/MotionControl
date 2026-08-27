@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-3812600-restory-chill-electronics-repairs",
+  "name": "ReStory: Chill Electronics Repairs",
+  "appid": 3812600,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3778737896,
+    "controller_type": "controller_triton",
+    "controller_type_nice": "Steam Controller",
+    "layout_title": "ReStory - Steam Controller / Deck",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 9831974,
+    "votes": {
+      "score": 0.5225225,
+      "up": 8,
+      "down": 3
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "PC, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "C",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Job Info, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "J",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Back / Menu, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Hint, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Zoom Out, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "rightFoot": {
+        "label": "Zoom In, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

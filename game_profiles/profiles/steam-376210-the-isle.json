@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-376210-the-isle",
+  "name": "The Isle",
+  "appid": 376210,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 965758936,
+    "controller_type": "controller_xbox360",
+    "controller_type_nice": "Xbox 360",
+    "layout_title": "The Isle for real nigss",
+    "subscriptions": 5095,
+    "lifetime_playtime_seconds": 378819359,
+    "votes": {
+      "score": 0.55813956,
+      "up": 46,
+      "down": 26
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Inventory",
+        "action": {
+          "type": "keyboard",
+          "target": "U",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "eat",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Trot",
+        "action": {
+          "type": "keyboard",
+          "target": "Z",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "prev",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

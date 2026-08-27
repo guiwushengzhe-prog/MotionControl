@@ -1,0 +1,84 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1151340-fallout-76",
+  "name": "Fallout 76",
+  "appid": 1151340,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2208414931,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 128993,
+    "lifetime_playtime_seconds": 73808054,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 5,
+    "zone_total": 6,
+    "coverage_ratio": 0.833,
+    "rejected": {
+      "button_b": "native Steam action is not directly convertible: controller_action"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 7,
+      "unsupported": 1,
+      "unsupported_reasons": {
+        "button_b": "native Steam action is not directly convertible: controller_action"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Jump",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Reload",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Activate",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "VATS",
+        "action": {
+          "type": "keyboard",
+          "target": "Q",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Bash / Power Attack / Grenade",
+        "action": {
+          "type": "keyboard",
+          "target": "ALT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

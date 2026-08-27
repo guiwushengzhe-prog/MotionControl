@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2622000-astral-party",
+  "name": "Astral Party",
+  "appid": 2622000,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3174533016,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "左摇杆控制鼠标的布局",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 5513875,
+    "votes": {
+      "score": 0.50476193,
+      "up": 3,
+      "down": 2
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Flashlight, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "leftHandLower": {
+        "label": "Reload, ,",
+        "action": {
+          "type": "mouse_button",
+          "target": "RIGHT",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Use, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump, ,",
+        "action": {
+          "type": "mouse_button",
+          "target": "LEFT",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Previous Weapon, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ALT",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ALT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

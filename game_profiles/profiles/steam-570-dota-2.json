@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-570-dota-2",
+  "name": "Dota 2",
+  "appid": 570,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 851577222,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "loganshotu's Bindings",
+    "subscriptions": 292026,
+    "lifetime_playtime_seconds": 9291790983,
+    "votes": {
+      "score": 0.575,
+      "up": 318,
+      "down": 222
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "左手上区",
+        "action": {
+          "type": "keyboard",
+          "target": "4",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "左手下区",
+        "action": {
+          "type": "keyboard",
+          "target": "2",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "右手上区",
+        "action": {
+          "type": "keyboard",
+          "target": "3",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "右手下区",
+        "action": {
+          "type": "keyboard",
+          "target": "1",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Mouse Scroll Down",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Mouse Scroll Up",
+        "action": {
+          "type": "keyboard",
+          "target": "G",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

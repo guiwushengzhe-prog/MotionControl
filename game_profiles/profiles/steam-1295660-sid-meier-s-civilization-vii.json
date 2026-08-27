@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1295660-sid-meier-s-civilization-vii",
+  "name": "Sid Meier's Civilization VII",
+  "appid": 1295660,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3426337152,
+    "controller_type": "controller_steamcontroller_gordon",
+    "controller_type_nice": "Steam Controller (2015)",
+    "layout_title": "QuickDeck",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 140101175,
+    "votes": {
+      "score": 0.5915493,
+      "up": 34,
+      "down": 8
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "T",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "C",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "ENTER",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": ",",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "rightFoot": {
+        "label": ",",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

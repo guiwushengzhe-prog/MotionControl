@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-227300-euro-truck-simulator-2",
+  "name": "Euro Truck Simulator 2",
+  "appid": 227300,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 819211745,
+    "controller_type": "controller_ps4",
+    "controller_type_nice": "DualShock 4",
+    "layout_title": "Euro Truck 2 Maping for DS4 - Sequential Mode",
+    "subscriptions": 10618,
+    "lifetime_playtime_seconds": 277863544,
+    "votes": {
+      "score": 0.59391534,
+      "up": 399,
+      "down": 257
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Trailer Attach/Detach",
+        "action": {
+          "type": "keyboard",
+          "target": "T",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Lights",
+        "action": {
+          "type": "keyboard",
+          "target": "L",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Wipers",
+        "action": {
+          "type": "keyboard",
+          "target": "P",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Navigation Page",
+        "action": {
+          "type": "keyboard",
+          "target": "F5",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Shift Down",
+        "action": {
+          "type": "keyboard",
+          "target": "CTRL",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Shift Up",
+        "action": {
+          "type": "keyboard",
+          "target": "SHIFT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

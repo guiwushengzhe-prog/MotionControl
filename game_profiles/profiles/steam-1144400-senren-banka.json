@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1144400-senren-banka",
+  "name": "Senren＊Banka",
+  "appid": 1144400,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2708663641,
+    "controller_type": "controller_generic",
+    "controller_type_nice": "Generic",
+    "layout_title": "Senren Banka Controller",
+    "subscriptions": 118,
+    "lifetime_playtime_seconds": 25797736,
+    "votes": {
+      "score": 0.5555556,
+      "up": 20,
+      "down": 6
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Open backlog",
+        "action": {
+          "type": "keyboard",
+          "target": "F5",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Hide window",
+        "action": {
+          "type": "keyboard",
+          "target": "DELETE",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Back",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Confirm",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Load",
+        "action": {
+          "type": "keyboard",
+          "target": "F3",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Skip mode",
+        "action": {
+          "type": "keyboard",
+          "target": "F7",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

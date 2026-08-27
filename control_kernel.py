@@ -11,13 +11,23 @@ import copy
 import json
 import math
 import os
+import statistics
 import threading
 import time
 from collections import deque
 from pathlib import Path
 from typing import Any
 
-from head_control import HeadController, HeadPoseEstimator, HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION
+from head_control import (
+    HeadController,
+    HeadPoseEstimator,
+    IntentAxis,
+    PITCH_INTENT_ANGLE,
+    PITCH_INTENT_START_VELOCITY,
+    PITCH_INTENT_STOP_VELOCITY,
+    HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION,
+)
+from game_profiles import flatten_bindings
 
 
 MP_NAMES = [
@@ -106,13 +116,22 @@ class ControlKernel:
         self.height = 480
         self.latest_pose: dict[str, dict] | None = None
         self.pose_last_valid_at = 0.0
+        # Keep a short monotonic history so first-run scene placement and
+        # explicit rematch use a robust multi-frame body snapshot instead of
+        # trusting one noisy MediaPipe frame.
+        self.pose_history: deque[tuple[float, dict[str, dict]]] = deque(maxlen=48)
         self.last_error: str | None = None
 
         self.zone_rects: dict[str, dict] = {}
         self.fixed_zones: dict[str, dict] = {}
         self.fixed_zones_enabled = False
         self.vertical_look = {
-            "enabled": False, "gate_zone_id": "lookGate", "point": "right_wrist",
+            # Before the first fixed-scene capture we still expose a provisional
+            # body-relative lookGate so the seventh region is visible and usable.
+            # The first reference capture replaces it with the fixed scene-space
+            # gate; later starts load that fixed gate without auto-rematching.
+            "enabled": True, "gate_zone_id": "lookGate", "point": "right_wrist",
+            "source": "hand", "verticalLookSource": "hand",
             "center_x": 0.5, "center_y": 0.5, "range_y": 0.18, "deadzone": 0.10,
         }
         self.vertical_gate_active = False
@@ -121,6 +140,24 @@ class ControlKernel:
         # becomes active we capture the right wrist's current Y as the
         # neutral anchor; head pitch is never allowed to reach final output.
         self.vertical_wrist_anchor_y: float | None = None
+        # v0.9.6 vertical look is body-relative: right-wrist Y is measured
+        # against right-shoulder Y.  This removes whole-body bobbing and makes
+        # natural arm arcs much less likely to disturb the view.
+        self.vertical_wrist_anchor_rel_y: float | None = None
+        self.vertical_anchor_samples: deque[float] = deque(maxlen=5)
+        self.vertical_wrist_filtered = 0.0
+        self.vertical_filter_last_at = 0.0
+        self.vertical_head_anchor_pitch: float | None = None
+        # A gate re-entry must wait for a short, stable filtered-pitch
+        # center.  Capturing one frame lets the filter's old tail look like a
+        # fresh vertical gesture and can arm the opposite direction.
+        self.vertical_head_anchor_samples: deque[float] = deque(maxlen=3)
+        self.vertical_pitch_intent = IntentAxis("vertical_pitch")
+        self.vertical_pitch_norm = 0.0
+        self.vertical_pitch_relative = 0.0
+        self.vertical_pitch_velocity = 0.0
+        self.vertical_pitch_acceleration = 0.0
+        self.vertical_pitch_intent_state = "IDLE"
         self.zone_state = {name: {"inside": 0, "outside": 0, "pressed": False} for name in BODY_ZONES}
         self.zone_state["lookGate"] = {"inside": 0, "outside": 0, "pressed": False}
         self.last_zone_emit = 0.0
@@ -133,6 +170,17 @@ class ControlKernel:
         }
         self.step = {"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0}
         self.last_motion_emit = 0.0
+
+        # v0.9.7 unified trigger -> output layer. Profile bindings are stored
+        # independently from recognition so changing games never changes pose rules.
+        self.control_bindings: dict[str, dict] = {}
+        self.trigger_previous: set[str] = set()
+        self.pose_active: set[str] = set()
+        self.pose_confidence: dict[str, float] = {}
+        self.pose_debounce = {
+            key: {"active": False, "on": 0, "off": 0}
+            for key in ("hands_cross", "right_leg_cross_left", "left_leg_cross_right")
+        }
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -153,6 +201,17 @@ class ControlKernel:
             self.head = self.head_controller.status(time.monotonic())
             self._safe_output(self.output.apply, 0.0, 0.0)
             return self.status_locked(time.monotonic())
+
+    def _reset_vertical_head_locked(self) -> None:
+        """Clear the gated head-pitch center and all vertical intent state."""
+        self.vertical_head_anchor_pitch = None
+        self.vertical_head_anchor_samples.clear()
+        self.vertical_pitch_intent.reset()
+        self.vertical_pitch_norm = 0.0
+        self.vertical_pitch_relative = 0.0
+        self.vertical_pitch_velocity = 0.0
+        self.vertical_pitch_acceleration = 0.0
+        self.vertical_pitch_intent_state = "IDLE"
 
     # ---------- public input/config boundary ----------
 
@@ -180,8 +239,19 @@ class ControlKernel:
         with self._lock:
             self.motion_config = [copy.deepcopy(item) for item in (items or []) if isinstance(item, dict)]
 
+    def configure_bindings(self, bindings: dict | None) -> None:
+        """Install one effective Game Profile without touching recognition thresholds."""
+        with self._lock:
+            self.control_bindings = flatten_bindings(bindings)
+            self.trigger_previous.clear()
+            # Release any output contributed by the previous profile immediately.
+            setter = getattr(self.output, "set_action_holds", None)
+            if setter is not None:
+                self._safe_output(setter, [], source_group="controls")
+
     def configure_head(self, *, algorithm=None, deadzone=None, sensitivity_x=None,
-                       sensitivity_y=None, enabled=None, invert_x=None, invert_y=None) -> dict:
+                       sensitivity_y=None, enabled=None, invert_x=None, invert_y=None,
+                       vertical_look_source=None) -> dict:
         with self._lock:
             self.head_controller.configure(
                 algorithm=algorithm,
@@ -192,6 +262,17 @@ class ControlKernel:
                 invert_x=invert_x,
                 invert_y=invert_y,
             )
+            if vertical_look_source is not None:
+                source = str(vertical_look_source).strip().lower()
+                if source in {"right_wrist", "hand", "右手"}:
+                    source = "hand"
+                elif source in {"head", "头部"}:
+                    source = "head"
+                else:
+                    raise ValueError("vertical_look_source must be hand or head")
+                self.vertical_look["source"] = source
+                self.vertical_look["verticalLookSource"] = source
+                self._reset_vertical_head_locked()
             self.head = self.head_controller.status(time.monotonic())
             return self.status_locked(time.monotonic())
 
@@ -208,10 +289,14 @@ class ControlKernel:
             self.fixed_zones_enabled = bool(self.fixed_zones)
             vertical = (layout or {}).get("vertical_look") if isinstance(layout, dict) else None
             if isinstance(vertical, dict):
+                raw_source = str(vertical.get("source", vertical.get("verticalLookSource", self.vertical_look.get("source", "hand")))).lower()
+                source = "head" if raw_source in {"head", "头部"} else "hand"
                 self.vertical_look.update({
                     "enabled": bool(vertical.get("enabled", True)),
                     "gate_zone_id": str(vertical.get("gate_zone_id", "lookGate")),
                     "point": str(vertical.get("point", "right_wrist")),
+                    "source": source,
+                    "verticalLookSource": source,
                     "center_x": _clamp(vertical.get("center_x", 0.5), 0.0, 1.0),
                     "center_y": _clamp(vertical.get("center_y", 0.5), 0.0, 1.0),
                     "range_y": _clamp(vertical.get("range_y", 0.18), 0.05, 0.45),
@@ -224,6 +309,12 @@ class ControlKernel:
             self.vertical_gate_active = False
             self.vertical_wrist_norm = 0.0
             self.vertical_wrist_anchor_y = None
+            self.vertical_wrist_anchor_rel_y = None
+            self.vertical_anchor_samples.clear()
+            self.vertical_head_anchor_samples.clear()
+            self.vertical_wrist_filtered = 0.0
+            self.vertical_filter_last_at = 0.0
+            self._reset_vertical_head_locked()
             self._safe_output(self.output.set_buttons, [], source="zones")
             return self.status_locked(time.monotonic())
 
@@ -245,14 +336,43 @@ class ControlKernel:
                     self._clear_body_locked()
                 self.active_body_source = source_id
                 self.head_controller.reset_tracking()
+                self.pose_history.clear()
             self.body_last_at = now
             self.width = max(1, int(width))
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
             if pose_map:
                 self.pose_last_valid_at = now
+                self.pose_history.append((now, copy.deepcopy(pose_map)))
             self._process_pose_locked(pose_map, now)
             return self.status_locked(now)
+
+    def stable_pose_snapshot(self, *, window_s: float = 0.90, min_samples: int = 6) -> dict[str, dict] | None:
+        """Return a robust recent pose for scene placement/rematch.
+
+        The runtime control path still uses the newest frame.  Only the
+        low-frequency scene-authoring path uses this median snapshot, so there
+        is no gameplay latency penalty.
+        """
+        now = time.monotonic()
+        with self._lock:
+            frames = [pose for ts, pose in self.pose_history if now - ts <= max(0.20, float(window_s))]
+            if len(frames) < max(2, int(min_samples)):
+                return copy.deepcopy(self.latest_pose) if self.latest_pose else None
+            names = set().union(*(frame.keys() for frame in frames))
+            stable: dict[str, dict] = {}
+            for name in names:
+                points = [frame.get(name) for frame in frames]
+                points = [p for p in points if isinstance(p, dict) and _score(p) >= 0.20]
+                if len(points) < max(3, len(frames) // 3):
+                    continue
+                stable[name] = {
+                    "x": statistics.median(float(p.get("x", 0.0)) for p in points),
+                    "y": statistics.median(float(p.get("y", 0.0)) for p in points),
+                    "z": statistics.median(float(p.get("z", 0.0)) for p in points),
+                    "score": statistics.median(_score(p) for p in points),
+                }
+            return stable or (copy.deepcopy(self.latest_pose) if self.latest_pose else None)
 
     def handle_sensor(self, source_id: str, buttons, *, left_trigger: float = 0.0,
                       right_trigger: float = 0.0, stick_x: float = 0.0, stick_y: float = 0.0,
@@ -317,6 +437,8 @@ class ControlKernel:
             return
         self._update_zones_locked(pose_map, now)
         self._update_motion_locked(pose_map, now)
+        self._update_cross_poses_locked(pose_map, now)
+        self._dispatch_controls_locked(now)
         self._update_head_locked(pose_map, now)
 
     def _compute_body_zones(self, pose_map: dict[str, dict]) -> dict[str, dict]:
@@ -351,6 +473,18 @@ class ControlKernel:
                 )
                 old = self.zone_rects.get(name)
                 rects[name] = self._smooth_rect(old, next_rect)
+
+            # Provisional seventh region for first-run UX.  It intentionally
+            # exists only while no fixed Scene Layout has been captured.  Once
+            # a reference is recorded the fixed camera-space lookGate takes
+            # over and no region follows the player.
+            gate_w, gate_h = 0.44 * torso_px, 0.30 * torso_px
+            gate_rect = _rect_at(
+                head_center["x"] + left_dir * 0.32 * torso_px / iw,
+                head_center["y"] + 0.34 * torso_px / ih,
+                gate_w, gate_h, iw, ih,
+            )
+            rects["lookGate"] = self._smooth_rect(self.zone_rects.get("lookGate"), gate_rect)
         la, ra = pose_map.get("left_ankle"), pose_map.get("right_ankle")
         if la and ra and max(_score(la), _score(ra)) >= 0.4:
             visible = [item for item in (la, ra) if _score(item) >= 0.4]
@@ -395,7 +529,8 @@ class ControlKernel:
         else:
             self.zone_rects = self._compute_body_zones(pose_map)
         changed = False
-        zone_names = list(BODY_ZONES) + (["lookGate"] if self.fixed_zones_enabled and "lookGate" in self.fixed_zones else [])
+        gate_available = (self.fixed_zones_enabled and "lookGate" in self.fixed_zones) or (not self.fixed_zones_enabled and "lookGate" in self.zone_rects)
+        zone_names = list(BODY_ZONES) + (["lookGate"] if gate_available else [])
         for name in zone_names:
             state = self.zone_state.setdefault(name, {"inside": 0, "outside": 0, "pressed": False})
             if name == "lookGate":
@@ -423,19 +558,26 @@ class ControlKernel:
                 if state["pressed"] and state["outside"] >= exit_frames:
                     state["pressed"] = False
                     changed = True
-        self.vertical_gate_active = bool(self.zone_state.get("lookGate", {}).get("pressed")) if self.fixed_zones_enabled else False
+        self.vertical_gate_active = bool(self.zone_state.get("lookGate", {}).get("pressed")) if gate_available else False
         if not self.vertical_gate_active:
             self.vertical_wrist_anchor_y = None
+            self.vertical_wrist_anchor_rel_y = None
+            self.vertical_anchor_samples.clear()
+            self.vertical_head_anchor_samples.clear()
+            self.vertical_wrist_filtered = 0.0
+            self.vertical_filter_last_at = 0.0
+            self._reset_vertical_head_locked()
         elif not previous_gate:
-            wrist = pose_map.get(str(self.vertical_look.get("point", "right_wrist")))
-            self.vertical_wrist_anchor_y = (
-                float(wrist["y"])
-                if wrist and _score(wrist) >= 0.42 and math.isfinite(float(wrist.get("y", math.nan)))
-                else None
-            )
-        keys = self._pressed_keys_locked()
-        if changed or (keys and now - self.last_zone_emit >= 0.14):
-            self._safe_output(self.output.set_buttons, keys, source="zones")
+            # Do not capture one arbitrary frame as the neutral point.  The
+            # next few stable frames are collected in _update_head_locked and
+            # their median becomes the anchor.
+            self.vertical_wrist_anchor_y = None
+            self.vertical_wrist_anchor_rel_y = None
+            self.vertical_anchor_samples.clear()
+            self.vertical_wrist_filtered = 0.0
+            self.vertical_filter_last_at = now
+            self._reset_vertical_head_locked()
+        if changed:
             self.last_zone_emit = now
 
     def _pressed_keys_locked(self) -> list[str]:
@@ -518,44 +660,316 @@ class ControlKernel:
         if self._set_motion_debounced("hands_up", hands_raw, 3, 4): active.add("hands_up")
         changed = active != self.motion_active
         self.motion_active = active
-        if changed or (active and now - self.last_motion_emit >= 0.15):
-            holds = [item for item in self.motion_config if item.get("enabled") and item.get("id") in active and item.get("target")]
-            self._safe_output(self.output.set_holds, holds, source_group="motions")
+        if changed:
             self.last_motion_emit = now
+
+    # ---------- cross poses + unified mapping ----------
+
+    def _set_pose_debounced(self, ident: str, raw: bool, on_frames: int = 2, off_frames: int = 2) -> bool:
+        state = self.pose_debounce[ident]
+        if raw:
+            state["on"] += 1
+            state["off"] = 0
+            if not state["active"] and state["on"] >= on_frames:
+                state["active"] = True
+        else:
+            state["off"] += 1
+            state["on"] = 0
+            if state["active"] and state["off"] >= off_frames:
+                state["active"] = False
+        return bool(state["active"])
+
+    @staticmethod
+    def _lateral_coordinate(point: dict, left_ref: dict, right_ref: dict) -> float:
+        """Body-side coordinate: left ~= -0.5, right ~= +0.5, mirror invariant."""
+        span = float(right_ref["x"]) - float(left_ref["x"])
+        width = max(1e-5, abs(span))
+        sign = 1.0 if span >= 0.0 else -1.0
+        mid = (float(left_ref["x"]) + float(right_ref["x"])) * 0.5
+        return (float(point["x"]) - mid) * sign / width
+
+    def _update_cross_poses_locked(self, pose_map: dict[str, dict], now: float) -> None:
+        active: set[str] = set()
+        confidence = {"hands_cross": 0.0, "right_leg_cross_left": 0.0, "left_leg_cross_right": 0.0}
+
+        torso_good = self._points_good(pose_map, ("left_shoulder", "right_shoulder", "left_hip", "right_hip"), 0.45)
+        if torso_good:
+            ls, rs = pose_map["left_shoulder"], pose_map["right_shoulder"]
+            lh, rh = pose_map["left_hip"], pose_map["right_hip"]
+            shoulder_mid = _midpoint(ls, rs)
+            hip_mid = _midpoint(lh, rh)
+            torso = max(0.025, abs(float(hip_mid["y"]) - float(shoulder_mid["y"])))
+
+            # Hands crossed: real video shows wrist identity/occlusion jitter near
+            # the crossing point. Use the forearm-X geometry plus chest location,
+            # instead of requiring both wrists to sit deeply on the opposite side.
+            hands_good = self._points_good(
+                pose_map,
+                ("left_elbow", "right_elbow", "left_wrist", "right_wrist"),
+                0.44,
+            )
+            hands_raw = False
+            if hands_good:
+                le, re = pose_map["left_elbow"], pose_map["right_elbow"]
+                lw, rw = pose_map["left_wrist"], pose_map["right_wrist"]
+                left_lat = self._lateral_coordinate(lw, ls, rs)
+                right_lat = self._lateral_coordinate(rw, ls, rs)
+                le_lat = self._lateral_coordinate(le, ls, rs)
+                re_lat = self._lateral_coordinate(re, ls, rs)
+                y_mid = (float(lw["y"]) + float(rw["y"])) * 0.5
+                chest_low = float(hip_mid["y"]) + 0.10 * torso
+                chest_high = float(shoulder_mid["y"]) - 0.18 * torso
+                vertical_close = abs(float(lw["y"]) - float(rw["y"])) <= 0.55 * torso
+                wrist_gap = abs(left_lat - right_lat)
+                forearms_point_inward = (left_lat - le_lat) > 0.10 and (right_lat - re_lat) < -0.10
+                crossed_order = left_lat > right_lat + 0.07
+                near_center = abs(left_lat) < 0.72 and abs(right_lat) < 0.72
+                hands_raw = (
+                    forearms_point_inward
+                    and crossed_order
+                    and near_center
+                    and wrist_gap < 0.72
+                    and chest_high <= y_mid <= chest_low
+                    and vertical_close
+                )
+                cross_depth = max(0.0, min(1.0, (left_lat - right_lat - 0.07) / 0.52))
+                confidence["hands_cross"] = round(0.58 + 0.38 * cross_depth, 3) if hands_raw else round(0.30 * cross_depth, 3)
+
+            # Leg crossing is driven by hip/knee/ankle geometry. Shoulder/pelvis
+            # side shift only contributes a small confidence bonus and is never a
+            # mandatory condition, matching the product requirement.
+            legs_good = self._points_good(pose_map, ("left_knee", "right_knee", "left_ankle", "right_ankle"), 0.46)
+            right_cross_raw = left_cross_raw = False
+            if legs_good:
+                lk, rk = pose_map["left_knee"], pose_map["right_knee"]
+                la, ra = pose_map["left_ankle"], pose_map["right_ankle"]
+                lk_lat = self._lateral_coordinate(lk, lh, rh)
+                rk_lat = self._lateral_coordinate(rk, lh, rh)
+                la_lat = self._lateral_coordinate(la, lh, rh)
+                ra_lat = self._lateral_coordinate(ra, lh, rh)
+                # The crossing ankle is usually visibly lifted while its knee
+                # remains near the original side. Do not require the knee to
+                # cross the centre too; that caused misses in the supplied video.
+                right_lifted = float(ra["y"]) < float(la["y"]) - 0.055 * torso
+                left_lifted = float(la["y"]) < float(ra["y"]) - 0.055 * torso
+                right_cross_raw = ra_lat < -0.035 and rk_lat < 0.34 and right_lifted
+                left_cross_raw = la_lat > 0.035 and lk_lat > -0.34 and left_lifted
+                hip_span = max(1e-5, abs(float(rh["x"]) - float(lh["x"])))
+                side_sign = 1.0 if float(rh["x"]) >= float(lh["x"]) else -1.0
+                shoulder_vs_hip = ((float(shoulder_mid["x"]) - float(hip_mid["x"])) * side_sign) / hip_span
+                right_depth = max(0.0, min(1.0, (-ra_lat - 0.035) / 0.58))
+                left_depth = max(0.0, min(1.0, (la_lat - 0.035) / 0.58))
+                confidence["right_leg_cross_left"] = round(min(1.0, (0.62 if right_cross_raw else 0.20) + 0.30 * right_depth + 0.08 * max(0.0, -shoulder_vs_hip)), 3)
+                confidence["left_leg_cross_right"] = round(min(1.0, (0.62 if left_cross_raw else 0.20) + 0.30 * left_depth + 0.08 * max(0.0, shoulder_vs_hip)), 3)
+
+            if self._set_pose_debounced("hands_cross", hands_raw):
+                active.add("hands_cross")
+            if self._set_pose_debounced("right_leg_cross_left", right_cross_raw):
+                active.add("right_leg_cross_left")
+            if self._set_pose_debounced("left_leg_cross_right", left_cross_raw):
+                active.add("left_leg_cross_right")
+        else:
+            for ident in self.pose_debounce:
+                self._set_pose_debounced(ident, False)
+
+        self.pose_active = active
+        self.pose_confidence = confidence
+
+    def _effective_binding_locked(self, trigger: str) -> dict | None:
+        binding = self.control_bindings.get(trigger)
+        if binding is not None:
+            if binding.get("disabled"):
+                return None
+            return binding
+        prefix, _, ident = trigger.partition(".")
+        if prefix == "zone" and ident in BODY_ZONES and BODY_ZONES[ident].get("button"):
+            return {"action": {"type": "gamepad", "target": BODY_ZONES[ident]["button"], "behavior": "hold"}}
+        if prefix == "motion":
+            for item in self.motion_config:
+                if item.get("id") == ident and item.get("enabled") and item.get("target"):
+                    return {"action": {"type": item.get("type", "gamepad"), "target": item.get("target"), "behavior": "hold"}}
+        return None
+
+    def _dispatch_controls_locked(self, now: float) -> None:
+        active = {f"zone.{name}" for name, state in self.zone_state.items() if name in BODY_ZONES and state.get("pressed")}
+        active.update(f"motion.{name}" for name in self.motion_active)
+        active.update(f"pose.{name}" for name in self.pose_active)
+
+        holds = []
+        for trigger in sorted(active):
+            binding = self._effective_binding_locked(trigger)
+            if not binding:
+                continue
+            action = copy.deepcopy(binding.get("action", {}))
+            behavior = str(action.get("behavior", "hold")).lower()
+            if trigger.startswith("pose."):
+                behavior = "tap"
+                action["behavior"] = "tap"
+            if behavior == "tap":
+                if trigger not in self.trigger_previous:
+                    action["source"] = f"trigger:{trigger}:{time.monotonic_ns()}"
+                    action["nonblocking"] = True
+                    executor = getattr(self.output, "execute_action", None)
+                    if executor is not None:
+                        self._safe_output(executor, action)
+            else:
+                holds.append({"id": trigger, "action": action})
+
+        setter = getattr(self.output, "set_action_holds", None)
+        if setter is not None:
+            self._safe_output(setter, holds, source_group="controls")
+        else:
+            # Keep test doubles and older OutputManager-compatible adapters working.
+            # New runtimes use set_action_holds; legacy adapters still understand
+            # the previous flat {id,type,target} hold format.
+            legacy_setter = getattr(self.output, "set_holds", None)
+            if legacy_setter is not None:
+                legacy_holds = []
+                for item in holds:
+                    action = item.get("action", {})
+                    ident = str(item.get("id", ""))
+                    legacy_holds.append({"id": ident.split(".", 1)[-1], "type": action.get("type", ""), "target": action.get("target", "")})
+                self._safe_output(legacy_setter, legacy_holds)
+        self.trigger_previous = active
 
     # ---------- clean head control ----------
 
     def _update_head_locked(self, pose_map: dict[str, dict], now: float) -> None:
-        # Clean head-control path.  Body actions and the output backend remain
-        # unchanged; only head estimation/mapping is delegated to HeadController.
+        # Body actions and the output backend remain unchanged; only head
+        # estimation/mapping is delegated to HeadController.  The look gate
+        # no longer freezes X: yaw remains independent of vertical permission.
         x, _pitch_y = self.head_controller.update(pose_map, self.width, self.height, now)
         self.head = self.head_controller.status(now)
-        # Head yaw is the only head signal that can reach the output.  The
-        # pitch value is retained inside HeadController for diagnostics, but
-        # is intentionally discarded here.  Vertical view is exclusively the
-        # right wrist while the fixed left-wrist lookGate is active.
+
         y = 0.0
         self.vertical_wrist_norm = 0.0
-        if self.fixed_zones_enabled and bool(self.vertical_look.get("enabled")):
+        self.vertical_pitch_norm = 0.0
+        self.vertical_pitch_relative = 0.0
+        source = "head" if str(self.vertical_look.get("source", "hand")).lower() == "head" else "hand"
+        if bool(self.vertical_look.get("enabled")) and self.vertical_gate_active:
             vcfg = self.vertical_look
-            wrist = pose_map.get(str(vcfg.get("point", "right_wrist")))
-            if self.vertical_gate_active and wrist and _score(wrist) >= 0.42:
-                if self.vertical_wrist_anchor_y is None:
-                    self.vertical_wrist_anchor_y = float(wrist["y"])
-                travel = max(0.05, float(vcfg.get("range_y", 0.18)))
-                raw_wrist = _clamp((float(wrist["y"]) - self.vertical_wrist_anchor_y) / travel, -1.0, 1.0)
-                deadzone = _clamp(vcfg.get("deadzone", 0.10), 0.0, 0.35)
-                if abs(raw_wrist) > deadzone:
-                    y = math.copysign((abs(raw_wrist) - deadzone) / max(1e-6, 1.0 - deadzone), raw_wrist)
-                self.vertical_wrist_norm = _clamp(y, -1.0, 1.0)
-        # Keep the public snapshot honest as well: a pitch-only movement must
-        # report zero final Y, not the discarded head-controller pitch value.
+            if source == "head":
+                # A new gate entry establishes a temporary center from the
+                # current filtered pitch.  This prevents an already-held nod
+                # from causing a jump when the user authorizes vertical look.
+                signal_pitch = getattr(self.head_controller, "signal_pitch", math.nan)
+                if not math.isfinite(signal_pitch):
+                    signal_pitch = _finite(self.head.get("raw_pitch"), math.nan)
+                if self.vertical_head_anchor_pitch is None and math.isfinite(signal_pitch):
+                    self.vertical_head_anchor_samples.append(float(signal_pitch))
+                    if len(self.vertical_head_anchor_samples) >= 3:
+                        self.vertical_head_anchor_pitch = float(statistics.median(self.vertical_head_anchor_samples))
+                        self.vertical_head_anchor_samples.clear()
+                        self.vertical_pitch_intent.reset()
+                if self.vertical_head_anchor_pitch is not None and math.isfinite(signal_pitch):
+                    try:
+                        pitch_span = float(self.head_controller._span()[1])
+                    except Exception:
+                        pitch_span = 1.0
+                    pitch_span = max(1e-6, pitch_span)
+                    relative = _clamp((float(signal_pitch) - self.vertical_head_anchor_pitch) / pitch_span, -1.0, 1.0)
+                    if bool(self.head_controller.config.get("invert_y")):
+                        relative = -relative
+                    deadzone = _clamp(vcfg.get("deadzone", 0.08), 0.03, 0.22)
+                    intent = self.vertical_pitch_intent.step(
+                        relative, now,
+                        angle_threshold=PITCH_INTENT_ANGLE,
+                        start_velocity=PITCH_INTENT_START_VELOCITY,
+                        stop_velocity=PITCH_INTENT_STOP_VELOCITY,
+                        release_threshold=deadzone * 0.62,
+                    )
+                    self.vertical_pitch_relative = relative
+                    self.vertical_pitch_velocity = intent["velocity"]
+                    self.vertical_pitch_acceleration = intent["acceleration"]
+                    self.vertical_pitch_intent_state = intent["state"]
+                    if intent["active"] and abs(relative) > deadzone:
+                        amount = (abs(relative) - deadzone) / max(1e-6, 1.0 - deadzone)
+                        shaped = _clamp(amount, 0.0, 1.0) ** 1.12
+                        y = math.copysign(shaped, relative) * _clamp(
+                            float(self.head_controller.config.get("sensitivity_y", 46.0)) / 100.0,
+                            0.15, 1.0,
+                        )
+                    self.vertical_pitch_norm = _clamp(y, -1.0, 1.0)
+            else:
+                self._reset_vertical_head_locked()
+                wrist = pose_map.get(str(vcfg.get("point", "right_wrist")))
+                shoulder = pose_map.get("right_shoulder")
+                good = (
+                    wrist and shoulder
+                    and _score(wrist) >= 0.48 and _score(shoulder) >= 0.48
+                    and math.isfinite(float(wrist.get("y", math.nan)))
+                    and math.isfinite(float(shoulder.get("y", math.nan)))
+                )
+                if good:
+                    rel_y = float(wrist["y"]) - float(shoulder["y"])
+                    self.vertical_wrist_anchor_y = float(wrist["y"])  # diagnostic compatibility
+                    if self.vertical_wrist_anchor_rel_y is None:
+                        self.vertical_anchor_samples.append(rel_y)
+                        if len(self.vertical_anchor_samples) >= 4:
+                            self.vertical_wrist_anchor_rel_y = statistics.median(self.vertical_anchor_samples)
+                            self.vertical_wrist_filtered = 0.0
+                            self.vertical_filter_last_at = now
+                    else:
+                        # Existing scene layouts used absolute wrist travel.  A
+                        # body-relative signal needs less physical movement, so use
+                        # 72% of the authored range while retaining user adjustment.
+                        travel = max(0.065, float(vcfg.get("range_y", 0.18)) * 0.72)
+                        raw = _clamp((rel_y - self.vertical_wrist_anchor_rel_y) / travel, -1.0, 1.0)
+                        deadzone = _clamp(vcfg.get("deadzone", 0.08), 0.04, 0.22)
+                        if abs(raw) > deadzone:
+                            t = (abs(raw) - deadzone) / max(1e-6, 1.0 - deadzone)
+                            # Slightly progressive curve: fine around center without
+                            # making large deliberate motions feel sluggish.
+                            target = math.copysign(t ** 1.12, raw)
+                        else:
+                            target = 0.0
+
+                        dt = max(1.0 / 120.0, min(0.10, now - (self.vertical_filter_last_at or now)))
+                        self.vertical_filter_last_at = now
+                        # ~42 ms one-pole smoothing.  This damps MediaPipe jitter but
+                        # is far faster than the old heavy-feeling wrist response.
+                        alpha = 1.0 - math.exp(-dt / 0.042)
+                        filtered = self.vertical_wrist_filtered + alpha * (target - self.vertical_wrist_filtered)
+                        # Reject single-frame teleport spikes without adding a long
+                        # queue or fixed-frame latency.
+                        max_step = 7.0 * dt
+                        filtered = self.vertical_wrist_filtered + _clamp(filtered - self.vertical_wrist_filtered, -max_step, max_step)
+                        if abs(filtered) < 0.012 and target == 0.0:
+                            filtered = 0.0
+                        self.vertical_wrist_filtered = _clamp(filtered, -1.0, 1.0)
+                        y = self.vertical_wrist_filtered
+                else:
+                    # Tracking loss is fail-safe.  Never hold the last camera Y.
+                    self.vertical_wrist_filtered = 0.0
+                    self.vertical_filter_last_at = now
+
+        if not self.vertical_gate_active:
+            self._reset_vertical_head_locked()
+        self.vertical_wrist_norm = _clamp(y, -1.0, 1.0)
+        self.head["normalized_x"] = round(float(x), 4)
+        self.head["output_x"] = round(float(x), 3)
         self.head["normalized_y"] = round(float(y), 4)
         self.head["output_y"] = round(float(y), 3)
+        self.head["vertical_look_source"] = source
+        self.head["verticalLookSource"] = source
+        self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
+        self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)
+        self.head["vertical_pitch_velocity"] = round(float(self.vertical_pitch_velocity), 4)
+        self.head["vertical_pitch_acceleration"] = round(float(self.vertical_pitch_acceleration), 4)
+        self.head["vertical_pitch_intent_state"] = self.vertical_pitch_intent_state
+        self.head["vertical_head_anchor_pitch"] = (
+            round(float(self.vertical_head_anchor_pitch), 5)
+            if self.vertical_head_anchor_pitch is not None else None
+        )
         self.head["vertical_wrist_anchor_y"] = (
             round(float(self.vertical_wrist_anchor_y), 4)
             if self.vertical_wrist_anchor_y is not None else None
         )
+        self.head["vertical_wrist_anchor_rel_y"] = (
+            round(float(self.vertical_wrist_anchor_rel_y), 4)
+            if self.vertical_wrist_anchor_rel_y is not None else None
+        )
+        self.head["vertical_anchor_samples"] = len(self.vertical_anchor_samples)
         if getattr(self.output, "enabled", True):
             self._safe_output(self.output.apply, x, y)
 
@@ -568,14 +982,28 @@ class ControlKernel:
         self.vertical_gate_active = False
         self.vertical_wrist_norm = 0.0
         self.vertical_wrist_anchor_y = None
+        self.vertical_wrist_anchor_rel_y = None
+        self.vertical_anchor_samples.clear()
+        self.vertical_head_anchor_samples.clear()
+        self.vertical_wrist_filtered = 0.0
+        self.vertical_filter_last_at = 0.0
+        self._reset_vertical_head_locked()
         self.motion_active.clear()
         for state in self.motion_debounce.values():
             state.update({"active": False, "on": 0, "off": 0})
+        self.pose_active.clear()
+        self.pose_confidence = {}
+        for state in self.pose_debounce.values():
+            state.update({"active": False, "on": 0, "off": 0})
+        self.trigger_previous.clear()
         self.step.update({"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0})
         self.head_controller.reset_tracking()
         self.head = self.head_controller.status(time.monotonic())
         self._safe_output(self.output.set_buttons, [], source="zones")
         self._safe_output(self.output.set_holds, [], source_group="motions")
+        setter = getattr(self.output, "set_action_holds", None)
+        if setter is not None:
+            self._safe_output(setter, [], source_group="controls")
         self._safe_output(self.output.apply, 0.0, 0.0)
 
     def _clear_body_locked(self) -> None:
@@ -596,7 +1024,8 @@ class ControlKernel:
 
     def status_locked(self, now: float) -> dict:
         pose_age = round(max(0.0, (now - self.body_last_at) * 1000.0)) if self.body_last_at else None
-        zone_names = list(BODY_ZONES) + (["lookGate"] if self.fixed_zones_enabled and "lookGate" in self.fixed_zones else [])
+        gate_available = (self.fixed_zones_enabled and "lookGate" in self.fixed_zones) or (not self.fixed_zones_enabled and "lookGate" in self.zone_rects)
+        zone_names = list(BODY_ZONES) + (["lookGate"] if gate_available else [])
         zones = {}
         for name in zone_names:
             if self.fixed_zones_enabled:
@@ -604,19 +1033,37 @@ class ControlKernel:
             else:
                 zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), "pressed": bool(self.zone_state[name]["pressed"])}
         self.head = self.head_controller.status(now)
-        self.head["vertical_source"] = "right_wrist" if self.fixed_zones_enabled and self.vertical_look.get("enabled") else "off"
+        source = "head" if str(self.vertical_look.get("source", "hand")).lower() == "head" else "hand"
+        vertical_output = self.vertical_pitch_norm if source == "head" else self.vertical_wrist_norm
+        self.head["vertical_source"] = "head_pitch" if self.vertical_look.get("enabled") and source == "head" else "right_wrist" if self.vertical_look.get("enabled") else "off"
+        self.head["vertical_look_source"] = source
+        self.head["verticalLookSource"] = source
         self.head["vertical_gate_active"] = bool(self.vertical_gate_active)
         self.head["vertical_wrist_norm"] = round(float(self.vertical_wrist_norm), 4)
+        self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
+        self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)
+        self.head["vertical_pitch_velocity"] = round(float(self.vertical_pitch_velocity), 4)
+        self.head["vertical_pitch_acceleration"] = round(float(self.vertical_pitch_acceleration), 4)
+        self.head["vertical_pitch_intent_state"] = self.vertical_pitch_intent_state
+        self.head["vertical_head_anchor_pitch"] = (
+            round(float(self.vertical_head_anchor_pitch), 5)
+            if self.vertical_head_anchor_pitch is not None else None
+        )
         self.head["vertical_wrist_anchor_y"] = (
             round(float(self.vertical_wrist_anchor_y), 4)
             if self.vertical_wrist_anchor_y is not None else None
         )
+        self.head["vertical_wrist_anchor_rel_y"] = (
+            round(float(self.vertical_wrist_anchor_rel_y), 4)
+            if self.vertical_wrist_anchor_rel_y is not None else None
+        )
+        self.head["vertical_anchor_samples"] = len(self.vertical_anchor_samples)
         # Always expose the final output Y, never the diagnostic pitch value.
         self.head["normalized_y"] = round(
-            float(self.vertical_wrist_norm) if self.vertical_gate_active else 0.0, 4
+            float(vertical_output) if self.vertical_gate_active else 0.0, 4
         )
         self.head["output_y"] = round(
-            float(self.vertical_wrist_norm) if self.vertical_gate_active else 0.0, 3
+            float(vertical_output) if self.vertical_gate_active else 0.0, 3
         )
         sensors = {
             source: {key: copy.deepcopy(value) for key, value in state.items() if key != "received_at"}
@@ -632,10 +1079,19 @@ class ControlKernel:
             "zones": zones,
             "buttons": self._pressed_keys_locked(),
             "motions": sorted(self.motion_active),
-            "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_legacy",
+            "poses_active": sorted(self.pose_active),
+            "pose_confidence": copy.deepcopy(self.pose_confidence),
+            "control_bindings": copy.deepcopy(self.control_bindings),
+            "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_provisional",
             "vertical_look": copy.deepcopy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),
             "vertical_wrist_norm": round(float(self.vertical_wrist_norm), 4),
+            "vertical_look_source": source,
+            "vertical_pitch_relative": round(float(self.vertical_pitch_relative), 4),
+            "vertical_pitch_norm": round(float(self.vertical_pitch_norm), 4),
+            "vertical_pitch_velocity": round(float(self.vertical_pitch_velocity), 4),
+            "vertical_pitch_acceleration": round(float(self.vertical_pitch_acceleration), 4),
+            "vertical_pitch_intent_state": self.vertical_pitch_intent_state,
             "vertical_wrist_anchor_y": (
                 round(float(self.vertical_wrist_anchor_y), 4)
                 if self.vertical_wrist_anchor_y is not None else None
@@ -1454,6 +1910,8 @@ class LocalControlRuntime:
     def close(self) -> None:
         self.camera.stop()
         self.kernel.close()
+
+
 # Keep the hand-anchor logic at the input/recognition boundary.  The existing
 # head-control and automatic-calibration implementation remains untouched.
 from hand_anchor import install_hand_anchor_adapter

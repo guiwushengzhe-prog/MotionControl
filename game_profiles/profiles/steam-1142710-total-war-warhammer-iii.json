@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1142710-total-war-warhammer-iii",
+  "name": "Total War: WARHAMMER III",
+  "appid": 1142710,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2950408060,
+    "controller_type": "controller_xbox360",
+    "controller_type_nice": "Xbox 360",
+    "layout_title": "Gamepad Strategy",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 1086312178,
+    "votes": {
+      "score": 0.53731346,
+      "up": 22,
+      "down": 12
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Flashlight, ,",
+        "action": {
+          "type": "mouse_button",
+          "target": "MIDDLE",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Reload, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Use, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "P",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Previous Weapon, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

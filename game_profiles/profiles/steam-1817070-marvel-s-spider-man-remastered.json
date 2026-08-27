@@ -1,0 +1,80 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1817070-marvel-s-spider-man-remastered",
+  "name": "Marvel’s Spider-Man Remastered",
+  "appid": 1817070,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2868830701,
+    "controller_type": "controller_ps4",
+    "controller_type_nice": "DualShock 4",
+    "layout_title": "PS4 Official Configuration + Better Spectrograph Controls",
+    "subscriptions": 22,
+    "lifetime_playtime_seconds": 29257721,
+    "votes": {
+      "score": 0.5203252,
+      "up": 14,
+      "down": 9
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 4,
+    "zone_total": 6,
+    "coverage_ratio": 0.667,
+    "rejected": {
+      "left_bumper": "native Steam action is not directly convertible: game_action",
+      "right_bumper": "native Steam action is not directly convertible: game_action"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 4,
+      "unsupported": 4,
+      "unsupported_reasons": {
+        "button_escape": "native Steam action is not directly convertible: game_action",
+        "left_bumper": "native Steam action is not directly convertible: game_action",
+        "right_bumper": "native Steam action is not directly convertible: game_action",
+        "button_menu": "native Steam action is not directly convertible: game_action"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "左手上区",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "左手下区",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "右手上区",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "右手下区",
+        "action": {
+          "type": "keyboard",
+          "target": "ENTER",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

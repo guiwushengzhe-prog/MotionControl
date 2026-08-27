@@ -1,0 +1,90 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-230410-warframe",
+  "name": "Warframe",
+  "appid": 230410,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 3052347565,
+    "controller_type": "controller_neptune",
+    "controller_type_nice": "Steam Deck",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 1388,
+    "lifetime_playtime_seconds": 65373204,
+    "votes": {
+      "score": 0.50980395,
+      "up": 2,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 7,
+      "unsupported": 1,
+      "unsupported_reasons": {
+        "button_menu": "native Steam action is not directly convertible: game_action"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

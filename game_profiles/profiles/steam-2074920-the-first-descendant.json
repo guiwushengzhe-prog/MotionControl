@@ -1,0 +1,90 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2074920-the-first-descendant",
+  "name": "The First Descendant",
+  "appid": 2074920,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3282803632,
+    "controller_type": "controller_ps4",
+    "controller_type_nice": "DualShock 4",
+    "layout_title": "PlayStation 4",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 198441094,
+    "votes": {
+      "score": 0.5163934,
+      "up": 13,
+      "down": 9
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 7,
+      "unsupported": 1,
+      "unsupported_reasons": {
+        "button_menu": "native Steam action is not directly convertible: controller_action"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-730-counter-strike-2",
+  "name": "Counter-Strike 2",
+  "appid": 730,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2424759969,
+    "controller_type": "controller_ps5",
+    "controller_type_nice": "DualSense",
+    "layout_title": "CSGO",
+    "subscriptions": 5877,
+    "lifetime_playtime_seconds": 908295581,
+    "votes": {
+      "score": 0.6642686,
+      "up": 227,
+      "down": 90
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Flashlight",
+        "action": {
+          "type": "keyboard",
+          "target": "Q",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Reload",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Use",
+        "action": {
+          "type": "keyboard",
+          "target": "SHIFT",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Previous Weapon",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}
