@@ -111,7 +111,6 @@ function renderKernelState(runtime){
     if(!showPreview) cameraPreview.removeAttribute('src');
   }
   $('#cameraPill').textContent=sourceMode==='phone'?'手机姿态源':(cameraRunning?'本地摄像头运行':'本地摄像头未启动');$('#cameraPill').className='pill '+(sourceMode==='phone'||cameraRunning?'ok':'bad');
-  const phonePill=$('#phonePill');if(phonePill){const phoneConnected=!!runtime?.mobile_pose_connected||!!runtime?.handheld_connected;phonePill.textContent=phoneConnected?'手机已连接':'手机未连接';phonePill.className='pill '+(phoneConnected?'ok':'bad')}
   $('#posePill').textContent=currentPoseMap?'人体已识别':'未识别人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');renderOverlay(currentPoseMap);
   const main=$('#mainActionBtn');if(main){main.textContent=!sessionStarted?'开始体感':(output.enabled?'停止游戏输出':'开启游戏输出');main.className=`btn ${output.enabled?'danger':'primary'} main-action-btn`}
 }
