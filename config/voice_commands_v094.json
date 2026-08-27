@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "product_version": "0.9.5",
-  "model": "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20",
-  "interaction": "single_stage_full_phrase_kws",
+  "product_version": "1.00",
+  "model": "vosk-model-small-cn-0.22",
+  "interaction": "vosk_constrained_grammar",
   "prefix": "体感",
   "profiles": {
     "emergency": {
@@ -242,6 +242,102 @@
       "profile": "normal",
       "kind": "keyboard",
       "default_target": "TAB"
+    },
+    {
+      "id": "game.profile_slot_01",
+      "label": "当前游戏功能1",
+      "phrase": "体感功能一",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F1"
+    },
+    {
+      "id": "game.profile_slot_02",
+      "label": "当前游戏功能2",
+      "phrase": "体感功能二",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F2"
+    },
+    {
+      "id": "game.profile_slot_03",
+      "label": "当前游戏功能3",
+      "phrase": "体感功能三",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F3"
+    },
+    {
+      "id": "game.profile_slot_04",
+      "label": "当前游戏功能4",
+      "phrase": "体感功能四",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F4"
+    },
+    {
+      "id": "game.profile_slot_05",
+      "label": "当前游戏功能5",
+      "phrase": "体感功能五",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F5"
+    },
+    {
+      "id": "game.profile_slot_06",
+      "label": "当前游戏功能6",
+      "phrase": "体感功能六",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F6"
+    },
+    {
+      "id": "game.profile_slot_07",
+      "label": "当前游戏功能7",
+      "phrase": "体感功能七",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F7"
+    },
+    {
+      "id": "game.profile_slot_08",
+      "label": "当前游戏功能8",
+      "phrase": "体感功能八",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F8"
+    },
+    {
+      "id": "game.profile_slot_09",
+      "label": "当前游戏功能9",
+      "phrase": "体感功能九",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F9"
+    },
+    {
+      "id": "game.profile_slot_10",
+      "label": "当前游戏功能10",
+      "phrase": "体感功能十号",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F10"
+    },
+    {
+      "id": "game.profile_slot_11",
+      "label": "当前游戏功能11",
+      "phrase": "体感功能十一号",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F11"
+    },
+    {
+      "id": "game.profile_slot_12",
+      "label": "当前游戏功能12",
+      "phrase": "体感功能十二号",
+      "profile": "normal",
+      "kind": "keyboard",
+      "default_target": "F12"
     }
   ]
 }

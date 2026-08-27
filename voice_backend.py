@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import queue
 import re
 import sys
@@ -12,10 +13,6 @@ from pathlib import Path
 from typing import Callable
 
 from output_backend import KEY_CODES, XUSB_GAMEPAD_BUTTONS, KeyboardOutput
-from sherpa_kws_backend import find_sherpa_kws_model
-from sherpa_phrase_kws import SherpaPhraseKws
-
-
 DEFAULT_WAKE_WORD = "体感"
 DEFAULT_EMERGENCY_STOP = "体感紧急停止"
 SYSTEM_HEAD_CALIBRATION_START = "HEAD_CALIBRATION_START"
@@ -27,6 +24,82 @@ MAX_AUDIO_FRAME_BYTES = 256 * 1024
 def compact_text(value: str) -> str:
     text = str(value or "").strip().lower()
     return re.sub(r"[\s\u3000，。！？、,.!?;；:：]+", "", text)
+
+
+def find_vosk_model(root: Path) -> Path | None:
+    """Resolve the portable Vosk model configured for the production runtime."""
+    candidates: list[Path] = []
+    configured_env = os.environ.get("VOSK_MODEL_PATH", "").strip().strip('"')
+    if configured_env:
+        candidates.append(Path(configured_env))
+    config_path = root / "config" / "vosk_model_path.txt"
+    if config_path.is_file():
+        try:
+            configured = config_path.read_text(encoding="utf-8-sig").strip().strip('"')
+            if configured:
+                candidate = Path(configured)
+                candidates.append(candidate if candidate.is_absolute() else root / candidate)
+        except OSError:
+            pass
+    candidates.append(root / "models" / "vosk-model-small-cn-0.22")
+    for candidate in candidates:
+        try:
+            if candidate.is_dir():
+                return candidate.resolve()
+        except OSError:
+            pass
+    return None
+
+
+class VoskCommandRecognizer:
+    """Streaming Vosk recognizer limited to the configured command phrases."""
+
+    def __init__(self, model_path: Path, phrases: list[str], sample_rate: int = 16_000) -> None:
+        try:
+            from vosk import KaldiRecognizer, Model, SetLogLevel
+        except ImportError as exc:
+            raise RuntimeError("Vosk 未安装") from exc
+        if not model_path.is_dir():
+            raise RuntimeError(f"Vosk 中文模型不存在：{model_path}")
+        SetLogLevel(-1)
+        self._KaldiRecognizer = KaldiRecognizer
+        self._model = Model(str(model_path))
+        self.sample_rate = int(sample_rate)
+        # The small Chinese model grammar is character-token based.  The
+        # robustness run proved that unspaced whole phrases are discarded as
+        # unknown vocabulary, while parser-side compact_text safely rejoins it.
+        self.supported = [self._grammar_entry(item) for item in dict.fromkeys(phrases) if compact_text(item)]
+        self.unsupported: list[str] = []
+        self.mode = "vosk_constrained_grammar"
+        self._grammar = json.dumps([*self.supported, "[unk]"], ensure_ascii=False)
+        self._recognizer = None
+        self.last_partial = ""
+        self.reset()
+
+    @staticmethod
+    def _grammar_entry(value: str) -> str:
+        text = str(value or "").strip()
+        if any("\u4e00" <= char <= "\u9fff" for char in text):
+            return " ".join(char for char in text if not char.isspace())
+        return text
+
+    def accept(self, pcm16: bytes) -> dict[str, str] | None:
+        if self._recognizer.AcceptWaveform(pcm16):
+            text = str(json.loads(self._recognizer.Result()).get("text", "")).strip()
+            self.last_partial = ""
+            return {"kind": "final", "text": text} if text else None
+        partial = str(json.loads(self._recognizer.PartialResult()).get("partial", "")).strip()
+        if partial and partial != self.last_partial:
+            self.last_partial = partial
+            return {"kind": "partial", "text": partial}
+        return None
+
+    def reset(self) -> None:
+        self._recognizer = self._KaldiRecognizer(self._model, self.sample_rate, self._grammar)
+        self.last_partial = ""
+
+    def close(self) -> None:
+        self._recognizer = None
 
 
 class VoiceService:
@@ -48,13 +121,11 @@ class VoiceService:
         self.mappings: list[dict] = []
         self.wake_word = DEFAULT_WAKE_WORD
         self.emergency_stop_phrases: list[str] = [DEFAULT_EMERGENCY_STOP]
-        self.wake_model_path = find_sherpa_kws_model(root)
-        # v0.9.4: single-stage full-phrase KWS. model_path points at the KWS model.
-        self.model_path = self.wake_model_path
-        self.keywords_file = root / "config" / "generated_voice" / "keywords.txt"
+        self.model_path = find_vosk_model(root)
         self.action_map_file = root / "config" / "generated_voice" / "voice_action_map.json"
-        self.recognizer: SherpaPhraseKws | None = None
-        self.recognizer_mode = "single_stage_phrase_kws"
+        self.command_registry: dict[str, dict] = {}
+        self.recognizer: VoskCommandRecognizer | None = None
+        self.recognizer_mode = "vosk_constrained_grammar"
         self.supported_count = 0
         self.unsupported: list[str] = []
         self.last_partial = ""
@@ -80,6 +151,7 @@ class VoiceService:
         self._mic_thread: threading.Thread | None = None
         self._lock = threading.RLock()
         self._load()
+        self._load_command_registry()
         self._rebuild_recognizer()
 
     def _load(self) -> None:
@@ -197,13 +269,24 @@ class VoiceService:
             if emergency_stop_phrases is not None:
                 self.emergency_stop_phrases = self._validate_emergency_phrases(emergency_stop_phrases)
             self._write_config()
-            self._resolve_voice_models()
             self._rebuild_recognizer()
             return self.status()
 
-    def _resolve_voice_models(self) -> None:
-        self.wake_model_path = find_sherpa_kws_model(self.root)
-        self.model_path = self.wake_model_path
+    def _load_command_registry(self) -> None:
+        self.command_registry = {}
+        if not self.action_map_file.is_file():
+            return
+        try:
+            data = json.loads(self.action_map_file.read_text(encoding="utf-8-sig"))
+            if isinstance(data, dict):
+                for phrase, raw in data.items():
+                    if not isinstance(raw, dict):
+                        continue
+                    command = dict(raw)
+                    command["phrase"] = str(phrase)
+                    self.command_registry[compact_text(phrase)] = command
+        except Exception as exc:
+            self.last_error = f"语音命令注册表读取失败：{exc}"
 
     def _rebuild_recognizer(self) -> None:
         previous = self.recognizer
@@ -217,27 +300,19 @@ class VoiceService:
         self.supported_count = 0
         self.unsupported = []
         self.audio_ready = False
-        self._resolve_voice_models()
-        missing = []
-        if self.wake_model_path is None:
-            missing.append("sherpa KWS 模型")
-        if not self.keywords_file.is_file():
-            missing.append("keywords.txt")
-        if not self.action_map_file.is_file():
-            missing.append("voice_action_map.json")
-        if missing:
-            self.last_error = "语音模型未就绪：" + "、".join(missing)
+        self.model_path = find_vosk_model(self.root)
+        if self.model_path is None:
+            self.last_error = "未找到 Vosk 中文模型；请放入 models/vosk-model-small-cn-0.22"
             return
         try:
-            self.recognizer = SherpaPhraseKws(
-                self.wake_model_path,
-                self.keywords_file,
-                self.action_map_file,
-                sample_rate=self.sample_rate,
-            )
-            self.recognizer_mode = "single_stage_phrase_kws"
-            self.supported_count = len(self.recognizer.actions)
-            self.unsupported = []
+            phrases = [self.wake_word, *self.emergency_stop_phrases]
+            for mapping in self.mappings:
+                commands = [mapping["phrase"], *mapping.get("synonyms", [])]
+                phrases.extend(f"{self.wake_word}{command}" for command in commands)
+            self.recognizer = VoskCommandRecognizer(self.model_path, phrases, self.sample_rate)
+            self.recognizer_mode = self.recognizer.mode
+            self.supported_count = len(self.recognizer.supported)
+            self.unsupported = list(self.recognizer.unsupported)
             self.last_error = None
             self.audio_ready = True
         except Exception as exc:
@@ -307,8 +382,13 @@ class VoiceService:
             result = self._match_and_execute(text, source_id=str(source_id), enforce_wake=True)
             return self.status(), result
 
-    def accept_phone_command(self, source_id: str, device_id: str, command_id: str, phrase: str) -> tuple[dict, dict | None]:
-        """v0.9.4: phone sends voice_command with command_id + phrase directly."""
+    def accept_phone_command(self, source_id: str, device_id: str, command_id: str, phrase: str = "") -> tuple[dict, dict | None]:
+        """Execute a phone KWS command by stable command_id.
+
+        v0.9.6 phones normally transmit only command_id.  ``phrase`` remains
+        optional for backward compatibility and diagnostics; the canonical
+        phrase is always resolved from the local registry before execution.
+        """
         cid = str(command_id or "").strip()
         phrase = str(phrase or "").strip()
         if not cid:
@@ -320,12 +400,13 @@ class VoiceService:
             self.last_final = phrase
             self.last_partial = ""
             self.last_audio_at = time.monotonic()
-            # Look up command in action map by phrase or command_id
+            # Keep stable command_id compatibility for phones already on the
+            # previous app build; new Vosk phones send final voice_text.
             command = None
-            if phrase and self.recognizer is not None:
-                command = self.recognizer.actions.get(compact_text(phrase))
-            if command is None and self.recognizer is not None:
-                for v in self.recognizer.actions.values():
+            if phrase:
+                command = self.command_registry.get(compact_text(phrase))
+            if command is None:
+                for v in self.command_registry.values():
                     if v.get("id") == cid:
                         command = v
                         break
@@ -335,6 +416,8 @@ class VoiceService:
                 self.last_executed = False
                 result = {"matched": False, "reason": "command_not_in_registry", "command_id": cid, "phrase": phrase}
                 return self.status(), result
+            canonical_phrase = str(command.get("phrase", phrase or cid)).strip()
+            self.last_final = canonical_phrase
             result = self._execute_command_action(command, source_id=str(source_id))
             return self.status(), result
 
@@ -344,27 +427,26 @@ class VoiceService:
         if len(pcm16) > MAX_AUDIO_FRAME_BYTES:
             raise ValueError("单个音频帧过大")
         if self.recognizer is None or not self.audio_ready:
-            raise RuntimeError(self.last_error or "单阶段短语 KWS 未就绪")
+            raise RuntimeError(self.last_error or "Vosk 受限语法未就绪")
         self.audio_bytes += len(pcm16)
         self.last_audio_at = time.monotonic()
         self.last_rms = self._pcm_rms(pcm16)
         self.peak_rms = max(self.peak_rms, self.last_rms)
-        event = self.recognizer.accept_pcm16(pcm16)
+        event = self.recognizer.accept(pcm16)
         result = None
         if event:
-            phrase = str(event.get("phrase", ""))
-            self.last_final = phrase
-            self.last_partial = ""
-            self.wake_until = 0.0
-            result = self._execute_command_action(event, source_id=source_id)
-            if result is not None:
-                result["recognized"] = phrase
+            if event["kind"] == "partial":
+                self.last_partial = event["text"]
+            else:
+                self.last_final = event["text"]
+                self.last_partial = ""
+                result = self._match_and_execute(event["text"], source_id=source_id, enforce_wake=True)
         return event, result
 
     def ingest(self, pcm16: bytes) -> dict:
         """Compatibility helper for a local test or an older caller."""
         with self._lock:
-            self._resolve_voice_models()
+            self.model_path = find_vosk_model(self.root)
             if self.recognizer is None:
                 self._rebuild_recognizer()
             self._activate_locked("computer_microphone", "computer", "computer")
@@ -499,10 +581,7 @@ class VoiceService:
     def start_local_microphone(self) -> dict:
         self.stop_local_microphone()
         with self._lock:
-            self._resolve_voice_models()
-            # The 220M command model is already warming in a persistent worker
-            # created at service startup.  Do not throw that worker away every
-            # time the user toggles the microphone.
+            self.model_path = find_vosk_model(self.root)
             if self.recognizer is None:
                 self._rebuild_recognizer()
             if self.recognizer is None:
@@ -604,9 +683,8 @@ class VoiceService:
         alive = bool(self.source_kind == "computer" and self.connected and self.last_audio_at and now - self.last_audio_at < VOICE_TIMEOUT_SECONDS)
         result = {
             "available": self.recognizer is not None,
-            "model_ready": bool(self.recognizer is not None and self.wake_model_path is not None),
-            "model_path": str(self.wake_model_path) if self.wake_model_path else None,
-            "wake_model_path": str(self.wake_model_path) if self.wake_model_path else None,
+            "model_ready": bool(self.recognizer is not None and self.model_path is not None),
+            "model_path": str(self.model_path) if self.model_path else None,
             "recognizer_mode": self.recognizer_mode,
             "supported_count": self.supported_count,
             "unsupported": list(self.unsupported),

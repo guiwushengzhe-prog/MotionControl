@@ -25,3 +25,15 @@ t ǐ g ǎn sh ǎn b ì :1.50 #0.38 @体感闪避
 t ǐ g ǎn j ì n éng :1.50 #0.38 @体感技能
 t ǐ g ǎn sh ǐ y òng w ù p ǐn :1.60 #0.33 @体感使用物品
 t ǐ g ǎn d ǎ k āi c ài d ān :1.60 #0.33 @体感打开菜单
+t ǐ g ǎn g ōng n éng y ī :1.60 #0.33 @体感功能一
+t ǐ g ǎn g ōng n éng èr :1.60 #0.33 @体感功能二
+t ǐ g ǎn g ōng n éng s ān :1.60 #0.33 @体感功能三
+t ǐ g ǎn g ōng n éng s ì :1.60 #0.33 @体感功能四
+t ǐ g ǎn g ōng n éng w ǔ :1.60 #0.33 @体感功能五
+t ǐ g ǎn g ōng n éng l iù :1.60 #0.33 @体感功能六
+t ǐ g ǎn g ōng n éng q ī :1.60 #0.33 @体感功能七
+t ǐ g ǎn g ōng n éng b ā :1.60 #0.33 @体感功能八
+t ǐ g ǎn g ōng n éng j iǔ :1.60 #0.33 @体感功能九
+t ǐ g ǎn g ōng n éng sh í h ào :1.60 #0.33 @体感功能十号
+t ǐ g ǎn g ōng n éng sh í y ī h ào :1.60 #0.33 @体感功能十一号
+t ǐ g ǎn g ōng n éng sh í èr h ào :1.60 #0.33 @体感功能十二号
