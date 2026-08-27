@@ -1,0 +1,162 @@
+{
+  "schema": "voice_robustness_corpus_v1",
+  "generated_by": "bounded subset derived from tts_manifest.json",
+  "generator_note": "6 command/negative clips per voice; all clean levels; stress subset gets all noise/SNR combinations",
+  "sample_rate": 16000,
+  "voices": [
+    {
+      "id": "xiaoxiao",
+      "name": "zh-CN-XiaoxiaoNeural"
+    },
+    {
+      "id": "yunxi",
+      "name": "zh-CN-YunxiNeural"
+    }
+  ],
+  "items": [
+    {
+      "id": "emergency_stop",
+      "voice_id": "xiaoxiao",
+      "voice_name": "zh-CN-XiaoxiaoNeural",
+      "text": "体感紧急停止",
+      "expected_intent": "system.emergency_stop",
+      "kind": "positive",
+      "stress": true,
+      "emergency": true,
+      "mapping": "generated_voice/voice_action_map.json",
+      "file": "../corpus/emergency_stop__xiaoxiao.wav"
+    },
+    {
+      "id": "nav_left_synonym",
+      "voice_id": "xiaoxiao",
+      "voice_name": "zh-CN-XiaoxiaoNeural",
+      "text": "体感向左",
+      "expected_intent": "nav.left",
+      "kind": "positive",
+      "stress": true,
+      "emergency": false,
+      "mapping": "config/voice_mappings.json synonym",
+      "file": "../corpus/nav_left_synonym__xiaoxiao.wav"
+    },
+    {
+      "id": "accelerate",
+      "voice_id": "xiaoxiao",
+      "voice_name": "zh-CN-XiaoxiaoNeural",
+      "text": "体感加速",
+      "expected_intent": "game.accelerate",
+      "kind": "positive",
+      "stress": true,
+      "emergency": false,
+      "mapping": "generated_voice/voice_action_map.json",
+      "file": "../corpus/accelerate__xiaoxiao.wav"
+    },
+    {
+      "id": "near_emergency",
+      "voice_id": "xiaoxiao",
+      "voice_name": "zh-CN-XiaoxiaoNeural",
+      "text": "体感紧急制止",
+      "expected_intent": null,
+      "kind": "negative",
+      "stress": true,
+      "emergency": false,
+      "mapping": "near miss",
+      "file": "../corpus/near_emergency__xiaoxiao.wav"
+    },
+    {
+      "id": "homophone_left",
+      "voice_id": "xiaoxiao",
+      "voice_name": "zh-CN-XiaoxiaoNeural",
+      "text": "体感向量",
+      "expected_intent": null,
+      "kind": "negative",
+      "stress": true,
+      "emergency": false,
+      "mapping": "homophone-like",
+      "file": "../corpus/homophone_left__xiaoxiao.wav"
+    },
+    {
+      "id": "no_wake_start",
+      "voice_id": "xiaoxiao",
+      "voice_name": "zh-CN-XiaoxiaoNeural",
+      "text": "启动一下",
+      "expected_intent": null,
+      "kind": "negative",
+      "stress": false,
+      "emergency": false,
+      "mapping": "missing wake word",
+      "file": "../corpus/no_wake_start__xiaoxiao.wav"
+    },
+    {
+      "id": "emergency_stop",
+      "voice_id": "yunxi",
+      "voice_name": "zh-CN-YunxiNeural",
+      "text": "体感紧急停止",
+      "expected_intent": "system.emergency_stop",
+      "kind": "positive",
+      "stress": true,
+      "emergency": true,
+      "mapping": "generated_voice/voice_action_map.json",
+      "file": "../corpus/emergency_stop__yunxi.wav"
+    },
+    {
+      "id": "nav_left_synonym",
+      "voice_id": "yunxi",
+      "voice_name": "zh-CN-YunxiNeural",
+      "text": "体感向左",
+      "expected_intent": "nav.left",
+      "kind": "positive",
+      "stress": true,
+      "emergency": false,
+      "mapping": "config/voice_mappings.json synonym",
+      "file": "../corpus/nav_left_synonym__yunxi.wav"
+    },
+    {
+      "id": "accelerate",
+      "voice_id": "yunxi",
+      "voice_name": "zh-CN-YunxiNeural",
+      "text": "体感加速",
+      "expected_intent": "game.accelerate",
+      "kind": "positive",
+      "stress": true,
+      "emergency": false,
+      "mapping": "generated_voice/voice_action_map.json",
+      "file": "../corpus/accelerate__yunxi.wav"
+    },
+    {
+      "id": "near_emergency",
+      "voice_id": "yunxi",
+      "voice_name": "zh-CN-YunxiNeural",
+      "text": "体感紧急制止",
+      "expected_intent": null,
+      "kind": "negative",
+      "stress": true,
+      "emergency": false,
+      "mapping": "near miss",
+      "file": "../corpus/near_emergency__yunxi.wav"
+    },
+    {
+      "id": "homophone_left",
+      "voice_id": "yunxi",
+      "voice_name": "zh-CN-YunxiNeural",
+      "text": "体感向量",
+      "expected_intent": null,
+      "kind": "negative",
+      "stress": true,
+      "emergency": false,
+      "mapping": "homophone-like",
+      "file": "../corpus/homophone_left__yunxi.wav"
+    },
+    {
+      "id": "no_wake_start",
+      "voice_id": "yunxi",
+      "voice_name": "zh-CN-YunxiNeural",
+      "text": "启动一下",
+      "expected_intent": null,
+      "kind": "negative",
+      "stress": false,
+      "emergency": false,
+      "mapping": "missing wake word",
+      "file": "../corpus/no_wake_start__yunxi.wav"
+    }
+  ]
+}

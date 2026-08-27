@@ -187,5 +187,89 @@
     "kind": "keyboard",
     "default_target": "TAB",
     "cooldown_ms": 700
+  },
+  "体感功能一": {
+    "id": "game.profile_slot_01",
+    "label": "当前游戏功能1",
+    "kind": "keyboard",
+    "default_target": "F1",
+    "cooldown_ms": 700
+  },
+  "体感功能二": {
+    "id": "game.profile_slot_02",
+    "label": "当前游戏功能2",
+    "kind": "keyboard",
+    "default_target": "F2",
+    "cooldown_ms": 700
+  },
+  "体感功能三": {
+    "id": "game.profile_slot_03",
+    "label": "当前游戏功能3",
+    "kind": "keyboard",
+    "default_target": "F3",
+    "cooldown_ms": 700
+  },
+  "体感功能四": {
+    "id": "game.profile_slot_04",
+    "label": "当前游戏功能4",
+    "kind": "keyboard",
+    "default_target": "F4",
+    "cooldown_ms": 700
+  },
+  "体感功能五": {
+    "id": "game.profile_slot_05",
+    "label": "当前游戏功能5",
+    "kind": "keyboard",
+    "default_target": "F5",
+    "cooldown_ms": 700
+  },
+  "体感功能六": {
+    "id": "game.profile_slot_06",
+    "label": "当前游戏功能6",
+    "kind": "keyboard",
+    "default_target": "F6",
+    "cooldown_ms": 700
+  },
+  "体感功能七": {
+    "id": "game.profile_slot_07",
+    "label": "当前游戏功能7",
+    "kind": "keyboard",
+    "default_target": "F7",
+    "cooldown_ms": 700
+  },
+  "体感功能八": {
+    "id": "game.profile_slot_08",
+    "label": "当前游戏功能8",
+    "kind": "keyboard",
+    "default_target": "F8",
+    "cooldown_ms": 700
+  },
+  "体感功能九": {
+    "id": "game.profile_slot_09",
+    "label": "当前游戏功能9",
+    "kind": "keyboard",
+    "default_target": "F9",
+    "cooldown_ms": 700
+  },
+  "体感功能十号": {
+    "id": "game.profile_slot_10",
+    "label": "当前游戏功能10",
+    "kind": "keyboard",
+    "default_target": "F10",
+    "cooldown_ms": 700
+  },
+  "体感功能十一号": {
+    "id": "game.profile_slot_11",
+    "label": "当前游戏功能11",
+    "kind": "keyboard",
+    "default_target": "F11",
+    "cooldown_ms": 700
+  },
+  "体感功能十二号": {
+    "id": "game.profile_slot_12",
+    "label": "当前游戏功能12",
+    "kind": "keyboard",
+    "default_target": "F12",
+    "cooldown_ms": 700
   }
 }

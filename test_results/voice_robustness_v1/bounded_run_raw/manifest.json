@@ -1,0 +1,853 @@
+{
+  "schema": "voice_robustness_v1",
+  "generated_at": "2026-08-27T17:36:24.434921+00:00",
+  "repo": "F:\\MotionControl-App",
+  "git": {
+    "head": "ed426809cb99877b36f4e2fa065014ca43d18a8a",
+    "branch": "head-control-v2-signal-fix-20260821",
+    "status_outside_this_artifact": "M README.md\n M WORKLOG.md\n M config/generated_voice/keywords.txt\n M config/generated_voice/keywords_raw.txt\n M config/generated_voice/voice_action_map.json\n M config/voice_commands_v094.json\nMM control_kernel.py\nA  hand_anchor.py\n M head_control.py\n M input_bridge.py\n M output_backend.py\n M scene_layout.py\n M server.py\n M tests/test_control_kernel.py\nA  tests/test_hand_anchor.py\n M tests/test_minimal_controls.py\n M tests/test_mobile_input_bridge.py\n M tests/test_scene_layout.py\nA  tools/evaluate_hand_anchor.py\n M tools/head_signal_capture.py\n M voice_backend.py\n M web/app.js\n M web/index.html\n?? .playwright-cli/\n?? .pylibs/\n?? .venv-funasr/\n?? .venv/\n?? BUILD_GAME_LIBRARY.bat\n?? BUILD_GAME_LIBRARY.ps1\n?? BUILD_PRIORITY_PROFILES.bat\n?? DEV_HANDOFF_V097.md\n?? backup_v093_20260824_002426/\n?? config/funasr_python_path.txt\n?? config/funasr_python_path.txt.example\n?? config/funasr_seaco_model_path.txt\n?? config/funasr_seaco_model_path.txt.example\n?? config/funasr_vad_model_path.txt\n?? config/funasr_vad_model_path.txt.example\n?? config/scene_layout.json\n?? config/scene_reference.jpg\n?? funasr_command_backend.py\n?? game_profiles.py\n?? game_profiles/\n?? hybrid_voice_backend.py\n?? output/20260825-video-fix-merge/\n?? output/LOCAL_AI_CAPTURE_VOICE_FIX.md\n?? output/MotionControl-App-core-source-5906fae-20260821.zip\n?? output/MotionControl-App-source-0.9.3-20260823.zip\n?? output/VIDEO_FIX_MERGE_REPORT_20260825.md\n?? output/camera-model-compat-failure-2026-08-22.json\n?? output/capture-voice-hotfix.patch\n?? output/funasr-command-worker.log\n?? output/funasr/\n?? output/funasr_verify_result.txt\n?? output/git-recovery/\n?? output/mobile-local-voice/\n?? output/server_stderr.log\n?? output/server_stdout.log\n?? output/sherpa-kws/\n?? output/v0.9.4-design/\n?? output/v095_runtime/\n?? output/v095_user_start/\n?? output/v097-dev-runtime-stderr.log\n?? output/v097-dev-runtime-stdout.log\n?? output/v097-video-fix-runtime-stderr.log\n?? output/v097-video-fix-runtime-stdout.log\n?? output/video-replay-v097-video-fix-20260825-cal04.json\n?? output/video-replay-v097-video-fix-20260825-cal40.json\n?? output/video-replay-v097-video-fix-20260825.json\n?? profile_audit.py\n?? server_err.log\n?? server_out.log\n?? server_startup.log\n?? steam_seed_catalog.py\n?? steam_vdf.py\n?? steaminput_builder.py\n?? test_results/\n?? tests/test_cross_poses_v097.py\n?? tests/test_game_profiles_v097.py\n?? tests/test_head_intent_v097.py\n?? tests/test_hybrid_voice_backend.py\n?? tests/test_mark_profile_verified_v097.py\n?? tests/test_output_actions_v097.py\n?? tests/test_profile_audit_v097.py\n?? tests/test_seed_catalog_v097.py\n?? tests/test_steam_vdf_v097.py\n?? tests/test_steaminput_builder_v097.py\n?? tests/test_video_fix_bundle_v097.py\n?? tools/audit_game_profiles.py\n?? tools/build_game_profiles.py\n?? tools/build_seed_catalog.py\n?? tools/download_funasr_command_models.py\n?? tools/funasr_command_worker.py\n?? tools/install_funasr_command_asr.ps1\n?? tools/mark_profile_verified.py\n?? tools/replay_pose_video.py\n?? tools/verify_funasr_command_asr.py\n?? web/v100.css",
+    "clean_outside_this_artifact": false
+  },
+  "input_protocol": "offline WAV -> recognizer/parser only; output disabled by construction",
+  "sample_rate": 16000,
+  "chunk_ms": 200,
+  "tts": {
+    "schema": "voice_robustness_corpus_v1",
+    "generated_by": "bounded subset derived from tts_manifest.json",
+    "generator_note": "6 command/negative clips per voice; all clean levels; stress subset gets all noise/SNR combinations",
+    "sample_rate": 16000,
+    "voices": [
+      {
+        "id": "xiaoxiao",
+        "name": "zh-CN-XiaoxiaoNeural"
+      },
+      {
+        "id": "yunxi",
+        "name": "zh-CN-YunxiNeural"
+      }
+    ],
+    "items": [
+      {
+        "id": "emergency_stop",
+        "voice_id": "xiaoxiao",
+        "voice_name": "zh-CN-XiaoxiaoNeural",
+        "text": "体感紧急停止",
+        "expected_intent": "system.emergency_stop",
+        "kind": "positive",
+        "stress": true,
+        "emergency": true,
+        "mapping": "generated_voice/voice_action_map.json",
+        "file": "../corpus/emergency_stop__xiaoxiao.wav"
+      },
+      {
+        "id": "nav_left_synonym",
+        "voice_id": "xiaoxiao",
+        "voice_name": "zh-CN-XiaoxiaoNeural",
+        "text": "体感向左",
+        "expected_intent": "nav.left",
+        "kind": "positive",
+        "stress": true,
+        "emergency": false,
+        "mapping": "config/voice_mappings.json synonym",
+        "file": "../corpus/nav_left_synonym__xiaoxiao.wav"
+      },
+      {
+        "id": "accelerate",
+        "voice_id": "xiaoxiao",
+        "voice_name": "zh-CN-XiaoxiaoNeural",
+        "text": "体感加速",
+        "expected_intent": "game.accelerate",
+        "kind": "positive",
+        "stress": true,
+        "emergency": false,
+        "mapping": "generated_voice/voice_action_map.json",
+        "file": "../corpus/accelerate__xiaoxiao.wav"
+      },
+      {
+        "id": "near_emergency",
+        "voice_id": "xiaoxiao",
+        "voice_name": "zh-CN-XiaoxiaoNeural",
+        "text": "体感紧急制止",
+        "expected_intent": null,
+        "kind": "negative",
+        "stress": true,
+        "emergency": false,
+        "mapping": "near miss",
+        "file": "../corpus/near_emergency__xiaoxiao.wav"
+      },
+      {
+        "id": "homophone_left",
+        "voice_id": "xiaoxiao",
+        "voice_name": "zh-CN-XiaoxiaoNeural",
+        "text": "体感向量",
+        "expected_intent": null,
+        "kind": "negative",
+        "stress": true,
+        "emergency": false,
+        "mapping": "homophone-like",
+        "file": "../corpus/homophone_left__xiaoxiao.wav"
+      },
+      {
+        "id": "no_wake_start",
+        "voice_id": "xiaoxiao",
+        "voice_name": "zh-CN-XiaoxiaoNeural",
+        "text": "启动一下",
+        "expected_intent": null,
+        "kind": "negative",
+        "stress": false,
+        "emergency": false,
+        "mapping": "missing wake word",
+        "file": "../corpus/no_wake_start__xiaoxiao.wav"
+      },
+      {
+        "id": "emergency_stop",
+        "voice_id": "yunxi",
+        "voice_name": "zh-CN-YunxiNeural",
+        "text": "体感紧急停止",
+        "expected_intent": "system.emergency_stop",
+        "kind": "positive",
+        "stress": true,
+        "emergency": true,
+        "mapping": "generated_voice/voice_action_map.json",
+        "file": "../corpus/emergency_stop__yunxi.wav"
+      },
+      {
+        "id": "nav_left_synonym",
+        "voice_id": "yunxi",
+        "voice_name": "zh-CN-YunxiNeural",
+        "text": "体感向左",
+        "expected_intent": "nav.left",
+        "kind": "positive",
+        "stress": true,
+        "emergency": false,
+        "mapping": "config/voice_mappings.json synonym",
+        "file": "../corpus/nav_left_synonym__yunxi.wav"
+      },
+      {
+        "id": "accelerate",
+        "voice_id": "yunxi",
+        "voice_name": "zh-CN-YunxiNeural",
+        "text": "体感加速",
+        "expected_intent": "game.accelerate",
+        "kind": "positive",
+        "stress": true,
+        "emergency": false,
+        "mapping": "generated_voice/voice_action_map.json",
+        "file": "../corpus/accelerate__yunxi.wav"
+      },
+      {
+        "id": "near_emergency",
+        "voice_id": "yunxi",
+        "voice_name": "zh-CN-YunxiNeural",
+        "text": "体感紧急制止",
+        "expected_intent": null,
+        "kind": "negative",
+        "stress": true,
+        "emergency": false,
+        "mapping": "near miss",
+        "file": "../corpus/near_emergency__yunxi.wav"
+      },
+      {
+        "id": "homophone_left",
+        "voice_id": "yunxi",
+        "voice_name": "zh-CN-YunxiNeural",
+        "text": "体感向量",
+        "expected_intent": null,
+        "kind": "negative",
+        "stress": true,
+        "emergency": false,
+        "mapping": "homophone-like",
+        "file": "../corpus/homophone_left__yunxi.wav"
+      },
+      {
+        "id": "no_wake_start",
+        "voice_id": "yunxi",
+        "voice_name": "zh-CN-YunxiNeural",
+        "text": "启动一下",
+        "expected_intent": null,
+        "kind": "negative",
+        "stress": false,
+        "emergency": false,
+        "mapping": "missing wake word",
+        "file": "../corpus/no_wake_start__yunxi.wav"
+      }
+    ]
+  },
+  "models": {
+    "vosk": {
+      "path": "F:\\MotionControl-App\\models\\vosk-model-small-cn-0.22",
+      "bytes": 68292271,
+      "sha256": "db67e7419f1ca224989e773d411f0dc85ac7c6cce7aedd6c92293fa6e2a1528e",
+      "files": [
+        {
+          "path": "am/final.mdl",
+          "bytes": 15901896,
+          "sha256": "91eda2c04c4f599361cb92b0e5298ccdf6b3c7a1fa52bfcefcd2c4e07aa1c131"
+        },
+        {
+          "path": "conf/mfcc.conf",
+          "bytes": 153,
+          "sha256": "6c326fea5741c2d78be12f76eb1b36ea2ace040da9e355e4cfe6bb80e5f7d5ab"
+        },
+        {
+          "path": "conf/model.conf",
+          "bytes": 289,
+          "sha256": "468a8125c07530f96adcc219a0a5f993e8e0721ccf18acbd3169b77fc685fb9b"
+        },
+        {
+          "path": "graph/disambig_tid.int",
+          "bytes": 234,
+          "sha256": "c9200318c2a265549ebfbea7e0176fa62e131e953abd140c9b0b39fe61e24015"
+        },
+        {
+          "path": "graph/Gr.fst",
+          "bytes": 26082259,
+          "sha256": "46d41a9b1723abccdcb354d731a5b58d87c060100d88ada1a3e31220f52b0434"
+        },
+        {
+          "path": "graph/HCLr.fst",
+          "bytes": 16158762,
+          "sha256": "798af0d9ba6f2d727747f58e1e7b2305f8618bc8ea7f6c51beecd8a2c965b965"
+        },
+        {
+          "path": "graph/phones/word_boundary.int",
+          "bytes": 7161,
+          "sha256": "11ca784b99f03188b451fb54714c2de3dd694e662a5f88e82df435c2789b9aec"
+        },
+        {
+          "path": "ivector/final.dubm",
+          "bytes": 168048,
+          "sha256": "e33276cbd548c0a03ae5812c98115940614997dff23a6d59968af6eaf7630ff8"
+        },
+        {
+          "path": "ivector/final.ie",
+          "bytes": 9927287,
+          "sha256": "c39d46fbff04efb7baa9660ae7a728b0e2f35a4a1250b56ed3a599e26956df86"
+        },
+        {
+          "path": "ivector/final.mat",
+          "bytes": 44975,
+          "sha256": "42706d88818070ea0d0182b4d11367ba52a13b9a2be45630f60858a422109ada"
+        },
+        {
+          "path": "ivector/global_cmvn.stats",
+          "bytes": 1090,
+          "sha256": "b267dc89c1556fdd5bc358f0a480929da1743eeccfa06a67daf8db629ca336bb"
+        },
+        {
+          "path": "ivector/online_cmvn.conf",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "ivector/splice.conf",
+          "bytes": 35,
+          "sha256": "9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756"
+        },
+        {
+          "path": "README",
+          "bytes": 82,
+          "sha256": "7362be411c609f2a1c9d2dfe22c2d72555c15eb90bfe47c41772f49ef94840ce"
+        }
+      ]
+    },
+    "sherpa": {
+      "path": "F:\\MotionControl-App\\models\\sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20",
+      "bytes": 40744741,
+      "sha256": "e81b6ca82c82bd905b1d235d2680fa0cc7c5a3c90cbcd013878584bf7581c409",
+      "files": [
+        {
+          "path": "decoder-epoch-13-avg-2-chunk-16-left-64.onnx",
+          "bytes": 759829,
+          "sha256": "63a22dd60f40fff082ac3e09afa507f6787da36df76ded2fbe145fa233e22c21"
+        },
+        {
+          "path": "decoder-epoch-13-avg-2-chunk-8-left-64.onnx",
+          "bytes": 759829,
+          "sha256": "63a22dd60f40fff082ac3e09afa507f6787da36df76ded2fbe145fa233e22c21"
+        },
+        {
+          "path": "en.phone",
+          "bytes": 3330061,
+          "sha256": "f7000ec3a90544c0c7c16090d8951779c2b322e14dad5006290f498567d439ea"
+        },
+        {
+          "path": "encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx",
+          "bytes": 4599656,
+          "sha256": "408bbd740838c42d5bf6d1c5b80b3c88b616c7860b92d980328b5b068c76ae48"
+        },
+        {
+          "path": "encoder-epoch-13-avg-2-chunk-16-left-64.onnx",
+          "bytes": 11976272,
+          "sha256": "540ff509ed89bd22afe04bf7049a54bb1c95c6d8a18742ea9691910cdb5f859e"
+        },
+        {
+          "path": "encoder-epoch-13-avg-2-chunk-8-left-64.int8.onnx",
+          "bytes": 4600657,
+          "sha256": "2ca84d6bfe73e1ea3c9c49f600f7cad1c9ddd423c53c906b8bfe802444dd78d5"
+        },
+        {
+          "path": "encoder-epoch-13-avg-2-chunk-8-left-64.onnx",
+          "bytes": 11976951,
+          "sha256": "307e2f5e87e9d6df4fd058239f4437b6236db7699b9c61decb490f89fb4226d0"
+        },
+        {
+          "path": "joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx",
+          "bytes": 86629,
+          "sha256": "190d4067b4cc20b72a42a1916e69d92052000fb7051a427ebb1bc72a69207dc1"
+        },
+        {
+          "path": "joiner-epoch-13-avg-2-chunk-16-left-64.onnx",
+          "bytes": 338154,
+          "sha256": "76f7a24ed0c08633af14b2ee377f747af880d3b65eeba2cd3f31f3380fb73e8d"
+        },
+        {
+          "path": "joiner-epoch-13-avg-2-chunk-8-left-64.int8.onnx",
+          "bytes": 86629,
+          "sha256": "190d4067b4cc20b72a42a1916e69d92052000fb7051a427ebb1bc72a69207dc1"
+        },
+        {
+          "path": "joiner-epoch-13-avg-2-chunk-8-left-64.onnx",
+          "bytes": 338154,
+          "sha256": "76f7a24ed0c08633af14b2ee377f747af880d3b65eeba2cd3f31f3380fb73e8d"
+        },
+        {
+          "path": "motioncontrol_keywords/command_keywords.txt",
+          "bytes": 1945,
+          "sha256": "e0efb4eedf91964f2339f470965bd6de94cc1d52283625d3f7d5e4b3362ed248"
+        },
+        {
+          "path": "motioncontrol_keywords/wake_keywords.txt",
+          "bytes": 32,
+          "sha256": "c1222a2d54a4e250f43dd1e03cdc31bc11c6763ebcb8d7c198b99b52754f63be"
+        },
+        {
+          "path": "motioncontrol_keywords/wake_only_keywords.txt",
+          "bytes": 32,
+          "sha256": "c1222a2d54a4e250f43dd1e03cdc31bc11c6763ebcb8d7c198b99b52754f63be"
+        },
+        {
+          "path": "test_wavs/en_0.wav",
+          "bytes": 212044,
+          "sha256": "6bc58a4efdf20daac252b6b1502632601a71efe0308f6757dc1eda34891a7e4f"
+        },
+        {
+          "path": "test_wavs/en_1.wav",
+          "bytes": 534924,
+          "sha256": "5143a6ba93c4b274e2c4ac22deb75c2c48936c853f0519add1de828b6c79cc5a"
+        },
+        {
+          "path": "test_wavs/en_trans.txt",
+          "bytes": 367,
+          "sha256": "55ca91f3ee53c324b2f802f63c50cacc8931da846c4aaa35f115680201ff904b"
+        },
+        {
+          "path": "test_wavs/keywords.txt",
+          "bytes": 284,
+          "sha256": "4878b5c2cddd6605d228877a196137e2412f0fcda1af44a524d7265a1547835c"
+        },
+        {
+          "path": "test_wavs/keywords_raw.txt",
+          "bytes": 208,
+          "sha256": "5b1ade36d81417b3479410134a0fb1f3b099b7cac4dea42f6939421902b59d19"
+        },
+        {
+          "path": "test_wavs/zh_0.wav",
+          "bytes": 179646,
+          "sha256": "668bf8df51a10027b84d5d8816a1ce11ae93545538dc05cfe2aa6811d399c250"
+        },
+        {
+          "path": "test_wavs/zh_1.wav",
+          "bytes": 164976,
+          "sha256": "30edbabea84ca4c076f5b43bb44495f436f6711319c32a200d3fc5c67c1fee1d"
+        },
+        {
+          "path": "test_wavs/zh_2.wav",
+          "bytes": 144856,
+          "sha256": "04a579c23bdd6de049814f1cbfb470d735d7747ba37eb0a92d813c89da942706"
+        },
+        {
+          "path": "test_wavs/zh_3.wav",
+          "bytes": 257006,
+          "sha256": "710e79fb3450042be50bb2f6432a2a549b53577aea041a577e53a926fcabb614"
+        },
+        {
+          "path": "test_wavs/zh_4.wav",
+          "bytes": 147216,
+          "sha256": "d46ca3a2ce52b5059f3d84e2cfdc62907e8579faa7078b1becaea614dd41b35d"
+        },
+        {
+          "path": "test_wavs/zh_5.wav",
+          "bytes": 132938,
+          "sha256": "55321b6d1ab4bd9a16928957a52cf943b2ae864543cca7f39e9844b4889e9bb8"
+        },
+        {
+          "path": "test_wavs/zh_6.wav",
+          "bytes": 113518,
+          "sha256": "f5da5689f1960431a53855d7fbe78c9ab0b73e5495ffba631cd43458225d9039"
+        },
+        {
+          "path": "tokens.txt",
+          "bytes": 1928,
+          "sha256": "2d3f32311f9b692b964da3c90e830258d3e78e013cb0c992dbfb15cd5a1a71b0"
+        }
+      ]
+    }
+  },
+  "packages": {
+    "vosk": {
+      "version": "0.3.45",
+      "metadata_license": "UNKNOWN",
+      "files_count": 21,
+      "location": "F:\\VoiceRobustnessV1-trial-312\\site-packages313"
+    },
+    "sherpa-onnx": {
+      "version": "1.13.5",
+      "metadata_license": "Apache licensed, as found in the LICENSE file",
+      "files_count": 23,
+      "location": "F:\\VoiceRobustnessV1-trial-312\\site-packages313"
+    },
+    "sherpa-onnx-core": {
+      "version": "1.13.5",
+      "metadata_license": "Apache-2.0",
+      "files_count": 16,
+      "location": "F:\\VoiceRobustnessV1-trial-312\\site-packages313"
+    },
+    "numpy": {
+      "version": "2.4.4",
+      "metadata_license": "",
+      "files_count": 1340,
+      "location": "F:\\VoiceRobustnessV1-trial-312\\site-packages313"
+    },
+    "cffi": {
+      "version": "2.1.1",
+      "metadata_license": "",
+      "files_count": 52,
+      "location": "F:\\VoiceRobustnessV1-trial-312\\site-packages313"
+    }
+  },
+  "candidate_defs": [
+    {
+      "id": "sherpa_phrase_kws_current",
+      "evaluated": true,
+      "source": "production sherpa_phrase_kws.py + generated keyword map"
+    },
+    {
+      "id": "vosk_constrained",
+      "evaluated": true,
+      "source": "Vosk KaldiRecognizer grammar"
+    },
+    {
+      "id": "vosk_open",
+      "evaluated": true,
+      "source": "Vosk KaldiRecognizer open vocabulary"
+    },
+    {
+      "id": "sherpa_general_asr",
+      "evaluated": false,
+      "reason": "no separate local Chinese ASR model selected/downloaded"
+    },
+    {
+      "id": "whisper_cpp",
+      "evaluated": false,
+      "reason": "no local binary and Chinese model available for this run"
+    }
+  ],
+  "conditions": {
+    "clean_levels_dbfs": [
+      -6,
+      -18,
+      -30
+    ],
+    "noise_types": [
+      "white",
+      "pink",
+      "fan"
+    ],
+    "snr_db": [
+      20,
+      10,
+      5,
+      0
+    ],
+    "preprocessing": [
+      "raw"
+    ],
+    "noise_scope": "items marked stress in tts_manifest",
+    "noise_seed": "sha256(item_id|voice_id|noise_type|snr_db) first 32 bits"
+  },
+  "mapping_sources": {
+    "current_full_phrase": "F:\\MotionControl-App\\config\\generated_voice\\voice_action_map.json",
+    "legacy_synonyms": "F:\\MotionControl-App\\config\\voice_mappings.json"
+  },
+  "counts": {
+    "speech_clips": 12,
+    "cases": 159,
+    "conditions": 15,
+    "successful_candidates": 3,
+    "prediction_rows": 477,
+    "candidate_errors": 0,
+    "clean_positive_cases": 54,
+    "noise_cases": 369
+  },
+  "candidate_errors": [],
+  "resources": [
+    {
+      "candidate": "sherpa_phrase_kws_current",
+      "label": "当前 Sherpa 全短语 KWS",
+      "model": {
+        "path": "F:\\MotionControl-App\\models\\sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20",
+        "bytes": 40744741,
+        "sha256": "e81b6ca82c82bd905b1d235d2680fa0cc7c5a3c90cbcd013878584bf7581c409",
+        "files": [
+          {
+            "path": "decoder-epoch-13-avg-2-chunk-16-left-64.onnx",
+            "bytes": 759829,
+            "sha256": "63a22dd60f40fff082ac3e09afa507f6787da36df76ded2fbe145fa233e22c21"
+          },
+          {
+            "path": "decoder-epoch-13-avg-2-chunk-8-left-64.onnx",
+            "bytes": 759829,
+            "sha256": "63a22dd60f40fff082ac3e09afa507f6787da36df76ded2fbe145fa233e22c21"
+          },
+          {
+            "path": "en.phone",
+            "bytes": 3330061,
+            "sha256": "f7000ec3a90544c0c7c16090d8951779c2b322e14dad5006290f498567d439ea"
+          },
+          {
+            "path": "encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx",
+            "bytes": 4599656,
+            "sha256": "408bbd740838c42d5bf6d1c5b80b3c88b616c7860b92d980328b5b068c76ae48"
+          },
+          {
+            "path": "encoder-epoch-13-avg-2-chunk-16-left-64.onnx",
+            "bytes": 11976272,
+            "sha256": "540ff509ed89bd22afe04bf7049a54bb1c95c6d8a18742ea9691910cdb5f859e"
+          },
+          {
+            "path": "encoder-epoch-13-avg-2-chunk-8-left-64.int8.onnx",
+            "bytes": 4600657,
+            "sha256": "2ca84d6bfe73e1ea3c9c49f600f7cad1c9ddd423c53c906b8bfe802444dd78d5"
+          },
+          {
+            "path": "encoder-epoch-13-avg-2-chunk-8-left-64.onnx",
+            "bytes": 11976951,
+            "sha256": "307e2f5e87e9d6df4fd058239f4437b6236db7699b9c61decb490f89fb4226d0"
+          },
+          {
+            "path": "joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx",
+            "bytes": 86629,
+            "sha256": "190d4067b4cc20b72a42a1916e69d92052000fb7051a427ebb1bc72a69207dc1"
+          },
+          {
+            "path": "joiner-epoch-13-avg-2-chunk-16-left-64.onnx",
+            "bytes": 338154,
+            "sha256": "76f7a24ed0c08633af14b2ee377f747af880d3b65eeba2cd3f31f3380fb73e8d"
+          },
+          {
+            "path": "joiner-epoch-13-avg-2-chunk-8-left-64.int8.onnx",
+            "bytes": 86629,
+            "sha256": "190d4067b4cc20b72a42a1916e69d92052000fb7051a427ebb1bc72a69207dc1"
+          },
+          {
+            "path": "joiner-epoch-13-avg-2-chunk-8-left-64.onnx",
+            "bytes": 338154,
+            "sha256": "76f7a24ed0c08633af14b2ee377f747af880d3b65eeba2cd3f31f3380fb73e8d"
+          },
+          {
+            "path": "motioncontrol_keywords/command_keywords.txt",
+            "bytes": 1945,
+            "sha256": "e0efb4eedf91964f2339f470965bd6de94cc1d52283625d3f7d5e4b3362ed248"
+          },
+          {
+            "path": "motioncontrol_keywords/wake_keywords.txt",
+            "bytes": 32,
+            "sha256": "c1222a2d54a4e250f43dd1e03cdc31bc11c6763ebcb8d7c198b99b52754f63be"
+          },
+          {
+            "path": "motioncontrol_keywords/wake_only_keywords.txt",
+            "bytes": 32,
+            "sha256": "c1222a2d54a4e250f43dd1e03cdc31bc11c6763ebcb8d7c198b99b52754f63be"
+          },
+          {
+            "path": "test_wavs/en_0.wav",
+            "bytes": 212044,
+            "sha256": "6bc58a4efdf20daac252b6b1502632601a71efe0308f6757dc1eda34891a7e4f"
+          },
+          {
+            "path": "test_wavs/en_1.wav",
+            "bytes": 534924,
+            "sha256": "5143a6ba93c4b274e2c4ac22deb75c2c48936c853f0519add1de828b6c79cc5a"
+          },
+          {
+            "path": "test_wavs/en_trans.txt",
+            "bytes": 367,
+            "sha256": "55ca91f3ee53c324b2f802f63c50cacc8931da846c4aaa35f115680201ff904b"
+          },
+          {
+            "path": "test_wavs/keywords.txt",
+            "bytes": 284,
+            "sha256": "4878b5c2cddd6605d228877a196137e2412f0fcda1af44a524d7265a1547835c"
+          },
+          {
+            "path": "test_wavs/keywords_raw.txt",
+            "bytes": 208,
+            "sha256": "5b1ade36d81417b3479410134a0fb1f3b099b7cac4dea42f6939421902b59d19"
+          },
+          {
+            "path": "test_wavs/zh_0.wav",
+            "bytes": 179646,
+            "sha256": "668bf8df51a10027b84d5d8816a1ce11ae93545538dc05cfe2aa6811d399c250"
+          },
+          {
+            "path": "test_wavs/zh_1.wav",
+            "bytes": 164976,
+            "sha256": "30edbabea84ca4c076f5b43bb44495f436f6711319c32a200d3fc5c67c1fee1d"
+          },
+          {
+            "path": "test_wavs/zh_2.wav",
+            "bytes": 144856,
+            "sha256": "04a579c23bdd6de049814f1cbfb470d735d7747ba37eb0a92d813c89da942706"
+          },
+          {
+            "path": "test_wavs/zh_3.wav",
+            "bytes": 257006,
+            "sha256": "710e79fb3450042be50bb2f6432a2a549b53577aea041a577e53a926fcabb614"
+          },
+          {
+            "path": "test_wavs/zh_4.wav",
+            "bytes": 147216,
+            "sha256": "d46ca3a2ce52b5059f3d84e2cfdc62907e8579faa7078b1becaea614dd41b35d"
+          },
+          {
+            "path": "test_wavs/zh_5.wav",
+            "bytes": 132938,
+            "sha256": "55321b6d1ab4bd9a16928957a52cf943b2ae864543cca7f39e9844b4889e9bb8"
+          },
+          {
+            "path": "test_wavs/zh_6.wav",
+            "bytes": 113518,
+            "sha256": "f5da5689f1960431a53855d7fbe78c9ab0b73e5495ffba631cd43458225d9039"
+          },
+          {
+            "path": "tokens.txt",
+            "bytes": 1928,
+            "sha256": "2d3f32311f9b692b964da3c90e830258d3e78e013cb0c992dbfb15cd5a1a71b0"
+          }
+        ]
+      },
+      "load_ms": 730.3250999975717,
+      "rss_before_bytes": 61153280,
+      "rss_after_bytes": 108646400,
+      "rss_delta_bytes": 47493120
+    },
+    {
+      "candidate": "vosk_constrained",
+      "label": "Vosk 受限词表",
+      "model": {
+        "path": "F:\\MotionControl-App\\models\\vosk-model-small-cn-0.22",
+        "bytes": 68292271,
+        "sha256": "db67e7419f1ca224989e773d411f0dc85ac7c6cce7aedd6c92293fa6e2a1528e",
+        "files": [
+          {
+            "path": "am/final.mdl",
+            "bytes": 15901896,
+            "sha256": "91eda2c04c4f599361cb92b0e5298ccdf6b3c7a1fa52bfcefcd2c4e07aa1c131"
+          },
+          {
+            "path": "conf/mfcc.conf",
+            "bytes": 153,
+            "sha256": "6c326fea5741c2d78be12f76eb1b36ea2ace040da9e355e4cfe6bb80e5f7d5ab"
+          },
+          {
+            "path": "conf/model.conf",
+            "bytes": 289,
+            "sha256": "468a8125c07530f96adcc219a0a5f993e8e0721ccf18acbd3169b77fc685fb9b"
+          },
+          {
+            "path": "graph/disambig_tid.int",
+            "bytes": 234,
+            "sha256": "c9200318c2a265549ebfbea7e0176fa62e131e953abd140c9b0b39fe61e24015"
+          },
+          {
+            "path": "graph/Gr.fst",
+            "bytes": 26082259,
+            "sha256": "46d41a9b1723abccdcb354d731a5b58d87c060100d88ada1a3e31220f52b0434"
+          },
+          {
+            "path": "graph/HCLr.fst",
+            "bytes": 16158762,
+            "sha256": "798af0d9ba6f2d727747f58e1e7b2305f8618bc8ea7f6c51beecd8a2c965b965"
+          },
+          {
+            "path": "graph/phones/word_boundary.int",
+            "bytes": 7161,
+            "sha256": "11ca784b99f03188b451fb54714c2de3dd694e662a5f88e82df435c2789b9aec"
+          },
+          {
+            "path": "ivector/final.dubm",
+            "bytes": 168048,
+            "sha256": "e33276cbd548c0a03ae5812c98115940614997dff23a6d59968af6eaf7630ff8"
+          },
+          {
+            "path": "ivector/final.ie",
+            "bytes": 9927287,
+            "sha256": "c39d46fbff04efb7baa9660ae7a728b0e2f35a4a1250b56ed3a599e26956df86"
+          },
+          {
+            "path": "ivector/final.mat",
+            "bytes": 44975,
+            "sha256": "42706d88818070ea0d0182b4d11367ba52a13b9a2be45630f60858a422109ada"
+          },
+          {
+            "path": "ivector/global_cmvn.stats",
+            "bytes": 1090,
+            "sha256": "b267dc89c1556fdd5bc358f0a480929da1743eeccfa06a67daf8db629ca336bb"
+          },
+          {
+            "path": "ivector/online_cmvn.conf",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "ivector/splice.conf",
+            "bytes": 35,
+            "sha256": "9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756"
+          },
+          {
+            "path": "README",
+            "bytes": 82,
+            "sha256": "7362be411c609f2a1c9d2dfe22c2d72555c15eb90bfe47c41772f49ef94840ce"
+          }
+        ]
+      },
+      "load_ms": 599.8865000001388,
+      "rss_before_bytes": 88616960,
+      "rss_after_bytes": 210583552,
+      "rss_delta_bytes": 121966592
+    },
+    {
+      "candidate": "vosk_open",
+      "label": "Vosk 开放识别",
+      "model": {
+        "path": "F:\\MotionControl-App\\models\\vosk-model-small-cn-0.22",
+        "bytes": 68292271,
+        "sha256": "db67e7419f1ca224989e773d411f0dc85ac7c6cce7aedd6c92293fa6e2a1528e",
+        "files": [
+          {
+            "path": "am/final.mdl",
+            "bytes": 15901896,
+            "sha256": "91eda2c04c4f599361cb92b0e5298ccdf6b3c7a1fa52bfcefcd2c4e07aa1c131"
+          },
+          {
+            "path": "conf/mfcc.conf",
+            "bytes": 153,
+            "sha256": "6c326fea5741c2d78be12f76eb1b36ea2ace040da9e355e4cfe6bb80e5f7d5ab"
+          },
+          {
+            "path": "conf/model.conf",
+            "bytes": 289,
+            "sha256": "468a8125c07530f96adcc219a0a5f993e8e0721ccf18acbd3169b77fc685fb9b"
+          },
+          {
+            "path": "graph/disambig_tid.int",
+            "bytes": 234,
+            "sha256": "c9200318c2a265549ebfbea7e0176fa62e131e953abd140c9b0b39fe61e24015"
+          },
+          {
+            "path": "graph/Gr.fst",
+            "bytes": 26082259,
+            "sha256": "46d41a9b1723abccdcb354d731a5b58d87c060100d88ada1a3e31220f52b0434"
+          },
+          {
+            "path": "graph/HCLr.fst",
+            "bytes": 16158762,
+            "sha256": "798af0d9ba6f2d727747f58e1e7b2305f8618bc8ea7f6c51beecd8a2c965b965"
+          },
+          {
+            "path": "graph/phones/word_boundary.int",
+            "bytes": 7161,
+            "sha256": "11ca784b99f03188b451fb54714c2de3dd694e662a5f88e82df435c2789b9aec"
+          },
+          {
+            "path": "ivector/final.dubm",
+            "bytes": 168048,
+            "sha256": "e33276cbd548c0a03ae5812c98115940614997dff23a6d59968af6eaf7630ff8"
+          },
+          {
+            "path": "ivector/final.ie",
+            "bytes": 9927287,
+            "sha256": "c39d46fbff04efb7baa9660ae7a728b0e2f35a4a1250b56ed3a599e26956df86"
+          },
+          {
+            "path": "ivector/final.mat",
+            "bytes": 44975,
+            "sha256": "42706d88818070ea0d0182b4d11367ba52a13b9a2be45630f60858a422109ada"
+          },
+          {
+            "path": "ivector/global_cmvn.stats",
+            "bytes": 1090,
+            "sha256": "b267dc89c1556fdd5bc358f0a480929da1743eeccfa06a67daf8db629ca336bb"
+          },
+          {
+            "path": "ivector/online_cmvn.conf",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "ivector/splice.conf",
+            "bytes": 35,
+            "sha256": "9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756"
+          },
+          {
+            "path": "README",
+            "bytes": 82,
+            "sha256": "7362be411c609f2a1c9d2dfe22c2d72555c15eb90bfe47c41772f49ef94840ce"
+          }
+        ]
+      },
+      "load_ms": 301.3595999946119,
+      "rss_before_bytes": 35803136,
+      "rss_after_bytes": 148258816,
+      "rss_delta_bytes": 112455680
+    }
+  ],
+  "run_timings": [
+    {
+      "candidate": "sherpa_phrase_kws_current",
+      "preprocessing": "raw",
+      "wall_ms": 3732.2914999967907,
+      "cpu_ms": 14625.0,
+      "cases": 159
+    },
+    {
+      "candidate": "vosk_constrained",
+      "preprocessing": "raw",
+      "wall_ms": 5960.621699996409,
+      "cpu_ms": 5875.0,
+      "cases": 159
+    },
+    {
+      "candidate": "vosk_open",
+      "preprocessing": "raw",
+      "wall_ms": 138532.17210000003,
+      "cpu_ms": 136234.375,
+      "cases": 159
+    }
+  ],
+  "ranking_policy": {
+    "safety_first_order": [
+      "false_trigger_rate",
+      "emergency_recall",
+      "p95_latency_ms",
+      "positive_intent_accuracy"
+    ],
+    "screening_line": {
+      "false_trigger_rate_max": 0.05,
+      "emergency_recall_min": 0.95,
+      "p95_latency_ms_max": 500
+    },
+    "weighted_score": "0.40*(1-false_trigger_rate)+0.30*emergency_recall+0.20*positive_intent_accuracy+0.10*latency_score"
+  }
+}

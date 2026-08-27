@@ -3,3 +3,11 @@ __pycache__/
 .pytest_cache/
 .model_cache/
 models/
+.playwright-cli/
+.pylibs/
+.venv*/
+backup*/
+*.log
+test_results/**/*.wav
+output/**/*.zip
+output/**/*.log
