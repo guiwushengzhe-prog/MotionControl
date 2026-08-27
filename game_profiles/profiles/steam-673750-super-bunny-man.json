@@ -1,0 +1,84 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-673750-super-bunny-man",
+  "name": "Super Bunny Man",
+  "appid": 673750,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2069481168,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 23970,
+    "lifetime_playtime_seconds": 7109540,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 5,
+    "zone_total": 6,
+    "coverage_ratio": 0.833,
+    "rejected": {
+      "left_bumper": "native Steam action is not directly convertible: controller_action"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 7,
+      "unsupported": 1,
+      "unsupported_reasons": {
+        "left_bumper": "native Steam action is not directly convertible: controller_action"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "左手上区",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "左手下区",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "右手上区",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "右手下区",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "右脚区",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

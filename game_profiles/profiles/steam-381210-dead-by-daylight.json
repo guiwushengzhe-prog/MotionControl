@@ -1,0 +1,82 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-381210-dead-by-daylight",
+  "name": "Dead by Daylight",
+  "appid": 381210,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2125226009,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 437060,
+    "lifetime_playtime_seconds": 175440626,
+    "votes": {
+      "score": 0.4950495,
+      "up": 0,
+      "down": 1
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 5,
+    "zone_total": 6,
+    "coverage_ratio": 0.833,
+    "rejected": {
+      "right_bumper": "binding not found"
+    },
+    "parser": {
+      "count": 6,
+      "supported": 6,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Survivor: Activate Ability",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Survivor: Crouch | Killer: Secondary Power",
+        "action": {
+          "type": "keyboard",
+          "target": "CTRL",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Survivor: Drop Item | Killer: Drop Item",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Survivor: Actions / Secondary Action Skill Check / Hook Struggle | Killer: Interactions Pick Up Item",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Survivor: Run",
+        "action": {
+          "type": "keyboard",
+          "target": "SHIFT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

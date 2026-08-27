@@ -25,6 +25,22 @@ POSE_SOURCE_PREFIX = "mobile_pose:"
 SENSOR_SOURCE_PREFIX = "mobile_sensor:"
 VOICE_SOURCE_PREFIX = "mobile_voice:"
 
+# v0.9.6 mobile camera protocol.  Phones still run MediaPipe locally but no
+# longer send all 33 image landmarks plus 33 world landmarks every frame.
+# Only the 25 Pose landmarks required by the existing PC control algorithms
+# are packed as [x, y, z, visibility] in this fixed order.  The bridge expands
+# them back to a canonical 33-point pose locally so all downstream PC logic
+# remains the single source of truth.
+MOBILE_POSE_FEATURE_INDICES = (
+    0,   # nose
+    2, 3, 5, 6,  # eyes + outer eyes used by scene/head control
+    7, 8, 9, 10,  # ears + mouth
+    11, 12, 13, 14, 15, 16,  # shoulders/elbows/wrists
+    23, 24, 25, 26, 27, 28,  # hips/knees/ankles
+    29, 30, 31, 32,  # heels/foot indices
+)
+MOBILE_POSE_FEATURE_LAYOUT = "mc25-v1"
+
 SENSOR_BUTTON_ALIASES = {
     "A": "A",
     "B": "B",
@@ -209,6 +225,79 @@ def _validate_pose_frame(message: dict) -> None:
         raise ValueError("inference_ms must be >= 0")
 
 
+def _validate_pose_features(message: dict) -> None:
+    if message.get("type") != "pose_features_v1" or message.get("role") != "camera":
+        raise ValueError("pose_features_v1 requires role=camera")
+    if message.get("layout") != MOBILE_POSE_FEATURE_LAYOUT:
+        raise ValueError(f"pose_features_v1 layout must be {MOBILE_POSE_FEATURE_LAYOUT}")
+    if not isinstance(message.get("device_id"), str) or not message["device_id"].strip():
+        raise ValueError("device_id must be a non-empty string")
+    if not _is_int(message.get("sequence")) or message["sequence"] < 0:
+        raise ValueError("sequence must be an integer >= 0")
+    if not _is_number(message.get("captured_at_ms")):
+        raise ValueError("captured_at_ms must be a number")
+    if not all(_is_int(message.get(name)) and message[name] > 0 for name in ("width", "height")):
+        raise ValueError("width and height must be positive integers")
+    if message.get("camera_facing") not in {"user", "environment"}:
+        raise ValueError("camera_facing must be user or environment")
+    if not isinstance(message.get("preview_mirrored"), bool) or not isinstance(message.get("coordinates_mirrored"), bool):
+        raise ValueError("mirror flags must be boolean")
+    points = message.get("points")
+    if not isinstance(points, list) or len(points) not in {0, len(MOBILE_POSE_FEATURE_INDICES)}:
+        raise ValueError(f"points must contain 0 or {len(MOBILE_POSE_FEATURE_INDICES)} packed landmarks")
+    for point in points:
+        if not isinstance(point, list) or len(point) != 4 or not all(_is_number(v) for v in point):
+            raise ValueError("each packed point must be [x,y,z,visibility]")
+        x, y, z, visibility = map(float, point)
+        if max(abs(x), abs(y), abs(z)) > LANDMARK_COORDINATE_ABS_LIMIT:
+            raise ValueError("packed pose coordinate exceeds safety limit")
+        if not 0.0 <= visibility <= 1.0:
+            raise ValueError("packed pose visibility must be in [0,1]")
+    if not _is_number(message.get("inference_ms", 0)) or float(message.get("inference_ms", 0)) < 0:
+        raise ValueError("inference_ms must be >= 0")
+
+
+def _expand_pose_features(message: dict) -> dict:
+    """Expand mc25-v1 into the canonical pose_frame_v2 representation.
+
+    This conversion happens only inside the PC process.  Omitted finger and
+    inner-eye landmarks are present with zero visibility so existing renderers
+    and algorithms can continue consuming a 33-landmark frame unchanged.
+    """
+    _validate_pose_features(message)
+    packed = message.get("points") or []
+    poses = []
+    if packed:
+        full = [{"x": 0.0, "y": 0.0, "z": 0.0, "visibility": 0.0} for _ in range(33)]
+        for index, values in zip(MOBILE_POSE_FEATURE_INDICES, packed):
+            full[index] = {
+                "x": float(values[0]), "y": float(values[1]),
+                "z": float(values[2]), "visibility": float(values[3]),
+            }
+        poses = [{"detection_id": None, "pose": full, "world_pose": None}]
+    return {
+        "type": "pose_frame_v2",
+        "role": "camera",
+        "device_id": message["device_id"],
+        "sequence": int(message["sequence"]),
+        "captured_at_ms": float(message["captured_at_ms"]),
+        "sent_at_ms": float(message.get("sent_at_ms", message["captured_at_ms"])),
+        "width": int(message["width"]),
+        "height": int(message["height"]),
+        "camera_facing": message["camera_facing"],
+        "camera_id": str(message.get("camera_id", "logical")),
+        "orientation_degrees": 0,
+        "preview_mirrored": bool(message["preview_mirrored"]),
+        "coordinates_mirrored": bool(message["coordinates_mirrored"]),
+        "actual_model": str(message.get("actual_model", "")),
+        "voice_state": str(message.get("voice_state", "not_connected")),
+        "poses": poses,
+        "hands": [],
+        "inference_ms": float(message.get("inference_ms", 0.0)),
+        "wire_protocol": "pose_features_v1",
+    }
+
+
 def _validate_voice_text(message: dict) -> None:
     if message.get("type") != "voice_text" or message.get("role") != "camera":
         raise ValueError("voice_text requires role=camera")
@@ -323,6 +412,7 @@ class InputBridge:
         self.kernel = kernel
         self._voice_service = voice
         self._scene_snapshot_handler = None
+        self._control_config_provider = None
         self._lock = threading.RLock()
         self._peers: set[WebSocketPeer] = set()
         self._source_peers: dict[str, WebSocketPeer] = {}
@@ -354,6 +444,43 @@ class InputBridge:
     def configure_scene_snapshot_handler(self, handler) -> None:
         with self._lock:
             self._scene_snapshot_handler = handler
+
+    def configure_control_config_provider(self, provider) -> None:
+        """Provide the current PC-authoritative game/Zone configuration to phones."""
+        with self._lock:
+            self._control_config_provider = provider
+
+    def _control_config_snapshot(self) -> dict | None:
+        with self._lock:
+            provider = self._control_config_provider
+        if provider is None:
+            return None
+        try:
+            payload = provider()
+            return dict(payload) if isinstance(payload, dict) else None
+        except Exception:
+            return None
+
+    def broadcast_control_config(self, payload: dict | None = None) -> dict:
+        """Push profile + fixed Zone data to connected phone clients.
+
+        The PC remains authoritative; phones cache this only for display/UX and
+        never re-decide mappings locally.
+        """
+        message = dict(payload) if isinstance(payload, dict) else self._control_config_snapshot()
+        if not message:
+            return {"sent": 0}
+        message.setdefault("type", "control_config_v1")
+        with self._lock:
+            peers = [peer for peer in self._peers if not peer.desktop]
+        sent = 0
+        for peer in peers:
+            try:
+                peer.send_json(message)
+                sent += 1
+            except (ConnectionError, OSError):
+                self.disconnect(peer)
+        return {"sent": sent}
 
     def request_scene_snapshot(self, purpose: str) -> dict:
         purpose = str(purpose or "capture").strip().lower()
@@ -558,6 +685,14 @@ class InputBridge:
             self._peers.add(peer)
             cached = self._latest_pose
             active_source = self._active_pose_source
+        if not peer.desktop:
+            config = self._control_config_snapshot()
+            if config:
+                try:
+                    peer.send_json(config)
+                except (ConnectionError, OSError):
+                    self.disconnect(peer)
+                    return
         if peer.desktop and active_source:
             try:
                 peer.send_json({
@@ -706,6 +841,11 @@ class InputBridge:
         self._broadcast_pose(forwarded)
         self._accept_input(peer)
 
+    def _handle_pose_features(self, peer: WebSocketPeer, message: dict) -> None:
+        # Keep exactly one downstream control path: compact phone payloads are
+        # expanded locally and then pass through the existing pose handler.
+        self._handle_pose(peer, _expand_pose_features(message))
+
     def _handle_sensor(self, peer: WebSocketPeer, message: dict) -> None:
         buttons, left_trigger, right_trigger, stick_x, stick_y, player_slot = _validate_sensor_frame(message)
         device_id = message["device_id"].strip()
@@ -786,7 +926,7 @@ class InputBridge:
             self._send_error(peer, str(exc))
 
     def _handle_voice_command(self, peer: WebSocketPeer, message: dict) -> None:
-        """v0.9.4: phone sends voice_command with command_id + phrase directly."""
+        """v0.9.6: phone normally sends only stable command_id; phrase is optional compatibility metadata."""
         if self.kernel is not None and self._body_mode != "phone":
             self._send_error(peer, "voice_command 仅在手机身体源激活时有效")
             return
@@ -875,6 +1015,8 @@ class InputBridge:
                 peer.send_json({"type": "clock_sync", "client_sent_ms": message["client_sent_ms"], "server_ms": round(time.time() * 1000)})
             elif message_type == "pose_frame_v2":
                 self._handle_pose(peer, message)
+            elif message_type == "pose_features_v1":
+                self._handle_pose_features(peer, message)
             elif message_type == "sensor_frame":
                 self._handle_sensor(peer, message)
             elif message_type == "voice_text":

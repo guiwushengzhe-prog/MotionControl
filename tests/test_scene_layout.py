@@ -162,11 +162,14 @@ def test_fixed_gate_enables_right_wrist_vertical_but_head_only_drives_x():
         _prepare_v093_head_for_scene_test(kernel)
         neutral = pose()
         neutral["right_wrist"]["y"] = 0.62
-        for _ in range(2):
+        for _ in range(6):
             state = kernel.handle_pose_map("test", neutral, width=640, height=480)
         assert state["head"]["vertical_gate_active"] is True
+        assert state["head"]["vertical_wrist_anchor_rel_y"] is not None
+        assert state["head"]["output_x"] == 0.0
         neutral["right_wrist"]["y"] = 0.76
-        state = kernel.handle_pose_map("test", neutral, width=640, height=480)
+        for _ in range(3):
+            state = kernel.handle_pose_map("test", neutral, width=640, height=480)
         assert state["head"]["output_y"] > 0
         # Move the left wrist out of the gate; vertical output decays toward zero.
         neutral["left_wrist"]["x"] = 0.05
@@ -267,5 +270,37 @@ def test_recommended_seven_zones_do_not_trigger_at_rest_and_use_intended_limbs()
             for _ in range(2):
                 state = kernel.handle_pose_map("test", p, width=640, height=480)
             assert button in state["buttons"], (zone_id, point_name, state["buttons"])
+    finally:
+        kernel.close()
+
+
+def test_first_run_without_saved_scene_exposes_and_arms_provisional_seventh_gate():
+    output = FakeOutput()
+    kernel = ControlKernel(output)
+    try:
+        _prepare_v093_head_for_scene_test(kernel)
+        base = pose()
+        state = kernel.handle_pose_map("first-run", base, width=640, height=480)
+        assert state["scene_mode"] == "body_relative_provisional"
+        assert set(state["zones"]) == {
+            "leftHandUpper", "leftHandLower", "rightHandUpper", "rightHandLower",
+            "leftFoot", "rightFoot", "lookGate",
+        }
+        gate = state["zones"]["lookGate"]["rect"]
+        assert gate and gate["x1"] < gate["x2"] and gate["y1"] < gate["y2"]
+
+        armed = pose()
+        armed["left_wrist"]["x"] = (gate["x1"] + gate["x2"]) / 2.0
+        armed["left_wrist"]["y"] = (gate["y1"] + gate["y2"]) / 2.0
+        armed["right_wrist"]["y"] = 0.50
+        for _ in range(6):
+            state = kernel.handle_pose_map("first-run", armed, width=640, height=480)
+        assert state["vertical_gate_active"] is True
+        assert state["head"]["vertical_wrist_anchor_rel_y"] is not None
+
+        armed["right_wrist"]["y"] = 0.70
+        for _ in range(3):
+            state = kernel.handle_pose_map("first-run", armed, width=640, height=480)
+        assert state["head"]["output_y"] > 0.0
     finally:
         kernel.close()

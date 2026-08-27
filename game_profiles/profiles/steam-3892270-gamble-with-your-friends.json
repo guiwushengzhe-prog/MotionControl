@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-3892270-gamble-with-your-friends",
+  "name": "Gamble With Your Friends",
+  "appid": 3892270,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3717893984,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "Gamble With Your Friends",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 216728366,
+    "votes": {
+      "score": 0.48387095,
+      "up": 10,
+      "down": 14
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Flashlight, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Reload, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Use, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "V",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Previous Weapon, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_DOWN",
+          "behavior": "tap"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

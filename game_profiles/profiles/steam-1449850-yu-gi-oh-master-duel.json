@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1449850-yu-gi-oh-master-duel",
+  "name": "Yu-Gi-Oh! Master Duel",
+  "appid": 1449850,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2728599928,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "Yu-Gi-Oh! Master Duel Controller (Alpha)",
+    "subscriptions": 167253,
+    "lifetime_playtime_seconds": 14241126744,
+    "votes": {
+      "score": 0.53846157,
+      "up": 97,
+      "down": 76
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Search (shop)",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "X (N/A)",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Back",
+        "action": {
+          "type": "mouse_button",
+          "target": "RIGHT",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Select",
+        "action": {
+          "type": "mouse_button",
+          "target": "LEFT",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Shop Menu Left",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Shop Menu Right",
+        "action": {
+          "type": "gamepad",
+          "target": "RB",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

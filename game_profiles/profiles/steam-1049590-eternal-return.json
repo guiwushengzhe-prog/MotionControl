@@ -1,0 +1,82 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1049590-eternal-return",
+  "name": "Eternal Return",
+  "appid": 1049590,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2393277503,
+    "controller_type": "controller_steamcontroller_gordon",
+    "controller_type_nice": "Steam Controller (2015)",
+    "layout_title": "[notNSANE] Eternal Return: Black Survival",
+    "subscriptions": 484,
+    "lifetime_playtime_seconds": 89438833,
+    "votes": {
+      "score": 0.54545456,
+      "up": 34,
+      "down": 20
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 5,
+    "zone_total": 6,
+    "coverage_ratio": 0.833,
+    "rejected": {
+      "left_bumper": "unsupported keyboard target: SEMICOLON"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Camera Type",
+        "action": {
+          "type": "keyboard",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Mastery",
+        "action": {
+          "type": "keyboard",
+          "target": "V",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Craft",
+        "action": {
+          "type": "keyboard",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Character Stats",
+        "action": {
+          "type": "keyboard",
+          "target": "C",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Rest",
+        "action": {
+          "type": "keyboard",
+          "target": "X",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

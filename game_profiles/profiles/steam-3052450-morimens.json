@@ -1,0 +1,75 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-3052450-morimens",
+  "name": "Morimens",
+  "appid": 3052450,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3399906600,
+    "controller_type": "controller_generic",
+    "controller_type_nice": "Generic",
+    "layout_title": "Morimens Keyboard (WASD) and Mouse",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 3689478,
+    "votes": {
+      "score": 0.50980395,
+      "up": 2,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 4,
+    "zone_total": 6,
+    "coverage_ratio": 0.667,
+    "rejected": {
+      "left_bumper": "binding not found",
+      "right_bumper": "binding not found"
+    },
+    "parser": {
+      "count": 5,
+      "supported": 5,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "End Turn, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Check Draw Pile, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Use, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Release the poss??, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SHIFT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

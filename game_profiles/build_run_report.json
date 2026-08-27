@@ -1,0 +1,166 @@
+{
+  "schema": "motioncontrol.game_profile_build_run.v1",
+  "generated_at": "2026-08-25T09:25:51.691622+00:00",
+  "batch_usable": 9,
+  "batch_failed": 1,
+  "library_generated_count": 198,
+  "library_count": 199,
+  "target_count": 300,
+  "target_progress": 0.66,
+  "target_met": false,
+  "build_gate": false,
+  "failures": [
+    {
+      "appid": 2285550,
+      "name": "Doloc Town",
+      "reason": "no Steam Input candidates"
+    }
+  ],
+  "run_finished_at": "2026-08-25T09:25:51.696230+00:00",
+  "run_processed": 220,
+  "run_usable": 192,
+  "run_failed": 28,
+  "run_skipped_existing": 6,
+  "run_failures": [
+    {
+      "appid": 3859630,
+      "name": "METAL GEAR SOLID: MASTER COLLECTION Vol.2",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 4435490,
+      "name": "Call of Duty®: Modern Warfare® 4",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2638890,
+      "name": "Onimusha: Way of the Sword",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2111630,
+      "name": "JR EAST Train Simulator",
+      "reason": "file 3462438702: only 0/6 zones convertible; file 3678350210: only 0/6 zones convertible; file 3561720301: only 0/6 zones convertible; file 3610169484: only 0/6 zones convertible; file 3411694589: only 0/6 zones convertible"
+    },
+    {
+      "appid": 3971650,
+      "name": "Lazy Witch's Factory",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 3994120,
+      "name": "AI Pixel Battle",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2288340,
+      "name": "ACE COMBAT 8: WINGS OF THEVE",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2622380,
+      "name": "ELDEN RING NIGHTREIGN",
+      "reason": "file 3619289052: only 0/6 zones convertible; file 3618581847: only 0/6 zones convertible; file 3651478055: only 0/6 zones convertible; file 3496483915: only 0/6 zones convertible; file 3512353067: only 0/6 zones convertible"
+    },
+    {
+      "appid": 2075800,
+      "name": "STAR WARS Zero Company™",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 4080220,
+      "name": "EA SPORTS FC™ 27",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 4611990,
+      "name": "日本事故物件監視協会3 -Japan Stigmatized Property-",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2836990,
+      "name": "Drunken Rogue",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2172910,
+      "name": "CAPTAIN TSUBASA 2: WORLD FIGHTERS",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 4356430,
+      "name": "NBA 2K27",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 688130,
+      "name": "Pogostuck: Rage With Your Friends",
+      "reason": "file 2545108016: only 0/6 zones convertible; file 2240002997: only 0/6 zones convertible; file 2349051325: only 0/6 zones convertible; file 2181796243: only 0/6 zones convertible; file 3036473347: only 1/6 zones convertible"
+    },
+    {
+      "appid": 3751260,
+      "name": "The Blood of Dawnwalker",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 4315040,
+      "name": "Hearth and Hamlet",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 3271000,
+      "name": "SEGA FOOTBALL CLUB CHAMPIONS",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 4830660,
+      "name": "Tsugunohi -The Thread That Beckons to Heaven-",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 3966510,
+      "name": "Feed the Scorchpot",
+      "reason": "file 3633590511: only 0/6 zones convertible"
+    },
+    {
+      "appid": 1888160,
+      "name": "ARMORED CORE™ VI FIRES OF RUBICON™",
+      "reason": "file 3025255012: only 0/6 zones convertible; file 3367217974: only 0/6 zones convertible; file 3030836717: only 0/6 zones convertible; file 3025759974: only 0/6 zones convertible; file 3030771877: only 0/6 zones convertible"
+    },
+    {
+      "appid": 4486870,
+      "name": "FEED THE AI",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2302530,
+      "name": "MementoMori",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 3681610,
+      "name": "DRAGON QUEST MONSTERS: The Withered World",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 3795900,
+      "name": "FRONT MISSION 3: Remake",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 4928820,
+      "name": "Shelve the Potions!",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2800630,
+      "name": "The Smurfs - Village Party",
+      "reason": "no Steam Input candidates"
+    },
+    {
+      "appid": 2285550,
+      "name": "Doloc Town",
+      "reason": "no Steam Input candidates"
+    }
+  ]
+}

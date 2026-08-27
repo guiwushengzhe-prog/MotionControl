@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2688950-planet-coaster-2",
+  "name": "Planet Coaster 2",
+  "appid": 2688950,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3496144222,
+    "controller_type": "controller_steamcontroller_gordon",
+    "controller_type_nice": "Steam Controller (2015)",
+    "layout_title": "planet coaster 2 w/ steam controller",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 1325570,
+    "votes": {
+      "score": 0.4950495,
+      "up": 0,
+      "down": 1
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Advanced Rotate/Move, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Lock to Surface Axes, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "CTRL",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Pause, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Adjust Game Speed, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "O",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Park Management, ,",
+        "action": {
+          "type": "mouse_button",
+          "target": "LEFT",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Rotate, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "Z",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

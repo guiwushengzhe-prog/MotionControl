@@ -1,0 +1,75 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-294100-rimworld",
+  "name": "RimWorld",
+  "appid": 294100,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 771639582,
+    "controller_type": null,
+    "controller_type_nice": null,
+    "layout_title": "Rimworld",
+    "subscriptions": 1250352,
+    "lifetime_playtime_seconds": 7639933704,
+    "votes": {
+      "score": 0.8894432,
+      "up": 5477,
+      "down": 637
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 4,
+    "zone_total": 6,
+    "coverage_ratio": 0.667,
+    "rejected": {
+      "left_bumper": "unsupported keyboard target: COMMA",
+      "right_bumper": "unsupported keyboard target: PERIOD"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Architect tab",
+        "action": {
+          "type": "keyboard",
+          "target": "TAB",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Work tab",
+        "action": {
+          "type": "keyboard",
+          "target": "F1",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Cancel",
+        "action": {
+          "type": "keyboard",
+          "target": "C",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Pause",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

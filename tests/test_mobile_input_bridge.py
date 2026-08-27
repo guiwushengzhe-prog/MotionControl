@@ -1,6 +1,6 @@
 import time
 
-from input_bridge import InputBridge
+from input_bridge import InputBridge, MOBILE_POSE_FEATURE_INDICES, _expand_pose_features
 from output_backend import OutputManager
 
 
@@ -93,6 +93,45 @@ def test_pose_source_is_forwarded_and_only_one_source_is_active():
     finally:
         bridge.close()
 
+
+
+def pose_features(device_id="camera-compact", sequence=0):
+    points = [[0.5, 0.5, 0.0, 0.95] for _ in MOBILE_POSE_FEATURE_INDICES]
+    return {
+        "type": "pose_features_v1", "role": "camera", "layout": "mc25-v1",
+        "device_id": device_id, "sequence": sequence, "captured_at_ms": 1000 + sequence,
+        "width": 480, "height": 854, "camera_facing": "environment",
+        "preview_mirrored": False, "coordinates_mirrored": False,
+        "actual_model": "full", "points": points, "inference_ms": 18.5,
+    }
+
+
+def test_compact_phone_pose_expands_locally_without_world_pose():
+    message = pose_features()
+    expanded = _expand_pose_features(message)
+    assert expanded["type"] == "pose_frame_v2"
+    assert expanded["wire_protocol"] == "pose_features_v1"
+    assert len(expanded["poses"]) == 1
+    pose = expanded["poses"][0]["pose"]
+    assert len(pose) == 33
+    assert expanded["poses"][0]["world_pose"] is None
+    assert all(pose[index]["visibility"] == .95 for index in MOBILE_POSE_FEATURE_INDICES)
+    omitted = set(range(33)) - set(MOBILE_POSE_FEATURE_INDICES)
+    assert all(pose[index]["visibility"] == 0.0 for index in omitted)
+
+    output = FakeOutput()
+    bridge = InputBridge(output)
+    desktop = FakePeer(desktop=True)
+    phone = FakePeer()
+    try:
+        bridge.register(desktop)
+        bridge._handle_pose_features(phone, message)
+        forwarded = [m for m in desktop.messages if m.get("type") == "pose_frame_v2"][-1]
+        assert forwarded["wire_protocol"] == "pose_features_v1"
+        assert forwarded["pose_count"] if "pose_count" in forwarded else True
+        assert bridge.status()["mobile_pose_source_id"] == "mobile_pose:camera-compact"
+    finally:
+        bridge.close()
 
 def test_sensor_frame_drives_button_trigger_and_stick_then_disconnect_zeros():
     output = FakeOutput()

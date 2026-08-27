@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-526870-satisfactory",
+  "name": "Satisfactory",
+  "appid": 526870,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2188499079,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 126256,
+    "lifetime_playtime_seconds": 113706215,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Dismantle",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Weapon Reload / Change Spline Build Mode",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Jump / Vehicle Handbrake",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Interact",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Emote Wheel",
+        "action": {
+          "type": "keyboard",
+          "target": "T",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Resource Scanner / Vehicle Menu",
+        "action": {
+          "type": "keyboard",
+          "target": "V",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

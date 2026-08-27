@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-835570-conqueror-s-blade",
+  "name": "Conqueror's Blade",
+  "appid": 835570,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2868273579,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "Mander",
+    "subscriptions": 13,
+    "lifetime_playtime_seconds": 74520641,
+    "votes": {
+      "score": 0.51304346,
+      "up": 9,
+      "down": 6
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "T",
+        "action": {
+          "type": "keyboard",
+          "target": "T",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "R",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Q",
+        "action": {
+          "type": "keyboard",
+          "target": "Q",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "E",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Use Item",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "RUN",
+        "action": {
+          "type": "keyboard",
+          "target": "SHIFT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

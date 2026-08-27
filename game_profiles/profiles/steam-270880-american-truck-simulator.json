@@ -1,0 +1,75 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-270880-american-truck-simulator",
+  "name": "American Truck Simulator",
+  "appid": 270880,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 1091970461,
+    "controller_type": "controller_ps4",
+    "controller_type_nice": "DualShock 4",
+    "layout_title": "NEStalgic's ATS Control Scheme (Dual Shock 4)",
+    "subscriptions": 4287,
+    "lifetime_playtime_seconds": 237611474,
+    "votes": {
+      "score": 0.6039216,
+      "up": 104,
+      "down": 51
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 4,
+    "zone_total": 6,
+    "coverage_ratio": 0.667,
+    "rejected": {
+      "left_bumper": "unsupported keyboard target: LEFT_BRACKET",
+      "right_bumper": "unsupported keyboard target: RIGHT_BRACKET"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Trailer Attach/Detach",
+        "action": {
+          "type": "keyboard",
+          "target": "T",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Cruise Control",
+        "action": {
+          "type": "keyboard",
+          "target": "C",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Hazard Warning",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Left Click",
+        "action": {
+          "type": "mouse_button",
+          "target": "LEFT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-4282500-hololive-dreams",
+  "name": "hololive Dreams",
+  "appid": 4282500,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3770130341,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "Gamepad Controls for Holodori ",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 112552352,
+    "votes": {
+      "score": 0.5229358,
+      "up": 7,
+      "down": 2
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 7,
+      "unsupported": 1,
+      "unsupported_reasons": {
+        "button_escape": "native Steam action is not directly convertible: controller_action"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Flashlight, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "J",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Reload, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Use, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Previous Weapon, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "D",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Next Weapon, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "K",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

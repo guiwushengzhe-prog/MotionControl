@@ -1,0 +1,2000 @@
+{
+  "schema": "motioncontrol.game_catalog.v1",
+  "count": 199,
+  "games": [
+    {
+      "id": "generic-xbox",
+      "name": "通用 Xbox / 默认",
+      "appid": null,
+      "profile": "profiles/generic-xbox.json",
+      "source": "builtin",
+      "verified": true
+    },
+    {
+      "id": "steam-3768760-007-first-light",
+      "name": "007 First Light",
+      "appid": 3768760,
+      "profile": "profiles/steam-3768760-007-first-light.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-251570-7-days-to-die",
+      "name": "7 Days to Die",
+      "appid": 251570,
+      "profile": "profiles/steam-251570-7-days-to-die.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1336490-against-the-storm",
+      "name": "Against the Storm",
+      "appid": 1336490,
+      "profile": "profiles/steam-1336490-against-the-storm.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-270880-american-truck-simulator",
+      "name": "American Truck Simulator",
+      "appid": 270880,
+      "profile": "profiles/steam-270880-american-truck-simulator.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-1172470-apex-legends",
+      "name": "Apex Legends™",
+      "appid": 1172470,
+      "profile": "profiles/steam-1172470-apex-legends.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2073620-arena-breakout-infinite",
+      "name": "Arena Breakout: Infinite",
+      "appid": 2073620,
+      "profile": "profiles/steam-2073620-arena-breakout-infinite.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2399830-ark-survival-ascended",
+      "name": "ARK: Survival Ascended",
+      "appid": 2399830,
+      "profile": "profiles/steam-2399830-ark-survival-ascended.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-346110-ark-survival-evolved",
+      "name": "ARK: Survival Evolved",
+      "appid": 346110,
+      "profile": "profiles/steam-346110-ark-survival-evolved.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-3751950-assassin-s-creed-black-flag-resynced",
+      "name": "Assassin's Creed Black Flag Resynced",
+      "appid": 3751950,
+      "profile": "profiles/steam-3751950-assassin-s-creed-black-flag-resynced.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2622000-astral-party",
+      "name": "Astral Party",
+      "appid": 2622000,
+      "profile": "profiles/steam-2622000-astral-party.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2807960-battlefield-6",
+      "name": "Battlefield™ 6",
+      "appid": 2807960,
+      "profile": "profiles/steam-2807960-battlefield-6.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2001760-beast-of-reincarnation",
+      "name": "Beast of Reincarnation",
+      "appid": 2001760,
+      "profile": "profiles/steam-2001760-beast-of-reincarnation.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1478500-big-walk",
+      "name": "Big Walk",
+      "appid": 1478500,
+      "profile": "profiles/steam-1478500-big-walk.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-582660-black-desert",
+      "name": "Black Desert",
+      "appid": 582660,
+      "profile": "profiles/steam-582660-black-desert.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2358720-black-myth-wukong",
+      "name": "Black Myth: Wukong",
+      "appid": 2358720,
+      "profile": "profiles/steam-2358720-black-myth-wukong.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false,
+      "priority": true
+    },
+    {
+      "id": "steam-3199170-blood-strike",
+      "name": "Blood Strike",
+      "appid": 3199170,
+      "profile": "profiles/steam-3199170-blood-strike.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2406770-bodycam",
+      "name": "Bodycam",
+      "appid": 2406770,
+      "profile": "profiles/steam-2406770-bodycam.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3595270-call-of-duty-modern-warfare-iii",
+      "name": "Call of Duty®: Modern Warfare® III",
+      "appid": 3595270,
+      "profile": "profiles/steam-3595270-call-of-duty-modern-warfare-iii.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3214610-cinderia",
+      "name": "Cinderia",
+      "appid": 3214610,
+      "profile": "profiles/steam-3214610-cinderia.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-255710-cities-skylines",
+      "name": "Cities: Skylines",
+      "appid": 255710,
+      "profile": "profiles/steam-255710-cities-skylines.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-949230-cities-skylines-ii",
+      "name": "Cities: Skylines II",
+      "appid": 949230,
+      "profile": "profiles/steam-949230-cities-skylines-ii.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-835570-conqueror-s-blade",
+      "name": "Conqueror's Blade",
+      "appid": 835570,
+      "profile": "profiles/steam-835570-conqueror-s-blade.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1621690-core-keeper",
+      "name": "Core Keeper",
+      "appid": 1621690,
+      "profile": "profiles/steam-1621690-core-keeper.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-730-counter-strike-2",
+      "name": "Counter-Strike 2",
+      "appid": 730,
+      "profile": "profiles/steam-730-counter-strike-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3321460-crimson-desert",
+      "name": "Crimson Desert",
+      "appid": 3321460,
+      "profile": "profiles/steam-3321460-crimson-desert.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1158310-crusader-kings-iii",
+      "name": "Crusader Kings III",
+      "appid": 1158310,
+      "profile": "profiles/steam-1158310-crusader-kings-iii.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-1313140-cult-of-the-lamb",
+      "name": "Cult of the Lamb",
+      "appid": 1313140,
+      "profile": "profiles/steam-1313140-cult-of-the-lamb.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1091500-cyberpunk-2077",
+      "name": "Cyberpunk 2077",
+      "appid": 1091500,
+      "profile": "profiles/steam-1091500-cyberpunk-2077.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1868140-dave-the-diver",
+      "name": "DAVE THE DIVER",
+      "appid": 1868140,
+      "profile": "profiles/steam-1868140-dave-the-diver.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-381210-dead-by-daylight",
+      "name": "Dead by Daylight",
+      "appid": 381210,
+      "profile": "profiles/steam-381210-dead-by-daylight.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 5,
+      "official": true
+    },
+    {
+      "id": "steam-4005220-deep-blue-sushi",
+      "name": "Deep Blue Sushi",
+      "appid": 4005220,
+      "profile": "profiles/steam-4005220-deep-blue-sushi.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2507950-delta-force",
+      "name": "Delta Force",
+      "appid": 2507950,
+      "profile": "profiles/steam-2507950-delta-force.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-960170-djmax-respect-v",
+      "name": "DJMAX RESPECT V",
+      "appid": 960170,
+      "profile": "profiles/steam-960170-djmax-respect-v.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-570-dota-2",
+      "name": "Dota 2",
+      "appid": 570,
+      "profile": "profiles/steam-570-dota-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1790600-dragon-ball-sparking-zero",
+      "name": "DRAGON BALL: Sparking! ZERO",
+      "appid": 1790600,
+      "profile": "profiles/steam-1790600-dragon-ball-sparking-zero.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2893570-dragon-quest-i-ii-hd-2d-remake",
+      "name": "DRAGON QUEST I & II HD-2D Remake",
+      "appid": 2893570,
+      "profile": "profiles/steam-2893570-dragon-quest-i-ii-hd-2d-remake.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2499860-dragon-quest-vii-reimagined",
+      "name": "DRAGON QUEST VII Reimagined",
+      "appid": 2499860,
+      "profile": "profiles/steam-2499860-dragon-quest-vii-reimagined.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2054970-dragon-s-dogma-2",
+      "name": "Dragon's Dogma 2",
+      "appid": 2054970,
+      "profile": "profiles/steam-2054970-dragon-s-dogma-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4570720-dragonsword-awakening",
+      "name": "DragonSword : Awakening",
+      "appid": 4570720,
+      "profile": "profiles/steam-4570720-dragonsword-awakening.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3950020-duet-night-abyss",
+      "name": "Duet Night Abyss",
+      "appid": 3950020,
+      "profile": "profiles/steam-3950020-duet-night-abyss.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4128400-ebaseball-pro-spirit",
+      "name": "eBaseball™: PRO SPIRIT",
+      "appid": 4128400,
+      "profile": "profiles/steam-4128400-ebaseball-pro-spirit.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2244210-echoes-of-aincrad",
+      "name": "Echoes of Aincrad",
+      "appid": 2244210,
+      "profile": "profiles/steam-2244210-echoes-of-aincrad.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1665460-efootball",
+      "name": "eFootball™",
+      "appid": 1665460,
+      "profile": "profiles/steam-1665460-efootball.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1245620-elden-ring",
+      "name": "ELDEN RING",
+      "appid": 1245620,
+      "profile": "profiles/steam-1245620-elden-ring.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-3932890-escape-from-tarkov",
+      "name": "Escape from Tarkov",
+      "appid": 3932890,
+      "profile": "profiles/steam-3932890-escape-from-tarkov.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1943950-escape-the-backrooms",
+      "name": "Escape the Backrooms",
+      "appid": 1943950,
+      "profile": "profiles/steam-1943950-escape-the-backrooms.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1049590-eternal-return",
+      "name": "Eternal Return",
+      "appid": 1049590,
+      "profile": "profiles/steam-1049590-eternal-return.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 5,
+      "official": false
+    },
+    {
+      "id": "steam-227300-euro-truck-simulator-2",
+      "name": "Euro Truck Simulator 2",
+      "appid": 227300,
+      "profile": "profiles/steam-227300-euro-truck-simulator-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-427520-factorio",
+      "name": "Factorio",
+      "appid": 427520,
+      "profile": "profiles/steam-427520-factorio.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1151340-fallout-76",
+      "name": "Fallout 76",
+      "appid": 1151340,
+      "profile": "profiles/steam-1151340-fallout-76.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 5,
+      "official": true
+    },
+    {
+      "id": "steam-2993780-fantasy-life-i-the-girl-who-steals-time",
+      "name": "FANTASY LIFE i: The Girl Who Steals Time",
+      "appid": 2993780,
+      "profile": "profiles/steam-2993780-fantasy-life-i-the-girl-who-steals-time.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2142790-fields-of-mistria",
+      "name": "Fields of Mistria",
+      "appid": 2142790,
+      "profile": "profiles/steam-2142790-fields-of-mistria.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-39210-final-fantasy-xiv-online",
+      "name": "FINAL FANTASY XIV Online",
+      "appid": 39210,
+      "profile": "profiles/steam-39210-final-fantasy-xiv-online.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1293830-forza-horizon-4",
+      "name": "Forza Horizon 4",
+      "appid": 1293830,
+      "profile": "profiles/steam-1293830-forza-horizon-4.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false,
+      "priority": true
+    },
+    {
+      "id": "steam-1551360-forza-horizon-5",
+      "name": "Forza Horizon 5",
+      "appid": 1551360,
+      "profile": "profiles/steam-1551360-forza-horizon-5.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false,
+      "priority": true
+    },
+    {
+      "id": "steam-2483190-forza-horizon-6",
+      "name": "Forza Horizon 6",
+      "appid": 2483190,
+      "profile": "profiles/steam-2483190-forza-horizon-6.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3892270-gamble-with-your-friends",
+      "name": "Gamble With Your Friends",
+      "appid": 3892270,
+      "profile": "profiles/steam-3892270-gamble-with-your-friends.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3308670-girls-frontline-2-exilium",
+      "name": "GIRLS' FRONTLINE 2: EXILIUM",
+      "appid": 3308670,
+      "profile": "profiles/steam-3308670-girls-frontline-2-exilium.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4559140-godius-eternal-war",
+      "name": "Godius Eternal War",
+      "appid": 4559140,
+      "profile": "profiles/steam-4559140-godius-eternal-war.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-881020-granblue-fantasy-relink",
+      "name": "Granblue Fantasy: Relink",
+      "appid": 881020,
+      "profile": "profiles/steam-881020-granblue-fantasy-relink.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-3240220-grand-theft-auto-v-enhanced",
+      "name": "Grand Theft Auto V Enhanced",
+      "appid": 3240220,
+      "profile": "profiles/steam-3240220-grand-theft-auto-v-enhanced.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true,
+      "priority": true
+    },
+    {
+      "id": "steam-271590-grand-theft-auto-v-legacy",
+      "name": "Grand Theft Auto V Legacy",
+      "appid": 271590,
+      "profile": "profiles/steam-271590-grand-theft-auto-v-legacy.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true,
+      "priority": true
+    },
+    {
+      "id": "steam-219990-grim-dawn",
+      "name": "Grim Dawn",
+      "appid": 219990,
+      "profile": "profiles/steam-219990-grim-dawn.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 5,
+      "official": false
+    },
+    {
+      "id": "steam-2661300-grounded-2",
+      "name": "Grounded 2",
+      "appid": 2661300,
+      "profile": "profiles/steam-2661300-grounded-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1384160-guilty-gear-strive",
+      "name": "GUILTY GEAR -STRIVE-",
+      "appid": 1384160,
+      "profile": "profiles/steam-1384160-guilty-gear-strive.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1761390-hatsune-miku-project-diva-mega-mix",
+      "name": "Hatsune Miku: Project DIVA Mega Mix+",
+      "appid": 1761390,
+      "profile": "profiles/steam-1761390-hatsune-miku-project-diva-mega-mix.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-4025700-heartopia",
+      "name": "Heartopia",
+      "appid": 4025700,
+      "profile": "profiles/steam-4025700-heartopia.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-394360-hearts-of-iron-iv",
+      "name": "Hearts of Iron IV",
+      "appid": 394360,
+      "profile": "profiles/steam-394360-hearts-of-iron-iv.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": true
+    },
+    {
+      "id": "steam-553850-helldivers-2",
+      "name": "HELLDIVERS™ 2",
+      "appid": 553850,
+      "profile": "profiles/steam-553850-helldivers-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-269210-hero-siege",
+      "name": "Hero Siege",
+      "appid": 269210,
+      "profile": "profiles/steam-269210-hero-siege.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4282500-hololive-dreams",
+      "name": "hololive Dreams",
+      "appid": 4282500,
+      "profile": "profiles/steam-4282500-hololive-dreams.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3856280-holovillage-our-cozy-days",
+      "name": "holoVillage: Our Cozy Days",
+      "appid": 3856280,
+      "profile": "profiles/steam-3856280-holovillage-our-cozy-days.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4001890-how-to-fish",
+      "name": "How to Fish",
+      "appid": 4001890,
+      "profile": "profiles/steam-4001890-how-to-fish.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3164330-infinity-nikki",
+      "name": "Infinity Nikki",
+      "appid": 3164330,
+      "profile": "profiles/steam-3164330-infinity-nikki.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4625810-internet-survivor-survivors",
+      "name": "Internet Survivor Survivors",
+      "appid": 4625810,
+      "profile": "profiles/steam-4625810-internet-survivor-survivors.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-266410-iracing",
+      "name": "iRacing",
+      "appid": 266410,
+      "profile": "profiles/steam-266410-iracing.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2950790-iron-nest-heavy-turret-simulator",
+      "name": "IRON NEST: Heavy Turret Simulator",
+      "appid": 2950790,
+      "profile": "profiles/steam-2950790-iron-nest-heavy-turret-simulator.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2058180-judgment",
+      "name": "Judgment",
+      "appid": 2058180,
+      "profile": "profiles/steam-2058180-judgment.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1771300-kingdom-come-deliverance-ii",
+      "name": "Kingdom Come: Deliverance II",
+      "appid": 1771300,
+      "profile": "profiles/steam-1771300-kingdom-come-deliverance-ii.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4294490-kotamon-my-sis-found-a-super-rare-card-in-her-ce",
+      "name": "KOTAMON: My Sis Found A Super-Rare Card In Her Cereal Box, So I Became A Garbage Man To Find The Entire Collection And Earn $1,000,000",
+      "appid": 4294490,
+      "profile": "profiles/steam-4294490-kotamon-my-sis-found-a-super-rare-card-in-her-ce.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4141950-kugayama-shiori-s-death-diary",
+      "name": "Kugayama Shiori's Death Diary",
+      "appid": 4141950,
+      "profile": "profiles/steam-4141950-kugayama-shiori-s-death-diary.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-2072450-like-a-dragon-infinite-wealth",
+      "name": "Like a Dragon: Infinite Wealth",
+      "appid": 2072450,
+      "profile": "profiles/steam-2072450-like-a-dragon-infinite-wealth.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1973530-limbus-company",
+      "name": "Limbus Company",
+      "appid": 1973530,
+      "profile": "profiles/steam-1973530-limbus-company.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2058190-lost-judgment",
+      "name": "Lost Judgment",
+      "appid": 2058190,
+      "profile": "profiles/steam-2058190-lost-judgment.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-4108000-machine-party",
+      "name": "Machine Party",
+      "appid": 4108000,
+      "profile": "profiles/steam-4108000-machine-party.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2141910-magic-the-gathering-arena",
+      "name": "Magic: The Gathering Arena",
+      "appid": 2141910,
+      "profile": "profiles/steam-2141910-magic-the-gathering-arena.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2767030-marvel-rivals",
+      "name": "Marvel Rivals",
+      "appid": 2767030,
+      "profile": "profiles/steam-2767030-marvel-rivals.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3787240-marvel-t-kon-fighting-souls",
+      "name": "MARVEL Tōkon: Fighting Souls",
+      "appid": 3787240,
+      "profile": "profiles/steam-3787240-marvel-t-kon-fighting-souls.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2651280-marvel-s-spider-man-2",
+      "name": "Marvel's Spider-Man 2",
+      "appid": 2651280,
+      "profile": "profiles/steam-2651280-marvel-s-spider-man-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1817070-marvel-s-spider-man-remastered",
+      "name": "Marvel’s Spider-Man Remastered",
+      "appid": 1817070,
+      "profile": "profiles/steam-1817070-marvel-s-spider-man-remastered.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-4704690-meccha-chameleon",
+      "name": "MECCHA CHAMELEON",
+      "appid": 4704690,
+      "profile": "profiles/steam-4704690-meccha-chameleon.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3500390-mega-man-star-force-legacy-collection",
+      "name": "Mega Man Star Force Legacy Collection",
+      "appid": 3500390,
+      "profile": "profiles/steam-3500390-mega-man-star-force-legacy-collection.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2679460-metaphor-refantazio",
+      "name": "Metaphor: ReFantazio",
+      "appid": 2679460,
+      "profile": "profiles/steam-2679460-metaphor-refantazio.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2537590-microsoft-flight-simulator-2024",
+      "name": "Microsoft Flight Simulator 2024",
+      "appid": 2537590,
+      "profile": "profiles/steam-2537590-microsoft-flight-simulator-2024.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2827200-mimesis",
+      "name": "MIMESIS",
+      "appid": 2827200,
+      "profile": "profiles/steam-2827200-mimesis.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1672970-minecraft-dungeons",
+      "name": "Minecraft Dungeons",
+      "appid": 1672970,
+      "profile": "profiles/steam-1672970-minecraft-dungeons.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-3282300-mistfall-hunter",
+      "name": "Mistfall Hunter",
+      "appid": 3282300,
+      "profile": "profiles/steam-3282300-mistfall-hunter.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1367080-mobile-suit-gundam-battle-operation-2",
+      "name": "MOBILE SUIT GUNDAM BATTLE OPERATION 2",
+      "appid": 1367080,
+      "profile": "profiles/steam-1367080-mobile-suit-gundam-battle-operation-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1446780-monster-hunter-rise",
+      "name": "MONSTER HUNTER RISE",
+      "appid": 1446780,
+      "profile": "profiles/steam-1446780-monster-hunter-rise.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2246340-monster-hunter-wilds",
+      "name": "Monster Hunter Wilds",
+      "appid": 2246340,
+      "profile": "profiles/steam-2246340-monster-hunter-wilds.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-582010-monster-hunter-world",
+      "name": "Monster Hunter: World",
+      "appid": 582010,
+      "profile": "profiles/steam-582010-monster-hunter-world.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-3052450-morimens",
+      "name": "Morimens",
+      "appid": 3052450,
+      "profile": "profiles/steam-3052450-morimens.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-2584270-mortal-shell-ii",
+      "name": "Mortal Shell II",
+      "appid": 2584270,
+      "profile": "profiles/steam-2584270-mortal-shell-ii.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-261550-mount-blade-ii-bannerlord",
+      "name": "Mount & Blade II: Bannerlord",
+      "appid": 261550,
+      "profile": "profiles/steam-261550-mount-blade-ii-bannerlord.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 5,
+      "official": true
+    },
+    {
+      "id": "steam-1607250-my-hero-ultra-rumble",
+      "name": "MY HERO ULTRA RUMBLE",
+      "appid": 1607250,
+      "profile": "profiles/steam-1607250-my-hero-ultra-rumble.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3681010-nioh-3",
+      "name": "Nioh 3",
+      "appid": 3681010,
+      "profile": "profiles/steam-3681010-nioh-3.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4508340-nte-neverness-to-everness",
+      "name": "NTE: Neverness to Everness",
+      "appid": 4508340,
+      "profile": "profiles/steam-4508340-nte-neverness-to-everness.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2139460-once-human",
+      "name": "Once Human",
+      "appid": 2139460,
+      "profile": "profiles/steam-2139460-once-human.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2918150-one-piece-bounty-rush",
+      "name": "ONE PIECE Bounty Rush",
+      "appid": 2918150,
+      "profile": "profiles/steam-2918150-one-piece-bounty-rush.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-753640-outer-wilds",
+      "name": "Outer Wilds",
+      "appid": 753640,
+      "profile": "profiles/steam-753640-outer-wilds.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1243830-overcooked-all-you-can-eat",
+      "name": "Overcooked! All You Can Eat",
+      "appid": 1243830,
+      "profile": "profiles/steam-1243830-overcooked-all-you-can-eat.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2357570-overwatch",
+      "name": "Overwatch®",
+      "appid": 2357570,
+      "profile": "profiles/steam-2357570-overwatch.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2707930-palia",
+      "name": "Palia",
+      "appid": 2707930,
+      "profile": "profiles/steam-2707930-palia.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1623730-palworld",
+      "name": "Palworld",
+      "appid": 1623730,
+      "profile": "profiles/steam-1623730-palworld.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2694490-path-of-exile-2",
+      "name": "Path of Exile 2",
+      "appid": 2694490,
+      "profile": "profiles/steam-2694490-path-of-exile-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3527290-peak",
+      "name": "PEAK",
+      "appid": 3527290,
+      "profile": "profiles/steam-3527290-peak.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2161700-persona-3-reload",
+      "name": "Persona 3 Reload",
+      "appid": 2161700,
+      "profile": "profiles/steam-2161700-persona-3-reload.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1687950-persona-5-royal",
+      "name": "Persona 5 Royal",
+      "appid": 1687950,
+      "profile": "profiles/steam-1687950-persona-5-royal.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3061570-persona5-the-phantom-x",
+      "name": "Persona5: The Phantom X",
+      "appid": 3061570,
+      "profile": "profiles/steam-3061570-persona5-the-phantom-x.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-739630-phasmophobia",
+      "name": "Phasmophobia",
+      "appid": 739630,
+      "profile": "profiles/steam-739630-phasmophobia.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 5,
+      "official": true
+    },
+    {
+      "id": "steam-4132330-pizza-house-simulator",
+      "name": "Pizza House Simulator🍕",
+      "appid": 4132330,
+      "profile": "profiles/steam-4132330-pizza-house-simulator.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2688950-planet-coaster-2",
+      "name": "Planet Coaster 2",
+      "appid": 2688950,
+      "profile": "profiles/steam-2688950-planet-coaster-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-218230-planetside-2",
+      "name": "PlanetSide 2",
+      "appid": 218230,
+      "profile": "profiles/steam-218230-planetside-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3357650-pragmata",
+      "name": "PRAGMATA",
+      "appid": 3357650,
+      "profile": "profiles/steam-3357650-pragmata.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4026250-project-p-i-t-t",
+      "name": "Project P.I.T.T.",
+      "appid": 4026250,
+      "profile": "profiles/steam-4026250-project-p-i-t-t.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-578080-pubg-battlegrounds",
+      "name": "PUBG: BATTLEGROUNDS",
+      "appid": 578080,
+      "profile": "profiles/steam-578080-pubg-battlegrounds.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1259790-puyo-puyo-tetris-2",
+      "name": "Puyo Puyo™ Tetris® 2",
+      "appid": 1259790,
+      "profile": "profiles/steam-1259790-puyo-puyo-tetris-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3241660-r-e-p-o",
+      "name": "R.E.P.O.",
+      "appid": 3241660,
+      "profile": "profiles/steam-3241660-r-e-p-o.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-648800-raft",
+      "name": "Raft",
+      "appid": 648800,
+      "profile": "profiles/steam-648800-raft.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2288350-raidou-remastered-the-mystery-of-the-soulless-ar",
+      "name": "RAIDOU Remastered: The Mystery of the Soulless Army",
+      "appid": 2288350,
+      "profile": "profiles/steam-2288350-raidou-remastered-the-mystery-of-the-soulless-ar.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1174180-red-dead-redemption-2",
+      "name": "Red Dead Redemption 2",
+      "appid": 1174180,
+      "profile": "profiles/steam-1174180-red-dead-redemption-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true,
+      "priority": true
+    },
+    {
+      "id": "steam-3764200-resident-evil-requiem",
+      "name": "Resident Evil Requiem",
+      "appid": 3764200,
+      "profile": "profiles/steam-3764200-resident-evil-requiem.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3812600-restory-chill-electronics-repairs",
+      "name": "ReStory: Chill Electronics Repairs",
+      "appid": 3812600,
+      "profile": "profiles/steam-3812600-restory-chill-electronics-repairs.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3092660-reverse-1999",
+      "name": "Reverse: 1999",
+      "appid": 3092660,
+      "profile": "profiles/steam-3092660-reverse-1999.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-294100-rimworld",
+      "name": "RimWorld",
+      "appid": 294100,
+      "profile": "profiles/steam-294100-rimworld.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-632360-risk-of-rain-2",
+      "name": "Risk of Rain 2",
+      "appid": 632360,
+      "profile": "profiles/steam-632360-risk-of-rain-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-872410-romance-of-the-three-kingdoms-xiv",
+      "name": "ROMANCE OF THE THREE KINGDOMS XIV",
+      "appid": 872410,
+      "profile": "profiles/steam-872410-romance-of-the-three-kingdoms-xiv.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": false
+    },
+    {
+      "id": "steam-1374490-runescape-dragonwilds",
+      "name": "RuneScape: Dragonwilds",
+      "appid": 1374490,
+      "profile": "profiles/steam-1374490-runescape-dragonwilds.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-252490-rust",
+      "name": "Rust",
+      "appid": 252490,
+      "profile": "profiles/steam-252490-rust.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1643320-s-t-a-l-k-e-r-2-heart-of-chornobyl",
+      "name": "S.T.A.L.K.E.R. 2: Heart of Chornobyl",
+      "appid": 1643320,
+      "profile": "profiles/steam-1643320-s-t-a-l-k-e-r-2-heart-of-chornobyl.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2764460-sandustry",
+      "name": "Sandustry",
+      "appid": 2764460,
+      "profile": "profiles/steam-2764460-sandustry.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-526870-satisfactory",
+      "name": "Satisfactory",
+      "appid": 526870,
+      "profile": "profiles/steam-526870-satisfactory.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1702010-sengoku-dynasty",
+      "name": "Sengoku Dynasty",
+      "appid": 1702010,
+      "profile": "profiles/steam-1702010-sengoku-dynasty.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1144400-senren-banka",
+      "name": "Senren＊Banka",
+      "appid": 1144400,
+      "profile": "profiles/steam-1144400-senren-banka.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2436940-sephiria",
+      "name": "Sephiria",
+      "appid": 2436940,
+      "profile": "profiles/steam-2436940-sephiria.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2584990-shadowverse-worlds-beyond",
+      "name": "Shadowverse: Worlds Beyond",
+      "appid": 2584990,
+      "profile": "profiles/steam-2584990-shadowverse-worlds-beyond.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3722330-shift-at-midnight",
+      "name": "Shift At Midnight",
+      "appid": 3722330,
+      "profile": "profiles/steam-3722330-shift-at-midnight.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1875830-shin-megami-tensei-v-vengeance",
+      "name": "Shin Megami Tensei V: Vengeance",
+      "appid": 1875830,
+      "profile": "profiles/steam-1875830-shin-megami-tensei-v-vengeance.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1295660-sid-meier-s-civilization-vii",
+      "name": "Sid Meier's Civilization VII",
+      "appid": 1295660,
+      "profile": "profiles/steam-1295660-sid-meier-s-civilization-vii.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2868840-slay-the-spire-2",
+      "name": "Slay the Spire 2",
+      "appid": 2868840,
+      "profile": "profiles/steam-2868840-slay-the-spire-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2486820-sonic-racing-crossworlds",
+      "name": "Sonic Racing: CrossWorlds",
+      "appid": 2486820,
+      "profile": "profiles/steam-2486820-sonic-racing-crossworlds.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4584110-soul-land-awakening-world",
+      "name": "Soul Land: Awakening World",
+      "appid": 4584110,
+      "profile": "profiles/steam-4584110-soul-land-awakening-world.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3451980-soul-s-remnant",
+      "name": "Soul's Remnant",
+      "appid": 3451980,
+      "profile": "profiles/steam-3451980-soul-s-remnant.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2113850-spirit-city-lofi-sessions",
+      "name": "Spirit City: Lofi Sessions",
+      "appid": 2113850,
+      "profile": "profiles/steam-2113850-spirit-city-lofi-sessions.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-413150-stardew-valley",
+      "name": "Stardew Valley",
+      "appid": 413150,
+      "profile": "profiles/steam-413150-stardew-valley.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 4,
+      "official": true
+    },
+    {
+      "id": "steam-2764370-starward",
+      "name": "Starward",
+      "appid": 2764370,
+      "profile": "profiles/steam-2764370-starward.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4012810-steins-gate-re-boot",
+      "name": "STEINS;GATE RE:BOOT",
+      "appid": 4012810,
+      "profile": "profiles/steam-4012810-steins-gate-re-boot.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4502710-stonewards",
+      "name": "Stonewards",
+      "appid": 4502710,
+      "profile": "profiles/steam-4502710-stonewards.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1332010-stray",
+      "name": "Stray",
+      "appid": 1332010,
+      "profile": "profiles/steam-1332010-stray.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1364780-street-fighter-6",
+      "name": "Street Fighter™ 6",
+      "appid": 1364780,
+      "profile": "profiles/steam-1364780-street-fighter-6.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1282270-strinova",
+      "name": "Strinova",
+      "appid": 1282270,
+      "profile": "profiles/steam-1282270-strinova.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1962700-subnautica-2",
+      "name": "Subnautica 2",
+      "appid": 1962700,
+      "profile": "profiles/steam-1962700-subnautica-2.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3576070-sudden-attack-zero-point",
+      "name": "Sudden Attack Zero Point",
+      "appid": 3576070,
+      "profile": "profiles/steam-3576070-sudden-attack-zero-point.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3117820-sultan-s-game",
+      "name": "Sultan's Game",
+      "appid": 3117820,
+      "profile": "profiles/steam-3117820-sultan-s-game.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2426960-summoners-war",
+      "name": "Summoners War",
+      "appid": 2426960,
+      "profile": "profiles/steam-2426960-summoners-war.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-673750-super-bunny-man",
+      "name": "Super Bunny Man",
+      "appid": 673750,
+      "profile": "profiles/steam-673750-super-bunny-man.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 5,
+      "official": true
+    },
+    {
+      "id": "steam-1909950-super-robot-wars-y",
+      "name": "SUPER ROBOT WARS Y",
+      "appid": 1909950,
+      "profile": "profiles/steam-1909950-super-robot-wars-y.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2526380-sword-of-convallaria",
+      "name": "Sword of Convallaria",
+      "appid": 2526380,
+      "profile": "profiles/steam-2526380-sword-of-convallaria.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2288630-taiko-no-tatsujin-rhythm-festival",
+      "name": "Taiko no Tatsujin: Rhythm Festival",
+      "appid": 2288630,
+      "profile": "profiles/steam-2288630-taiko-no-tatsujin-rhythm-festival.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 5,
+      "official": false
+    },
+    {
+      "id": "steam-1778820-tekken-8",
+      "name": "TEKKEN 8",
+      "appid": 1778820,
+      "profile": "profiles/steam-1778820-tekken-8.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-105600-terraria",
+      "name": "Terraria",
+      "appid": 105600,
+      "profile": "profiles/steam-105600-terraria.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2680010-the-first-berserker-khazan",
+      "name": "The First Berserker: Khazan",
+      "appid": 2680010,
+      "profile": "profiles/steam-2680010-the-first-berserker-khazan.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2074920-the-first-descendant",
+      "name": "The First Descendant",
+      "appid": 2074920,
+      "profile": "profiles/steam-2074920-the-first-descendant.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-376210-the-isle",
+      "name": "The Isle",
+      "appid": 376210,
+      "profile": "profiles/steam-376210-the-isle.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3679080-the-seven-deadly-sins-origin",
+      "name": "The Seven Deadly Sins: Origin",
+      "appid": 3679080,
+      "profile": "profiles/steam-3679080-the-seven-deadly-sins-origin.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4120790-the-sorting-bureau",
+      "name": "The Sorting Bureau",
+      "appid": 4120790,
+      "profile": "profiles/steam-4120790-the-sorting-bureau.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2429640-throne-and-liberty",
+      "name": "Throne and Liberty",
+      "appid": 2429640,
+      "profile": "profiles/steam-2429640-throne-and-liberty.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-359550-tom-clancy-s-rainbow-six-siege",
+      "name": "Tom Clancy's Rainbow Six Siege",
+      "appid": 359550,
+      "profile": "profiles/steam-359550-tom-clancy-s-rainbow-six-siege.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1142710-total-war-warhammer-iii",
+      "name": "Total War: WARHAMMER III",
+      "appid": 1142710,
+      "profile": "profiles/steam-1142710-total-war-warhammer-iii.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3196440-vacation-cafe-simulator",
+      "name": "Vacation Cafe Simulator",
+      "appid": 3196440,
+      "profile": "profiles/steam-3196440-vacation-cafe-simulator.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-892970-valheim",
+      "name": "Valheim",
+      "appid": 892970,
+      "profile": "profiles/steam-892970-valheim.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-4131730-vholume",
+      "name": "VHOLUME",
+      "appid": 4131730,
+      "profile": "profiles/steam-4131730-vholume.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-438100-vrchat",
+      "name": "VRChat",
+      "appid": 438100,
+      "profile": "profiles/steam-438100-vrchat.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-1867240-wardogs",
+      "name": "WARDOGS",
+      "appid": 1867240,
+      "profile": "profiles/steam-1867240-wardogs.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-230410-warframe",
+      "name": "Warframe",
+      "appid": 230410,
+      "profile": "profiles/steam-230410-warframe.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-3564740-where-winds-meet",
+      "name": "Where Winds Meet",
+      "appid": 3564740,
+      "profile": "profiles/steam-3564740-where-winds-meet.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3041230-windrose",
+      "name": "Windrose",
+      "appid": 3041230,
+      "profile": "profiles/steam-3041230-windrose.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2379740-wizardry-variants-daphne",
+      "name": "Wizardry Variants Daphne",
+      "appid": 2379740,
+      "profile": "profiles/steam-2379740-wizardry-variants-daphne.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1407200-world-of-tanks",
+      "name": "World of Tanks",
+      "appid": 1407200,
+      "profile": "profiles/steam-1407200-world-of-tanks.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-444200-world-of-tanks-blitz",
+      "name": "World of Tanks Blitz",
+      "appid": 444200,
+      "profile": "profiles/steam-444200-world-of-tanks-blitz.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2964090-world-of-warships-legends",
+      "name": "World of Warships: Legends",
+      "appid": 2964090,
+      "profile": "profiles/steam-2964090-world-of-warships-legends.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-699130-world-war-z",
+      "name": "World War Z",
+      "appid": 699130,
+      "profile": "profiles/steam-699130-world-war-z.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-3513350-wuthering-waves",
+      "name": "Wuthering Waves",
+      "appid": 3513350,
+      "profile": "profiles/steam-3513350-wuthering-waves.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-2988580-yakuza-0-director-s-cut",
+      "name": "Yakuza 0 Director's Cut",
+      "appid": 2988580,
+      "profile": "profiles/steam-2988580-yakuza-0-director-s-cut.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-3937550-yakuza-kiwami-3-dark-ties",
+      "name": "Yakuza Kiwami 3 & Dark Ties",
+      "appid": 3937550,
+      "profile": "profiles/steam-3937550-yakuza-kiwami-3-dark-ties.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": true
+    },
+    {
+      "id": "steam-2163330-yet-another-zombie-survivors",
+      "name": "Yet Another Zombie Survivors",
+      "appid": 2163330,
+      "profile": "profiles/steam-2163330-yet-another-zombie-survivors.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1449850-yu-gi-oh-master-duel",
+      "name": "Yu-Gi-Oh! Master Duel",
+      "appid": 1449850,
+      "profile": "profiles/steam-1449850-yu-gi-oh-master-duel.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-4162040-zenless-zone-zero",
+      "name": "Zenless Zone Zero",
+      "appid": 4162040,
+      "profile": "profiles/steam-4162040-zenless-zone-zero.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    }
+  ]
+}

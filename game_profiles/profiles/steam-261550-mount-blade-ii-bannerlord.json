@@ -1,0 +1,82 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-261550-mount-blade-ii-bannerlord",
+  "name": "Mount & Blade II: Bannerlord",
+  "appid": 261550,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2096366581,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 144299,
+    "lifetime_playtime_seconds": 113460752,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 5,
+    "zone_total": 6,
+    "coverage_ratio": 0.833,
+    "rejected": {
+      "right_bumper": "unsupported keyboard target: BACKSLASH"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Switch Weapon Usage",
+        "action": {
+          "type": "keyboard",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Kick / Bash",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Interact",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump | Campaign Map: Resume/Pause Time",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Show Indicator",
+        "action": {
+          "type": "keyboard",
+          "target": "ALT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

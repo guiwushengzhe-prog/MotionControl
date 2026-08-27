@@ -1,0 +1,90 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-1407200-world-of-tanks",
+  "name": "World of Tanks",
+  "appid": 1407200,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2570158614,
+    "controller_type": "controller_generic",
+    "controller_type_nice": "Generic",
+    "layout_title": "World Of Tanks",
+    "subscriptions": 678,
+    "lifetime_playtime_seconds": 1413643392,
+    "votes": {
+      "score": 0.6395939,
+      "up": 76,
+      "down": 21
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 7,
+      "unsupported": 1,
+      "unsupported_reasons": {
+        "button_menu": "unsupported Steam binding command: mode_shift"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Consumable 1",
+        "action": {
+          "type": "keyboard",
+          "target": "4",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Consumable 2",
+        "action": {
+          "type": "keyboard",
+          "target": "5",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Consumable 3",
+        "action": {
+          "type": "keyboard",
+          "target": "6",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Modification 2",
+        "action": {
+          "type": "keyboard",
+          "target": "8",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Reload",
+        "action": {
+          "type": "keyboard",
+          "target": "C",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Auto-Aim",
+        "action": {
+          "type": "mouse_button",
+          "target": "RIGHT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

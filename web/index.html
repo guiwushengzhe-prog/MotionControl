@@ -3,151 +3,164 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MotionControl 游戏控制 v0.9.5</title>
+<title>MotionControl 1.00 · 体感游戏控制</title>
 <style>
-:root{font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;color-scheme:dark;color:#f4f7fb;background:#0d1015}*{box-sizing:border-box}body{margin:0;background:#0d1015}.wrap{max-width:1200px;margin:auto;padding:12px}.top,.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.top{margin-bottom:9px}.top h1{font-size:21px;margin:0 7px 0 0}.spacer{flex:1}.pill{padding:6px 9px;border-radius:999px;background:#252c35;font-size:12px}.ok{background:#17472e}.bad{background:#54252b}.warn{background:#594718}.btn,select,input{font:inherit}.btn,select{border:1px solid #3b4654;border-radius:9px;background:#232a33;color:#fff;padding:8px 11px}.btn{cursor:pointer;font-weight:700}.primary{background:#245fd0}.safe{background:#17734f}.danger{background:#a52d35}.notice{display:none;margin:7px 0;padding:8px 10px;border-radius:9px;background:#554316;color:#fff1b5}.layout{display:grid;grid-template-columns:minmax(600px,1.58fr) minmax(320px,.82fr);gap:11px}.card{background:#171c23;border:1px solid #2e3742;border-radius:12px;padding:11px}.viewer{position:relative;aspect-ratio:4/3;background:#050608;border-radius:10px;overflow:hidden}.viewer video,.viewer canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.viewer.mirror video,.viewer.mirror canvas{transform:scaleX(-1)}.hint{position:absolute;left:9px;bottom:9px;background:#000c;padding:6px 8px;border-radius:7px;font-size:12px}.zones{position:absolute;inset:0;pointer-events:none}.zone{position:absolute;display:none;border:3px solid rgba(255,255,255,.58);border-radius:12px;place-items:center;font-weight:900;font-size:20px;background:rgba(0,0,0,.16);transition:border-color .06s,background .06s}.zone.active{border-color:#ff535f;background:rgba(255,60,70,.30);box-shadow:0 0 17px rgba(255,70,80,.38)}.zone.foot{border-style:dashed;font-size:16px}.section{margin-top:9px;padding-top:9px;border-top:1px solid #2c3540}.title{font-size:16px;font-weight:800;margin-bottom:7px}.muted{font-size:12px;color:#9eabba;line-height:1.45}.controls{display:grid;grid-template-columns:1fr 1fr;gap:7px}.controls label{font-size:12px;color:#aab5c3}.controls select{width:100%;margin-top:3px}.slider{margin-top:8px}.slider input{width:100%}.shoulders{display:flex;justify-content:center;gap:120px;margin:10px 0 -4px}.shoulder-key{min-width:54px;height:30px;border-radius:8px;display:grid;place-items:center;background:#272f39;border:2px solid #4a5665;font-weight:900}.shoulder-key.active{background:#d73b47;border-color:#ff8a91}.pad{display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px);gap:4px;justify-content:center;margin:8px 0}.key{border-radius:50%;display:grid;place-items:center;background:#272f39;border:2px solid #4a5665;font-weight:900;font-size:18px}.key.active{background:#d73b47;border-color:#ff8a91}.key-y{grid-column:2;grid-row:1}.key-x{grid-column:1;grid-row:2}.key-b{grid-column:3;grid-row:2}.key-a{grid-column:2;grid-row:3}.statusline{font-size:13px;margin:6px 0;color:#cbd4df}.motion-chips{display:flex;gap:5px;flex-wrap:wrap;margin:7px 0}.motion-chip{padding:5px 7px;border-radius:7px;background:#242b34;border:1px solid #3c4754;font-size:12px}.motion-chip.active{background:#9a3139;border-color:#f26b73}.compact-voice{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid #2c3540}.compact-voice .statusline{flex:1;min-width:180px;margin:0}.settings-mask{display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.66);padding:24px}.settings-mask.open{display:grid;place-items:center}.settings{width:min(820px,96vw);max-height:88vh;overflow:auto;background:#151a21;border:1px solid #394554;border-radius:14px;padding:14px}.settings-head{position:sticky;top:-14px;background:#151a21;z-index:2;display:flex;align-items:center;gap:8px;padding:10px 0 8px}.settings-head h2{font-size:19px;margin:0}.settings-section{padding:12px 0;border-top:1px solid #303945}.settings-section:first-of-type{border-top:0}.motion-row{display:grid;grid-template-columns:auto 1.25fr .9fr 1fr;gap:7px;align-items:center;margin:7px 0}.motion-row input[type=text],.voice-row input,.voice-row select,.motion-row select{width:100%;min-width:0;border:1px solid #3b4654;border-radius:8px;background:#20262e;color:#fff;padding:8px}.motion-name{font-weight:700}.voice-row{display:grid;grid-template-columns:1.25fr .75fr 1fr auto;gap:6px;margin:6px 0}.voice-row button{padding:7px 9px}.settings-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.model-path{font-size:11px;color:#8391a2;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-url{width:100%;margin-top:3px;border:1px solid #3b4654;border-radius:8px;background:#20262e;color:#dbe6f4;padding:8px}.advgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tiny{font-size:12px}.tiny input[type=range]{width:100%}.checkrow{display:flex;gap:12px;flex-wrap:wrap;margin-top:9px;font-size:13px}@media(max-width:900px){.layout{grid-template-columns:1fr}.spacer{display:none}}@media(max-width:650px){.motion-row{grid-template-columns:auto 1fr}.motion-row select,.motion-row input[type=text]{grid-column:2}.voice-row{grid-template-columns:1fr 1fr}.advgrid{grid-template-columns:1fr}.settings-mask{padding:8px}}.look-gate{border-color:#7ee787;background:rgba(50,180,90,.15);font-size:13px}.look-gate.active{border-color:#57ff7f;background:rgba(50,220,90,.28)}.scene-editor{position:relative;width:100%;aspect-ratio:4/3;background:#07090c;border:1px solid #394554;border-radius:10px;overflow:hidden;margin-top:8px}.scene-editor img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}.scene-editor-zones{position:absolute;inset:0}.scene-edit-zone{position:absolute;border:3px solid #d8e7ff;border-radius:50%;display:grid;place-items:center;font-weight:900;background:rgba(0,0,0,.18);cursor:move;user-select:none;touch-action:none}.scene-edit-zone.gate{border-color:#6dff91;background:rgba(50,180,90,.18)}.scene-vertical-center{position:absolute;height:3px;background:#ffd66b;left:54%;width:38%;cursor:ns-resize;touch-action:none}.scene-vertical-center:after{content:'右腕中心';position:absolute;right:0;bottom:4px;font-size:11px;color:#ffe69a;background:#000b;padding:2px 4px;border-radius:4px}.scene-zone-tools{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}.scene-zone-tools label{font-size:12px;color:#aab5c3}.scene-zone-tools input,.scene-zone-tools select{width:100%;margin-top:3px}.scene-metrics{white-space:pre-line;font-size:12px;color:#b7c4d3;line-height:1.5;margin-top:7px}
+:root{font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;color-scheme:dark;color:#f5f7fb;background:#0b0e13}*{box-sizing:border-box}body{margin:0;background:#0b0e13;color:#f5f7fb}.wrap{max-width:1360px;margin:auto;padding:16px}.top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}.brand{display:flex;align-items:baseline;gap:9px;margin-right:8px}.brand h1{font-size:24px;margin:0;letter-spacing:.01em}.version{font-size:12px;color:#8391a2}.spacer{flex:1}.pill{padding:7px 11px;border-radius:999px;background:#252c35;font-size:13px;font-weight:800;border:1px solid transparent}.pill.ok{background:#123e2a;border-color:#286d4a}.pill.bad{background:#3a2025;border-color:#65333b;color:#d7b9be}.pill.warn{background:#4a3b18;border-color:#786128}.btn,select,input{font:inherit}.btn,select,input[type=text],.source-url{border:1px solid #3a4655;border-radius:10px;background:#20262f;color:#fff}.btn{cursor:pointer;font-weight:800;padding:10px 14px}.btn:hover{filter:brightness(1.08)}.primary{background:#2466dc;border-color:#397ae9}.safe{background:#17734f}.danger{background:#9b2d38;border-color:#c74d59}.notice{display:none;margin:0 0 12px;padding:11px 14px;border-radius:10px;background:#554316;color:#fff1b5;font-size:14px}.layout{display:grid;grid-template-columns:minmax(620px,1.9fr) minmax(360px,1fr);gap:14px;align-items:start}.card{background:#151a21;border:1px solid #2d3743;border-radius:16px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.16)}.viewer-card{padding:12px}.viewer{position:relative;aspect-ratio:4/3;background:#050608;border-radius:13px;overflow:hidden}.viewer img,.viewer canvas,.viewer .zones{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;transform:scaleX(-1);transform-origin:center}.viewer img{z-index:1}.viewer canvas{z-index:2}.zones{z-index:3;pointer-events:none}.hint{position:absolute;z-index:5;left:12px;bottom:12px;background:rgba(0,0,0,.70);padding:8px 10px;border-radius:9px;font-size:13px}.zone{position:absolute;display:none;border:3px solid rgba(255,255,255,.80);border-radius:13px;place-items:center;text-align:center;font-weight:900;font-size:20px;background:rgba(0,0,0,.24);text-shadow:0 1px 4px #000;transition:border-color .08s,background .08s,box-shadow .08s;transform:scaleX(-1);line-height:1.05;padding:4px}.zone strong{font-size:clamp(16px,2vw,25px)}.zone small{display:block;margin-top:3px;font-size:11px;font-weight:800;color:#e6edf5}.zone.hand-left{border-color:#5ecbff;background:rgba(33,137,210,.22)}.zone.hand-right{border-color:#ffae5e;background:rgba(221,118,30,.22)}.zone.foot{border-color:#bd83ff;background:rgba(134,70,205,.20)}.zone.circle-shape{border-radius:50%}.zone.active{border-color:#ff5966;background:rgba(255,62,75,.32);box-shadow:0 0 20px rgba(255,70,80,.43)}.zone.foot{border-style:dashed;font-size:17px}.zone.look-gate{border:3px dashed #68e68c;background:rgba(30,160,75,.18);border-radius:15px;font-size:14px;line-height:1.15;padding:4px;color:#eaffef}.zone.look-gate.active{border-style:solid;border-color:#5dff8a;background:rgba(30,210,85,.33);box-shadow:0 0 23px rgba(70,255,120,.42)}.zone-edit-bar{position:absolute;z-index:9;left:12px;right:12px;top:12px;display:none;align-items:center;gap:8px;padding:10px;border-radius:12px;background:rgba(8,13,18,.92);border:1px solid #4b5a69;transform:none!important}.zone-edit-bar.open{display:flex}.zone-edit-bar b{font-size:15px}.zone-edit-bar span{font-size:12px;color:#c4d0dc;flex:1}.viewer.zone-editing .zones{pointer-events:auto}.viewer.zone-editing .zone{cursor:grab;touch-action:none;box-shadow:0 0 0 2px rgba(255,255,255,.18)}.viewer.zone-editing .zone:active{cursor:grabbing}.zone-edit-bar .btn{padding:8px 12px}.adjust-zone-btn{background:#215a83;border-color:#3e8bc1}
+.viewer-foot{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:10px 2px 0}.look-gate-status{font-size:14px;color:#a9b8c7}.look-gate-status.active{color:#75ff9c;font-weight:900}.statusline{font-size:14px;color:#c8d3df}.muted{font-size:12px;color:#95a4b5;line-height:1.5}.control-card{padding:16px}.hero-kicker{font-size:13px;color:#8ea0b4;font-weight:800;margin-bottom:8px}.main-action-btn{width:100%;min-height:68px;font-size:23px;border-radius:14px}.main-action-status{min-height:42px;padding:10px 2px 4px;color:#bdcad7;font-size:15px;line-height:1.45}.quick-tools{display:grid;grid-template-columns:1fr;gap:9px;margin-top:10px}.quick-tools .btn{min-height:48px;font-size:16px;text-align:left;padding-left:16px}.section{margin-top:16px;padding-top:14px;border-top:1px solid #2b3541}.title{font-size:18px;font-weight:900;margin-bottom:9px}.section-sub{font-size:13px;color:#9eabba;margin:-3px 0 10px}.compact-voice{padding:10px 12px;border-radius:10px;background:#10151b;border:1px solid #293542;margin-bottom:10px}.common-voice-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.voice-command-card{min-height:61px;padding:11px 12px;border:1px solid #3b4858;border-radius:11px;background:#202832;color:#f5f7fb;font-size:17px;font-weight:900;text-align:left;display:flex;flex-direction:column;justify-content:center}.voice-command-card small{display:block;color:#9faebe;font-size:12px;font-weight:600;margin-top:4px}.voice-all-btn{width:100%;margin-top:10px;min-height:48px;font-size:16px}.trigger-summary{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.trigger-chip{padding:6px 9px;border-radius:8px;background:#242c36;border:1px solid #3c4856;font-size:12px}.trigger-chip.active{background:#8d3038;border-color:#e2636d}.shoulder-key,.key{display:inline-grid;place-items:center;background:#272f39;border:2px solid #4a5665;font-weight:900}.shoulder-key{min-width:50px;height:30px;border-radius:8px}.key{width:38px;height:38px;border-radius:50%}.shoulder-key.active,.key.active{background:#d73b47;border-color:#ff8a91}.mini-pad{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.settings-mask,.voice-commands-mask{display:none;position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.72);padding:22px}.settings-mask.open,.voice-commands-mask.open{display:grid;place-items:center}.settings,.voice-commands-dialog{width:min(940px,96vw);max-height:90vh;overflow:auto;background:#151a21;border:1px solid #3a4655;border-radius:16px;padding:16px}.settings-head,.dialog-head{position:sticky;top:-16px;background:#151a21;z-index:3;display:flex;align-items:center;gap:8px;padding:9px 0 11px}.settings-head h2,.dialog-head h2{font-size:21px;margin:0}.settings-section{padding:14px 0;border-top:1px solid #303945}.settings-section:first-of-type{border-top:0}.controls,.advgrid,.scene-zone-tools{display:grid;grid-template-columns:1fr 1fr;gap:9px}.controls label,.scene-zone-tools label{font-size:12px;color:#aab5c3}.controls select,.controls input,.scene-zone-tools input,.scene-zone-tools select{width:100%;margin-top:4px;padding:9px}.slider{margin-top:10px}.slider input{width:100%}.settings-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.motion-row{display:grid;grid-template-columns:auto 1.2fr .9fr 1fr;gap:8px;align-items:center;margin:7px 0}.motion-row input[type=text],.voice-row input,.voice-row select,.motion-row select{width:100%;min-width:0;border:1px solid #3b4654;border-radius:8px;background:#20262e;color:#fff;padding:8px}.motion-name{font-weight:700}.voice-row{display:grid;grid-template-columns:1.25fr .75fr 1fr auto;gap:7px;margin:6px 0}.checkrow{display:flex;gap:12px;flex-wrap:wrap;margin-top:9px;font-size:13px}.tiny{font-size:12px}.tiny input[type=range]{width:100%}.head-vertical-setting{display:none!important}.model-path{font-size:11px;color:#8391a2;margin-top:5px;word-break:break-all}.source-url{width:100%;padding:9px}.scene-editor{position:relative;width:100%;aspect-ratio:4/3;background:#07090c;border:1px solid #394554;border-radius:10px;overflow:hidden;margin-top:9px}.scene-editor img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}.scene-editor-zones{position:absolute;inset:0}.scene-edit-zone{position:absolute;border:3px solid #d8e7ff;border-radius:50%;display:grid;place-items:center;text-align:center;font-size:11px;font-weight:900;background:rgba(0,0,0,.18);cursor:move;user-select:none;touch-action:none}.scene-edit-zone.gate{border-radius:14px;border-style:dashed;border-color:#6dff91;background:rgba(50,180,90,.18)}.scene-vertical-center{position:absolute;height:3px;background:#ffd66b;left:54%;width:38%;cursor:ns-resize;touch-action:none}.scene-vertical-center:after{content:'右腕中心';position:absolute;right:0;bottom:4px;font-size:11px;color:#ffe69a;background:#000b;padding:2px 4px;border-radius:4px}.scene-metrics{white-space:pre-line;font-size:12px;color:#b7c4d3;line-height:1.5;margin-top:7px}.perf-details,.diagnostic-text{white-space:pre-line;font-size:12px;color:#aebdcb;line-height:1.55;margin-top:8px}.compat-details summary,.perf-panel summary{cursor:pointer;font-weight:800;color:#c8d6e4}.voice-group{margin:16px 0 22px}.voice-group h3{font-size:18px;margin:0 0 9px}.voice-command-grid.full{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.voice-command-grid.full .voice-command-card{font-size:16px;min-height:62px}.calibration-overlay{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:rgba(3,6,10,.97);color:#fff;padding:clamp(18px,4vw,64px)}.calibration-overlay[hidden]{display:none}.calibration-card{width:min(1100px,94vw);min-height:min(760px,92vh);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:clamp(16px,3vh,34px)}.calibration-kicker{font-size:clamp(20px,2.5vw,36px);letter-spacing:.18em;color:#8fc8ff;font-weight:800}.calibration-stage{font-size:clamp(34px,6vw,88px);font-weight:900}.calibration-prompt{font-size:clamp(28px,4.4vw,66px);font-weight:900;line-height:1.25}.calibration-countdown{font-size:clamp(48px,8vw,124px);font-variant-numeric:tabular-nums;font-weight:900;color:#ffd66b}.calibration-progress{width:min(900px,86vw);height:18px;border-radius:999px;background:#273241;overflow:hidden;border:1px solid #53657c}.calibration-progress>div{height:100%;width:0;background:linear-gradient(90deg,#4fd7ff,#7cff9e)}.calibration-detail{font-size:clamp(17px,2vw,28px);color:#b9c9dc}.calibration-cancel{margin-top:auto;min-width:240px;font-size:clamp(22px,2.6vw,34px);padding:14px 30px;border-radius:12px;background:#9e2935;border:2px solid #ff8a91;color:#fff;font-weight:900}.hidden-compat{display:none!important}
+.profile-bar{display:grid;grid-template-columns:1fr auto;gap:8px}.profile-bar input,.profile-bar select{width:100%;padding:10px}.profile-game-name{font-size:20px;font-weight:900}.profile-meta{font-size:12px;color:#93a3b5;margin-top:4px}.binding-list{display:grid;gap:8px;margin-top:10px}.binding-row{display:grid;grid-template-columns:minmax(150px,1.15fr) minmax(130px,.85fr) minmax(150px,1fr) auto;gap:8px;align-items:center;padding:9px;border:1px solid #303b47;border-radius:10px;background:#10151b}.binding-row .trigger-name{font-weight:800}.binding-row select,.binding-row input{width:100%;padding:8px;border:1px solid #3b4654;border-radius:8px;background:#20262e;color:#fff}.binding-row .binding-behavior{font-size:11px;color:#9aabba}.profile-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.profile-empty{padding:12px;color:#9aa9b8;border:1px dashed #3b4654;border-radius:10px}.pose-summary{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.pose-chip{padding:6px 9px;border-radius:8px;background:#242c36;border:1px solid #3c4856;font-size:12px}.pose-chip.active{background:#8d3038;border-color:#e2636d}
+@media(max-width:980px){.layout{grid-template-columns:1fr}.common-voice-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.voice-command-grid.full{grid-template-columns:repeat(2,minmax(0,1fr))}.spacer{display:none}}
+@media(max-width:620px){.binding-row{grid-template-columns:1fr}.wrap{padding:10px}.brand{width:100%}.top{gap:6px}.pill{font-size:12px;padding:6px 8px}.common-voice-grid,.voice-command-grid.full,.controls,.advgrid,.scene-zone-tools{grid-template-columns:1fr}.motion-row{grid-template-columns:auto 1fr}.motion-row select,.motion-row input[type=text]{grid-column:2}.voice-row{grid-template-columns:1fr 1fr}.settings-mask,.voice-commands-mask{padding:7px}}
 </style>
-<style>
-.viewer img,.viewer canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}
-.viewer img{z-index:1}.viewer canvas{z-index:2}
-.viewer video,.viewer img,.viewer canvas,.viewer .zones{transform:scaleX(-1);transform-origin:center}
-.hint{z-index:4}.zones{z-index:3}
-.perf-panel{margin-top:9px}.perf-panel summary{cursor:pointer;font-weight:800}.perf-summary{margin-left:10px;font-size:12px;color:#b8c5d4;font-weight:400}.perf-details{white-space:pre-line;font-size:12px;color:#aebdcb;line-height:1.55;margin-top:7px}
-.main-action-btn{min-width:150px;font-size:15px}.common-voice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:7px}.voice-command-card{min-height:44px;padding:8px 10px;border:1px solid #3b4654;border-radius:9px;background:#202731;color:#f4f7fb;font-size:14px;font-weight:800;text-align:left}.voice-command-card small{display:block;color:#99a8b8;font-size:11px;font-weight:500;margin-top:2px}.voice-command-panel{margin-top:9px;border-top:1px solid #2c3540;padding-top:8px}.voice-command-panel summary{cursor:pointer;color:#cbd7e5;font-size:13px;font-weight:800}.voice-command-grid.full{grid-template-columns:repeat(3,minmax(0,1fr));max-height:330px;overflow:auto}.voice-command-grid.full .voice-command-card{min-height:50px;font-size:13px}.head-vertical-setting{display:none!important}.technical{display:none!important}#cameraBtn,#outputBtn,#backendStatus{display:none!important}
-</style>
-<style>
-.calibration-overlay{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:rgba(3,6,10,.97);color:#fff;padding:clamp(18px,4vw,64px)}
-.calibration-overlay[hidden]{display:none}
-.calibration-card{width:min(1100px,94vw);min-height:min(760px,92vh);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:clamp(16px,3vh,34px)}
-.calibration-kicker{font-size:clamp(20px,2.5vw,36px);letter-spacing:.18em;color:#8fc8ff;font-weight:800}
-.calibration-stage{font-size:clamp(34px,6vw,88px);font-weight:900;line-height:1.1}
-.calibration-prompt{font-size:clamp(28px,4.4vw,66px);font-weight:900;line-height:1.25;max-width:1000px;min-height:2.5em;display:grid;place-items:center}
-.calibration-countdown{font-size:clamp(48px,8vw,124px);font-variant-numeric:tabular-nums;font-weight:900;color:#ffd66b;line-height:1}
-.calibration-progress{width:min(900px,86vw);height:18px;border-radius:999px;background:#273241;overflow:hidden;border:1px solid #53657c}
-.calibration-progress>div{height:100%;width:0;background:linear-gradient(90deg,#4fd7ff,#7cff9e);transition:width .15s linear}
-.calibration-detail{font-size:clamp(17px,2vw,28px);color:#b9c9dc;min-height:1.5em}
-.calibration-cancel{margin-top:auto;min-width:240px;font-size:clamp(22px,2.6vw,34px);padding:14px 30px;border-radius:12px;background:#9e2935;border:2px solid #ff8a91;color:#fff;font-weight:900;cursor:pointer}
-</style>
+<link rel="stylesheet" href="/v100.css">
 </head>
 <body><div class="wrap">
-<div class="top">
-<h1>MotionControl 游戏控制 v0.9.5</h1>
-<span id="cameraPill" class="pill bad">摄像头关闭</span>
-<span id="posePill" class="pill bad">未识别人体</span>
-<span id="phonePill" class="pill bad">手机未连接</span>
-<span id="outputPill" class="pill bad">输出关闭</span>
-<span id="voicePill" class="pill bad">语音关闭</span>
-<div class="spacer"></div>
-<button id="mainActionBtn" class="btn primary main-action-btn">开始体感</button>
-<button id="cameraBtn" class="btn safe">启动本地摄像头</button>
-<button id="overlayBtn" class="btn">悬浮窗</button>
-<button id="sceneCaptureBtn" class="btn">记录场景</button>
-<button id="sceneRematchBtn" class="btn">重新匹配</button>
-<button id="settingsBtn" class="btn">设置</button>
-<button id="outputBtn" class="btn primary">开启输出 F8</button>
-<button id="stopBtn" class="btn danger">紧急停止 F9</button>
-</div>
+<header class="top">
+  <div class="brand"><div><h1>MotionControl</h1><span class="tagline">单摄像头体感游戏控制</span></div><span class="version">1.00</span></div>
+  <div class="health-strip" aria-label="系统状态">
+    <span id="cameraPill" class="pill bad">摄像头</span>
+    <span id="posePill" class="pill bad">人体</span>
+    <span id="voicePill" class="pill optional">语音</span>
+    <span id="phonePill" class="pill optional">手机</span>
+    <span id="outputPill" class="pill">输出</span>
+  </div>
+  <div class="header-actions">
+    <button id="overlayBtn" class="btn utility-btn">悬浮窗</button>
+    <button id="settingsBtn" class="btn utility-btn">设置</button>
+    <button id="stopBtn" class="btn danger">紧急停止 · F9</button>
+  </div>
+</header>
 <div id="notice" class="notice"></div>
-<div class="layout">
-<div class="card">
-<div class="viewer" id="viewer">
-<img id="cameraPreview" alt="电脑摄像头预览" style="display:none">
-<canvas id="canvas"></canvas>
-<div class="zones">
-<div class="zone" data-zone="leftHandUpper">Y</div><div class="zone" data-zone="leftHandLower">X</div>
-<div class="zone" data-zone="rightHandUpper">B</div><div class="zone" data-zone="rightHandLower">A</div>
-<div class="zone foot" data-zone="leftFoot">LB</div><div class="zone foot" data-zone="rightFoot">RB</div>
-<div class="zone look-gate" data-zone="lookGate">视角门</div>
-</div>
-<div id="hint" class="hint">站到镜头前，先开始体感</div>
-</div>
-<div class="section">
-<div class="row"><button id="calBtn" class="btn">站好并校准</button><button id="centerBtn" class="btn">视角回正</button><span id="calStatus" class="pill">可说“体感开始校准”</span></div>
-<div class="statusline" id="headStatus">头控：等待中心</div>
-</div>
-</div>
-<div class="card">
-<div class="section" style="margin-top:0;padding-top:0;border-top:0">
-<div class="title">摄像头来源</div>
-<div class="controls">
-<label>来源<select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></label>
-<label class="technical">采集后端<select id="cameraBackend"><option value="auto" selected>自动</option><option value="msmf">MSMF</option><option value="dshow">DirectShow</option></select></label>
-<label>手机填入的局域网地址<input id="phoneWsUrl" class="source-url" readonly value="连接服务器后显示"></label>
-</div>
-<div id="mobileStatus" class="pill bad" style="margin-top:7px">手机未连接</div>
-<div class="muted">手机模式只接收 33 点姿态；视频留在手机，不在电脑重复推理。手持按钮/摇杆可同时连接。</div>
-</div>
-<div class="title">游戏输出</div>
-<div class="controls">
-<label>头控输出<select id="outputMode"><option value="mouse">鼠标视角</option><option value="gamepad">Xbox 360 右摇杆</option></select></label>
-</div>
-<div class="slider"><label>游戏速度倍率 <b id="strengthValue">160%</b></label><input id="strength" type="range" min="60" max="300" step="10" value="160"></div>
-<div class="shoulders"><div id="padLB" class="shoulder-key">LB</div><div id="padRB" class="shoulder-key">RB</div></div>
-<div class="pad"><div id="padY" class="key key-y">Y</div><div id="padX" class="key key-x">X</div><div id="padB" class="key key-b">B</div><div id="padA" class="key key-a">A</div></div>
-<div id="buttonStatus" class="statusline">身体区域：等待人体</div>
-<div class="motion-chips"><span id="motionMarch" class="motion-chip">踏步</span><span id="motionCalf" class="motion-chip">小腿向后</span><span id="motionSquat" class="motion-chip">下蹲</span><span id="motionHands" class="motion-chip">双手过头</span></div>
-<div id="motionStatus" class="statusline">动作：未触发</div>
-<div id="backendStatus" class="muted">正在检查输出后端…</div>
-<div class="compact-voice"><button id="voiceBtn" class="btn" disabled>语音由本地服务接收</button><div id="voiceStatus" class="statusline">语音：等待本地服务或手机文本</div></div>
-<div class="voice-command-area section">
-<div class="title">常用语音</div>
-<div id="commonVoiceCommands" class="common-voice-grid"></div>
-<details id="voiceCommandsPanel" class="voice-command-panel"><summary>全部 27 条命令</summary><div id="voiceCommandGrid" class="voice-command-grid full"></div></details>
-</div>
-</div>
-</div>
-</div>
+
+<main class="layout">
+  <section class="card viewer-card">
+    <div class="viewer-heading"><div><span class="eyebrow">实时追踪</span><h2>玩家与体感区域</h2></div><span class="viewer-note">区域亮起 = 当前正在触发</span></div>
+    <div class="viewer" id="viewer">
+      <img id="cameraPreview" alt="电脑摄像头预览" style="display:none">
+      <canvas id="canvas"></canvas>
+      <div class="zones">
+        <div class="zone hand-left" data-zone="leftHandUpper"><strong>Y</strong><small>左手</small></div><div class="zone hand-left" data-zone="leftHandLower"><strong>X</strong><small>左手</small></div>
+        <div class="zone hand-right" data-zone="rightHandUpper"><strong>B</strong><small>右手</small></div><div class="zone hand-right" data-zone="rightHandLower"><strong>A</strong><small>右手</small></div>
+        <div class="zone foot" data-zone="leftFoot"><strong>LB</strong><small>左脚</small></div><div class="zone foot" data-zone="rightFoot"><strong>RB</strong><small>右脚</small></div>
+        <div class="zone look-gate" data-zone="lookGate"><strong>上下视角</strong><small>左手放这里</small></div>
+      </div>
+      <div id="zoneEditBar" class="zone-edit-bar"><b>直接拖动体感区域</b><span>把每个区域拖到你最舒服的位置。绿色区放在下巴左侧附近。</span><button id="saveLiveZonesBtn" class="btn safe">保存</button><button id="cancelLiveZonesBtn" class="btn">取消</button></div>
+      <div id="hint" class="hint">站到镜头前，点击“开始体感”</div>
+    </div>
+    <div class="viewer-foot">
+      <div id="lookGateStatus" class="look-gate-status">上下视角待机 · 左手放入绿色区域开启</div>
+      <div class="spacer"></div>
+      <div id="headStatus" class="statusline">头控：等待中心</div>
+    </div>
+    <div class="viewer-foot">
+      <div id="buttonStatus" class="statusline">身体区域：等待人体</div>
+      <div class="mini-pad" aria-label="当前区域按键">
+        <span id="padLB" class="shoulder-key">LB</span><span id="padY" class="key">Y</span><span id="padX" class="key">X</span><span id="padB" class="key">B</span><span id="padA" class="key">A</span><span id="padRB" class="shoulder-key">RB</span>
+      </div>
+    </div>
+    <div class="trigger-summary"><span id="motionMarch" class="trigger-chip">踏步</span><span id="motionCalf" class="trigger-chip">小腿向后</span><span id="motionSquat" class="trigger-chip">下蹲</span><span id="motionHands" class="trigger-chip">双手过头</span></div>
+    <div class="pose-summary"><span id="poseHandsCross" class="pose-chip">双手交叉</span><span id="poseRightCross" class="pose-chip">右腿向左交叉</span><span id="poseLeftCross" class="pose-chip">左腿向右交叉</span></div>
+    <div id="motionStatus" class="statusline" style="margin-top:7px">动作：未触发</div>
+  </section>
+
+  <aside class="card control-card">
+    <div class="control-intro"><span class="eyebrow">控制中心</span><h2>准备开玩</h2><p>选好游戏后开始体感。只有“输出”开启时才会真正向游戏发送按键。</p></div>
+    <div class="hero-kicker">运行状态</div>
+    <button id="mainActionBtn" class="btn primary main-action-btn">开始体感</button>
+    <div id="mainActionStatus" class="main-action-status">点击一次启动识别；游戏输出默认保持关闭</div>
+
+    <div class="quick-tools">
+      <button id="calBtn" class="btn">站好并校准</button>
+      <button id="adjustZonesBtn" class="btn adjust-zone-btn">区域不准？直接拖动调整</button>
+      <button id="sceneRematchBtn" class="btn">重新自动识别位置</button>
+      <button id="centerBtn" class="btn">视角回正</button>
+    </div>
+    <div id="calStatus" class="muted" style="margin-top:8px">可说“体感开始校准”</div>
+
+    <section class="section">
+      <div class="title">当前游戏配置</div>
+      <div id="profileGameName" class="profile-game-name">通用 Xbox / 默认</div>
+      <div id="profileMeta" class="profile-meta">正在读取离线游戏库…</div>
+      <div class="profile-bar" style="margin-top:9px"><input id="profileSearch" type="text" placeholder="搜索游戏名或 Steam AppID"><button id="profileSearchBtn" class="btn">搜索</button></div>
+      <div class="profile-bar" style="margin-top:8px"><select id="profileSelect"></select><button id="profileApplyBtn" class="btn primary">使用这个游戏</button></div>
+    </section>
+
+    <section class="section">
+      <div class="title">快捷语音</div>
+      <div class="section-sub">整句话直接说，不需要先单独喊“体感”。</div>
+      <div class="compact-voice"><div id="voiceStatus" class="statusline">语音正在检查…</div></div>
+      <div id="commonVoiceCommands" class="common-voice-grid"></div>
+      <button id="voiceCommandsBtn" class="btn voice-all-btn">查看全部语音指令</button>
+    </section>
+  </aside>
+</main>
+
+<!-- Compatibility controls kept off the main page; JS/API IDs remain stable. -->
+<div class="hidden-compat" aria-hidden="true"><button id="cameraBtn"></button><button id="outputBtn"></button><button id="voiceBtn"></button><div id="backendStatus"></div><button id="sceneCaptureSettingsBtn"></button><button id="sceneRematchSettingsBtn"></button></div>
+
+<div id="voiceCommandsMask" class="voice-commands-mask" aria-hidden="true"><div class="voice-commands-dialog">
+  <div class="dialog-head"><h2>全部语音指令</h2><div class="spacer"></div><button id="closeVoiceCommandsBtn" class="btn">关闭</button></div>
+  <div class="muted" style="font-size:14px">直接说完整口令即可。游戏专属补充功能会跟随当前 Game Profile 切换。</div>
+  <div id="voiceCommandGrid"></div>
+</div></div>
 
 <div id="settingsMask" class="settings-mask" aria-hidden="true"><div class="settings">
-<div class="settings-head"><h2>设置</h2><div class="spacer"></div><button id="closeSettingsBtn" class="btn">关闭</button></div>
-<div class="settings-section">
-<div class="title">固定空间区域 / 场景适配</div>
-<div class="muted">先站到游戏位置，说“体感截图”或点击“记录参考场景”。截图后可走回电脑拖动圆圈。下一次手机方向改变时，再站到游戏位置说“体感重新匹配”；程序不会自行调整，也不会在游戏过程中跟着人移动。</div>
-<div class="settings-actions"><button id="sceneCaptureSettingsBtn" class="btn">记录参考场景</button><button id="sceneRematchSettingsBtn" class="btn">重新匹配本次场景</button><button id="sceneSaveBtn" class="btn primary">保存区域布局</button></div>
-<div id="sceneStatus" class="statusline">尚未记录参考场景</div>
-<div id="sceneEditor" class="scene-editor" hidden><img id="sceneReference" alt="参考场景"><div id="sceneEditorZones" class="scene-editor-zones"></div><div id="sceneVerticalCenter" class="scene-vertical-center"></div></div>
-<div id="sceneTools" class="scene-zone-tools" hidden><label>正在编辑<select id="sceneZoneSelect"></select></label><label>圆圈半径 <span id="sceneRadiusValue">—</span><input id="sceneRadius" type="range" min="2.5" max="20" step="0.5"></label><label>右腕上下范围 <span id="sceneVerticalRangeValue">—</span><input id="sceneVerticalRange" type="range" min="6" max="40" step="1"></label><label>右腕中心死区 <span id="sceneVerticalDeadzoneValue">—</span><input id="sceneVerticalDeadzone" type="range" min="0" max="35" step="1"></label></div>
-<div id="sceneMetrics" class="scene-metrics"></div>
-</div>
-<div class="settings-section">
-<div class="title">四个动作与按键</div>
-<div class="muted">动作默认关闭，避免未经测试就误触。开启后满足规则时保持对应输入，动作结束立即松开。</div>
-<div id="motionRows"></div>
-<div class="settings-actions"><button id="saveMotionBtn" class="btn primary">保存动作映射</button></div>
-</div>
-<div class="settings-section">
-<div class="title">语音映射</div>
-<div class="muted">唤醒词默认为“体感”。电脑端由 sherpa 只检测“体感”，唤醒后使用 SeACoParaformer + 热词识别命令；手机端本轮仍只接收手机送来的语音文本。紧急停止命令：“体感紧急停止”。</div>
-<div id="voiceRows"></div>
-<div class="settings-actions"><button id="addVoiceBtn" class="btn">＋命令</button><button id="saveVoiceBtn" class="btn">保存词表</button></div>
-<div id="voiceMode" class="pill">未就绪</div>
-<div id="voiceModelPath" class="model-path">命令模型：SeACoParaformer（等待服务状态）</div>
-</div>
-<div class="settings-section">
-<div class="title">头控</div>
-<div class="muted">只保留两种实验算法和必要参数。3D 头姿优先；脸部比例用于 A/B 对比。中心附近会自动按静止噪声扩大稳定区，避免鼠标漂移。</div>
-<div class="advgrid">
-<label>算法<select id="headAlgorithm"><option value="pnp">3D 头姿（PnP）</option><option value="ratio">脸部比例（实验）</option></select></label>
-<div class="tiny">稳定区 <b id="deadzoneValue">10%</b><input id="deadzone" type="range" min="3" max="25" value="10"></div>
-<div class="tiny">水平视角速度 <b id="speedXValue">58%</b><input id="speedX" type="range" min="20" max="120" step="2" value="58"></div>
-<div class="tiny head-vertical-setting">垂直视角速度 <b id="speedYValue">—</b><input id="speedY" type="range" min="15" max="100" step="2" value="46"></div>
-</div>
-<div class="checkrow"><label><input id="headEnable" type="checkbox" checked> 头控</label><label><input id="invertX" type="checkbox"> 左右反转</label><label class="head-vertical-setting"><input id="invertY" type="checkbox"> 上下反转</label></div>
-</div>
-<div class="settings-section">
-<details class="perf-panel" id="performancePanel"><summary>高级诊断</summary><div id="perfSummary" class="perf-summary">仅在排查问题时查看</div><div id="perfDetails" class="perf-details">等待本地服务诊断数据。</div></details>
-</div>
+  <div class="settings-head"><div><span class="eyebrow">MotionControl 1.00</span><h2>设置</h2><p>正常使用只需要调整输入来源、游戏映射和头控；诊断项保持默认即可。</p></div><div class="spacer"></div><button id="closeSettingsBtn" class="btn">完成</button></div>
+
+  <div class="settings-section">
+    <div class="title">输入来源</div>
+    <div class="controls">
+      <label>摄像头来源<select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></label>
+      <label>手机连接地址<input id="phoneWsUrl" class="source-url" readonly value="连接服务器后显示"></label>
+      <label>采集兼容模式<select id="cameraBackend"><option value="auto" selected>自动</option><option value="msmf">MSMF</option><option value="dshow">DirectShow</option></select></label>
+    </div>
+    <div id="mobileStatus" class="pill bad" style="margin-top:8px;display:inline-block">手机未连接</div>
+  </div>
+
+  <div class="settings-section">
+    <div class="title">游戏输出</div>
+    <div class="controls"><label>视角输出<select id="outputMode"><option value="mouse">鼠标视角</option><option value="gamepad">Xbox 360 右摇杆</option></select></label></div>
+    <div class="slider"><label>游戏速度倍率 <b id="strengthValue">160%</b></label><input id="strength" type="range" min="60" max="300" step="10" value="160"></div>
+  </div>
+
+  <div class="settings-section">
+    <div class="title">7 个固定体感区域</div>
+    <div class="muted">首次点击“开始体感”会在识别到完整人体后自动建立 7 个区域。以后不会自动跟随人体，也不会自动重新匹配；摄像头位置或站位明显改变时，再点击主页面“重新识别我的位置”。</div>
+    <div class="settings-actions"><button id="sceneCaptureBtn" class="btn">重新记录参考场景</button><button id="sceneSaveBtn" class="btn primary">保存区域布局</button></div>
+    <div id="sceneStatus" class="statusline">尚未记录参考场景</div>
+    <div id="sceneEditor" class="scene-editor" hidden><img id="sceneReference" alt="参考场景"><div id="sceneEditorZones" class="scene-editor-zones"></div><div id="sceneVerticalCenter" class="scene-vertical-center"></div></div>
+    <div id="sceneTools" class="scene-zone-tools" hidden><label>正在编辑<select id="sceneZoneSelect"></select></label><label>区域大小 <span id="sceneRadiusValue">—</span><input id="sceneRadius" type="range" min="2.5" max="20" step="0.5"></label><label>右手上下范围 <span id="sceneVerticalRangeValue">—</span><input id="sceneVerticalRange" type="range" min="6" max="40" step="1"></label><label>右手中心死区 <span id="sceneVerticalDeadzoneValue">—</span><input id="sceneVerticalDeadzone" type="range" min="0" max="35" step="1"></label></div>
+    <div id="sceneMetrics" class="scene-metrics"></div>
+  </div>
+
+  <div class="settings-section">
+    <div class="title">体感映射</div>
+    <div class="muted">这里统一管理当前游戏的体感区域、连续动作、交叉姿势和补充语音。优先把高频操作交给区域和动作；低频或不适合身体表达的功能交给语音。</div>
+    <div id="profileBindingRows" class="binding-list"></div>
+    <div class="profile-actions"><button id="saveProfileBindingsBtn" class="btn primary">保存当前游戏映射</button><button id="resetProfileBindingsBtn" class="btn">恢复这个游戏默认</button></div>
+    <div id="motionRows" hidden></div><button id="saveMotionBtn" hidden></button>
+  </div>
+
+  <div class="settings-section">
+    <div class="title">头控</div>
+    <div class="muted">头部只控制左右视角。上下视角先由左手进入绿色门控，再按这里选择右手或头部。</div>
+    <div class="advgrid"><label>算法<select id="headAlgorithm"><option value="pnp">3D 头姿（推荐）</option><option value="ratio">脸部比例（实验）</option></select></label><label>上下视角控制<select id="verticalLookSource"><option value="hand">右手</option><option value="head">头部</option></select></label><div class="tiny">中心稳定区 <b id="deadzoneValue">10%</b><input id="deadzone" type="range" min="3" max="25" value="10"></div><div class="tiny">左右视角速度 <b id="speedXValue">58%</b><input id="speedX" type="range" min="20" max="120" step="2" value="58"></div><div class="tiny head-vertical-setting">头部上下速度 <b id="speedYValue">46%</b><input id="speedY" type="range" min="15" max="100" step="2" value="46"></div></div>
+    <div class="checkrow"><label><input id="headEnable" type="checkbox" checked> 头控</label><label><input id="invertX" type="checkbox"> 左右反转</label><label class="head-vertical-setting"><input id="invertY" type="checkbox"> 上下反转</label></div>
+  </div>
+
+  <div class="settings-section">
+    <details class="compat-details"><summary>高级：兼容语音映射</summary><div class="muted" style="margin:8px 0">正常使用无需修改。语音主链使用固定完整短语识别；当前游戏的补充语音由 Game Profile 自动切换。</div><div id="voiceRows"></div><div class="settings-actions"><button id="addVoiceBtn" class="btn">＋命令</button><button id="saveVoiceBtn" class="btn">保存兼容映射</button></div></details>
+  </div>
+
+  <div class="settings-section">
+    <details class="perf-panel" id="performancePanel"><summary>高级诊断</summary>
+      <div id="perfSummary" class="muted" style="margin-top:8px">仅在排查问题时查看</div><div id="perfDetails" class="perf-details">等待本地服务诊断数据。</div>
+      <div id="voiceMode" class="pill" style="margin-top:10px;display:inline-block">未就绪</div><div id="voiceModelPath" class="model-path"></div><div id="voiceDiagnostic" class="diagnostic-text"></div>
+    </details>
+  </div>
 </div></div>
-<div id="calibrationOverlay" class="calibration-overlay" hidden aria-live="assertive">
-<div class="calibration-card">
-<div class="calibration-kicker">头控中心</div>
-<div id="calibrationStage" class="calibration-stage">准备校准</div>
-<div id="calibrationPrompt" class="calibration-prompt">请看向游戏屏幕中心</div>
-<div id="calibrationCountdown" class="calibration-countdown">8.0</div>
-<div class="calibration-progress"><div id="calibrationProgressBar"></div></div>
-<div id="calibrationDetail" class="calibration-detail"></div>
-<button id="calibrationCancel" class="calibration-cancel">取消校准</button>
-</div>
-</div>
+
+<div id="calibrationOverlay" class="calibration-overlay" hidden aria-live="assertive"><div class="calibration-card">
+  <div class="calibration-kicker">头控中心</div><div id="calibrationStage" class="calibration-stage">准备校准</div><div id="calibrationPrompt" class="calibration-prompt">请看向游戏屏幕中心</div><div id="calibrationCountdown" class="calibration-countdown">8.0</div><div class="calibration-progress"><div id="calibrationProgressBar"></div></div><div id="calibrationDetail" class="calibration-detail"></div><button id="calibrationCancel" class="calibration-cancel">取消校准</button>
+</div></div>
 <script type="module" src="/app.js"></script>
 </body></html>

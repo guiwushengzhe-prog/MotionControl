@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2139460-once-human",
+  "name": "Once Human",
+  "appid": 2139460,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3285812959,
+    "controller_type": "controller_xbox360",
+    "controller_type_nice": "Xbox 360",
+    "layout_title": "Jaybrook07 Once Human Final 1.2",
+    "subscriptions": 4,
+    "lifetime_playtime_seconds": 3188633067,
+    "votes": {
+      "score": 0.7072243,
+      "up": 322,
+      "down": 104
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "weapon swap, ,",
+        "action": {
+          "type": "mouse_wheel",
+          "target": "SCROLL_UP",
+          "behavior": "tap"
+        }
+      },
+      "leftHandLower": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "F",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "crouch/roll, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "C",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "M",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "track task/spacetime, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

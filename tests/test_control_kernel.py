@@ -114,6 +114,22 @@ def test_phone_pose_reaches_kernel_without_browser_and_triggers_motion():
         kernel.close()
 
 
+
+def test_stable_pose_snapshot_rejects_single_frame_zone_placement_outlier():
+    output = FakeOutput()
+    kernel = ControlKernel(output)
+    try:
+        for index in range(9):
+            pose = pose_map(hands_up=False)
+            pose["left_ear"] = dict(pose["left_ear"])
+            pose["left_ear"]["x"] = 0.92 if index == 8 else 0.46
+            kernel.handle_pose_map("mobile_pose:stable", pose)
+        stable = kernel.stable_pose_snapshot(window_s=0.90, min_samples=6)
+        assert stable is not None
+        assert abs(stable["left_ear"]["x"] - 0.46) < 0.01
+    finally:
+        kernel.close()
+
 def test_sensor_and_disconnect_are_handled_by_kernel_directly():
     output = FakeOutput()
     kernel = ControlKernel(output)

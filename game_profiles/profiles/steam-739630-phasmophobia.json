@@ -1,0 +1,82 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-739630-phasmophobia",
+  "name": "Phasmophobia",
+  "appid": 739630,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2259465658,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 555108,
+    "lifetime_playtime_seconds": 100069803,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 5,
+    "zone_total": 6,
+    "coverage_ratio": 0.833,
+    "rejected": {
+      "button_a": "binding not found"
+    },
+    "parser": {
+      "count": 7,
+      "supported": 7,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Inventory Swap",
+        "action": {
+          "type": "keyboard",
+          "target": "Q",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Pickup",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Drop Item",
+        "action": {
+          "type": "keyboard",
+          "target": "G",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Local Push To Talk",
+        "action": {
+          "type": "keyboard",
+          "target": "V",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Global Push To Talk",
+        "action": {
+          "type": "keyboard",
+          "target": "B",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

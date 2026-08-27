@@ -1,0 +1,85 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-219990-grim-dawn",
+  "name": "Grim Dawn",
+  "appid": 219990,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 839227079,
+    "controller_type": "controller_xboxone",
+    "controller_type_nice": "Xbox One",
+    "layout_title": "Grim Dawn v1",
+    "subscriptions": 4467,
+    "lifetime_playtime_seconds": 38542191,
+    "votes": {
+      "score": 0.50274724,
+      "up": 133,
+      "down": 131
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 5,
+    "zone_total": 6,
+    "coverage_ratio": 0.833,
+    "rejected": {
+      "left_bumper": "unsupported Steam binding command: mode_shift"
+    },
+    "parser": {
+      "count": 8,
+      "supported": 6,
+      "unsupported": 2,
+      "unsupported_reasons": {
+        "button_menu": "native Steam action is not directly convertible: game_action",
+        "left_bumper": "unsupported Steam binding command: mode_shift"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "左手上区",
+        "action": {
+          "type": "keyboard",
+          "target": "2",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "左手下区",
+        "action": {
+          "type": "keyboard",
+          "target": "1",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "右手上区",
+        "action": {
+          "type": "gamepad",
+          "target": "LB",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "右手下区",
+        "action": {
+          "type": "keyboard",
+          "target": "3",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "右脚区",
+        "action": {
+          "type": "keyboard",
+          "target": "R",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

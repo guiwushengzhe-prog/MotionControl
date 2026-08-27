@@ -1,0 +1,82 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2288630-taiko-no-tatsujin-rhythm-festival",
+  "name": "Taiko no Tatsujin: Rhythm Festival",
+  "appid": 2288630,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3362053365,
+    "controller_type": "controller_generic",
+    "controller_type_nice": "Generic",
+    "layout_title": "Hori Nintendo Switch Controller",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 3674120,
+    "votes": {
+      "score": 0.4903846,
+      "up": 1,
+      "down": 3
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 5,
+    "zone_total": 6,
+    "coverage_ratio": 0.833,
+    "rejected": {
+      "right_bumper": "binding not found"
+    },
+    "parser": {
+      "count": 7,
+      "supported": 7,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "Y",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "B",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": ",",
+        "action": {
+          "type": "gamepad",
+          "target": "A",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": ",",
+        "action": {
+          "type": "gamepad_trigger",
+          "target": "LT",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

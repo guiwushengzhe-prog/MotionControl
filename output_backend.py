@@ -31,31 +31,93 @@ class _INPUT(ctypes.Structure):
 
 
 class MouseOutput:
-    """Windows relative mouse output using SendInput."""
+    """Windows relative mouse, mouse-button and wheel output using SendInput."""
 
     MOUSEEVENTF_MOVE = 0x0001
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+    MOUSEEVENTF_RIGHTDOWN = 0x0008
+    MOUSEEVENTF_RIGHTUP = 0x0010
+    MOUSEEVENTF_MIDDLEDOWN = 0x0020
+    MOUSEEVENTF_MIDDLEUP = 0x0040
+    MOUSEEVENTF_XDOWN = 0x0080
+    MOUSEEVENTF_XUP = 0x0100
+    MOUSEEVENTF_WHEEL = 0x0800
     INPUT_MOUSE = 0
+    WHEEL_DELTA = 120
+    XBUTTON1 = 0x0001
+    XBUTTON2 = 0x0002
 
     def __init__(self) -> None:
         self.available = os.name == "nt"
         self.last_error: str | None = None
+        self.pressed: set[str] = set()
+
+    def _send(self, flags: int, *, dx: int = 0, dy: int = 0, data: int = 0) -> bool:
+        if not self.available:
+            raise RuntimeError("鼠标输出仅支持 Windows")
+        event = _INPUT()
+        event.type = self.INPUT_MOUSE
+        event.mi = _MOUSEINPUT(int(dx), int(dy), int(data), int(flags), 0, None)
+        sent = ctypes.windll.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(_INPUT))
+        if sent != 1:
+            self.last_error = f"SendInput failed: {ctypes.get_last_error()}"
+            raise RuntimeError(self.last_error)
+        self.last_error = None
+        return True
 
     def move(self, dx: int, dy: int = 0) -> bool:
-        if not self.available or (dx == 0 and dy == 0):
+        if dx == 0 and dy == 0:
             return False
         try:
-            event = _INPUT()
-            event.type = self.INPUT_MOUSE
-            event.mi = _MOUSEINPUT(dx, dy, 0, self.MOUSEEVENTF_MOVE, 0, None)
-            sent = ctypes.windll.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(_INPUT))
-            if sent != 1:
-                self.last_error = f"SendInput failed: {ctypes.get_last_error()}"
-                return False
-            self.last_error = None
-            return True
+            return self._send(self.MOUSEEVENTF_MOVE, dx=dx, dy=dy)
         except Exception as exc:
             self.last_error = str(exc)
             return False
+
+    @staticmethod
+    def normalize_button(button: str) -> str:
+        aliases = {"LEFT_BUTTON": "LEFT", "RIGHT_BUTTON": "RIGHT", "MIDDLE_BUTTON": "MIDDLE", "MOUSE4": "X1", "MOUSE5": "X2"}
+        value = str(button).strip().upper()
+        return aliases.get(value, value)
+
+    def set_button(self, button: str, pressed: bool) -> None:
+        button = self.normalize_button(button)
+        if button not in {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}:
+            raise ValueError(f"不支持的鼠标按键：{button}")
+        if pressed == (button in self.pressed):
+            return
+        if button == "LEFT":
+            flags, data = (self.MOUSEEVENTF_LEFTDOWN if pressed else self.MOUSEEVENTF_LEFTUP), 0
+        elif button == "RIGHT":
+            flags, data = (self.MOUSEEVENTF_RIGHTDOWN if pressed else self.MOUSEEVENTF_RIGHTUP), 0
+        elif button == "MIDDLE":
+            flags, data = (self.MOUSEEVENTF_MIDDLEDOWN if pressed else self.MOUSEEVENTF_MIDDLEUP), 0
+        else:
+            flags = self.MOUSEEVENTF_XDOWN if pressed else self.MOUSEEVENTF_XUP
+            data = self.XBUTTON1 if button == "X1" else self.XBUTTON2
+        self._send(flags, data=data)
+        if pressed:
+            self.pressed.add(button)
+        else:
+            self.pressed.discard(button)
+
+    def wheel(self, direction: str, notches: int = 1) -> None:
+        direction = str(direction).strip().upper()
+        if direction not in {"SCROLL_UP", "SCROLL_DOWN"}:
+            raise ValueError(f"不支持的滚轮方向：{direction}")
+        amount = self.WHEEL_DELTA * max(1, min(10, int(notches)))
+        if direction == "SCROLL_DOWN":
+            amount = -amount
+        # mouseData is an unsigned DWORD in the INPUT struct; preserve the signed 32-bit wheel delta.
+        self._send(self.MOUSEEVENTF_WHEEL, data=ctypes.c_ulong(amount & 0xFFFFFFFF).value)
+
+    def release_all(self) -> None:
+        for button in tuple(self.pressed):
+            try:
+                self.set_button(button, False)
+            except Exception:
+                self.pressed.discard(button)
 
 
 KEY_CODES = {
@@ -165,6 +227,8 @@ XUSB_GAMEPAD_BUTTONS = {
     "DPAD_RIGHT": 0x0008,
     "START": 0x0010,
     "BACK": 0x0020,
+    "L3": 0x0040,
+    "R3": 0x0080,
     "LB": 0x0100,
     "RB": 0x0200,
     "A": 0x1000,
@@ -387,6 +451,7 @@ class OutputManager:
         self.last_buttons: tuple[str, ...] = ()
         self._button_sources: dict[str, set[str]] = {"zones": set()}
         self._keyboard_sources: dict[str, set[str]] = {}
+        self._mouse_button_sources: dict[str, set[str]] = {}
         self._left_stick_sources: dict[str, tuple[float, float]] = {}
         self._trigger_sources: dict[str, tuple[float, float]] = {}
         self.last_button_update = 0.0
@@ -517,6 +582,14 @@ class OutputManager:
         for key in sorted(desired - current):
             self.keyboard.set_key(key, True)
 
+    def _refresh_mouse_buttons_locked(self) -> None:
+        desired = set().union(*self._mouse_button_sources.values()) if self.enabled and self._mouse_button_sources else set()
+        current = set(getattr(self.mouse, "pressed", set()))
+        for button in sorted(current - desired):
+            self.mouse.set_button(button, False)
+        for button in sorted(desired - current):
+            self.mouse.set_button(button, True)
+
     def _refresh_left_stick_locked(self) -> None:
         x = y = 0.0
         if self.enabled:
@@ -574,6 +647,69 @@ class OutputManager:
             try:
                 self._refresh_buttons_locked()
                 self._refresh_keyboard_locked()
+                self._refresh_mouse_buttons_locked()
+                self._refresh_left_stick_locked()
+                self._refresh_triggers_locked()
+                self.last_error = None
+            except Exception as exc:
+                self.last_error = str(exc)
+                self.enabled = False
+                self._zero_locked()
+                raise
+            return self.status()
+
+    def set_action_holds(self, holds, source_group: str = "controls") -> dict:
+        """Replace one trigger group's continuous outputs using the unified action schema.
+
+        Supported hold actions: keyboard, mouse_button, gamepad buttons, LT/RT and
+        left-stick cardinal directions. mouse_wheel is intentionally rejected because
+        a wheel is an impulse and must never run continuously while a zone is occupied.
+        """
+        prefix = str(source_group) + ":"
+        with self._lock:
+            for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
+                for key in [k for k in store if k.startswith(prefix)]:
+                    store.pop(key, None)
+            for item in holds or []:
+                if not isinstance(item, dict):
+                    continue
+                ident = str(item.get("id", "")).strip()
+                action = item.get("action") if isinstance(item.get("action"), dict) else item
+                action_type = str(action.get("type", "")).strip().lower()
+                target = str(action.get("target", "")).strip().upper()
+                if not ident or not target:
+                    continue
+                source = prefix + ident
+                if action_type in {"gamepad", "gamepad_button", "xinput_button"}:
+                    if target not in XUSB_GAMEPAD_BUTTONS:
+                        raise ValueError(f"不支持的 Xbox 键：{target}")
+                    self._button_sources[source] = {target}
+                elif action_type == "keyboard":
+                    self._keyboard_sources[source] = self._combo_keys(target)
+                elif action_type == "mouse_button":
+                    if target not in {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}:
+                        raise ValueError(f"不支持的鼠标按键：{target}")
+                    self._mouse_button_sources[source] = {target}
+                elif action_type == "gamepad_axis":
+                    if target not in GAMEPAD_AXES:
+                        raise ValueError(f"不支持的 Xbox 摇杆方向：{target}")
+                    self._left_stick_sources[source] = GAMEPAD_AXES[target]
+                elif action_type == "gamepad_trigger":
+                    if target == "LT":
+                        self._trigger_sources[source] = (1.0, 0.0)
+                    elif target == "RT":
+                        self._trigger_sources[source] = (0.0, 1.0)
+                    else:
+                        raise ValueError(f"不支持的 Xbox 扳机：{target}")
+                elif action_type == "mouse_wheel":
+                    raise ValueError("鼠标滚轮只能使用 tap，不能作为持续 hold")
+                else:
+                    raise ValueError(f"不支持的持续输出类型：{action_type}")
+            self.last_hold_update = time.monotonic()
+            try:
+                self._refresh_buttons_locked()
+                self._refresh_keyboard_locked()
+                self._refresh_mouse_buttons_locked()
                 self._refresh_left_stick_locked()
                 self._refresh_triggers_locked()
                 self.last_error = None
@@ -621,11 +757,13 @@ class OutputManager:
         with self._lock:
             self._button_sources.pop(source, None)
             self._keyboard_sources.pop(source, None)
+            self._mouse_button_sources.pop(source, None)
             self._left_stick_sources.pop(source, None)
             self._trigger_sources.pop(source, None)
             try:
                 self._refresh_buttons_locked()
                 self._refresh_keyboard_locked()
+                self._refresh_mouse_buttons_locked()
                 self._refresh_left_stick_locked()
                 self._refresh_triggers_locked()
             except Exception as exc:
@@ -682,21 +820,70 @@ class OutputManager:
             self._keyboard_sources.pop(source, None)
             self._refresh_keyboard_locked()
 
+    def _release_later(self, source: str, duration: float) -> None:
+        timer = threading.Timer(max(0.02, min(0.30, float(duration))), lambda: self.clear_source(source))
+        timer.daemon = True
+        timer.start()
+
     def execute_action(self, action: dict) -> dict:
+        """Execute one discrete action without blocking the pose/control thread."""
         if not isinstance(action, dict):
             raise ValueError("action must be an object")
         with self._lock:
             if not self.enabled:
                 return {"executed": False, "reason": "output disabled"}
-        action_type = str(action.get("type", "")).lower()
+        action_type = str(action.get("type", "")).strip().lower()
+        aliases = {"gamepad_button": "gamepad", "xinput_button": "gamepad", "mouse": "mouse_button", "wheel": "mouse_wheel"}
+        action_type = aliases.get(action_type, action_type)
         target = str(action.get("target", "")).strip().upper()
-        source = str(action.get("source", "")).strip() or None
-        if action_type == "gamepad":
-            self.tap_gamepad(target, source=source)
-        elif action_type == "keyboard":
-            self.tap_keyboard(target, source=source)
-        else:
-            raise ValueError(f"不支持的输出类型：{action_type}")
+        source = str(action.get("source", "")).strip() or f"pulse:{action_type}:{time.monotonic_ns()}"
+        duration = float(action.get("duration", 0.08))
+        nonblocking = bool(action.get("nonblocking", False))
+        # Preserve the existing voice/API contract: ordinary keyboard/gamepad taps
+        # are complete when execute_action returns. Pose edges opt into the timer
+        # path so the camera/control thread never sleeps.
+        if not nonblocking and action_type == "gamepad":
+            self.tap_gamepad(target, duration=duration, source=source)
+            return {"executed": True, "action": f"{action_type}:{target}"}
+        if not nonblocking and action_type == "keyboard":
+            self.tap_keyboard(target, duration=duration, source=source)
+            return {"executed": True, "action": f"{action_type}:{target}"}
+        with self._lock:
+            if action_type == "gamepad":
+                if target not in XUSB_GAMEPAD_BUTTONS:
+                    raise ValueError(f"不支持的 Xbox 键：{target}")
+                self._button_sources[source] = {target}
+                self._refresh_buttons_locked()
+            elif action_type == "keyboard":
+                self._keyboard_sources[source] = self._combo_keys(target)
+                self._refresh_keyboard_locked()
+            elif action_type == "mouse_button":
+                if target not in {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}:
+                    raise ValueError(f"不支持的鼠标按键：{target}")
+                self._mouse_button_sources[source] = {target}
+                self._refresh_mouse_buttons_locked()
+            elif action_type == "gamepad_axis":
+                if target not in GAMEPAD_AXES:
+                    raise ValueError(f"不支持的 Xbox 摇杆方向：{target}")
+                self._left_stick_sources[source] = GAMEPAD_AXES[target]
+                self._refresh_left_stick_locked()
+            elif action_type == "gamepad_trigger":
+                if target == "LT":
+                    self._trigger_sources[source] = (1.0, 0.0)
+                elif target == "RT":
+                    self._trigger_sources[source] = (0.0, 1.0)
+                else:
+                    raise ValueError(f"不支持的 Xbox 扳机：{target}")
+                self._refresh_triggers_locked()
+            elif action_type == "mouse_wheel":
+                if target not in {"SCROLL_UP", "SCROLL_DOWN"}:
+                    raise ValueError(f"不支持的滚轮方向：{target}")
+                self.mouse.wheel(target, int(action.get("notches", 1)))
+                return {"executed": True, "action": f"{action_type}:{target}"}
+            else:
+                raise ValueError(f"不支持的输出类型：{action_type}")
+            self.last_error = None
+        self._release_later(source, duration)
         return {"executed": True, "action": f"{action_type}:{target}"}
 
     def _zero_locked(self) -> None:
@@ -706,9 +893,13 @@ class OutputManager:
         self.last_buttons = ()
         self._button_sources = {"zones": set()}
         self._keyboard_sources = {}
+        self._mouse_button_sources = {}
         self._left_stick_sources = {}
         self._trigger_sources = {}
         self.keyboard.release_all()
+        release_mouse = getattr(self.mouse, "release_all", None)
+        if release_mouse is not None:
+            release_mouse()
         self._mouse_residual_x = 0.0
         self._mouse_residual_y = 0.0
         if self._pad is not None:
@@ -742,16 +933,18 @@ class OutputManager:
                     except Exception as exc:
                         self.last_error = str(exc)
                 if self.last_hold_update and now - self.last_hold_update > 0.45:
-                    prefixes = ("motions:",)
+                    prefixes = ("motions:", "controls:")
                     changed = False
-                    for store in (self._button_sources, self._keyboard_sources, self._left_stick_sources):
+                    for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
                         for key in [k for k in store if k.startswith(prefixes)]:
                             store.pop(key, None); changed = True
                     if changed:
                         try:
                             self._refresh_buttons_locked()
                             self._refresh_keyboard_locked()
+                            self._refresh_mouse_buttons_locked()
                             self._refresh_left_stick_locked()
+                            self._refresh_triggers_locked()
                         except Exception as exc:
                             self.last_error = str(exc)
 
@@ -773,6 +966,7 @@ class OutputManager:
             "last_y": round(self.last_y, 4),
             "buttons": list(self.last_buttons),
             "keyboard_holds": sorted(set().union(*self._keyboard_sources.values())) if self._keyboard_sources else [],
+            "mouse_button_holds": sorted(set().union(*self._mouse_button_sources.values())) if self._mouse_button_sources else [],
             "left_stick_holds": list(self._left_stick_sources.keys()),
             "trigger_holds": list(self._trigger_sources.keys()),
             "last_error": self.last_error,

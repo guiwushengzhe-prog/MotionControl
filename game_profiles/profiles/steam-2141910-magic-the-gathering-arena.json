@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-2141910-magic-the-gathering-arena",
+  "name": "Magic: The Gathering Arena",
+  "appid": 2141910,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 2979724214,
+    "controller_type": "controller_steamcontroller_gordon",
+    "controller_type_nice": "Steam Controller (2015)",
+    "layout_title": "Straightforward MTG Arena Controls",
+    "subscriptions": 1,
+    "lifetime_playtime_seconds": 5713596636,
+    "votes": {
+      "score": 0.6193182,
+      "up": 59,
+      "down": 17
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Toggle Autopass, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ENTER",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Toggle Full Control, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "CTRL",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Back, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Pass Priority, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Undo Mana Action, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "Z",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Toggle Phases, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "L",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

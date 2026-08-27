@@ -1,0 +1,88 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-892970-valheim",
+  "name": "Valheim",
+  "appid": 892970,
+  "source": {
+    "kind": "steaminputdb",
+    "official": true,
+    "file_id": 2442408209,
+    "controller_type": "controller_mobile_touch",
+    "controller_type_nice": "Mobile Touch",
+    "layout_title": "#Library_ControllerSaveDefaultTitle",
+    "subscriptions": 367571,
+    "lifetime_playtime_seconds": 116258976,
+    "votes": {
+      "score": 0,
+      "up": 0,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 6,
+    "zone_total": 6,
+    "coverage_ratio": 1.0,
+    "rejected": {},
+    "parser": {
+      "count": 8,
+      "supported": 8,
+      "unsupported": 0,
+      "unsupported_reasons": {}
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Auto-Run / Prev Build Item",
+        "action": {
+          "type": "keyboard",
+          "target": "Q",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "Use / Next Build Item",
+        "action": {
+          "type": "keyboard",
+          "target": "E",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": "Dodge, ghost_045_move_0170.png #232323 #E4E4E4",
+        "action": {
+          "type": "mouse_button",
+          "target": "RIGHT",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Jump",
+        "action": {
+          "type": "keyboard",
+          "target": "SPACE",
+          "behavior": "hold"
+        }
+      },
+      "leftFoot": {
+        "label": "Inventory",
+        "action": {
+          "type": "keyboard",
+          "target": "TAB",
+          "behavior": "hold"
+        }
+      },
+      "rightFoot": {
+        "label": "Secondary Attack / Deconstruct",
+        "action": {
+          "type": "mouse_button",
+          "target": "MIDDLE",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}

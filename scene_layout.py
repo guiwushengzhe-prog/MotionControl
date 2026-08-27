@@ -301,6 +301,8 @@ class SceneLayoutManager:
             "enabled": True,
             "gate_zone_id": "lookGate",
             "point": "right_wrist",
+            "source": "hand",
+            "verticalLookSource": "hand",
             "center_x": _clamp(rw["x"], 0.0, 1.0),
             "center_y": _clamp(rw["y"], 0.0, 1.0),
             "range_y": _clamp(torso * 0.75, 0.10, 0.28),
@@ -372,6 +374,8 @@ class SceneLayoutManager:
             old = copy.deepcopy(self.reference.get("vertical_look") or {})
             old.update({
                 "enabled": bool(vertical.get("enabled", old.get("enabled", True))),
+                "source": "head" if str(vertical.get("source", vertical.get("verticalLookSource", old.get("source", "hand")))).lower() in {"head", "头部"} else "hand",
+                "verticalLookSource": "head" if str(vertical.get("verticalLookSource", vertical.get("source", old.get("source", "hand")))).lower() in {"head", "头部"} else "hand",
                 "center_x": _clamp(vertical.get("center_x", old.get("center_x", 0.5)), 0.0, 1.0),
                 "center_y": _clamp(vertical.get("center_y", old.get("center_y", 0.5)), 0.0, 1.0),
                 "range_y": _clamp(vertical.get("range_y", old.get("range_y", 0.18)), 0.06, 0.40),

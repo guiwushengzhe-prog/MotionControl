@@ -1,0 +1,19 @@
+{
+  "schema": "motioncontrol.game_profile_build_report.v1",
+  "generated_at": "2026-08-25T09:25:51.691622+00:00",
+  "batch_usable": 9,
+  "batch_failed": 1,
+  "library_generated_count": 198,
+  "library_count": 199,
+  "target_count": 300,
+  "target_progress": 0.66,
+  "target_met": false,
+  "build_gate": false,
+  "failures": [
+    {
+      "appid": 2285550,
+      "name": "Doloc Town",
+      "reason": "no Steam Input candidates"
+    }
+  ]
+}

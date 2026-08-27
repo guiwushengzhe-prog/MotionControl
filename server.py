@@ -13,12 +13,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
+from game_profiles import GameProfileStore, action_catalog
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
 from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService
 from scene_layout import SceneLayoutManager
 
-# Product version.  The wire protocol remains pose_frame_v2.
-VERSION = "0.9.5"
+# Product version. 1.00 is the first productized stable UI/UX release.
+VERSION = "1.00"
 
 
 def application_root() -> Path:
@@ -45,16 +46,37 @@ RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
 SCENE = SceneLayoutManager(ROOT)
 if SCENE.session:
     KERNEL.configure_scene_layout(SCENE.session)
+PROFILES = GameProfileStore(ROOT)
+KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
+
+
+def _apply_effective_profile() -> dict:
+    profile = PROFILES.effective_profile()
+    KERNEL.configure_bindings(profile.get("bindings", {}))
+    return profile
 
 
 def _scene_apply_current() -> dict:
     if SCENE.session:
         KERNEL.configure_scene_layout(SCENE.session)
-    return SCENE.status()
+    status = SCENE.status()
+    bridge = globals().get("INPUT_BRIDGE")
+    payload_fn = globals().get("_phone_control_payload")
+    if bridge is not None and callable(payload_fn):
+        broadcaster = getattr(bridge, "broadcast_control_config", None)
+        if broadcaster is not None:
+            try:
+                broadcaster(payload_fn())
+            except Exception:
+                pass
+    return status
 
 
 def _scene_capture_with_frame(frame, purpose: str) -> dict:
-    pose = KERNEL.latest_pose
+    # Scene authoring is deliberately low-frequency.  Use a recent multi-frame
+    # median pose here so one MediaPipe jump cannot place all seven regions in
+    # the wrong location.  Gameplay itself still uses the newest frame.
+    pose = KERNEL.stable_pose_snapshot(window_s=0.90, min_samples=6) or KERNEL.latest_pose
     if purpose == "capture":
         SCENE.capture_reference(frame, pose, KERNEL.zone_rects)
     elif purpose == "rematch":
@@ -95,8 +117,20 @@ HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
 
 
 def execute_voice_action(action: dict) -> dict:
-    """Keep system voice commands at the local control-kernel boundary."""
+    """Keep system voice commands at the local control-kernel boundary.
+
+    A selected game Profile may override a stable voice command id.  The
+    recognizer and command vocabulary remain unchanged; only the final action
+    is selected at this boundary.
+    """
     if str(action.get("type", "")).lower() != "system":
+        command_id = str(action.get("command_id", "")).strip()
+        if command_id:
+            binding = KERNEL.control_bindings.get(f"voice.{command_id}")
+            if isinstance(binding, dict) and not binding.get("disabled") and isinstance(binding.get("action"), dict):
+                mapped = dict(binding["action"])
+                mapped["source"] = action.get("source", "voice")
+                return OUTPUT.execute_action(mapped)
         return OUTPUT.execute_action(action)
     target = str(action.get("target", "")).strip().upper()
     # Output start/stop
@@ -141,6 +175,22 @@ VOICE = VoiceService(
 )
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
 INPUT_BRIDGE.configure_scene_snapshot_handler(_scene_snapshot_from_phone)
+
+def _phone_control_payload() -> dict:
+    profile = PROFILES.effective_profile()
+    scene = SCENE.status()
+    return {
+        "type": "control_config_v1",
+        "version": VERSION,
+        "game": {"id": profile.get("id"), "name": profile.get("name"), "appid": profile.get("appid")},
+        "bindings": profile.get("bindings", {}),
+        "zones": scene.get("zones", {}),
+        "vertical_look": scene.get("vertical_look", {}),
+    }
+
+provider = getattr(INPUT_BRIDGE, "configure_control_config_provider", None)
+if provider is not None:
+    provider(_phone_control_payload)
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
 MOTION_CONFIG_FILE = CONFIG_DIR / "motion_mappings.json"
@@ -380,6 +430,23 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/ws/input":
             INPUT_BRIDGE.serve_websocket(self, parsed.query)
             return
+        if route == "/api/game-profiles/catalog":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            self._send_json({"version": VERSION, **PROFILES.list_games(query)})
+            return
+        if route == "/api/game-profiles/selected":
+            self._send_json({"version": VERSION, "profile": PROFILES.effective_profile()})
+            return
+        if route == "/api/game-profiles/profile":
+            profile_id = parse_qs(parsed.query).get("id", [""])[0]
+            try:
+                self._send_json({"version": VERSION, "profile": PROFILES.get_profile(profile_id)})
+            except (KeyError, ValueError, OSError, json.JSONDecodeError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 404)
+            return
+        if route == "/api/output/actions":
+            self._send_json({"version": VERSION, "actions": action_catalog()})
+            return
         if route == "/api/models":
             available = bool(MODEL_PATH and MODEL_PATH.is_file())
             self._send_json({
@@ -467,7 +534,7 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/voice/audio":
             self._send_json({
                 "ok": False,
-                "error": "browser voice endpoint disabled; use the local computer microphone or /ws/input voice_text",
+                "error": "browser voice endpoint disabled; use the local computer microphone or /ws/input voice_command(command_id)",
             }, 410)
             return
 
@@ -504,6 +571,27 @@ class Handler(SimpleHTTPRequestHandler):
                 RUNTIME.configure_motions(MOTION_CONFIG)
                 OUTPUT.set_holds([], source_group="motions")
                 self._send_json({"ok": True, "motions": MOTION_CONFIG})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route in {"/api/game-profiles/select", "/api/game-profiles/overrides"}:
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "game profile changes are loopback-only"}, 403)
+                return
+            body = self._body()
+            if body is None:
+                self._send_json({"ok": False, "error": "invalid JSON"}, 400)
+                return
+            try:
+                if route.endswith("/select"):
+                    profile = PROFILES.select(str(body.get("id", "")))
+                else:
+                    profile = PROFILES.set_overrides(body.get("overrides", {}))
+                KERNEL.configure_bindings(profile.get("bindings", {}))
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
+                self._send_json({"ok": True, "profile": profile})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
@@ -580,6 +668,7 @@ class Handler(SimpleHTTPRequestHandler):
                     sensitivity_y=body.get("sensitivity_y"),
                     enabled=body.get("enabled"),
                     invert_x=body.get("invert_x"), invert_y=body.get("invert_y"),
+                    vertical_look_source=body.get("vertical_look_source", body.get("verticalLookSource")),
                 )
                 self._send_json({"ok": True, **RUNTIME.status()})
             except Exception as exc:
@@ -662,7 +751,7 @@ def main():
     MODEL_PATH = resolve_full_model(MODEL_ROOT)
     RUNTIME.configure_model(MODEL_PATH)
     INPUT_BRIDGE.configure_endpoint(args.host, args.port)
-    print(f"MotionControl body zones + four motions + voice v{VERSION}")
+    print(f"MotionControl 1.00 · body zones + motions + voice · v{VERSION}")
     print("Model root:", MODEL_ROOT or "NOT FOUND")
     print("MediaPipe Full:", MODEL_PATH or "NOT FOUND")
 

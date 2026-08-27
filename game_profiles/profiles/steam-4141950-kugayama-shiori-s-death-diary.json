@@ -1,0 +1,77 @@
+{
+  "schema": "motioncontrol.game_profile.v1",
+  "id": "steam-4141950-kugayama-shiori-s-death-diary",
+  "name": "Kugayama Shiori's Death Diary",
+  "appid": 4141950,
+  "source": {
+    "kind": "steaminputdb",
+    "official": false,
+    "file_id": 3758804173,
+    "controller_type": "controller_neptune",
+    "controller_type_nice": "Steam Deck",
+    "layout_title": "𝕊𝔲𝔭𝔢𝔯𝔦𝔬𝔯 | Laplacian ∵ Layout: V1.00 | [Steam Deck]",
+    "subscriptions": 0,
+    "lifetime_playtime_seconds": 57524,
+    "votes": {
+      "score": 0.5049505,
+      "up": 1,
+      "down": 0
+    }
+  },
+  "quality": {
+    "usable": true,
+    "zone_coverage": 4,
+    "zone_total": 6,
+    "coverage_ratio": 0.667,
+    "rejected": {
+      "left_bumper": "binding not found",
+      "right_bumper": "binding not found"
+    },
+    "parser": {
+      "count": 6,
+      "supported": 5,
+      "unsupported": 1,
+      "unsupported_reasons": {
+        "button_menu": "native Steam action is not directly convertible: controller_action"
+      }
+    }
+  },
+  "bindings": {
+    "zones": {
+      "leftHandUpper": {
+        "label": "Auto Mode | ⏯️, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "F6",
+          "behavior": "hold"
+        }
+      },
+      "leftHandLower": {
+        "label": "🎴 | Hide Text UI, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "M",
+          "behavior": "hold"
+        }
+      },
+      "rightHandUpper": {
+        "label": ",",
+        "action": {
+          "type": "keyboard",
+          "target": "ESC",
+          "behavior": "hold"
+        }
+      },
+      "rightHandLower": {
+        "label": "Advance Text | 🎮, ,",
+        "action": {
+          "type": "keyboard",
+          "target": "ENTER",
+          "behavior": "hold"
+        }
+      }
+    },
+    "motions": {},
+    "poses": {}
+  }
+}
