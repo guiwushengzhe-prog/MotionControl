@@ -1412,3 +1412,8 @@ class LocalControlRuntime:
     def close(self) -> None:
         self.camera.stop()
         self.kernel.close()
+# Keep the hand-anchor logic at the input/recognition boundary.  The existing
+# head-control and automatic-calibration implementation remains untouched.
+from hand_anchor import install_hand_anchor_adapter
+
+install_hand_anchor_adapter(ControlKernel)
