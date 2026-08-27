@@ -698,6 +698,11 @@ class NativeCameraService:
     REQUESTED_HEIGHT = 480
     REQUESTED_FPS = 30
     PROBE_SECONDS = 2.5
+    # The browser requests preview frames at roughly 6.7 Hz.  Keep a small
+    # server-side headroom while avoiding an unconditional 15 Hz JPEG encoder
+    # when no browser is looking at the preview.
+    PREVIEW_FPS = 8.0
+    PREVIEW_DEMAND_SECONDS = 1.0
 
     def __init__(self, kernel: ControlKernel, model_path=None, camera_index: int = 0) -> None:
         self.kernel = kernel
@@ -741,10 +746,14 @@ class NativeCameraService:
         self._preview_jpeg: bytes | None = None
         self._preview_sequence = 0
         self._preview_at = 0.0
+        self._preview_requested_until = 0.0
         self._capture_times: deque[float] = deque(maxlen=120)
         self._inference_times: deque[float] = deque(maxlen=120)
         self._inference_durations_ms: deque[float] = deque(maxlen=120)
         self._latencies_ms: deque[float] = deque(maxlen=120)
+        self._preview_times: deque[float] = deque(maxlen=120)
+        self._preview_durations_ms: deque[float] = deque(maxlen=120)
+        self._preview_sizes: deque[int] = deque(maxlen=120)
 
     @staticmethod
     def _normalize_backend(value: str | None) -> str:
@@ -880,10 +889,14 @@ class NativeCameraService:
         self._preview_jpeg = None
         self._preview_sequence = 0
         self._preview_at = 0.0
+        self._preview_requested_until = 0.0
         self._capture_times.clear()
         self._inference_times.clear()
         self._inference_durations_ms.clear()
         self._latencies_ms.clear()
+        self._preview_times.clear()
+        self._preview_durations_ms.clear()
+        self._preview_sizes.clear()
 
     def configure_model(self, model_path) -> None:
         with self._lock:
@@ -1230,30 +1243,43 @@ class NativeCameraService:
             next_encode_at = 0.0
             while True:
                 with self._condition:
-                    while not self._stop.is_set() and self._latest_sequence <= last_sequence:
-                        self._condition.wait(0.10)
+                    while not self._stop.is_set():
+                        now = time.monotonic()
+                        demand_active = now < self._preview_requested_until
+                        frame_ready = self._latest_sequence > last_sequence
+                        if not demand_active or not frame_ready:
+                            self._condition.wait(0.10)
+                            continue
+                        wait = next_encode_at - now
+                        if wait > 0:
+                            self._condition.wait(min(wait, 0.10))
+                            continue
+                        sequence = self._latest_sequence
+                        frame = self._latest_frame
+                        last_sequence = sequence
+                        break
                     if self._stop.is_set():
                         break
-                    wait = next_encode_at - time.monotonic()
-                    if wait > 0:
-                        self._condition.wait(min(wait, 0.10))
-                        continue
-                    sequence = self._latest_sequence
-                    frame = self._latest_frame
-                    last_sequence = sequence
                 if frame is None:
                     continue
+                encode_started = time.perf_counter()
                 ok, encoded = cv2.imencode(
                     ".jpg", frame,
                     [int(cv2.IMWRITE_JPEG_QUALITY), 78],
                 )
-                next_encode_at = time.monotonic() + (1.0 / 15.0)
+                encode_finished = time.perf_counter()
+                next_encode_at = time.monotonic() + (1.0 / self.PREVIEW_FPS)
                 if not ok:
                     continue
+                preview = encoded.tobytes()
+                preview_at = time.monotonic()
                 with self._condition:
-                    self._preview_jpeg = encoded.tobytes()
+                    self._preview_jpeg = preview
                     self._preview_sequence = sequence
-                    self._preview_at = time.monotonic()
+                    self._preview_at = preview_at
+                    self._preview_times.append(preview_at)
+                    self._preview_durations_ms.append((encode_finished - encode_started) * 1000.0)
+                    self._preview_sizes.append(len(preview))
         except Exception as exc:
             with self._condition:
                 if not self._stop.is_set():
@@ -1330,12 +1356,28 @@ class NativeCameraService:
                 "web_render_fps": None,
                 "recent_humans": int(self.last_pose_count),
                 "preview_ready": bool(self._preview_jpeg),
+                "preview_fps": self._round_or_none(self._rate(self._preview_times), 2),
+                "preview_encode_avg_ms": self._round_or_none(
+                    sum(self._preview_durations_ms) / len(self._preview_durations_ms)
+                    if self._preview_durations_ms else None,
+                ),
+                "preview_encode_p95_ms": self._round_or_none(self._p95(self._preview_durations_ms)),
+                "preview_jpeg_avg_bytes": round(sum(self._preview_sizes) / len(self._preview_sizes)) if self._preview_sizes else None,
+                "preview_last_age_ms": round(max(0.0, (now - self._preview_at) * 1000.0)) if self._preview_at else None,
                 "running": bool(self.running),
                 "last_error": self.last_error,
             }
 
     def latest_preview(self) -> bytes | None:
-        with self._lock:
+        # A preview request is a short-lived demand signal.  This keeps the
+        # encoder asleep when the browser is hidden or the camera preview is
+        # not in use, without changing the endpoint's latest-JPEG semantics.
+        with self._condition:
+            self._preview_requested_until = max(
+                self._preview_requested_until,
+                time.monotonic() + self.PREVIEW_DEMAND_SECONDS,
+            )
+            self._condition.notify_all()
             return bytes(self._preview_jpeg) if self._preview_jpeg else None
 
     def latest_frame(self):

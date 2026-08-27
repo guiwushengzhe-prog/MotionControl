@@ -81,7 +81,7 @@ function renderCalibrationOverlay(hs={}){
 function renderKernelState(runtime){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
-  currentPoseMap=k.pose||null;canvas.width=frameWidth;canvas.height=frameHeight;viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
+  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
   const keys=new Set(k.buttons||[]);for(const id of ['A','B','X','Y','LB','RB'])$(`#pad${id}`)?.classList.toggle('active',keys.has(id));
   $('#buttonStatus').textContent=keys.size?'身体区域：'+[...keys].join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
   const active=new Set(k.motions||[]),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头']};
@@ -116,7 +116,7 @@ function renderKernelState(runtime){
 }
 function renderInputStatus(status){const connected=!!(status?.mobile_pose_connected||status?.handheld_connected),pill=$('#mobileStatus');pill.textContent=connected?'手机已连接':'手机未连接';pill.className='pill '+(connected?'ok':'bad');const top=$('#phonePill');if(top){top.textContent=connected?'手机已连接':'手机未连接';top.className='pill '+(connected?'ok':'bad')}const field=$('#phoneWsUrl');if(field)field.value=status?.phone_ws_urls?.[0]||'连接服务器后显示'}
 async function refreshKernel(){try{renderKernelState(await api('/api/kernel/status'))}catch{}}
-async function refreshInput(){try{renderInputStatus(await api('/api/input/status'))}catch{}}
+async function refreshInput(){try{renderInputStatus(await api('/api/input/status?brief=1'))}catch{}}
 
 function formatPerf(value,suffix=''){return value===null||value===undefined||value===''?'—':`${value}${suffix}`}
 function renderPerformance(data){
@@ -134,7 +134,7 @@ function renderPerformance(data){
     `姿态年龄/总延迟：${formatPerf(data.pose_frame_age_ms,' ms')} / ${formatPerf(data.total_latency_ms,' ms')}`,
     `网络 FPS/年龄：${formatPerf(data.network_fps)} / ${formatPerf(data.network_age_ms,' ms')}`,
     `网页渲染 FPS：${formatPerf(perfUi.renderTimes.length?measureRenderFps() : null)} · 跳帧：${data.dropped_frames??0} / 跳过：${data.skipped_frames??0}`,
-    `最近人体数：${formatPerf(data.recent_humans)} · 预览：${data.preview_ready?'已就绪':'—'}`,
+    `最近人体数：${formatPerf(data.recent_humans)} · 预览：${data.preview_ready?'已就绪':'—'}（${formatPerf(data.preview_fps)} FPS，编码 ${formatPerf(data.preview_encode_avg_ms,' ms')} / P95 ${formatPerf(data.preview_encode_p95_ms,' ms')}）`,
   ];
   $('#perfDetails').textContent=lines.join('\n');
 }

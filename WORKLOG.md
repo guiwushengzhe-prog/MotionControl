@@ -217,3 +217,11 @@
 - PC 网页版本统一为 0.9.5：主按钮按“开始体感→开启游戏输出→停止游戏输出”推进；普通界面隐藏性能/模型/后端技术字段，保留高级诊断入口；新增六条常用语音大字区和从本地命令目录读取的完整 27 条命令面板。
 - 手机端产品标识升级为 0.9.5 / Android versionCode 21；Sherpa KWS、scene_snapshot、地址记忆和断线自动重连链保持不变，技术状态从普通界面隐藏。
 - 本轮不替换 MediaPipe、Sherpa、模型或输出后端；真实摄像头、真人动作、游戏联调和手机实机验收留待验收阶段。
+
+## 2026-08-28：PC 端性能优化短测（MotionControl 1.00）
+
+- 8765 端口当时由用户现有 Python 服务占用，状态为手机姿态源；未抢占摄像头、未重启该服务。使用正式 `F:\MotionControl\MediaPipe\.venv`、兼容 Full 模型 `I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full_compatible_075.task` 和 `F:\MotionControl\test_videos\baseline_001.mp4` 做同输入无输出短测。一次基线得到 488 个姿态帧、每帧 33 点，推理平均约 12.6 ms/P95 约 13.8 ms；JPEG 质量 78 的编码平均约 1.7 ms，说明预览编码是可独立削减的外围开销，不能据此宣称真实摄像头验收。
+- 摄像头服务预览改为短时请求驱动、最高 8 FPS；没有预览请求时不编码 JPEG，请求仍返回当前最新 JPEG，采集/推理线程和关键点流未改动。新增预览 FPS、编码平均/P95、JPEG 大小和最近年龄诊断字段。
+- `/api/input/status` 保留默认完整响应以兼容旧网页和手机桥接；网页轮询改用新增语义 `?brief=1`，仅省略重复的 `runtime` 快照。临时本地服务验证 brief 响应约 439 bytes、完整响应约 6964 bytes；旧调用仍返回完整字段。
+- 临时端口验证 HTTP/1.1 持久连接下各 JSON/静态响应均有正确 `Content-Length`，404 后续请求和 WebSocket 升级均不挂起；未对正在运行的 8765 服务做热重启。网页 3 秒轮询频率与改动前一致（kernel 12、input/output/performance 各 4 次）。
+- 仅通过 `py_compile`、`node --check` 和预览线程定向单测；输出保持关闭。未进行真人摄像头、手机实机或游戏输出验收。
