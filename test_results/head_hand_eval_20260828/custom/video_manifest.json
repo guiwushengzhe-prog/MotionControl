@@ -1,0 +1,766 @@
+[
+  {
+    "video": "D:\\xwechat_files\\wxid_wczned99ujlf22_545c\\msg\\video\\2026-08\\bf5ad4437d893c1bbb493ff90ab5d368.mp4",
+    "model": "F:\\MotionControl-build-075\\isolated-075\\models\\mediapipe\\pose_landmarker_full.task",
+    "fps": 30.0,
+    "width": 720,
+    "height": 1280,
+    "declared_frame_count": 1562,
+    "decoded_frame_count": 1562,
+    "duration_s": 52.06666666666667,
+    "invalid_pose_frames": 0,
+    "pose_valid_rate": 1.0,
+    "landmark_count": 33,
+    "hand_landmarks_present": false,
+    "notes": "Pose Landmarker stream only; no 21-point hand model was used.",
+    "calibration_window": {
+      "chosen": {
+        "start_s": 44.0,
+        "duration_s": 6.0,
+        "score": 0.41935239138957503,
+        "coverage": [
+          1.0,
+          1.0
+        ]
+      },
+      "candidates": [
+        {
+          "start_s": 44.0,
+          "duration_s": 6.0,
+          "score": 0.41935239138957503,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 41.5,
+          "duration_s": 6.0,
+          "score": 0.42065431059834946,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 43.5,
+          "duration_s": 6.0,
+          "score": 0.42115575350785917,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 23.5,
+          "duration_s": 6.0,
+          "score": 0.43041187146962023,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 43.0,
+          "duration_s": 6.0,
+          "score": 0.4352573850184446,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 24.0,
+          "duration_s": 6.0,
+          "score": 0.4383159461174828,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 42.5,
+          "duration_s": 6.0,
+          "score": 0.44004137885331585,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 42.0,
+          "duration_s": 6.0,
+          "score": 0.4405192606150353,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 28.5,
+          "duration_s": 6.0,
+          "score": 0.44886854041181007,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 28.0,
+          "duration_s": 6.0,
+          "score": 0.44905214581647146,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 41.0,
+          "duration_s": 6.0,
+          "score": 0.45606425024212316,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 30.5,
+          "duration_s": 6.0,
+          "score": 0.45693921346027877,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        }
+      ],
+      "window_s": 6.0
+    },
+    "calibration_start_s": 44.0,
+    "head_results": {
+      "pnp": {
+        "final_status": {
+          "signal_version": "head-control-v4.3-reference-video-tuned",
+          "algorithm": "pnp",
+          "available_algorithms": [
+            "pnp",
+            "ratio"
+          ],
+          "pnp_available": true,
+          "pnp_error": null,
+          "enabled": true,
+          "invert_x": false,
+          "invert_y": false,
+          "deadzone": 0.1,
+          "effective_deadzone_x": 0.28,
+          "effective_deadzone_y": 0.2176,
+          "sensitivity_x": 58.0,
+          "sensitivity_y": 46.0,
+          "calibrated": true,
+          "calibrating": false,
+          "center_capture_pending": false,
+          "center_capture_kind": "",
+          "center_phase": "",
+          "center_invalid_count": 0,
+          "center_rejected_count": 0,
+          "center_observed_count": 97,
+          "center_quality": "可用",
+          "center_elapsed_s": null,
+          "center_remaining_s": null,
+          "center_valid_s": 0.0,
+          "center_required_s": 2.2,
+          "center_target_samples": 32,
+          "center_min_samples": 20,
+          "center_sample_count": 0,
+          "quality": "个人中心 · 质量可用",
+          "notice": "校准完成 · 质量可用",
+          "raw_yaw": 33.59277023725175,
+          "raw_pitch": 15.051794904001827,
+          "raw_roll": 3.9638285720193758,
+          "confidence": 0.5704,
+          "reprojection_error": 0.09446,
+          "estimate_valid": true,
+          "estimate_error": null,
+          "filtered_yaw": 32.95049452476975,
+          "filtered_pitch": 14.966302172861834,
+          "signal_yaw": 32.95049452476975,
+          "signal_pitch": 14.966302172861834,
+          "yaw_velocity": 0.0,
+          "yaw_acceleration": 0.0,
+          "pitch_velocity": 0.0517,
+          "pitch_acceleration": -0.0053,
+          "yaw_intent_state": "HOLD",
+          "pitch_intent_state": "RETURNING",
+          "yaw_return_latched": false,
+          "pitch_return_latched": true,
+          "yaw_intent_active": false,
+          "pitch_intent_active": false,
+          "yaw_intent_angle_threshold": 0.055,
+          "yaw_intent_velocity_threshold": 0.12,
+          "pitch_intent_angle_threshold": 0.035,
+          "pitch_intent_velocity_threshold": 0.07,
+          "center_yaw": 12.756517930428394,
+          "center_pitch": 8.152957022000146,
+          "noise_yaw": 2.125739,
+          "noise_pitch": 0.759694,
+          "normalized_x": 1.0,
+          "normalized_y": 0.5678,
+          "output_x": 0.0,
+          "output_y": 0.0,
+          "calibration_notice_text": "校准完成 · 质量可用"
+        },
+        "metrics": {
+          "valid_estimate_rate": 1.0,
+          "valid_frames": 1562,
+          "calibrated_at_s": 47.2,
+          "calibration_samples": 180,
+          "calibration_yaw_sigma": 1.9756128610155623,
+          "calibration_pitch_sigma": 1.3604385934561554,
+          "center_yaw": 12.756517930428394,
+          "center_pitch": 8.152957022000146,
+          "noise_yaw": 2.125739,
+          "noise_pitch": 0.759694,
+          "effective_deadzone_x": 0.28,
+          "effective_deadzone_y": 0.2176,
+          "post_calibrated_frames": 146,
+          "nonzero_x_rate": 0.0136986301369863,
+          "nonzero_y_rate": 0.11643835616438356,
+          "max_abs_output_x": 4.279,
+          "max_abs_output_y": 15.534,
+          "neutral_output_x_p95": 0.0,
+          "x_output_sign_consistency": 1.0,
+          "y_output_sign_consistency": 1.0,
+          "x_sign_samples": 2,
+          "y_sign_samples": 17,
+          "invalid_runs_max_frames": 0,
+          "yaw_states": {
+            "IDLE": 90,
+            "TURN_LEFT": 0,
+            "TURN_RIGHT": 4,
+            "HOLD": 5,
+            "RETURNING": 47
+          },
+          "pitch_states": {
+            "IDLE": 57,
+            "TURN_LEFT": 5,
+            "TURN_RIGHT": 33,
+            "HOLD": 0,
+            "RETURNING": 51
+          }
+        }
+      },
+      "ratio": {
+        "final_status": {
+          "signal_version": "head-control-v4.3-reference-video-tuned",
+          "algorithm": "ratio",
+          "available_algorithms": [
+            "pnp",
+            "ratio"
+          ],
+          "pnp_available": true,
+          "pnp_error": null,
+          "enabled": true,
+          "invert_x": false,
+          "invert_y": false,
+          "deadzone": 0.1,
+          "effective_deadzone_x": 0.28,
+          "effective_deadzone_y": 0.1,
+          "sensitivity_x": 58.0,
+          "sensitivity_y": 46.0,
+          "calibrated": true,
+          "calibrating": false,
+          "center_capture_pending": false,
+          "center_capture_kind": "",
+          "center_phase": "",
+          "center_invalid_count": 0,
+          "center_rejected_count": 0,
+          "center_observed_count": 97,
+          "center_quality": "噪声较大",
+          "center_elapsed_s": null,
+          "center_remaining_s": null,
+          "center_valid_s": 0.0,
+          "center_required_s": 2.2,
+          "center_target_samples": 32,
+          "center_min_samples": 20,
+          "center_sample_count": 0,
+          "quality": "个人中心 · 质量噪声较大",
+          "notice": "校准完成 · 噪声较大，已自动扩大稳定区；需要更灵敏可重新校准",
+          "raw_yaw": 0.5416534063811619,
+          "raw_pitch": 0.45569415543994846,
+          "raw_roll": 177.6731467557095,
+          "confidence": 0.9996,
+          "reprojection_error": null,
+          "estimate_valid": true,
+          "estimate_error": null,
+          "filtered_yaw": 0.5304131574266949,
+          "filtered_pitch": 0.45258050023225377,
+          "signal_yaw": 0.5304131574266949,
+          "signal_pitch": 0.45258050023225377,
+          "yaw_velocity": 0.2294,
+          "yaw_acceleration": -1.1186,
+          "pitch_velocity": 0.1285,
+          "pitch_acceleration": -3.2817,
+          "yaw_intent_state": "RETURNING",
+          "pitch_intent_state": "TURN_RIGHT",
+          "yaw_return_latched": true,
+          "pitch_return_latched": false,
+          "yaw_intent_active": false,
+          "pitch_intent_active": true,
+          "yaw_intent_angle_threshold": 0.055,
+          "yaw_intent_velocity_threshold": 0.12,
+          "pitch_intent_angle_threshold": 0.035,
+          "pitch_intent_velocity_threshold": 0.07,
+          "center_yaw": 0.2333656365204433,
+          "center_pitch": 0.4023066432885252,
+          "noise_yaw": 0.081149,
+          "noise_pitch": 0.004135,
+          "normalized_x": 0.8737,
+          "normalized_y": 0.3142,
+          "output_x": 0.0,
+          "output_y": 6.006,
+          "calibration_notice_text": "校准完成 · 噪声较大，已自动扩大稳定区；需要更灵敏可重新校准"
+        },
+        "metrics": {
+          "valid_estimate_rate": 1.0,
+          "valid_frames": 1562,
+          "calibrated_at_s": 47.2,
+          "calibration_samples": 180,
+          "calibration_yaw_sigma": 0.04674065749868621,
+          "calibration_pitch_sigma": 0.009400594638429202,
+          "center_yaw": 0.2333656365204433,
+          "center_pitch": 0.4023066432885252,
+          "noise_yaw": 0.081149,
+          "noise_pitch": 0.004135,
+          "effective_deadzone_x": 0.28,
+          "effective_deadzone_y": 0.1,
+          "post_calibrated_frames": 146,
+          "nonzero_x_rate": 0.03424657534246575,
+          "nonzero_y_rate": 0.13013698630136986,
+          "max_abs_output_x": 5.323,
+          "max_abs_output_y": 6.006,
+          "neutral_output_x_p95": 0.0,
+          "x_output_sign_consistency": 1.0,
+          "y_output_sign_consistency": 1.0,
+          "x_sign_samples": 5,
+          "y_sign_samples": 19,
+          "invalid_runs_max_frames": 0,
+          "yaw_states": {
+            "IDLE": 89,
+            "TURN_LEFT": 3,
+            "TURN_RIGHT": 7,
+            "HOLD": 0,
+            "RETURNING": 47
+          },
+          "pitch_states": {
+            "IDLE": 108,
+            "TURN_LEFT": 8,
+            "TURN_RIGHT": 24,
+            "HOLD": 0,
+            "RETURNING": 6
+          }
+        }
+      }
+    },
+    "hand_summary": {
+      "left": {
+        "wrist_valid_rate": 0.9807938540332907,
+        "shoulder_elbow_group_valid_rate": 1.0,
+        "wrist_occluded_but_shoulder_elbow_valid_rate": 0.019206145966709345,
+        "wrist_invalid_max_run_frames": 19,
+        "group_invalid_max_run_frames": 0,
+        "arm_angle_valid_rate": 0.9807938540332907,
+        "note": "group_valid means >=2 of shoulder/elbow/wrist; angle requires all 3. It is a semantic arm-state proxy, not a hand/fist classifier."
+      },
+      "right": {
+        "wrist_valid_rate": 0.6997439180537772,
+        "shoulder_elbow_group_valid_rate": 0.9628681177976952,
+        "wrist_occluded_but_shoulder_elbow_valid_rate": 0.26312419974391804,
+        "wrist_invalid_max_run_frames": 218,
+        "group_invalid_max_run_frames": 24,
+        "arm_angle_valid_rate": 0.6997439180537772,
+        "note": "group_valid means >=2 of shoulder/elbow/wrist; angle requires all 3. It is a semantic arm-state proxy, not a hand/fist classifier."
+      }
+    }
+  },
+  {
+    "video": "D:\\xwechat_files\\wxid_wczned99ujlf22_545c\\msg\\video\\2026-08\\c7fbc865832d892ec4aaa362fda5800d.mp4",
+    "model": "F:\\MotionControl-build-075\\isolated-075\\models\\mediapipe\\pose_landmarker_full.task",
+    "fps": 30.0,
+    "width": 720,
+    "height": 1280,
+    "declared_frame_count": 1706,
+    "decoded_frame_count": 1706,
+    "duration_s": 56.86666666666667,
+    "invalid_pose_frames": 6,
+    "pose_valid_rate": 0.9964830011723329,
+    "landmark_count": 33,
+    "hand_landmarks_present": false,
+    "notes": "Pose Landmarker stream only; no 21-point hand model was used.",
+    "calibration_window": {
+      "chosen": {
+        "start_s": 34.5,
+        "duration_s": 6.0,
+        "score": 0.7452564631815851,
+        "coverage": [
+          1.0,
+          1.0
+        ]
+      },
+      "candidates": [
+        {
+          "start_s": 34.5,
+          "duration_s": 6.0,
+          "score": 0.7452564631815851,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 34.0,
+          "duration_s": 6.0,
+          "score": 0.7956138595638479,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 35.0,
+          "duration_s": 6.0,
+          "score": 0.798664902223787,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 39.5,
+          "duration_s": 6.0,
+          "score": 0.8004407336068196,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 39.0,
+          "duration_s": 6.0,
+          "score": 0.804553156659804,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 40.0,
+          "duration_s": 6.0,
+          "score": 0.8131375267425824,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 33.5,
+          "duration_s": 6.0,
+          "score": 0.8295690729062957,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 38.5,
+          "duration_s": 6.0,
+          "score": 0.8301534326775368,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 40.5,
+          "duration_s": 6.0,
+          "score": 0.8310188895866183,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 36.0,
+          "duration_s": 6.0,
+          "score": 0.8343845773909916,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 41.0,
+          "duration_s": 6.0,
+          "score": 0.8419668208366782,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "start_s": 35.5,
+          "duration_s": 6.0,
+          "score": 0.8460043433898294,
+          "coverage": [
+            1.0,
+            1.0
+          ]
+        }
+      ],
+      "window_s": 6.0
+    },
+    "calibration_start_s": 34.5,
+    "head_results": {
+      "pnp": {
+        "final_status": {
+          "signal_version": "head-control-v4.3-reference-video-tuned",
+          "algorithm": "pnp",
+          "available_algorithms": [
+            "pnp",
+            "ratio"
+          ],
+          "pnp_available": true,
+          "pnp_error": null,
+          "enabled": true,
+          "invert_x": false,
+          "invert_y": false,
+          "deadzone": 0.1,
+          "effective_deadzone_x": 0.28,
+          "effective_deadzone_y": 0.3,
+          "sensitivity_x": 58.0,
+          "sensitivity_y": 46.0,
+          "calibrated": true,
+          "calibrating": false,
+          "center_capture_pending": false,
+          "center_capture_kind": "",
+          "center_phase": "",
+          "center_invalid_count": 0,
+          "center_rejected_count": 0,
+          "center_observed_count": 97,
+          "center_quality": "噪声较大",
+          "center_elapsed_s": null,
+          "center_remaining_s": null,
+          "center_valid_s": 0.0,
+          "center_required_s": 2.2,
+          "center_target_samples": 32,
+          "center_min_samples": 20,
+          "center_sample_count": 0,
+          "quality": "个人中心 · 质量噪声较大",
+          "notice": "校准完成 · 噪声较大，已自动扩大稳定区；需要更灵敏可重新校准",
+          "raw_yaw": 5.002107182079859,
+          "raw_pitch": 44.79632283420096,
+          "raw_roll": 11.210148899048455,
+          "confidence": 0.4768,
+          "reprojection_error": 0.08402,
+          "estimate_valid": true,
+          "estimate_error": null,
+          "filtered_yaw": 11.018652210816974,
+          "filtered_pitch": 45.75570892417423,
+          "signal_yaw": 11.018652210816974,
+          "signal_pitch": 45.75570892417423,
+          "yaw_velocity": -4.3611,
+          "yaw_acceleration": -73.1761,
+          "pitch_velocity": 0.0,
+          "pitch_acceleration": 0.0,
+          "yaw_intent_state": "RETURNING",
+          "pitch_intent_state": "HOLD",
+          "yaw_return_latched": true,
+          "pitch_return_latched": false,
+          "yaw_intent_active": false,
+          "pitch_intent_active": false,
+          "yaw_intent_angle_threshold": 0.055,
+          "yaw_intent_velocity_threshold": 0.12,
+          "pitch_intent_angle_threshold": 0.035,
+          "pitch_intent_velocity_threshold": 0.07,
+          "center_yaw": -2.6569999671075704,
+          "center_pitch": 11.480374406392654,
+          "noise_yaw": 1.93244,
+          "noise_pitch": 2.757252,
+          "normalized_x": 0.7598,
+          "normalized_y": 1.0,
+          "output_x": 0.0,
+          "output_y": 0.0,
+          "calibration_notice_text": "校准完成 · 噪声较大，已自动扩大稳定区；需要更灵敏可重新校准"
+        },
+        "metrics": {
+          "valid_estimate_rate": 0.9953106682297772,
+          "valid_frames": 1698,
+          "calibrated_at_s": 37.7,
+          "calibration_samples": 180,
+          "calibration_yaw_sigma": 4.343584111745149,
+          "calibration_pitch_sigma": 2.0528019823523747,
+          "center_yaw": -2.6569999671075704,
+          "center_pitch": 11.480374406392654,
+          "noise_yaw": 1.93244,
+          "noise_pitch": 2.757252,
+          "effective_deadzone_x": 0.28,
+          "effective_deadzone_y": 0.3,
+          "post_calibrated_frames": 575,
+          "nonzero_x_rate": 0.11304347826086956,
+          "nonzero_y_rate": 0.06782608695652174,
+          "max_abs_output_x": 33.114,
+          "max_abs_output_y": 28.0,
+          "neutral_output_x_p95": 0.0,
+          "x_output_sign_consistency": 1.0,
+          "y_output_sign_consistency": 1.0,
+          "x_sign_samples": 65,
+          "y_sign_samples": 39,
+          "invalid_runs_max_frames": 7,
+          "yaw_states": {
+            "IDLE": 149,
+            "TURN_LEFT": 41,
+            "TURN_RIGHT": 50,
+            "HOLD": 52,
+            "RETURNING": 283
+          },
+          "pitch_states": {
+            "IDLE": 334,
+            "TURN_LEFT": 62,
+            "TURN_RIGHT": 6,
+            "HOLD": 36,
+            "RETURNING": 137
+          }
+        }
+      },
+      "ratio": {
+        "final_status": {
+          "signal_version": "head-control-v4.3-reference-video-tuned",
+          "algorithm": "ratio",
+          "available_algorithms": [
+            "pnp",
+            "ratio"
+          ],
+          "pnp_available": true,
+          "pnp_error": null,
+          "enabled": true,
+          "invert_x": false,
+          "invert_y": false,
+          "deadzone": 0.1,
+          "effective_deadzone_x": 0.28,
+          "effective_deadzone_y": 0.3,
+          "sensitivity_x": 58.0,
+          "sensitivity_y": 46.0,
+          "calibrated": true,
+          "calibrating": false,
+          "center_capture_pending": false,
+          "center_capture_kind": "",
+          "center_phase": "",
+          "center_invalid_count": 0,
+          "center_rejected_count": 0,
+          "center_observed_count": 97,
+          "center_quality": "可用",
+          "center_elapsed_s": null,
+          "center_remaining_s": null,
+          "center_valid_s": 0.0,
+          "center_required_s": 2.2,
+          "center_target_samples": 32,
+          "center_min_samples": 20,
+          "center_sample_count": 0,
+          "quality": "个人中心 · 质量可用",
+          "notice": "校准完成 · 质量可用",
+          "raw_yaw": 0.15090085348284235,
+          "raw_pitch": 0.5547445499562146,
+          "raw_roll": -174.9973531421904,
+          "confidence": 0.7823,
+          "reprojection_error": null,
+          "estimate_valid": true,
+          "estimate_error": null,
+          "filtered_yaw": 0.1675092228665054,
+          "filtered_pitch": 0.570099021980024,
+          "signal_yaw": 0.1675092228665054,
+          "signal_pitch": 0.570099021980024,
+          "yaw_velocity": -0.3385,
+          "yaw_acceleration": -49.662,
+          "pitch_velocity": 0.0,
+          "pitch_acceleration": 0.0,
+          "yaw_intent_state": "RETURNING",
+          "pitch_intent_state": "HOLD",
+          "yaw_return_latched": true,
+          "pitch_return_latched": false,
+          "yaw_intent_active": false,
+          "pitch_intent_active": false,
+          "yaw_intent_angle_threshold": 0.055,
+          "yaw_intent_velocity_threshold": 0.12,
+          "pitch_intent_angle_threshold": 0.035,
+          "pitch_intent_velocity_threshold": 0.07,
+          "center_yaw": -0.01313267731989097,
+          "center_pitch": 0.38527757510897537,
+          "noise_yaw": 0.031239,
+          "noise_pitch": 0.028545,
+          "normalized_x": 0.5313,
+          "normalized_y": 1.0,
+          "output_x": 0.0,
+          "output_y": 0.0,
+          "calibration_notice_text": "校准完成 · 质量可用"
+        },
+        "metrics": {
+          "valid_estimate_rate": 0.9958968347010551,
+          "valid_frames": 1699,
+          "calibrated_at_s": 37.7,
+          "calibration_samples": 180,
+          "calibration_yaw_sigma": 0.0791509015906426,
+          "calibration_pitch_sigma": 0.016013221360697324,
+          "center_yaw": -0.01313267731989097,
+          "center_pitch": 0.38527757510897537,
+          "noise_yaw": 0.031239,
+          "noise_pitch": 0.028545,
+          "effective_deadzone_x": 0.28,
+          "effective_deadzone_y": 0.3,
+          "post_calibrated_frames": 575,
+          "nonzero_x_rate": 0.12,
+          "nonzero_y_rate": 0.017391304347826087,
+          "max_abs_output_x": 22.445,
+          "max_abs_output_y": 27.182,
+          "neutral_output_x_p95": 0.0,
+          "x_output_sign_consistency": 1.0,
+          "y_output_sign_consistency": 1.0,
+          "x_sign_samples": 69,
+          "y_sign_samples": 10,
+          "invalid_runs_max_frames": 7,
+          "yaw_states": {
+            "IDLE": 220,
+            "TURN_LEFT": 49,
+            "TURN_RIGHT": 47,
+            "HOLD": 37,
+            "RETURNING": 222
+          },
+          "pitch_states": {
+            "IDLE": 419,
+            "TURN_LEFT": 26,
+            "TURN_RIGHT": 11,
+            "HOLD": 6,
+            "RETURNING": 113
+          }
+        }
+      }
+    },
+    "hand_summary": {
+      "left": {
+        "wrist_valid_rate": 0.9912075029308324,
+        "shoulder_elbow_group_valid_rate": 0.9964830011723329,
+        "wrist_occluded_but_shoulder_elbow_valid_rate": 0.005275498241500586,
+        "wrist_invalid_max_run_frames": 9,
+        "group_invalid_max_run_frames": 6,
+        "arm_angle_valid_rate": 0.9912075029308324,
+        "note": "group_valid means >=2 of shoulder/elbow/wrist; angle requires all 3. It is a semantic arm-state proxy, not a hand/fist classifier."
+      },
+      "right": {
+        "wrist_valid_rate": 0.9853458382180539,
+        "shoulder_elbow_group_valid_rate": 0.9917936694021102,
+        "wrist_occluded_but_shoulder_elbow_valid_rate": 0.006447831184056272,
+        "wrist_invalid_max_run_frames": 16,
+        "group_invalid_max_run_frames": 14,
+        "arm_angle_valid_rate": 0.9853458382180539,
+        "note": "group_valid means >=2 of shoulder/elbow/wrist; angle requires all 3. It is a semantic arm-state proxy, not a hand/fist classifier."
+      }
+    }
+  }
+]

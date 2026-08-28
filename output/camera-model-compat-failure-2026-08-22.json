@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-08-22T00:18:07.2784619+08:00",
+  "service_version": "0.9.3",
+  "service_pid": 17940,
+  "python_executable": "F:\\MotionControl\\MediaPipe\\.venv\\Scripts\\python.exe",
+  "body_mode": "computer",
+  "camera_start_result": {
+    "running": false,
+    "frames": 0,
+    "last_error": "Input tensor has type float32: it requires specifying NormalizationOptions metadata to preprocess input images.",
+    "model_path": "I:\\MotionControl-Pose-Models\\models\\mediapipe\\pose_landmarker_full.task",
+    "resolution": {"width": 0, "height": 0},
+    "backend": null,
+    "requested_fps": 30
+  },
+  "head_signal_version": "head-control-v4.3-reference-video-tuned",
+  "output_enabled": false,
+  "source": "computer",
+  "evidence": "真实用户点击本地摄像头后，服务返回HTTP 400；未启动摄像头推理，也未进行校准或输出测试。"
+}

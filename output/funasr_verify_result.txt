@@ -1,0 +1,11 @@
+﻿{
+  "ok": true,
+  "mode": "sherpa-wake+funasr-seaco",
+  "python": "F:\\MotionControl-App\\.venv-funasr\\Scripts\\python.exe",
+  "model": "F:\\MotionControl-App\\models\\funasr\\speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+  "vad": "F:\\MotionControl-App\\models\\funasr\\speech_fsmn_vad_zh-cn-16k-common-pytorch",
+  "silence_result": {
+    "text": "",
+    "latency_ms": 58.7
+  }
+}

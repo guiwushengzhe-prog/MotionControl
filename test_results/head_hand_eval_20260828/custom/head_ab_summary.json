@@ -1,0 +1,208 @@
+{
+  "bf5ad4437d893c1bbb493ff90ab5d368.mp4": {
+    "calibration_start_s": 44.0,
+    "head": {
+      "pnp": {
+        "valid_estimate_rate": 1.0,
+        "valid_frames": 1562,
+        "calibrated_at_s": 47.2,
+        "calibration_samples": 180,
+        "calibration_yaw_sigma": 1.9756128610155623,
+        "calibration_pitch_sigma": 1.3604385934561554,
+        "center_yaw": 12.756517930428394,
+        "center_pitch": 8.152957022000146,
+        "noise_yaw": 2.125739,
+        "noise_pitch": 0.759694,
+        "effective_deadzone_x": 0.28,
+        "effective_deadzone_y": 0.2176,
+        "post_calibrated_frames": 146,
+        "nonzero_x_rate": 0.0136986301369863,
+        "nonzero_y_rate": 0.11643835616438356,
+        "max_abs_output_x": 4.279,
+        "max_abs_output_y": 15.534,
+        "neutral_output_x_p95": 0.0,
+        "x_output_sign_consistency": 1.0,
+        "y_output_sign_consistency": 1.0,
+        "x_sign_samples": 2,
+        "y_sign_samples": 17,
+        "invalid_runs_max_frames": 0,
+        "yaw_states": {
+          "IDLE": 90,
+          "TURN_LEFT": 0,
+          "TURN_RIGHT": 4,
+          "HOLD": 5,
+          "RETURNING": 47
+        },
+        "pitch_states": {
+          "IDLE": 57,
+          "TURN_LEFT": 5,
+          "TURN_RIGHT": 33,
+          "HOLD": 0,
+          "RETURNING": 51
+        }
+      },
+      "ratio": {
+        "valid_estimate_rate": 1.0,
+        "valid_frames": 1562,
+        "calibrated_at_s": 47.2,
+        "calibration_samples": 180,
+        "calibration_yaw_sigma": 0.04674065749868621,
+        "calibration_pitch_sigma": 0.009400594638429202,
+        "center_yaw": 0.2333656365204433,
+        "center_pitch": 0.4023066432885252,
+        "noise_yaw": 0.081149,
+        "noise_pitch": 0.004135,
+        "effective_deadzone_x": 0.28,
+        "effective_deadzone_y": 0.1,
+        "post_calibrated_frames": 146,
+        "nonzero_x_rate": 0.03424657534246575,
+        "nonzero_y_rate": 0.13013698630136986,
+        "max_abs_output_x": 5.323,
+        "max_abs_output_y": 6.006,
+        "neutral_output_x_p95": 0.0,
+        "x_output_sign_consistency": 1.0,
+        "y_output_sign_consistency": 1.0,
+        "x_sign_samples": 5,
+        "y_sign_samples": 19,
+        "invalid_runs_max_frames": 0,
+        "yaw_states": {
+          "IDLE": 89,
+          "TURN_LEFT": 3,
+          "TURN_RIGHT": 7,
+          "HOLD": 0,
+          "RETURNING": 47
+        },
+        "pitch_states": {
+          "IDLE": 108,
+          "TURN_LEFT": 8,
+          "TURN_RIGHT": 24,
+          "HOLD": 0,
+          "RETURNING": 6
+        }
+      }
+    },
+    "hand": {
+      "left": {
+        "wrist_valid_rate": 0.9807938540332907,
+        "shoulder_elbow_group_valid_rate": 1.0,
+        "wrist_occluded_but_shoulder_elbow_valid_rate": 0.019206145966709345,
+        "wrist_invalid_max_run_frames": 19,
+        "group_invalid_max_run_frames": 0,
+        "arm_angle_valid_rate": 0.9807938540332907,
+        "note": "group_valid means >=2 of shoulder/elbow/wrist; angle requires all 3. It is a semantic arm-state proxy, not a hand/fist classifier."
+      },
+      "right": {
+        "wrist_valid_rate": 0.6997439180537772,
+        "shoulder_elbow_group_valid_rate": 0.9628681177976952,
+        "wrist_occluded_but_shoulder_elbow_valid_rate": 0.26312419974391804,
+        "wrist_invalid_max_run_frames": 218,
+        "group_invalid_max_run_frames": 24,
+        "arm_angle_valid_rate": 0.6997439180537772,
+        "note": "group_valid means >=2 of shoulder/elbow/wrist; angle requires all 3. It is a semantic arm-state proxy, not a hand/fist classifier."
+      }
+    }
+  },
+  "c7fbc865832d892ec4aaa362fda5800d.mp4": {
+    "calibration_start_s": 34.5,
+    "head": {
+      "pnp": {
+        "valid_estimate_rate": 0.9953106682297772,
+        "valid_frames": 1698,
+        "calibrated_at_s": 37.7,
+        "calibration_samples": 180,
+        "calibration_yaw_sigma": 4.343584111745149,
+        "calibration_pitch_sigma": 2.0528019823523747,
+        "center_yaw": -2.6569999671075704,
+        "center_pitch": 11.480374406392654,
+        "noise_yaw": 1.93244,
+        "noise_pitch": 2.757252,
+        "effective_deadzone_x": 0.28,
+        "effective_deadzone_y": 0.3,
+        "post_calibrated_frames": 575,
+        "nonzero_x_rate": 0.11304347826086956,
+        "nonzero_y_rate": 0.06782608695652174,
+        "max_abs_output_x": 33.114,
+        "max_abs_output_y": 28.0,
+        "neutral_output_x_p95": 0.0,
+        "x_output_sign_consistency": 1.0,
+        "y_output_sign_consistency": 1.0,
+        "x_sign_samples": 65,
+        "y_sign_samples": 39,
+        "invalid_runs_max_frames": 7,
+        "yaw_states": {
+          "IDLE": 149,
+          "TURN_LEFT": 41,
+          "TURN_RIGHT": 50,
+          "HOLD": 52,
+          "RETURNING": 283
+        },
+        "pitch_states": {
+          "IDLE": 334,
+          "TURN_LEFT": 62,
+          "TURN_RIGHT": 6,
+          "HOLD": 36,
+          "RETURNING": 137
+        }
+      },
+      "ratio": {
+        "valid_estimate_rate": 0.9958968347010551,
+        "valid_frames": 1699,
+        "calibrated_at_s": 37.7,
+        "calibration_samples": 180,
+        "calibration_yaw_sigma": 0.0791509015906426,
+        "calibration_pitch_sigma": 0.016013221360697324,
+        "center_yaw": -0.01313267731989097,
+        "center_pitch": 0.38527757510897537,
+        "noise_yaw": 0.031239,
+        "noise_pitch": 0.028545,
+        "effective_deadzone_x": 0.28,
+        "effective_deadzone_y": 0.3,
+        "post_calibrated_frames": 575,
+        "nonzero_x_rate": 0.12,
+        "nonzero_y_rate": 0.017391304347826087,
+        "max_abs_output_x": 22.445,
+        "max_abs_output_y": 27.182,
+        "neutral_output_x_p95": 0.0,
+        "x_output_sign_consistency": 1.0,
+        "y_output_sign_consistency": 1.0,
+        "x_sign_samples": 69,
+        "y_sign_samples": 10,
+        "invalid_runs_max_frames": 7,
+        "yaw_states": {
+          "IDLE": 220,
+          "TURN_LEFT": 49,
+          "TURN_RIGHT": 47,
+          "HOLD": 37,
+          "RETURNING": 222
+        },
+        "pitch_states": {
+          "IDLE": 419,
+          "TURN_LEFT": 26,
+          "TURN_RIGHT": 11,
+          "HOLD": 6,
+          "RETURNING": 113
+        }
+      }
+    },
+    "hand": {
+      "left": {
+        "wrist_valid_rate": 0.9912075029308324,
+        "shoulder_elbow_group_valid_rate": 0.9964830011723329,
+        "wrist_occluded_but_shoulder_elbow_valid_rate": 0.005275498241500586,
+        "wrist_invalid_max_run_frames": 9,
+        "group_invalid_max_run_frames": 6,
+        "arm_angle_valid_rate": 0.9912075029308324,
+        "note": "group_valid means >=2 of shoulder/elbow/wrist; angle requires all 3. It is a semantic arm-state proxy, not a hand/fist classifier."
+      },
+      "right": {
+        "wrist_valid_rate": 0.9853458382180539,
+        "shoulder_elbow_group_valid_rate": 0.9917936694021102,
+        "wrist_occluded_but_shoulder_elbow_valid_rate": 0.006447831184056272,
+        "wrist_invalid_max_run_frames": 16,
+        "group_invalid_max_run_frames": 14,
+        "arm_angle_valid_rate": 0.9853458382180539,
+        "note": "group_valid means >=2 of shoulder/elbow/wrist; angle requires all 3. It is a semantic arm-state proxy, not a hand/fist classifier."
+      }
+    }
+  }
+}
