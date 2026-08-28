@@ -882,7 +882,11 @@ class ControlKernel:
                     self.vertical_pitch_velocity = intent["velocity"]
                     self.vertical_pitch_acceleration = intent["acceleration"]
                     self.vertical_pitch_intent_state = intent["state"]
-                    if intent["active"] and abs(relative) > deadzone:
+                    # The look gate is already the player's explicit vertical
+                    # permission.  Inside it, a calibrated head-pitch
+                    # deflection controls view velocity directly; the intent
+                    # state remains diagnostic and cannot silence a held nod.
+                    if abs(relative) > deadzone:
                         amount = (abs(relative) - deadzone) / max(1e-6, 1.0 - deadzone)
                         shaped = _clamp(amount, 0.0, 1.0) ** 1.12
                         y = math.copysign(shaped, relative) * _clamp(

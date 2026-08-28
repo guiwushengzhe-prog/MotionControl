@@ -123,6 +123,11 @@ def test_head_vertical_mode_uses_gate_temporary_pitch_center(tmp_path):
         for i in range(1, 5):
             kernel.handle_pose_map("camera", _gate_pose(pitch=-3.0 * i), width=640, height=480)
         assert output.axes[-1][1] < 0.0
+        # While the clutch remains held, a stable nod is view velocity rather
+        # than a one-shot gesture; RETURNING/HOLD diagnostics must not mute it.
+        for _ in range(5):
+            kernel.handle_pose_map("camera", _gate_pose(pitch=-12.0), width=640, height=480)
+        assert output.axes[-1][1] < 0.0
     finally:
         kernel.close()
 
