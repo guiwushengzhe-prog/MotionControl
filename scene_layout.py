@@ -134,19 +134,36 @@ def _resolve_placement_pose(pose: dict[str, dict]) -> tuple[dict[str, dict], lis
 
 
 def _pose_ready(pose: dict[str, dict] | None, *, require_placement: bool = False) -> tuple[bool, str]:
-    # Do not gate the first screenshot on four fragile single-frame landmark
-    # confidence values.  Ears/feet are resolved with fallbacks later.
+    """Return whether there is enough body geometry to author the seven circles.
+
+    Only the stable torso anchors are mandatory.  Wrists, ears and feet are
+    deliberately *not* hard gates: they fluctuate much more in MediaPipe and
+    all of them can be estimated well enough for an initial recommended layout.
+    The generated circles are editable recommendations, not a measurement that
+    warrants blocking the whole setup on one low-confidence limb landmark.
+    """
     del require_placement
-    core = ("nose", "left_shoulder", "right_shoulder", "left_wrist", "right_wrist", "left_hip", "right_hip")
-    missing_core = [name for name in core if not pose or _score(pose.get(name)) < 0.30 or not _point_in_frame(pose.get(name))]
+    core = ("nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip")
+    missing_core = [
+        name for name in core
+        if not pose or _score(pose.get(name)) < 0.24 or not _point_in_frame(pose.get(name))
+    ]
     if missing_core:
-        return False, "请站到游戏位置并让摄像头看清头、肩、髋和双手腕"
+        labels = {
+            "nose": "头部",
+            "left_shoulder": "左肩",
+            "right_shoulder": "右肩",
+            "left_hip": "左髋",
+            "right_hip": "右髋",
+        }
+        missing_text = "、".join(labels.get(name, name) for name in missing_core)
+        return False, f"还缺少稳定骨架：{missing_text}；请让头、双肩和髋部进入画面"
     ls, rs = pose["left_shoulder"], pose["right_shoulder"]
     lh, rh = pose["left_hip"], pose["right_hip"]
     shoulder_width = math.hypot(ls["x"] - rs["x"], ls["y"] - rs["y"])
     torso = math.hypot((ls["x"] + rs["x"] - lh["x"] - rh["x"]) / 2.0, (ls["y"] + rs["y"] - lh["y"] - rh["y"]) / 2.0)
-    if shoulder_width < 0.07 or torso < 0.08:
-        return False, "人物在画面中过小，请站到正常游戏位置后再执行"
+    if shoulder_width < 0.055 or torso < 0.065:
+        return False, "人物在画面中过小，请稍微靠近摄像头；只需保证头、双肩和髋部清楚可见"
     return True, "ok"
 
 
@@ -229,7 +246,6 @@ class SceneLayoutManager:
         pose, _fallback = _resolve_placement_pose(pose)
         le, re = pose["left_ear"], pose["right_ear"]
         la, ra = pose["left_ankle"], pose["right_ankle"]
-        rw = pose["right_wrist"]
         ls, rs = pose["left_shoulder"], pose["right_shoulder"]
         lh, rh = pose["left_hip"], pose["right_hip"]
 
@@ -247,6 +263,19 @@ class SceneLayoutManager:
         right_dir = -left_dir
         left_foot_dir = -1.0 if la["x"] <= ra["x"] else 1.0
         right_foot_dir = -left_foot_dir
+
+        # Right wrist is useful only for the initial hand-controlled vertical
+        # center.  It must never block seven-zone creation.  If it is absent or
+        # confidence dips on the capture frame, place a conservative neutral
+        # hand center from the shoulder/torso geometry; the user can still drag
+        # or recalibrate it later.
+        rw = _best_point(pose, ("right_wrist",), 0.03)
+        if rw is None:
+            rw = {
+                "x": _clamp(rs["x"] + right_dir * shoulder_width * 0.18, 0.0, 1.0),
+                "y": _clamp(rs["y"] + torso * 0.72, 0.0, 1.0),
+                "score": 0.01,
+            }
 
         hand_r = _clamp(shoulder_width * 0.24, 0.040, 0.080)
         foot_r = _clamp(shoulder_width * 0.28, 0.045, 0.090)
@@ -322,6 +351,8 @@ class SceneLayoutManager:
             raise RuntimeError("场景截图需要 OpenCV（opencv-python）") from exc
         height, width = frame.shape[:2]
         placement_pose, fallback = _resolve_placement_pose(pose)
+        if _best_point(pose or {}, ("right_wrist",), 0.03) is None:
+            fallback.append("right_wrist")
         zones, vertical = self._initial_layout(placement_pose, dynamic_rects)
         self.config_dir.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(self.reference_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), 94]):
@@ -344,7 +375,7 @@ class SceneLayoutManager:
         self._save()
         message = "参考场景已记录，已按人体自动生成 7 个固定圈"
         if fallback:
-            message += "；部分耳/脚关键点本帧置信度较低，已用相邻骨架估算，请在截图中检查圈位置"
+            message += "；部分腕/耳/脚关键点本帧不稳定，已自动估算初始位置，请按需要拖动微调"
         self.last_result = {
             "ok": True, "state": "reference_captured", "message": message,
             "width": width, "height": height, "placement_fallback": list(fallback),
