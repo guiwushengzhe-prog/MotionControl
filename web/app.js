@@ -125,7 +125,7 @@ function renderMainStatus(){
   const el=$('#mainActionStatus');if(!el)return;
   if(!sessionStarted){el.textContent='先启动识别；确认人体和区域正常后，再开始游戏控制';return}
   if(!currentPoseMap){el.textContent='正在找玩家 · 请让全身进入画面';return}
-  if(!sceneConfigured){el.textContent='正在建立体感区域 · 完成前不会向游戏发送输入';return}
+  if(!sceneConfigured){el.textContent=output.enabled?'正在控制游戏 · 体感区域尚未完成定位，头控、动作、语音和手机输入仍可用':'识别已就绪 · 体感区域尚未完成定位，头控、动作、语音和手机输入仍可用';return}
   el.textContent=output.enabled?'正在控制游戏 · F9 可随时紧急停止':'识别已就绪 · 可以开始游戏控制';
 }
 
@@ -374,7 +374,6 @@ async function ensureInitialSceneLayout(){
 }
 async function handleMainAction(){try{
   if(!sessionStarted){await setSource(sourceMode||'computer',true);await ensureInitialSceneLayout();notice(sceneConfigured?'体感识别已开始，7 个区域已就绪；游戏输出仍关闭。':'体感识别已开始；游戏输出仍关闭。');return}
-  if(!output.enabled&&!(await ensureInitialSceneLayout())){notice('7 个体感区域尚未完成定位，游戏输出保持关闭。');return}
   await setOutput(!output.enabled)
 }catch(e){notice('主操作失败：'+(e?.message||e))}}
 async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'校准已取消':'校准已开始：看向游戏屏幕中心，保持自然姿势')}catch(e){notice('中心设置失败：'+(e?.message||e))}}
