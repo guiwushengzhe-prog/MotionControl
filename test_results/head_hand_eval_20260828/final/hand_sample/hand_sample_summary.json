@@ -1,0 +1,30 @@
+{
+  "bf5ad4437d893c1bbb493ff90ab5d368.mp4": {
+    "video": "D:\\xwechat_files\\wxid_wczned99ujlf22_545c\\msg\\video\\2026-08\\bf5ad4437d893c1bbb493ff90ab5d368.mp4",
+    "model": "F:\\switch\\mobile\\public\\models\\hand_landmarker.task",
+    "fps": 30.0,
+    "sample_step_frames": 30,
+    "sample_count": 53,
+    "samples_with_any_hand": 24,
+    "samples_with_two_hands": 7,
+    "any_hand_rate": 0.4528301886792453,
+    "left_label_rate": 0.2830188679245283,
+    "right_label_rate": 0.2830188679245283,
+    "max_no_hand_run_samples": 8,
+    "note": "Sparse image-mode sampling only; handedness may be mirror-dependent. Not a continuous hand-control result."
+  },
+  "c7fbc865832d892ec4aaa362fda5800d.mp4": {
+    "video": "D:\\xwechat_files\\wxid_wczned99ujlf22_545c\\msg\\video\\2026-08\\c7fbc865832d892ec4aaa362fda5800d.mp4",
+    "model": "F:\\switch\\mobile\\public\\models\\hand_landmarker.task",
+    "fps": 30.0,
+    "sample_step_frames": 30,
+    "sample_count": 57,
+    "samples_with_any_hand": 49,
+    "samples_with_two_hands": 4,
+    "any_hand_rate": 0.8596491228070176,
+    "left_label_rate": 0.38596491228070173,
+    "right_label_rate": 0.5263157894736842,
+    "max_no_hand_run_samples": 7,
+    "note": "Sparse image-mode sampling only; handedness may be mirror-dependent. Not a continuous hand-control result."
+  }
+}

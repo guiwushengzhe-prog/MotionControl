@@ -1,0 +1,349 @@
+{
+  "version": "hand-anchor-v1",
+  "inputs": [
+    {
+      "video": "bf5ad4437d893c1bbb493ff90ab5d368",
+      "source": "F:\\MotionControl-App\\test_results\\head_hand_eval_20260828\\final\\bf5ad4437d893c1bbb493ff90ab5d368.pose_stream.json",
+      "frame_count": 1562,
+      "sides": {
+        "left": {
+          "legacy_wrist": {
+            "valid_frames": 1531,
+            "availability_rate": 0.9801536491677336,
+            "longest_missing_frames": 19,
+            "recapture_jump": {
+              "samples": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            },
+            "boundary_jitter": {
+              "samples": 578,
+              "median": 0.0067494213581085205,
+              "p95": 0.05340409278869629,
+              "max": 0.11536669731140137
+            },
+            "boundary_events": 33,
+            "short_event_proxy": 4,
+            "event_durations_frames": [
+              2,
+              2,
+              66,
+              12,
+              23,
+              35,
+              9,
+              9,
+              27,
+              11,
+              7,
+              2,
+              6,
+              10,
+              24,
+              13,
+              3,
+              26,
+              1,
+              36,
+              40,
+              58,
+              34,
+              131,
+              63,
+              19,
+              10,
+              5,
+              17,
+              6,
+              36,
+              46,
+              3
+            ]
+          },
+          "hand_anchor": {
+            "valid_frames_including_fallback": 1557,
+            "available_rate_including_fallback": 0.9967989756722151,
+            "observed_frames": 1557,
+            "observed_rate": 0.9967989756722151,
+            "zone_ready_frames": 1551,
+            "zone_ready_rate": 0.9929577464788732,
+            "longest_missing_frames": 5,
+            "recapture_jump": {
+              "samples": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            },
+            "boundary_jitter": {
+              "samples": 564,
+              "median": 0.006582698443490409,
+              "p95": 0.04988387105056935,
+              "max": 0.11853204223845681
+            },
+            "boundary_events": 22,
+            "short_event_proxy": 1,
+            "event_durations_frames": [
+              19,
+              2,
+              70,
+              72,
+              10,
+              11,
+              44,
+              7,
+              7,
+              3,
+              9,
+              43,
+              89,
+              135,
+              131,
+              79,
+              25,
+              32,
+              19,
+              6,
+              100,
+              3
+            ],
+            "confidence_median": 0.7006,
+            "source_counts": {
+              "missing": 5,
+              "observed": 1557
+            },
+            "common_boundary_edge_x": 0.8033202886581421
+          },
+          "comparison": {
+            "availability_delta_including_fallback": 0.016645326504481472,
+            "zone_ready_delta": 0.012804097311139628,
+            "longest_missing_delta_frames": -14,
+            "short_event_proxy_delta": -3
+          }
+        },
+        "right": {
+          "legacy_wrist": {
+            "valid_frames": 1081,
+            "availability_rate": 0.6920614596670934,
+            "longest_missing_frames": 220,
+            "recapture_jump": {
+              "samples": 5,
+              "median": 0.05227773736372189,
+              "p95": 0.24297817779913047,
+              "max": 0.24297817779913047
+            },
+            "boundary_jitter": {
+              "samples": 905,
+              "median": 0.00047625601291656494,
+              "p95": 0.006679177284240723,
+              "max": 0.0367201566696167
+            },
+            "boundary_events": 3,
+            "short_event_proxy": 0,
+            "event_durations_frames": [
+              294,
+              60,
+              15
+            ]
+          },
+          "hand_anchor": {
+            "valid_frames_including_fallback": 1562,
+            "available_rate_including_fallback": 1.0,
+            "observed_frames": 1562,
+            "observed_rate": 1.0,
+            "zone_ready_frames": 1444,
+            "zone_ready_rate": 0.9244558258642765,
+            "longest_missing_frames": 0,
+            "recapture_jump": {
+              "samples": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            },
+            "boundary_jitter": {
+              "samples": 796,
+              "median": 0.0006915076095477812,
+              "p95": 0.011791619432111294,
+              "max": 0.06316726667361892
+            },
+            "boundary_events": 10,
+            "short_event_proxy": 0,
+            "event_durations_frames": [
+              8,
+              296,
+              66,
+              20,
+              4,
+              11,
+              6,
+              131,
+              42,
+              16
+            ],
+            "confidence_median": 0.9739,
+            "source_counts": {
+              "observed": 1562
+            },
+            "common_boundary_edge_x": 0.17250609397888184
+          },
+          "comparison": {
+            "availability_delta_including_fallback": 0.3079385403329066,
+            "zone_ready_delta": 0.23239436619718312,
+            "longest_missing_delta_frames": -220,
+            "short_event_proxy_delta": 0
+          }
+        }
+      }
+    },
+    {
+      "video": "c7fbc865832d892ec4aaa362fda5800d",
+      "source": "F:\\MotionControl-App\\test_results\\head_hand_eval_20260828\\final\\c7fbc865832d892ec4aaa362fda5800d.pose_stream.json",
+      "frame_count": 1706,
+      "sides": {
+        "left": {
+          "legacy_wrist": {
+            "valid_frames": 1691,
+            "availability_rate": 0.9912075029308324,
+            "longest_missing_frames": 9,
+            "recapture_jump": {
+              "samples": 1,
+              "median": 0.3797819970603229,
+              "p95": 0.3797819970603229,
+              "max": 0.3797819970603229
+            },
+            "boundary_jitter": {
+              "samples": 1426,
+              "median": 0.0004500150680541992,
+              "p95": 0.004800140857696533,
+              "max": 0.050488293170928955
+            },
+            "boundary_events": 6,
+            "short_event_proxy": 0,
+            "event_durations_frames": [
+              9,
+              15,
+              1248,
+              37,
+              4,
+              18
+            ]
+          },
+          "hand_anchor": {
+            "valid_frames_including_fallback": 1706,
+            "available_rate_including_fallback": 1.0,
+            "observed_frames": 1700,
+            "observed_rate": 0.9964830011723329,
+            "zone_ready_frames": 1705,
+            "zone_ready_rate": 0.9994138335287222,
+            "longest_missing_frames": 0,
+            "recapture_jump": {
+              "samples": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            },
+            "boundary_jitter": {
+              "samples": 1402,
+              "median": 0.0004890562029342682,
+              "p95": 0.004839115095343627,
+              "max": 0.25865234240786095
+            },
+            "boundary_events": 5,
+            "short_event_proxy": 0,
+            "event_durations_frames": [
+              9,
+              16,
+              1407,
+              4,
+              18
+            ],
+            "confidence_median": 0.982,
+            "source_counts": {
+              "observed": 1700,
+              "predicted": 6
+            },
+            "common_boundary_edge_x": 0.6005350947380066
+          },
+          "comparison": {
+            "availability_delta_including_fallback": 0.008792497069167626,
+            "zone_ready_delta": 0.008206330597889777,
+            "longest_missing_delta_frames": -9,
+            "short_event_proxy_delta": 0
+          }
+        },
+        "right": {
+          "legacy_wrist": {
+            "valid_frames": 1680,
+            "availability_rate": 0.984759671746776,
+            "longest_missing_frames": 16,
+            "recapture_jump": {
+              "samples": 1,
+              "median": 0.11226529349936834,
+              "p95": 0.11226529349936834,
+              "max": 0.11226529349936834
+            },
+            "boundary_jitter": {
+              "samples": 1149,
+              "median": 0.00021061301231384277,
+              "p95": 0.002733945846557617,
+              "max": 0.12427681684494019
+            },
+            "boundary_events": 3,
+            "short_event_proxy": 1,
+            "event_durations_frames": [
+              28,
+              581,
+              1
+            ]
+          },
+          "hand_anchor": {
+            "valid_frames_including_fallback": 1694,
+            "available_rate_including_fallback": 0.9929660023446659,
+            "observed_frames": 1694,
+            "observed_rate": 0.9929660023446659,
+            "zone_ready_frames": 1694,
+            "zone_ready_rate": 0.9929660023446659,
+            "longest_missing_frames": 12,
+            "recapture_jump": {
+              "samples": 0,
+              "median": null,
+              "p95": null,
+              "max": null
+            },
+            "boundary_jitter": {
+              "samples": 1147,
+              "median": 0.00021706055076559094,
+              "p95": 0.0027779278246201633,
+              "max": 0.11154215392838879
+            },
+            "boundary_events": 3,
+            "short_event_proxy": 1,
+            "event_durations_frames": [
+              29,
+              582,
+              1
+            ],
+            "confidence_median": 0.9976,
+            "source_counts": {
+              "missing": 12,
+              "observed": 1694
+            },
+            "common_boundary_edge_x": 0.19561663269996643
+          },
+          "comparison": {
+            "availability_delta_including_fallback": 0.008206330597889888,
+            "zone_ready_delta": 0.008206330597889888,
+            "longest_missing_delta_frames": -4,
+            "short_event_proxy_delta": 0
+          }
+        }
+      }
+    }
+  ],
+  "notes": [
+    "All results are offline and no-output; the pose streams were captured previously with MediaPipe Pose Full.",
+    "Boundary events use a common median-x edge and 2-frame hysteresis as an engineering jitter/false-trigger proxy, not action labels.",
+    "Hand anchor valid includes the finite 250 ms forearm/arm fallback; zone_ready additionally satisfies the legacy 0.42 score gate.",
+    "Pose33 thumb/index/pinky points are support points. This does not evaluate continuous 21-point fist/pinch recognition."
+  ]
+}
