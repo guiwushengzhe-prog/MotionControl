@@ -1,4 +1,4 @@
-"""Regression tests for the reduced head-control-v4.3-reference-video-tuned path."""
+"""Regression tests for the reduced head-control-v4.4 gated-pitch path."""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ def ratio_pose(nose_x=0.50, nose_y=0.45):
 def test_signal_version_and_algorithms_are_reduced():
     controller = HeadController()
     state = controller.status()
-    assert HEAD_SIGNAL_VERSION == "head-control-v4.3-reference-video-tuned"
+    assert HEAD_SIGNAL_VERSION == "head-control-v4.4-gated-pitch"
     assert state["available_algorithms"] == ["pnp", "ratio"]
     for obsolete in (
         "raw_pitch_face", "raw_pitch_z", "raw_pitch_fused",
@@ -414,13 +414,52 @@ def test_deflection_is_view_velocity_hold_continues_return_to_center_stops(tmp_p
     c = _ready_controller(tmp_path)
     x1, _ = c.update({"yaw": 9.0, "pitch": 0.0}, 640, 480, now=1.0)
     x2, _ = c.update({"yaw": 9.0, "pitch": 0.0}, 640, 480, now=1.04)
+    x3, _ = c.update({"yaw": 9.0, "pitch": 0.0}, 640, 480, now=1.10)
     assert x1 > 0 and x2 > 0
-    # Holding the same head deflection keeps camera velocity in the same sign.
-    assert c.output_x > 0
+    # Ungated relative head control stops once the turn is held.
+    assert x3 == 0.0
     # Returning physically to neutral must snap out filter tail and stop exactly.
-    x0, y0 = c.update({"yaw": 0.0, "pitch": 0.0}, 640, 480, now=1.08)
+    x0, y0 = c.update({"yaw": 0.0, "pitch": 0.0}, 640, 480, now=1.14)
     assert x0 == 0.0 and y0 == 0.0
     assert c.output_x == 0.0 and c.output_y == 0.0
+
+
+def test_pnp_yaw_proxy_is_diagnostic_and_never_rewrites_or_suppresses(tmp_path):
+    class ProxyEstimator:
+        pnp_available = True
+        pnp_error = ""
+
+        def reset(self):
+            pass
+
+        def estimate(self, pose, width, height, algorithm):
+            return HeadEstimate(
+                True,
+                yaw=float(pose["yaw"]),
+                pitch=0.0,
+                roll=0.0,
+                confidence=1.0,
+                algorithm="pnp",
+                yaw_proxy=float(pose["proxy"]),
+            )
+
+    c = _ready_controller(tmp_path)
+    c.estimator = ProxyEstimator()
+    c.center_yaw_proxy = 0.0
+    c.noise_yaw_proxy = 0.0
+    # Disagreement is diagnostic only: the proxy must not become another
+    # hidden/global invert switch. PnP remains the direction authority.
+    x, _ = c.update({"yaw": -30.0, "proxy": 0.20}, 640, 480, now=1.0)
+    assert x < 0.0
+    assert c.status(1.0)["raw_yaw"] < 0.0
+    assert c.status(1.0)["control_yaw"] < 0.0
+    assert c.status(1.0)["yaw_guard_state"] == "proxy_motion"
+    # A proxy-neutral disagreement is diagnostic only; it must not silently
+    # erase an otherwise valid PnP signal.
+    c._reset_filters()
+    x, _ = c.update({"yaw": 28.0, "proxy": 0.002}, 640, 480, now=2.0)
+    assert x > 0.0
+    assert c.status(2.0)["yaw_guard_state"] == "proxy_neutral"
 
 
 def test_noise_aware_deadzone_prevents_small_jitter(tmp_path):

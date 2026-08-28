@@ -28,7 +28,11 @@ from pathlib import Path
 from typing import Any
 
 
-HEAD_SIGNAL_VERSION = "head-control-v4.3-reference-video-tuned"
+HEAD_SIGNAL_VERSION = "head-control-v4.4-gated-pitch"
+HEAD_PROFILE_COMPATIBLE_VERSIONS = {
+    HEAD_SIGNAL_VERSION,
+    "head-control-v4.3-reference-video-tuned",
+}
 HEAD_ALGORITHMS = ("pnp", "ratio")
 
 # Center capture is intentionally the only calibration flow.  The calibration
@@ -90,8 +94,9 @@ MAX_PNP_STEP_DEG = 35.0
 
 # v0.9.7 intent thresholds are expressed in normalized signal units per
 # second.  Pitch is deliberately more permissive than yaw (roughly 60%) so a
-# small natural nod can be used when the left-hand look gate is active, while
-# a stationary off-centre head never keeps producing camera motion.
+# small natural nod can be used when the left-hand look gate is active.  The
+# ungated controller remains a relative turn gesture; ControlKernel separately
+# applies stable pitch deflection only while the player holds the look gate.
 YAW_INTENT_ANGLE = 0.055
 YAW_INTENT_START_VELOCITY = 0.12
 YAW_INTENT_STOP_VELOCITY = 0.045
@@ -104,10 +109,8 @@ class IntentAxis:
     """Small angle + velocity + acceleration state machine.
 
     ``TURN_*`` is emitted only while the signal is moving in the same
-    direction as its deflection.  A held deflection becomes ``HOLD`` and
-    returns zero output; a velocity reversal becomes ``RETURNING`` and also
-    returns zero immediately.  Acceleration is retained as a diagnostic and
-    auxiliary transition signal, not as a mandatory trigger.
+    direction as its deflection.  A held deflection becomes ``HOLD`` and is
+    silent; a velocity reversal becomes ``RETURNING`` and returns zero.
     """
 
     def __init__(self, name: str) -> None:
@@ -416,6 +419,10 @@ class HeadEstimate:
     algorithm: str = ""
     error: str = ""
     reprojection_error: float = math.nan
+    # Independent 2D nose/eye yaw proxy.  It is used only to corroborate the
+    # neutral state; PnP remains the single owner of angle magnitude and sign.
+    # This avoids turning a camera/mirror ambiguity into a global sign patch.
+    yaw_proxy: float = math.nan
 
 
 class HeadPoseEstimator:
@@ -576,7 +583,12 @@ class HeadPoseEstimator:
             # With the anatomical-left/right model above, positive yaw means
             # subject-right and positive pitch means down.  This is the kernel
             # canonical convention: left/up negative, right/down positive.
-            return HeadEstimate(True, yaw, pitch, roll, confidence, "pnp", reprojection_error=reprojection)
+            ratio = self._estimate_ratio(pose)
+            yaw_proxy = ratio.yaw if ratio.valid and math.isfinite(ratio.yaw) else math.nan
+            return HeadEstimate(
+                True, yaw, pitch, roll, confidence, "pnp",
+                reprojection_error=reprojection, yaw_proxy=yaw_proxy,
+            )
         except Exception as exc:
             self.pnp_error = str(exc)
             return HeadEstimate(False, algorithm="pnp", error=f"PnP 失败：{exc}")
@@ -611,7 +623,7 @@ class HeadPoseEstimator:
         # A small roll diagnostic from the eye line; not used for control.
         roll = math.degrees(math.atan2(_finite(re["y"]) - _finite(le["y"]), _finite(re["x"]) - _finite(le["x"])))
         confidence = sum(_score(pose[name]) for name in self._RATIO_NAMES) / len(self._RATIO_NAMES)
-        return HeadEstimate(True, yaw, pitch, roll, confidence, "ratio")
+        return HeadEstimate(True, yaw, pitch, roll, confidence, "ratio", yaw_proxy=yaw)
 
 
 class HeadController:
@@ -623,8 +635,10 @@ class HeadController:
         self.config = dict(DEFAULT_CONFIG)
         self.center_yaw = 0.0
         self.center_pitch = 0.0
+        self.center_yaw_proxy = math.nan
         self.noise_yaw = 0.0
         self.noise_pitch = 0.0
+        self.noise_yaw_proxy = 0.0
         self.calibrated = False
         self.calibrating = False
         self.center_pending = True
@@ -640,6 +654,7 @@ class HeadController:
         self.center_quality = "未校准"
         self.center_yaw_samples: list[float] = []
         self.center_pitch_samples: list[float] = []
+        self.center_yaw_proxy_samples: list[float] = []
         self.center_confidence_samples: list[float] = []
         self.raw = HeadEstimate(False, algorithm=self.config["algorithm"])
         self.filtered_yaw = math.nan
@@ -651,6 +666,10 @@ class HeadController:
         # temporary center when the left-hand look gate opens.
         self.signal_yaw = math.nan
         self.signal_pitch = math.nan
+        self.control_yaw = math.nan
+        self.yaw_proxy = math.nan
+        self.yaw_proxy_delta = math.nan
+        self.yaw_guard_state = "fallback"
         self.yaw_velocity = 0.0
         self.yaw_acceleration = 0.0
         self.pitch_velocity = 0.0
@@ -685,6 +704,10 @@ class HeadController:
         self.filtered_pitch = math.nan
         self.signal_yaw = math.nan
         self.signal_pitch = math.nan
+        self.control_yaw = math.nan
+        self.yaw_proxy = math.nan
+        self.yaw_proxy_delta = math.nan
+        self.yaw_guard_state = "fallback"
         self.yaw_velocity = 0.0
         self.yaw_acceleration = 0.0
         self.pitch_velocity = 0.0
@@ -759,6 +782,7 @@ class HeadController:
         self.center_observed_count = 0
         self.center_yaw_samples = []
         self.center_pitch_samples = []
+        self.center_yaw_proxy_samples = []
         self.center_confidence_samples = []
         self._reset_filters()
         self.notice = "校准已开始：看向游戏屏幕中心，保持自然姿势"
@@ -787,6 +811,7 @@ class HeadController:
         self.center_observed_count = 0
         self.center_yaw_samples = []
         self.center_pitch_samples = []
+        self.center_yaw_proxy_samples = []
         self.center_confidence_samples = []
         self.notice = reason
         self.notice_until = time.monotonic() + 2.5
@@ -827,6 +852,7 @@ class HeadController:
         if success:
             yaw, yaw_sigma = _robust_center_and_sigma(self.center_yaw_samples)
             pitch, pitch_sigma = _robust_center_and_sigma(self.center_pitch_samples)
+            proxy, proxy_sigma = _robust_center_and_sigma(self.center_yaw_proxy_samples)
             ref_yaw_sigma, ref_pitch_sigma = self._calibration_quality_limits()
             if not (math.isfinite(yaw) and math.isfinite(pitch)):
                 success = False
@@ -837,8 +863,10 @@ class HeadController:
                 # measured noise enlarge the runtime deadzone.
                 self.center_yaw = yaw
                 self.center_pitch = pitch
+                self.center_yaw_proxy = proxy if math.isfinite(proxy) else math.nan
                 self.noise_yaw = max(0.0, yaw_sigma if math.isfinite(yaw_sigma) else 0.0)
                 self.noise_pitch = max(0.0, pitch_sigma if math.isfinite(pitch_sigma) else 0.0)
+                self.noise_yaw_proxy = max(0.0, proxy_sigma if math.isfinite(proxy_sigma) else 0.0)
                 self.calibrated = True
                 self.center_pending = False
                 ratio_y = self.noise_yaw / max(ref_yaw_sigma, 1e-9)
@@ -875,6 +903,7 @@ class HeadController:
         self.center_valid_s = 0.0
         self.center_yaw_samples = []
         self.center_pitch_samples = []
+        self.center_yaw_proxy_samples = []
         self.center_confidence_samples = []
         self.notice_until = time.monotonic() + 3.0
         self._reset_filters()
@@ -917,10 +946,43 @@ class HeadController:
             self._axis_active_y = active
         return value
 
+    def _diagnostic_yaw(self, estimate: HeadEstimate) -> float:
+        """Record an independent face-local yaw diagnostic without steering.
+
+        The two-video audit found that PnP and image-space nose/eye geometry
+        can agree yet still conflict with an isolated manual left/right label.
+        Therefore the proxy must not rewrite direction or silently suppress a
+        PnP value.  Angle magnitude and canonical sign remain owned by PnP;
+        the user's explicit ``invert_x`` remains the sole direction override.
+        """
+        self.yaw_proxy = estimate.yaw_proxy
+        self.yaw_proxy_delta = math.nan
+        self.yaw_guard_state = "fallback"
+        if (
+            self.config["algorithm"] != "pnp"
+            or not math.isfinite(estimate.yaw_proxy)
+            or not math.isfinite(self.center_yaw_proxy)
+        ):
+            return estimate.yaw
+
+        proxy_delta = estimate.yaw_proxy - self.center_yaw_proxy
+        self.yaw_proxy_delta = proxy_delta
+        # This diagnostic threshold classifies whether the independent proxy
+        # also sees motion.  It never changes the value returned to control.
+        # Calibration noise only affects the diagnostic classification.
+        proxy_gate = max(RATIO_YAW_SPAN * 0.035, self.noise_yaw_proxy * 2.8)
+        self.yaw_guard_state = "proxy_neutral" if abs(proxy_delta) <= proxy_gate else "proxy_motion"
+        return estimate.yaw
+
     @staticmethod
     def _slew(current: float, target: float, dt: float) -> float:
         if target == 0.0:
             # Neutral must be exact, not a slow decay that causes cursor drift.
+            return 0.0
+        if current * target < 0.0:
+            # A physical direction reversal must stop the old direction on the
+            # crossing frame.  The opposite direction may start next frame;
+            # never slew through a residual wrong-sign mouse/gamepad command.
             return 0.0
         step = OUTPUT_SLEW_PERCENT_PER_S * max(0.0, min(0.08, dt))
         delta = _clamp(target - current, -step, step)
@@ -947,11 +1009,14 @@ class HeadController:
 
         span_x, span_y = self._span()
 
+        control_yaw = self._diagnostic_yaw(estimate) if self.calibrated else estimate.yaw
+        self.control_yaw = control_yaw
+
         # Keep filtered raw signals alive for both calibrated horizontal
         # control and the kernel's gated head-pitch mode.  Before calibration
         # we still filter the absolute estimate, but never emit output.
         if self.calibrated:
-            raw_x_for_release = _clamp((estimate.yaw - self.center_yaw) / span_x, -1.0, 1.0)
+            raw_x_for_release = _clamp((control_yaw - self.center_yaw) / span_x, -1.0, 1.0)
             raw_y_for_release = _clamp((estimate.pitch - self.center_pitch) / span_y, -1.0, 1.0)
             release_x = self.effective_deadzone_x * DEADZONE_RELEASE_RATIO
             release_y = self.effective_deadzone_y * DEADZONE_RELEASE_RATIO
@@ -959,7 +1024,7 @@ class HeadController:
                 self._yaw_filter.reset()
                 filtered_yaw = self._yaw_filter.apply(self.center_yaw, now)
             else:
-                filtered_yaw = self._yaw_filter.apply(estimate.yaw, now)
+                filtered_yaw = self._yaw_filter.apply(control_yaw, now)
             if abs(raw_y_for_release) <= release_y:
                 self._pitch_filter.reset()
                 filtered_pitch = self._pitch_filter.apply(self.center_pitch, now)
@@ -1002,6 +1067,8 @@ class HeadController:
 
             self.center_yaw_samples.append(estimate.yaw)
             self.center_pitch_samples.append(estimate.pitch)
+            if math.isfinite(estimate.yaw_proxy):
+                self.center_yaw_proxy_samples.append(estimate.yaw_proxy)
             self.center_confidence_samples.append(estimate.confidence)
             self.notice = "正在记录自然中心：轻微模型抖动是正常的，不需要刻意僵住"
             if (
@@ -1048,9 +1115,10 @@ class HeadController:
         self.pitch_intent_state = pitch_intent["state"]
         self.norm_x, self.norm_y = raw_x, raw_y
 
-        # Intent, not angle alone, drives output.  A held off-centre head is
-        # therefore silent, and reversing direction stops the old direction
-        # before the head reaches the neutral center.
+        # Ungated head control remains a repeatable relative gesture: turn to
+        # move, hold to stop, and return to center without undoing the view.
+        # The separately gated vertical mode in ControlKernel is absolute
+        # deflection while the player's left hand explicitly holds the clutch.
         if yaw_intent["active"]:
             vx = self._axis_curve(raw_x, "x")
         else:
@@ -1122,6 +1190,7 @@ class HeadController:
             "raw_yaw": self.raw.yaw if self.raw.valid and math.isfinite(self.raw.yaw) else None,
             "raw_pitch": self.raw.pitch if self.raw.valid and math.isfinite(self.raw.pitch) else None,
             "raw_roll": self.raw.roll if self.raw.valid and math.isfinite(self.raw.roll) else None,
+            "raw_yaw_proxy": self.raw.yaw_proxy if self.raw.valid and math.isfinite(self.raw.yaw_proxy) else None,
             "confidence": round(self.raw.confidence, 4) if self.raw.valid else 0.0,
             "reprojection_error": (
                 round(self.raw.reprojection_error, 5)
@@ -1132,6 +1201,9 @@ class HeadController:
             "filtered_yaw": self.filtered_yaw if math.isfinite(self.filtered_yaw) else None,
             "filtered_pitch": self.filtered_pitch if math.isfinite(self.filtered_pitch) else None,
             "signal_yaw": self.signal_yaw if math.isfinite(self.signal_yaw) else None,
+            "control_yaw": self.control_yaw if math.isfinite(self.control_yaw) else None,
+            "yaw_proxy_delta": self.yaw_proxy_delta if math.isfinite(self.yaw_proxy_delta) else None,
+            "yaw_guard_state": self.yaw_guard_state,
             "signal_pitch": self.signal_pitch if math.isfinite(self.signal_pitch) else None,
             "yaw_velocity": round(float(self.yaw_velocity), 4),
             "yaw_acceleration": round(float(self.yaw_acceleration), 4),
@@ -1149,8 +1221,10 @@ class HeadController:
             "pitch_intent_velocity_threshold": PITCH_INTENT_START_VELOCITY,
             "center_yaw": self.center_yaw if self.calibrated else None,
             "center_pitch": self.center_pitch if self.calibrated else None,
+            "center_yaw_proxy": self.center_yaw_proxy if self.calibrated and math.isfinite(self.center_yaw_proxy) else None,
             "noise_yaw": round(self.noise_yaw, 6),
             "noise_pitch": round(self.noise_pitch, 6),
+            "noise_yaw_proxy": round(self.noise_yaw_proxy, 6),
             "normalized_x": round(self.norm_x, 4),
             "normalized_y": round(self.norm_y, 4),
             "output_x": round(self.output_x, 3),
@@ -1164,7 +1238,10 @@ class HeadController:
             return
         try:
             payload = json.loads(Path(self.profile_path).read_text(encoding="utf-8"))
-            if payload.get("signal_version") != HEAD_SIGNAL_VERSION:
+            # v4.4 changes the runtime yaw signal and therefore always takes a
+            # fresh center, but the user's explicit sensitivity/deadzone/invert
+            # choices from the immediately preceding v4.3 profile remain valid.
+            if payload.get("signal_version") not in HEAD_PROFILE_COMPATIBLE_VERSIONS:
                 return
             params = payload.get("params") or {}
             algorithm = str(params.get("algorithm", "pnp"))
@@ -1187,8 +1264,10 @@ class HeadController:
             self.calibrated = False
             self.center_pending = True
             self.center_quality = "未校准"
+            self.center_yaw_proxy = math.nan
             self.noise_yaw = 0.0
             self.noise_pitch = 0.0
+            self.noise_yaw_proxy = 0.0
             self._recompute_deadzone()
         except (OSError, ValueError, TypeError):
             return
@@ -1204,8 +1283,10 @@ class HeadController:
             "center": {
                 "yaw": self.center_yaw if self.calibrated else None,
                 "pitch": self.center_pitch if self.calibrated else None,
+                "yaw_proxy": self.center_yaw_proxy if self.calibrated and math.isfinite(self.center_yaw_proxy) else None,
                 "noise_yaw": self.noise_yaw,
                 "noise_pitch": self.noise_pitch,
+                "noise_yaw_proxy": self.noise_yaw_proxy,
             },
         }
         temp = path.with_suffix(path.suffix + ".tmp")
