@@ -71,11 +71,13 @@ def test_seventh_look_gate_exists_before_and_after_fixed_scene_capture():
     assert 'body_relative_provisional' in kernel_text
 
 
-def test_first_start_auto_initializes_seven_zone_scene_before_output():
+def test_first_start_keeps_scene_capture_but_output_is_not_scene_gated():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     assert 'ensureInitialSceneLayout' in app
     assert "post('/api/scene/capture'" in app
-    assert '7 个体感区域尚未完成定位，游戏输出保持关闭' in app
+    assert 'await setOutput(!output.enabled)' in app
+    assert 'if(!output.enabled&&!(await ensureInitialSceneLayout()))' not in app
+    assert '头控、动作、语音和手机输入仍可用' in app
 
 
 def test_four_motion_rules_and_settings_exist():

@@ -225,3 +225,10 @@
 - `/api/input/status` 保留默认完整响应以兼容旧网页和手机桥接；网页轮询改用新增语义 `?brief=1`，仅省略重复的 `runtime` 快照。临时本地服务验证 brief 响应约 439 bytes、完整响应约 6964 bytes；旧调用仍返回完整字段。
 - 临时端口验证 HTTP/1.1 持久连接下各 JSON/静态响应均有正确 `Content-Length`，404 后续请求和 WebSocket 升级均不挂起；未对正在运行的 8765 服务做热重启。网页 3 秒轮询频率与改动前一致（kernel 12、input/output/performance 各 4 次）。
 - 仅通过 `py_compile`、`node --check` 和预览线程定向单测；输出保持关闭。未进行真人摄像头、手机实机或游戏输出验收。
+
+## 2026-08-28：未完成身体 Zone 时缩小输出门控
+
+- `web/app.js` 主操作保留首次启动时的场景捕获流程，但不再要求场景/身体 Zone 完成后才能开启总输出。
+- 未完成 Zone 时，主状态明确提示区域尚未定位，同时保留头控、动作、语音和手机输入可用；Zone 捕获、调整和 Zone 触发条件未改动。
+- 未修改 `head_control.py` 或头控/自动校准参数；仅更新对应的最小静态回归断言。
+- 检查边界：`node --check web/app.js` 与 `tests/test_minimal_controls.py` 中的单个 Zone 门控回归；未重启 8765、未进行真人/硬件验收。
