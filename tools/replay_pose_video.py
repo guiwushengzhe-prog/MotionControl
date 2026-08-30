@@ -101,6 +101,10 @@ def _event_snapshot(kernel: ControlKernel, t: float) -> dict:
         "head_center_phase": head.get("center_phase"),
         "head_center_valid_s": head.get("center_valid_s"),
         "head_center_samples": head.get("center_samples"),
+        "world_pose_available": bool(status.get("world_pose_available")),
+        "personal_pnp_active": bool(head.get("personal_pnp_active")),
+        "personal_pnp_template_quality": head.get("personal_pnp_template_quality"),
+        "personal_pnp_rejection_reason": head.get("personal_pnp_rejection_reason"),
     }
 
 
@@ -196,6 +200,11 @@ def main() -> int:
             last_timestamp_ms = timestamp_ms
             result = detector.detect_for_video(image, timestamp_ms)
             landmarks = result.pose_landmarks[0] if result.pose_landmarks else None
+            world_landmarks = (
+                result.pose_world_landmarks[0]
+                if getattr(result, "pose_world_landmarks", None)
+                else None
+            )
             pose_map = None
             if landmarks:
                 pose_map = {
@@ -210,11 +219,27 @@ def main() -> int:
             else:
                 invalid_frames += 1
 
+            world_pose = None
+            if world_landmarks:
+                world_pose = {
+                    MP_NAMES[i]: {
+                        "x": _finite(point.x),
+                        "y": _finite(point.y),
+                        "z": _finite(point.z),
+                        "score": _finite(getattr(point, "visibility", getattr(point, "presence", 1.0)), 1.0),
+                    }
+                    for i, point in enumerate(world_landmarks[: len(MP_NAMES)])
+                }
+
             with kernel._lock:
                 kernel.width = max(1, width)
                 kernel.height = max(1, height)
                 kernel.latest_pose = pose_map
-                kernel._process_pose_locked(pose_map, now)
+                kernel.latest_world_pose = world_pose
+                if world_pose is None:
+                    kernel._process_pose_locked(pose_map, now)
+                else:
+                    kernel._process_pose_locked(pose_map, now, world_pose)
                 row = _event_snapshot(kernel, now)
                 row["video_t"] = round(t_video, 3)
                 samples.append(row)
