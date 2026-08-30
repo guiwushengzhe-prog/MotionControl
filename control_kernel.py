@@ -115,6 +115,12 @@ class ControlKernel:
         self.width = 640
         self.height = 480
         self.latest_pose: dict[str, dict] | None = None
+        # World landmarks are needed during the v153 personal-PnP center
+        # capture, but are deliberately kept separate from the normalized
+        # image pose so body zones and renderers never see metric coordinates.
+        # Once a personal model is active, HeadController uses them only for
+        # diagnostics; the runtime yaw path remains normalized-2D only.
+        self.latest_world_pose: dict[str, dict] | None = None
         self.pose_last_valid_at = 0.0
         # Keep a short monotonic history so first-run scene placement and
         # explicit rematch use a robust multi-frame body snapshot instead of
@@ -235,6 +241,31 @@ class ControlKernel:
             result[name] = point
         return result
 
+    @staticmethod
+    def world_pose_map_from_message(message: dict) -> dict[str, dict] | None:
+        """Convert the first MediaPipe world_pose list to a named map.
+
+        World coordinates are metric/model coordinates and must not receive
+        the image-space ``coordinates_mirrored`` correction.  The phone and
+        local MediaPipe paths both provide the same canonical 33-point order.
+        Missing world landmarks are treated as an optional runtime signal: the
+        normalized pose can still drive the ordinary controller, while v153
+        simply remains on its safe generic-PnP fallback until calibration has
+        enough world samples.
+        """
+        poses = message.get("poses") if isinstance(message, dict) else None
+        item = poses[0] if poses and isinstance(poses[0], dict) else None
+        landmarks = item.get("world_pose") if item else None
+        if not isinstance(landmarks, list) or len(landmarks) != 33:
+            return None
+        result: dict[str, dict] = {}
+        for index, name in enumerate(MP_NAMES):
+            landmark = landmarks[index]
+            if not isinstance(landmark, dict):
+                continue
+            result[name] = _point(landmark)
+        return result if result else None
+
     def configure_motions(self, items) -> None:
         with self._lock:
             self.motion_config = [copy.deepcopy(item) for item in (items or []) if isinstance(item, dict)]
@@ -251,7 +282,7 @@ class ControlKernel:
 
     def configure_head(self, *, algorithm=None, deadzone=None, sensitivity_x=None,
                        sensitivity_y=None, enabled=None, invert_x=None, invert_y=None,
-                       vertical_look_source=None) -> dict:
+                       horizontal_algorithm=None, vertical_look_source=None) -> dict:
         with self._lock:
             self.head_controller.configure(
                 algorithm=algorithm,
@@ -261,6 +292,7 @@ class ControlKernel:
                 enabled=enabled,
                 invert_x=invert_x,
                 invert_y=invert_y,
+                horizontal_algorithm=horizontal_algorithm,
             )
             if vertical_look_source is not None:
                 source = str(vertical_look_source).strip().lower()
@@ -320,11 +352,23 @@ class ControlKernel:
 
     def handle_pose_message(self, source_id: str, message: dict) -> dict:
         pose_map = self.pose_map_from_message(message)
+        world_pose = self.world_pose_map_from_message(message)
         width = int(message.get("width") or 640)
         height = int(message.get("height") or 480)
-        return self.handle_pose_map(source_id, pose_map, width=width, height=height)
+        return self.handle_pose_map(
+            source_id, pose_map, width=width, height=height,
+            world_pose=world_pose,
+        )
 
-    def handle_pose_map(self, source_id: str, pose_map: dict[str, dict] | None, *, width: int = 640, height: int = 480) -> dict:
+    def handle_pose_map(
+        self,
+        source_id: str,
+        pose_map: dict[str, dict] | None,
+        *,
+        width: int = 640,
+        height: int = 480,
+        world_pose: dict[str, dict] | list[dict] | None = None,
+    ) -> dict:
         now = time.monotonic()
         with self._lock:
             source_id = str(source_id)
@@ -341,10 +385,17 @@ class ControlKernel:
             self.width = max(1, int(width))
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
+            self.latest_world_pose = copy.deepcopy(world_pose) if world_pose else None
             if pose_map:
                 self.pose_last_valid_at = now
                 self.pose_history.append((now, copy.deepcopy(pose_map)))
-            self._process_pose_locked(pose_map, now)
+            # Keep compatibility with scene/test adapters that still expose
+            # the original two-argument processing hook; only pass the new
+            # world stream when one is actually present.
+            if world_pose is None:
+                self._process_pose_locked(pose_map, now)
+            else:
+                self._process_pose_locked(pose_map, now, world_pose)
             return self.status_locked(now)
 
     def stable_pose_snapshot(self, *, window_s: float = 0.90, min_samples: int = 6) -> dict[str, dict] | None:
@@ -431,7 +482,12 @@ class ControlKernel:
 
     # ---------- pose processing ----------
 
-    def _process_pose_locked(self, pose_map: dict[str, dict] | None, now: float) -> None:
+    def _process_pose_locked(
+        self,
+        pose_map: dict[str, dict] | None,
+        now: float,
+        world_pose: dict[str, dict] | list[dict] | None = None,
+    ) -> None:
         if not pose_map:
             self._clear_body_outputs_locked()
             return
@@ -439,7 +495,7 @@ class ControlKernel:
         self._update_motion_locked(pose_map, now)
         self._update_cross_poses_locked(pose_map, now)
         self._dispatch_controls_locked(now)
-        self._update_head_locked(pose_map, now)
+        self._update_head_locked(pose_map, now, world_pose)
 
     def _compute_body_zones(self, pose_map: dict[str, dict]) -> dict[str, dict]:
         iw, ih = self.width, self.height
@@ -834,11 +890,23 @@ class ControlKernel:
 
     # ---------- clean head control ----------
 
-    def _update_head_locked(self, pose_map: dict[str, dict], now: float) -> None:
+    def _update_head_locked(
+        self,
+        pose_map: dict[str, dict],
+        now: float,
+        world_pose: dict[str, dict] | list[dict] | None = None,
+    ) -> None:
         # Body actions and the output backend remain unchanged; only head
         # estimation/mapping is delegated to HeadController.  The look gate
         # no longer freezes X: yaw remains independent of vertical permission.
-        x, _pitch_y = self.head_controller.update(pose_map, self.width, self.height, now)
+        if world_pose is None:
+            x, _pitch_y = self.head_controller.update(
+                pose_map, self.width, self.height, now,
+            )
+        else:
+            x, _pitch_y = self.head_controller.update(
+                pose_map, self.width, self.height, now, world_pose=world_pose,
+            )
         self.head = self.head_controller.status(now)
 
         y = 0.0
@@ -1014,6 +1082,7 @@ class ControlKernel:
         if self.head_controller.calibrating:
             self.head_controller.cancel_center("人体来源已断开")
         self.latest_pose = None
+        self.latest_world_pose = None
         self.pose_last_valid_at = 0.0
         self._clear_body_outputs_locked()
 
@@ -1080,6 +1149,11 @@ class ControlKernel:
             "width": self.width,
             "height": self.height,
             "pose": copy.deepcopy(self.latest_pose),
+            # Keep metric landmarks out of the regular status payload (it is
+            # polled frequently), but expose whether the current frame carried
+            # them so calibration diagnostics can distinguish a missing world
+            # stream from a rejected personal template.
+            "world_pose_available": bool(self.latest_world_pose),
             "zones": zones,
             "buttons": self._pressed_keys_locked(),
             "motions": sorted(self.motion_active),
@@ -1666,6 +1740,11 @@ class NativeCameraService:
                 self._last_timestamp_ms = timestamp_ms
                 result = self._detector.detect_for_video(image, timestamp_ms)
                 landmarks = result.pose_landmarks[0] if result.pose_landmarks else None
+                world_landmarks = (
+                    result.pose_world_landmarks[0]
+                    if getattr(result, "pose_world_landmarks", None)
+                    else None
+                )
                 pose_map = None
                 if landmarks:
                     pose_map = {
@@ -1675,7 +1754,19 @@ class NativeCameraService:
                         }
                         for index, point in enumerate(landmarks)
                     }
-                self.kernel.handle_pose_map("computer_camera", pose_map, width=width, height=height)
+                world_pose = None
+                if world_landmarks:
+                    world_pose = {
+                        MP_NAMES[index]: {
+                            "x": _finite(point.x), "y": _finite(point.y), "z": _finite(point.z),
+                            "score": _finite(getattr(point, "visibility", getattr(point, "presence", 1.0)), 1.0),
+                        }
+                        for index, point in enumerate(world_landmarks)
+                    }
+                self.kernel.handle_pose_map(
+                    "computer_camera", pose_map, width=width, height=height,
+                    world_pose=world_pose,
+                )
                 finished = time.monotonic()
                 inference_ms = (time.perf_counter() - started) * 1000.0
                 with self._condition:

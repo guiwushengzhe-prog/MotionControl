@@ -450,7 +450,7 @@ def install_hand_anchor_adapter(control_kernel_class) -> None:
         }
         self.hand_anchor_points = {}
 
-    def _process(self, pose_map, now):
+    def _process(self, pose_map, now, world_pose=None):
         if not hasattr(self, "hand_anchor_trackers"):
             self.hand_anchor_trackers = {side: HandAnchorTracker(side) for side in ("left", "right")}
             self.hand_anchor_points = {}
@@ -465,7 +465,11 @@ def install_hand_anchor_adapter(control_kernel_class) -> None:
             for tracker in self.hand_anchor_trackers.values():
                 tracker.reset()
             self.hand_anchor_points = {}
-        return original_process(self, pose_map, now)
+        # Keep the optional metric world stream intact while preserving the
+        # old hook signature for callers that do not provide it.
+        if world_pose is None:
+            return original_process(self, pose_map, now)
+        return original_process(self, pose_map, now, world_pose)
 
     def _zones(self, pose_map, now):
         adapted = pose_with_hand_anchors(pose_map, getattr(self, "hand_anchor_points", {}))

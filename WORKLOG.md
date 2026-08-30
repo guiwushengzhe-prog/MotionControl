@@ -240,3 +240,11 @@
 - 只有当上下视角来源选择“头部”且左腕进入 `lookGate`（视角门）时，系统才捕获临时俯仰中心，并把相对俯仰持续映射为纵向视角；离开视角门会立即清除锚点并把 Y 精确归零。普通未进入视角门时仍沿用原头控状态机，不新增全局漂移风险。
 - Luna Max 定向复核：语法检查通过，43 项定向测试通过。两段缓存视频的强制视角门回放中，上下宏召回率 91.91%，正确方向 92.03%，反向 2.17%，零输出 5.80%；视角门未激活与退出后 Y 均为 0。
 - 验证边界：上述结果属于缓存关键点和人工片段的离线视角门回放，不等同于真人实时摄像头或游戏内手感验收；未调整 deadzone、灵敏度、gamma 或鼠标速度。
+
+## 2026-08-30：v153 Personal PnP 接入与 world_pose 边界
+
+- 保留现有 `gesture_v153` 横向策略及 `classic` 兼容策略；通过 `/api/head/config` 的 `horizontal_algorithm` 显式选择，不改纵向 lookGate、腕部纵向控制或冻结的头控参数。
+- `pose_frame_v2` 的 normalized image pose 与可选 `world_pose` 在 `ControlKernel` 中分流：图像点只做一次 `coordinates_mirrored` 纠正并进入身体/头控，world 点只用于 v153 个人模板校准和诊断；运行期 world_pose 断流不会替换或改变已激活的横向输出。
+- 电脑本地 MediaPipe Pose Full 现在把 `pose_world_landmarks` 沿同一内核边界传入；完整 replay 工具也复用该链路。状态只增加 `world_pose_available`、个人模板质量/拒绝原因等紧凑字段，不在高频状态中复制完整 world 点。
+- 个人模板在世界点不足、刚体抖动过大、三组左右脸点不一致、重投影或深度无效时安全回退通用 PnP，并保留拒绝原因供诊断。
+- 定向验证：`tests/test_v153_integration.py` 5 passed；头控/手机桥/内核/手部锚点相关子集 71 passed；另完成 py_compile。未做真人、真实摄像头、游戏输出或全量测试。

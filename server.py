@@ -668,6 +668,7 @@ class Handler(SimpleHTTPRequestHandler):
                     sensitivity_y=body.get("sensitivity_y"),
                     enabled=body.get("enabled"),
                     invert_x=body.get("invert_x"), invert_y=body.get("invert_y"),
+                    horizontal_algorithm=body.get("horizontal_algorithm"),
                     vertical_look_source=body.get("vertical_look_source", body.get("verticalLookSource")),
                 )
                 self._send_json({"ok": True, **RUNTIME.status()})
