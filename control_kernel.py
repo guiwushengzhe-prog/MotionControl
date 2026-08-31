@@ -28,6 +28,7 @@ from head_control import (
     HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION,
 )
 from game_profiles import flatten_bindings
+from vertical_hand_control import VerticalHandController
 
 
 MP_NAMES = [
@@ -142,6 +143,7 @@ class ControlKernel:
         }
         self.vertical_gate_active = False
         self.vertical_wrist_norm = 0.0
+        self.vertical_hand_controller = VerticalHandController()
         # The left-wrist lookGate is a deliberate arm/hand gate.  When it
         # becomes active we capture the right wrist's current Y as the
         # neutral anchor; head pitch is never allowed to reach final output.
@@ -150,7 +152,10 @@ class ControlKernel:
         # against right-shoulder Y.  This removes whole-body bobbing and makes
         # natural arm arcs much less likely to disturb the view.
         self.vertical_wrist_anchor_rel_y: float | None = None
-        self.vertical_anchor_samples: deque[float] = deque(maxlen=5)
+        # Keep the historical attribute as an alias for compatibility with
+        # status consumers and focused kernel tests.  The state is owned by
+        # VerticalHandController from here on.
+        self.vertical_anchor_samples = self.vertical_hand_controller.anchor_samples
         self.vertical_wrist_filtered = 0.0
         self.vertical_filter_last_at = 0.0
         self.vertical_head_anchor_pitch: float | None = None
@@ -207,6 +212,20 @@ class ControlKernel:
             self.head = self.head_controller.status(time.monotonic())
             self._safe_output(self.output.apply, 0.0, 0.0)
             return self.status_locked(time.monotonic())
+
+    def _sync_vertical_hand_locked(self, state: dict | None = None) -> None:
+        """Mirror vertical-hand diagnostics kept for the public kernel API."""
+        snapshot = state or self.vertical_hand_controller.status()
+        self.vertical_wrist_anchor_y = snapshot.get("anchor_y")
+        self.vertical_wrist_anchor_rel_y = snapshot.get("anchor_rel_y")
+        self.vertical_wrist_filtered = float(snapshot.get("filtered", 0.0) or 0.0)
+        self.vertical_filter_last_at = float(snapshot.get("filter_last_at", 0.0) or 0.0)
+
+    def _reset_vertical_hand_locked(self, now: float | None = None) -> None:
+        """Reset hand vertical-look state and its legacy diagnostic mirrors."""
+        self.vertical_hand_controller.reset(now)
+        self._sync_vertical_hand_locked()
+        self.vertical_wrist_norm = 0.0
 
     def _reset_vertical_head_locked(self) -> None:
         """Clear the gated head-pitch center and all vertical intent state."""
@@ -339,13 +358,8 @@ class ControlKernel:
             for state in self.zone_state.values():
                 state.update({"inside": 0, "outside": 0, "pressed": False})
             self.vertical_gate_active = False
-            self.vertical_wrist_norm = 0.0
-            self.vertical_wrist_anchor_y = None
-            self.vertical_wrist_anchor_rel_y = None
-            self.vertical_anchor_samples.clear()
+            self._reset_vertical_hand_locked()
             self.vertical_head_anchor_samples.clear()
-            self.vertical_wrist_filtered = 0.0
-            self.vertical_filter_last_at = 0.0
             self._reset_vertical_head_locked()
             self._safe_output(self.output.set_buttons, [], source="zones")
             return self.status_locked(time.monotonic())
@@ -616,22 +630,14 @@ class ControlKernel:
                     changed = True
         self.vertical_gate_active = bool(self.zone_state.get("lookGate", {}).get("pressed")) if gate_available else False
         if not self.vertical_gate_active:
-            self.vertical_wrist_anchor_y = None
-            self.vertical_wrist_anchor_rel_y = None
-            self.vertical_anchor_samples.clear()
+            self._reset_vertical_hand_locked()
             self.vertical_head_anchor_samples.clear()
-            self.vertical_wrist_filtered = 0.0
-            self.vertical_filter_last_at = 0.0
             self._reset_vertical_head_locked()
         elif not previous_gate:
             # Do not capture one arbitrary frame as the neutral point.  The
             # next few stable frames are collected in _update_head_locked and
             # their median becomes the anchor.
-            self.vertical_wrist_anchor_y = None
-            self.vertical_wrist_anchor_rel_y = None
-            self.vertical_anchor_samples.clear()
-            self.vertical_wrist_filtered = 0.0
-            self.vertical_filter_last_at = now
+            self._reset_vertical_hand_locked(now)
             self._reset_vertical_head_locked()
         if changed:
             self.last_zone_emit = now
@@ -964,56 +970,9 @@ class ControlKernel:
                     self.vertical_pitch_norm = _clamp(y, -1.0, 1.0)
             else:
                 self._reset_vertical_head_locked()
-                wrist = pose_map.get(str(vcfg.get("point", "right_wrist")))
-                shoulder = pose_map.get("right_shoulder")
-                good = (
-                    wrist and shoulder
-                    and _score(wrist) >= 0.48 and _score(shoulder) >= 0.48
-                    and math.isfinite(float(wrist.get("y", math.nan)))
-                    and math.isfinite(float(shoulder.get("y", math.nan)))
-                )
-                if good:
-                    rel_y = float(wrist["y"]) - float(shoulder["y"])
-                    self.vertical_wrist_anchor_y = float(wrist["y"])  # diagnostic compatibility
-                    if self.vertical_wrist_anchor_rel_y is None:
-                        self.vertical_anchor_samples.append(rel_y)
-                        if len(self.vertical_anchor_samples) >= 4:
-                            self.vertical_wrist_anchor_rel_y = statistics.median(self.vertical_anchor_samples)
-                            self.vertical_wrist_filtered = 0.0
-                            self.vertical_filter_last_at = now
-                    else:
-                        # Existing scene layouts used absolute wrist travel.  A
-                        # body-relative signal needs less physical movement, so use
-                        # 72% of the authored range while retaining user adjustment.
-                        travel = max(0.065, float(vcfg.get("range_y", 0.18)) * 0.72)
-                        raw = _clamp((rel_y - self.vertical_wrist_anchor_rel_y) / travel, -1.0, 1.0)
-                        deadzone = _clamp(vcfg.get("deadzone", 0.08), 0.04, 0.22)
-                        if abs(raw) > deadzone:
-                            t = (abs(raw) - deadzone) / max(1e-6, 1.0 - deadzone)
-                            # Slightly progressive curve: fine around center without
-                            # making large deliberate motions feel sluggish.
-                            target = math.copysign(t ** 1.12, raw)
-                        else:
-                            target = 0.0
-
-                        dt = max(1.0 / 120.0, min(0.10, now - (self.vertical_filter_last_at or now)))
-                        self.vertical_filter_last_at = now
-                        # ~42 ms one-pole smoothing.  This damps MediaPipe jitter but
-                        # is far faster than the old heavy-feeling wrist response.
-                        alpha = 1.0 - math.exp(-dt / 0.042)
-                        filtered = self.vertical_wrist_filtered + alpha * (target - self.vertical_wrist_filtered)
-                        # Reject single-frame teleport spikes without adding a long
-                        # queue or fixed-frame latency.
-                        max_step = 7.0 * dt
-                        filtered = self.vertical_wrist_filtered + _clamp(filtered - self.vertical_wrist_filtered, -max_step, max_step)
-                        if abs(filtered) < 0.012 and target == 0.0:
-                            filtered = 0.0
-                        self.vertical_wrist_filtered = _clamp(filtered, -1.0, 1.0)
-                        y = self.vertical_wrist_filtered
-                else:
-                    # Tracking loss is fail-safe.  Never hold the last camera Y.
-                    self.vertical_wrist_filtered = 0.0
-                    self.vertical_filter_last_at = now
+                hand_state = self.vertical_hand_controller.update(pose_map, now, vcfg)
+                self._sync_vertical_hand_locked(hand_state)
+                y = float(hand_state["output"])
 
         if not self.vertical_gate_active:
             self._reset_vertical_head_locked()
@@ -1052,13 +1011,8 @@ class ControlKernel:
             state.update({"inside": 0, "outside": 0, "pressed": False})
         self.zone_rects = {}
         self.vertical_gate_active = False
-        self.vertical_wrist_norm = 0.0
-        self.vertical_wrist_anchor_y = None
-        self.vertical_wrist_anchor_rel_y = None
-        self.vertical_anchor_samples.clear()
+        self._reset_vertical_hand_locked()
         self.vertical_head_anchor_samples.clear()
-        self.vertical_wrist_filtered = 0.0
-        self.vertical_filter_last_at = 0.0
         self._reset_vertical_head_locked()
         self.motion_active.clear()
         for state in self.motion_debounce.values():
