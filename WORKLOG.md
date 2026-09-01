@@ -248,3 +248,9 @@
 - 电脑本地 MediaPipe Pose Full 现在把 `pose_world_landmarks` 沿同一内核边界传入；完整 replay 工具也复用该链路。状态只增加 `world_pose_available`、个人模板质量/拒绝原因等紧凑字段，不在高频状态中复制完整 world 点。
 - 个人模板在世界点不足、刚体抖动过大、三组左右脸点不一致、重投影或深度无效时安全回退通用 PnP，并保留拒绝原因供诊断。
 - 定向验证：`tests/test_v153_integration.py` 5 passed；头控/手机桥/内核/手部锚点相关子集 71 passed；另完成 py_compile。未做真人、真实摄像头、游戏输出或全量测试。
+
+## 2026-09-01：frozen22 横向测量源接入
+
+- 新增显式 `frozen22` 横向算法选项，固定使用 R3 已审计 `real-ab-equalmean-20260830-v1` 11 点/22 维 signature；保持 `classic` 默认和 `gesture_v153` 原路径不变。
+- 运行时只从中心校准收集 frozen22 的中性中心、通道噪声和可选 world-face 残差；固定 signature 不会被用户数据重拟合。frozen22 通过现有相对 ratchet（相对棘轮）状态机输出水平轴，缺点/校准无效时安全归零。
+- 定向验证：归档 A/B 关键点重放 1833/2695 个有效帧，特征与参考最大绝对误差 `0`、raw yaw 最大绝对误差 `0`；frozen22 选择/校准/缺点归零 3 项通过；v153 与清洁头控子集 34 项通过。未做真人或游戏输出验收。

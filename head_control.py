@@ -120,11 +120,38 @@ PITCH_INTENT_STOP_VELOCITY = 0.026
 # geometry switch and the calibration flow are shared; only the yaw intent
 # machine and the yaw branch of update() differ.
 
-HORIZONTAL_ALGORITHMS = ("classic", "gesture_v153")
+HORIZONTAL_ALGORITHMS = ("classic", "gesture_v153", "frozen22")
 HORIZONTAL_ALGORITHM_VERSIONS = {
     "classic": "v4.4-gated-pitch-ratchet-baseline",
     "gesture_v153": "relative-ratchet-v153-personal-pnp-g12-calib-derotate-hardened",
+    "frozen22": "real-ab-equalmean-20260830-v1",
 }
+
+# frozen22 is the audited R3 11-point / 22-dimensional horizontal
+# measurement.  The signature is a fixed research coefficient vector: runtime
+# calibration may estimate only a user's neutral center and per-channel noise.
+# It must never be re-fit from a new capture.
+FROZEN22_SIGNATURE_VERSION = "real-ab-equalmean-20260830-v1"
+FROZEN22_SIGNATURE = (
+    0.017391687225, -0.0063843505855, 0.003726558662, 0.000005274079,
+    0.0004064948765, -0.000035417555825, -0.004127857981, 0.00003236540025,
+    0.003492305625, -0.00002010736025, 0.000074819552875, -0.000058343073335,
+    -0.003572923066, 0.0000744540638, -0.034462183665, -0.006624336096,
+    -0.03443915071, -0.0047827628515, 0.0088078813755, -0.01310556813,
+    0.007183393412, -0.01328455541,
+)
+FROZEN22_MEDIAN_WINDOW = 3
+FROZEN22_MAX_CAL_SIGMA_DEG = 2.5
+FROZEN22_MIN_SAMPLES = 20
+FROZEN22_SIGMA_FLOOR = 1e-4
+# frozen22 returns a degree-like yaw measurement.  This is only the output
+# normalization span; it does not alter the audited 22-D signature.
+FROZEN22_YAW_SPAN_DEG = PNP_YAW_SPAN_DEG
+HEAD11_NAMES = (
+    "nose", "left_eye_inner", "left_eye", "left_eye_outer",
+    "right_eye_inner", "right_eye", "right_eye_outer",
+    "left_ear", "right_ear", "mouth_left", "mouth_right",
+)
 
 HEAD_POINT_EMA_TAU_S = 0.050
 YAW_V2_VELOCITY_TAU_S = 0.070
@@ -499,6 +526,161 @@ def _world_face_xyz(pose: dict[str, dict] | None) -> tuple[tuple[float, float, f
         if not all(math.isfinite(v) for v in xyz): return None
         vals.append(xyz)
     return tuple(vals)
+
+
+def _head11_local_feature_xy(
+    points: tuple[tuple[float, float], ...],
+) -> tuple[tuple[float, ...], float] | None:
+    """Build the audited frozen22 derolled, eye-centred 22-D feature.
+
+    The point order and normalization intentionally mirror the R3 reference:
+    three landmarks per eye are averaged, the eye line is derolled, and all
+    coordinates are divided by the pixel eye span.  No runtime coefficient
+    fitting belongs here.
+    """
+    if len(points) != len(HEAD11_NAMES):
+        return None
+    try:
+        left_eye = (
+            sum(float(points[i][0]) for i in (1, 2, 3)) / 3.0,
+            sum(float(points[i][1]) for i in (1, 2, 3)) / 3.0,
+        )
+        right_eye = (
+            sum(float(points[i][0]) for i in (4, 5, 6)) / 3.0,
+            sum(float(points[i][1]) for i in (4, 5, 6)) / 3.0,
+        )
+        mx = (left_eye[0] + right_eye[0]) * 0.5
+        my = (left_eye[1] + right_eye[1]) * 0.5
+        dx = right_eye[0] - left_eye[0]
+        dy = right_eye[1] - left_eye[1]
+        scale = math.hypot(dx, dy)
+        if not math.isfinite(scale) or scale < 3.0:
+            return None
+        angle = math.atan2(dy, dx)
+        c, s = math.cos(-angle), math.sin(-angle)
+        out: list[float] = []
+        for x, y in points:
+            x, y = float(x), float(y)
+            if not (math.isfinite(x) and math.isfinite(y)):
+                return None
+            rx, ry = x - mx, y - my
+            out.extend(((c * rx - s * ry) / scale, (s * rx + c * ry) / scale))
+        return tuple(out), float(scale)
+    except Exception:
+        return None
+
+
+def _head11_local_feature(
+    pose: dict[str, dict] | None,
+    width: int,
+    height: int,
+) -> tuple[tuple[float, ...], float] | None:
+    """Return the fixed 11-point feature in image pixels and its eye span."""
+    if not isinstance(pose, dict):
+        return None
+    if any(not _point_ok(pose.get(name), 0.20) for name in HEAD11_NAMES):
+        return None
+    width, height = max(2, int(width)), max(2, int(height))
+    points: list[tuple[float, float]] = []
+    for name in HEAD11_NAMES:
+        point = pose.get(name)
+        if not isinstance(point, dict):
+            return None
+        x = _finite(point.get("x")) * width
+        y = _finite(point.get("y")) * height
+        if not (math.isfinite(x) and math.isfinite(y)):
+            return None
+        points.append((x, y))
+    return _head11_local_feature_xy(tuple(points))
+
+
+def _world_head11_xyz(
+    pose: dict[str, dict] | None,
+) -> tuple[tuple[float, float, float], ...] | None:
+    """Extract the same 11 landmarks from optional metric world pose."""
+    if not isinstance(pose, dict):
+        return None
+    out: list[tuple[float, float, float]] = []
+    for name in HEAD11_NAMES:
+        point = pose.get(name)
+        if not isinstance(point, dict):
+            return None
+        xyz = (_finite(point.get("x")), _finite(point.get("y")), _finite(point.get("z")))
+        if not all(math.isfinite(value) for value in xyz):
+            return None
+        out.append(tuple(float(value) for value in xyz))
+    return tuple(out)
+
+
+def _head11_eye_world_span(
+    template: tuple[tuple[float, float, float], ...] | None,
+) -> float:
+    if template is None or len(template) != len(HEAD11_NAMES):
+        return math.nan
+    left = tuple(sum(template[i][j] for i in (1, 2, 3)) / 3.0 for j in range(3))
+    right = tuple(sum(template[i][j] for i in (4, 5, 6)) / 3.0 for j in range(3))
+    return math.sqrt(sum((right[j] - left[j]) ** 2 for j in range(3)))
+
+
+def _frozen22_world_residual_rel(
+    template: tuple[tuple[float, float, float], ...] | None,
+    samples: list[tuple[tuple[float, float, float], ...]],
+) -> float:
+    """Report optional non-rigid world-face residual for diagnostics only."""
+    if template is None or len(template) != len(HEAD11_NAMES) or not samples:
+        return math.inf
+    try:
+        import numpy as np
+
+        p = np.asarray(template, dtype=np.float64)
+        if p.shape != (11, 3) or not np.isfinite(p).all():
+            return math.inf
+        eye = _head11_eye_world_span(template)
+        if not math.isfinite(eye) or eye <= 1e-9:
+            return math.inf
+        pc = p - p.mean(axis=0, keepdims=True)
+        values: list[float] = []
+        for sample in samples:
+            q = np.asarray(sample, dtype=np.float64)
+            if q.shape != (11, 3) or not np.isfinite(q).all():
+                continue
+            qc = q - q.mean(axis=0, keepdims=True)
+            u, _, vt = np.linalg.svd(pc.T @ qc)
+            # Keep the same Kabsch reflection correction as the reference.
+            rotation = vt.T @ u.T
+            if np.linalg.det(rotation) < 0.0:
+                vt[-1, :] *= -1.0
+                rotation = vt.T @ u.T
+            aligned = pc @ rotation.T
+            rms = float(np.sqrt(np.mean(np.sum((aligned - qc) ** 2, axis=1))))
+            if math.isfinite(rms):
+                values.append(rms / eye)
+        return float(_median(values)) if values else math.inf
+    except Exception:
+        return math.inf
+
+
+def _personal22_matched_yaw(
+    feature: tuple[float, ...] | None,
+    center: tuple[float, ...] | None,
+    sigma: tuple[float, ...] | None,
+    signature: tuple[float, ...] | None,
+) -> float:
+    """Project a calibrated 22-D feature onto the fixed frozen22 signature."""
+    if feature is None or center is None or sigma is None or signature is None:
+        return math.nan
+    if min(len(feature), len(center), len(sigma), len(signature)) < 22:
+        return math.nan
+    numerator = denominator = 0.0
+    for value, neutral, noise, coefficient in zip(
+        feature[:22], center[:22], sigma[:22], signature[:22]
+    ):
+        if not all(math.isfinite(float(item)) for item in (value, neutral, noise, coefficient)):
+            return math.nan
+        weight = 1.0 / max(FROZEN22_SIGMA_FLOOR, abs(float(noise))) ** 2
+        numerator += (float(value) - float(neutral)) * float(coefficient) * weight
+        denominator += float(coefficient) * float(coefficient) * weight
+    return float(numerator / denominator) if denominator > 1e-12 else math.nan
 
 def _world_rigid_yaw(
     template: tuple[tuple[float, float, float], ...] | None,
@@ -1844,6 +2026,28 @@ class HeadController:
         self.center_multi2d_proxy_samples: list[tuple[float, ...]] = []
         self.center_world_face_samples: list[tuple[tuple[float, float, float], ...]] = []
         self.center_world_face_template: tuple[tuple[float, float, float], ...] | None = None
+        # frozen22 fixed-signature measurement state.  Only the neutral center
+        # and per-channel noise are learned at runtime; the 22 coefficients are
+        # the audited R3 constants above.
+        self.current_personal22_feature: tuple[float, ...] | None = None
+        self.current_personal22_eye_px = math.nan
+        self.frozen22_center: tuple[float, ...] | None = None
+        self.frozen22_sigma: tuple[float, ...] | None = None
+        self.frozen22_yaw = math.nan
+        self.frozen22_yaw_median = math.nan
+        self.frozen22_cal_sigma_deg = math.inf
+        self.frozen22_world_resid_rel = math.inf
+        self.frozen22_calibration_valid = False
+        self._frozen22_history: list[float] = []
+        self.center_personal22_feature_samples: list[tuple[float, ...]] = []
+        self.center_world_head11_samples: list[tuple[tuple[float, float, float], ...]] = []
+        self._calibration_restore_frozen22: tuple[
+            tuple[float, ...] | None,
+            tuple[float, ...] | None,
+            float,
+            float,
+            bool,
+        ] | None = None
         self.center_pnp_pose_samples: list[tuple[dict[str, dict], int, int]] = []
         self.personal_pnp_active = False
         self.personal_pnp_valid_samples = 0
@@ -1880,6 +2084,9 @@ class HeadController:
         self._load_profile()
 
     def _span(self) -> tuple[float, float]:
+        if self.config.get("horizontal_algorithm") == "frozen22":
+            pitch_span = PNP_PITCH_SPAN_DEG if self.config["algorithm"] == "pnp" else RATIO_PITCH_SPAN
+            return FROZEN22_YAW_SPAN_DEG, pitch_span
         if self.config["algorithm"] == "pnp":
             return PNP_YAW_SPAN_DEG, PNP_PITCH_SPAN_DEG
         return RATIO_YAW_SPAN, RATIO_PITCH_SPAN
@@ -1912,6 +2119,11 @@ class HeadController:
         self._pitch_intent.reset()
         self._axis_active_x = False
         self._axis_active_y = False
+        self.current_personal22_feature = None
+        self.current_personal22_eye_px = math.nan
+        self.frozen22_yaw = math.nan
+        self.frozen22_yaw_median = math.nan
+        self._frozen22_history.clear()
         self.output_x = self.output_y = 0.0
         self.norm_x = self.norm_y = 0.0
         self._last_update = 0.0
@@ -2056,6 +2268,18 @@ class HeadController:
         self._calibration_restore_personal_active = False
         self._calibration_restore_depth = math.nan
 
+    def _restore_precalibration_frozen22(self) -> None:
+        saved = self._calibration_restore_frozen22
+        if saved is not None:
+            (
+                self.frozen22_center,
+                self.frozen22_sigma,
+                self.frozen22_cal_sigma_deg,
+                self.frozen22_world_resid_rel,
+                self.frozen22_calibration_valid,
+            ) = saved
+        self._calibration_restore_frozen22 = None
+
     def _apply_policy_model(self) -> None:
         """Install or remove the personal PnP model when the policy changes.
 
@@ -2086,9 +2310,10 @@ class HeadController:
                 set_model(None)
         self.personal_pnp_active = False
         self.personal_pnp_center_depth = math.nan
-        if policy == "classic":
+        if policy in {"classic", "frozen22"}:
             # Classic is an intentional compatibility policy, not a rejected
-            # personal model.  Keep diagnostics neutral until v153 is selected.
+            # personal model.  Frozen22 has its own fixed 2D signature and does
+            # not use the personal PnP model either.
             self.personal_pnp_rejection_reason = ""
         elif not self.personal_pnp_rejection_reason:
             self.personal_pnp_rejection_reason = "未启用个人模型"
@@ -2115,9 +2340,18 @@ class HeadController:
                 )
             if value != self.config["horizontal_algorithm"]:
                 self.config["horizontal_algorithm"] = value
-                # Policies share the calibration; the personal PnP model is
-                # gesture_v153-only and is swapped here.
+                # A horizontal source change changes the measurement geometry.
+                # Require a fresh neutral center instead of silently reusing a
+                # center captured for another source.
+                if self.calibrating:
+                    self.cancel_center("横向算法已切换，请重新设置中心")
+                self.calibrated = False
+                self.center_pending = True
+                self.center_quality = "未校准"
+                self.frozen22_calibration_valid = False
                 self._reset_filters()
+                # Policies share the estimator, but the personal PnP model is
+                # gesture_v153-only and is swapped here.
                 self._apply_policy_model()
         if algorithm is not None:
             algorithm = str(algorithm).lower().strip()
@@ -2149,6 +2383,13 @@ class HeadController:
 
     def start_center(self, now: float | None = None, kind: str = "manual") -> None:
         now = time.monotonic() if now is None else now
+        self._calibration_restore_frozen22 = (
+            self.frozen22_center,
+            self.frozen22_sigma,
+            self.frozen22_cal_sigma_deg,
+            self.frozen22_world_resid_rel,
+            self.frozen22_calibration_valid,
+        )
         # Always collect a new center with the generic PnP geometry first.  If
         # the attempt is cancelled or fails, restore the previously valid
         # personal model together with the already-preserved old center.
@@ -2180,6 +2421,8 @@ class HeadController:
         self.center_norm_z_yaw_samples = []
         self.center_multi2d_proxy_samples = []
         self.center_world_face_samples = []
+        self.center_personal22_feature_samples = []
+        self.center_world_head11_samples = []
         self.center_pnp_pose_samples = []
         self.center_roll_samples = []
         self.current_world_rigid_yaw = math.nan
@@ -2217,9 +2460,12 @@ class HeadController:
         self.center_norm_z_yaw_samples = []
         self.center_multi2d_proxy_samples = []
         self.center_world_face_samples = []
+        self.center_personal22_feature_samples = []
+        self.center_world_head11_samples = []
         self.center_pnp_pose_samples = []
         self.center_roll_samples = []
         self._restore_precalibration_pnp_model()
+        self._restore_precalibration_frozen22()
         self.notice = reason
         self.notice_until = time.monotonic() + 2.5
         self._reset_filters()
@@ -2335,6 +2581,65 @@ class HeadController:
                                 self.center_world_rigid_yaw = rc
                                 self.noise_world_rigid_yaw = max(0.0, rs)
 
+                # frozen22 uses the exact fixed 11-point/22-D signature from
+                # the audited R3 reference.  Only neutral center and channel
+                # noise are estimated from this user's calibration window.
+                self.frozen22_center = None
+                self.frozen22_sigma = None
+                self.frozen22_yaw = math.nan
+                self.frozen22_yaw_median = math.nan
+                self.frozen22_cal_sigma_deg = math.inf
+                self.frozen22_world_resid_rel = math.inf
+                self.frozen22_calibration_valid = False
+                self._frozen22_history = []
+                if len(self.center_personal22_feature_samples) >= FROZEN22_MIN_SAMPLES:
+                    centers22: list[float] = []
+                    sigmas22: list[float] = []
+                    for index in range(22):
+                        center22, sigma22 = _robust_center_and_sigma(
+                            [sample[index] for sample in self.center_personal22_feature_samples]
+                        )
+                        centers22.append(center22)
+                        sigmas22.append(
+                            max(FROZEN22_SIGMA_FLOOR, sigma22)
+                            if math.isfinite(sigma22) else math.inf
+                        )
+                    if all(math.isfinite(value) for value in centers22) and all(
+                        math.isfinite(value) for value in sigmas22
+                    ):
+                        frozen_center = tuple(centers22)
+                        frozen_sigma = tuple(sigmas22)
+                        neutral_yaws = [
+                            _personal22_matched_yaw(
+                                sample, frozen_center, frozen_sigma, FROZEN22_SIGNATURE
+                            )
+                            for sample in self.center_personal22_feature_samples
+                        ]
+                        _, calibration_sigma = _robust_center_and_sigma(neutral_yaws)
+                        self.frozen22_center = frozen_center
+                        self.frozen22_sigma = frozen_sigma
+                        self.frozen22_cal_sigma_deg = (
+                            calibration_sigma if math.isfinite(calibration_sigma) else math.inf
+                        )
+                if len(self.center_world_head11_samples) >= FROZEN22_MIN_SAMPLES:
+                    world_template = tuple(
+                        tuple(
+                            _median([sample[i][j] for sample in self.center_world_head11_samples])
+                            for j in range(3)
+                        )
+                        for i in range(11)
+                    )
+                    if all(all(math.isfinite(value) for value in point) for point in world_template):
+                        self.frozen22_world_resid_rel = _frozen22_world_residual_rel(
+                            world_template, self.center_world_head11_samples
+                        )
+                self.frozen22_calibration_valid = bool(
+                    self.frozen22_center is not None
+                    and self.frozen22_sigma is not None
+                    and math.isfinite(self.frozen22_cal_sigma_deg)
+                    and self.frozen22_cal_sigma_deg <= FROZEN22_MAX_CAL_SIGMA_DEG
+                )
+
                 # Generic center snapshot: the center every non-v153 policy uses.
                 self._generic_center = (self.center_yaw, self.noise_yaw, self.center_pitch, self.noise_pitch)
                 if str(self.config.get("horizontal_algorithm", "classic")) == "gesture_v153" and self._activate_personal_pnp_from_center():
@@ -2351,6 +2656,7 @@ class HeadController:
                 self._calibration_restore_model = None
                 self._calibration_restore_personal_active = False
                 self._calibration_restore_depth = math.nan
+                self._calibration_restore_frozen22 = None
                 self.calibrated = True
                 self.center_pending = False
                 ratio_y = self.noise_yaw / max(ref_yaw_sigma, 1e-9)
@@ -2372,6 +2678,7 @@ class HeadController:
                 self._save_profile()
         if not success:
             self._restore_precalibration_pnp_model()
+            self._restore_precalibration_frozen22()
             if self.calibrated:
                 # A failed *recalibration* must not downgrade or overwrite the
                 # already-good center.  Resume the previous center after the
@@ -2394,6 +2701,8 @@ class HeadController:
         self.center_norm_z_yaw_samples = []
         self.center_multi2d_proxy_samples = []
         self.center_world_face_samples = []
+        self.center_personal22_feature_samples = []
+        self.center_world_head11_samples = []
         self.center_pnp_pose_samples = []
         self.center_roll_samples = []
         self.notice_until = time.monotonic() + 3.0
@@ -2502,6 +2811,29 @@ class HeadController:
         self.current_world_yaw = _depth_yaw_proxy(world_pose_map)
         self.current_norm_z_yaw = _depth_yaw_proxy(pose)
         self.current_multi2d_proxy = _multi2d_yaw_proxy(pose, width, height)
+        frozen_feature = _head11_local_feature(pose, width, height)
+        if frozen_feature is None:
+            self.current_personal22_feature = None
+            self.current_personal22_eye_px = math.nan
+            self.frozen22_yaw = math.nan
+            self.frozen22_yaw_median = math.nan
+            self._frozen22_history.clear()
+        else:
+            self.current_personal22_feature, self.current_personal22_eye_px = frozen_feature
+            frozen_yaw = _personal22_matched_yaw(
+                self.current_personal22_feature,
+                self.frozen22_center,
+                self.frozen22_sigma,
+                FROZEN22_SIGNATURE,
+            )
+            self.frozen22_yaw = frozen_yaw
+            if math.isfinite(frozen_yaw):
+                self._frozen22_history.append(float(frozen_yaw))
+                if len(self._frozen22_history) > FROZEN22_MEDIAN_WINDOW:
+                    del self._frozen22_history[:-FROZEN22_MEDIAN_WINDOW]
+                self.frozen22_yaw_median = _median(self._frozen22_history)
+            else:
+                self.frozen22_yaw_median = math.nan
         self.current_world_rigid_yaw = math.nan
         self.current_world_rigid_fit = math.nan
         current_world_face = _world_face_xyz(world_pose_map)
@@ -2533,7 +2865,13 @@ class HeadController:
 
         span_x, span_y = self._span()
 
-        control_yaw = self._diagnostic_yaw(estimate) if self.calibrated else estimate.yaw
+        if self.calibrated and policy == "frozen22":
+            # The fixed-signature projection is already neutral-centred; do
+            # not feed the unrelated sparse-PnP yaw into this policy.
+            control_yaw = self.frozen22_yaw_median
+            span_x = FROZEN22_YAW_SPAN_DEG
+        else:
+            control_yaw = self._diagnostic_yaw(estimate) if self.calibrated else estimate.yaw
         self.control_yaw = control_yaw
 
         # Keep filtered raw signals alive for both calibrated horizontal
@@ -2609,6 +2947,11 @@ class HeadController:
                 self.center_multi2d_proxy_samples.append(self.current_multi2d_proxy)
             if current_world_face is not None:
                 self.center_world_face_samples.append(current_world_face)
+            if self.current_personal22_feature is not None:
+                self.center_personal22_feature_samples.append(self.current_personal22_feature)
+            current_world_head11 = _world_head11_xyz(world_pose_map)
+            if current_world_head11 is not None:
+                self.center_world_head11_samples.append(current_world_head11)
             snap = self._snapshot_pnp_pose(estimate_pose)
             if snap is not None:
                 self.center_pnp_pose_samples.append((snap, int(width), int(height)))
@@ -2639,14 +2982,31 @@ class HeadController:
             if (policy == "gesture_v153" and self.config["algorithm"] == "pnp" and self.personal_pnp_active)
             else 1.0
         )
-        raw_x = _clamp(yaw_gain * (self.signal_yaw - self.center_yaw) / span_x, -1.0, 1.0)
+        frozen22_ready = bool(
+            policy == "frozen22"
+            and self.frozen22_calibration_valid
+            and math.isfinite(self.frozen22_yaw_median)
+        )
+        if policy == "frozen22":
+            raw_x = _clamp(
+                self.frozen22_yaw_median / max(FROZEN22_YAW_SPAN_DEG, 1e-6),
+                -1.0,
+                1.0,
+            ) if frozen22_ready else 0.0
+        else:
+            raw_x = _clamp(yaw_gain * (self.signal_yaw - self.center_yaw) / span_x, -1.0, 1.0)
         raw_y = _clamp((self.signal_pitch - self.center_pitch) / span_y, -1.0, 1.0)
         if self.config["invert_x"]:
             raw_x = -raw_x
         if self.config["invert_y"]:
             raw_y = -raw_y
 
-        intent_raw_x = _clamp(yaw_gain * (control_yaw - self.center_yaw) / span_x, -1.0, 1.0)
+        if policy == "frozen22":
+            intent_raw_x = _clamp(
+                control_yaw / max(FROZEN22_YAW_SPAN_DEG, 1e-6), -1.0, 1.0
+            ) if frozen22_ready and math.isfinite(control_yaw) else 0.0
+        else:
+            intent_raw_x = _clamp(yaw_gain * (control_yaw - self.center_yaw) / span_x, -1.0, 1.0)
         intent_raw_x = -intent_raw_x if self.config["invert_x"] else intent_raw_x
         vx = 0.0
         if policy == "classic":
@@ -2664,7 +3024,7 @@ class HeadController:
                 vx = self._axis_curve(raw_x, "x")
             else:
                 self._axis_active_x = False
-        else:  # gesture_v153
+        elif policy == "gesture_v153":
             start_x = _clamp(max(self.effective_deadzone_x * 0.58, 0.055), 0.045, 0.18)
             self.personal_pnp_current_depth = getattr(self.estimator, "pnp_depth", math.nan)
             self.personal_pnp_far_depth_ratio = 1.0
@@ -2717,6 +3077,35 @@ class HeadController:
                     world_rigid_sigma=self.noise_world_rigid_yaw,
                     now=now,
                 )
+        else:  # frozen22 fixed-signature source
+            if not frozen22_ready:
+                self._x_intent_v153.reset()
+                self._cross_axis_lock.reset()
+                self.yaw_intent_state = "IDLE"
+                self.yaw_velocity = 0.0
+                self.yaw_acceleration = 0.0
+                self._axis_active_x = False
+                vx = 0.0
+            else:
+                start_x = _clamp(max(self.effective_deadzone_x * 0.58, 0.055), 0.045, 0.18)
+                vx = self._x_intent_v153.update(
+                    raw_x,
+                    now,
+                    raw_norm=intent_raw_x,
+                    start_angle=start_x,
+                    start_velocity=0.12,
+                    keep_velocity=0.045,
+                    return_velocity=0.060,
+                    stop_grace_s=0.075,
+                    acceleration_stop=1.15,
+                    curve_gamma=1.30,
+                )
+                self.yaw_intent_state = self._x_intent_v153.state
+                self.yaw_velocity = float(self._x_intent_v153.velocity)
+                self.yaw_acceleration = float(self._x_intent_v153.acceleration)
+                # The fixed 22-D source is already a separate, direction-fixed
+                # measurement.  Do not apply the PnP/multi-2D cross-axis gate.
+                self._cross_axis_lock.reset()
         pitch_intent = self._pitch_intent.step(
             raw_y, now,
             angle_threshold=PITCH_INTENT_ANGLE,
@@ -2765,6 +3154,8 @@ class HeadController:
             remaining = None
             quality = "等待校准（可说“开始校准”）"
         policy_name = str(self.config.get("horizontal_algorithm", "classic"))
+        if policy_name == "frozen22" and self.calibrated and not self.frozen22_calibration_valid:
+            quality = "Frozen22 需要重新校准"
         if policy_name == "classic":
             yaw_latched = bool(self._yaw_intent.return_latched)
             horizontal_version = HORIZONTAL_ALGORITHM_VERSIONS["classic"]
@@ -2776,6 +3167,33 @@ class HeadController:
             "horizontal_algorithm": policy_name,
             "horizontal_algorithm_version": horizontal_version,
             "available_horizontal_algorithms": list(HORIZONTAL_ALGORITHMS),
+            "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
+            "frozen22_controls_mouse": bool(policy_name == "frozen22"),
+            "frozen22_calibration_valid": bool(self.frozen22_calibration_valid),
+            "frozen22_frame_valid": bool(
+                self.frozen22_calibration_valid
+                and self.current_personal22_feature is not None
+                and math.isfinite(self.frozen22_yaw_median)
+            ),
+            "frozen22_yaw_deg": (
+                round(float(self.frozen22_yaw), 5)
+                if math.isfinite(self.frozen22_yaw) else None
+            ),
+            "frozen22_yaw_median_deg": (
+                round(float(self.frozen22_yaw_median), 5)
+                if math.isfinite(self.frozen22_yaw_median) else None
+            ),
+            "frozen22_cal_sigma_deg": (
+                round(float(self.frozen22_cal_sigma_deg), 5)
+                if math.isfinite(self.frozen22_cal_sigma_deg) else None
+            ),
+            "frozen22_world_resid_rel": (
+                round(float(self.frozen22_world_resid_rel), 5)
+                if math.isfinite(self.frozen22_world_resid_rel) else None
+            ),
+            "frozen22_cal_samples": (
+                len(self.center_personal22_feature_samples) if self.calibrating else None
+            ),
             "personal_pnp_active": bool(self.personal_pnp_active),
             "personal_pnp_template_quality": (
                 "active" if self.personal_pnp_active
@@ -2920,7 +3338,7 @@ class HeadController:
             # Profiles written before the v153 policy used a few transient
             # names (for example ``gesture``).  Do not let those silently
             # select a different signal path; use the production v153 policy
-            # unless the persisted value is one of the two explicit choices.
+            # unless the persisted value is one of the explicit choices.
             if horizontal_algorithm == "gesture":
                 horizontal_algorithm = "gesture_v153"
             if horizontal_algorithm not in HORIZONTAL_ALGORITHMS:
