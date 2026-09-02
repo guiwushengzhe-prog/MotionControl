@@ -80,4 +80,8 @@ def test_frozen22_missing_11_point_neutralizes_horizontal_output(tmp_path):
     controller.output_x = 42.0
     controller.update(_pose(omit_inner=True), 640, 480, now=5.0)
     assert controller.output_x == 0.0
-    assert controller.status()["frozen22_frame_valid"] is False
+    state = controller.status()
+    assert state["frozen22_frame_valid"] is False
+    assert state["horizontal_calibrated"] is True
+    assert state["frozen22_missing_points"] == ["left_eye_inner"]
+    assert "左眼内侧" in state["quality"]

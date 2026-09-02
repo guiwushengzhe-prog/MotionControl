@@ -1,6 +1,11 @@
 import time
 
-from input_bridge import InputBridge, MOBILE_POSE_FEATURE_INDICES, _expand_pose_features
+from input_bridge import (
+    InputBridge,
+    MOBILE_POSE_FEATURE_INDICES,
+    MOBILE_POSE_FEATURE_INDICES_V2,
+    _expand_pose_features,
+)
 from output_backend import OutputManager
 
 
@@ -132,6 +137,24 @@ def test_compact_phone_pose_expands_locally_without_world_pose():
         assert bridge.status()["mobile_pose_source_id"] == "mobile_pose:camera-compact"
     finally:
         bridge.close()
+
+
+def test_mc27_phone_pose_preserves_inner_eye_points_for_frozen22():
+    points = [
+        [0.30 + index * 0.001, 0.40, 0.0, 0.96]
+        for index, _ in enumerate(MOBILE_POSE_FEATURE_INDICES_V2)
+    ]
+    message = {
+        **pose_features(),
+        "layout": "mc27-v2",
+        "points": points,
+    }
+    expanded = _expand_pose_features(message)
+    pose = expanded["poses"][0]["pose"]
+    assert pose[1]["visibility"] == 0.96
+    assert pose[4]["visibility"] == 0.96
+    assert pose[1]["x"] == points[MOBILE_POSE_FEATURE_INDICES_V2.index(1)][0]
+    assert pose[4]["x"] == points[MOBILE_POSE_FEATURE_INDICES_V2.index(4)][0]
 
 def test_sensor_frame_drives_button_trigger_and_stick_then_disconnect_zeros():
     output = FakeOutput()
