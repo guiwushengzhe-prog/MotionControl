@@ -12,7 +12,7 @@ import math
 import pytest
 
 from control_kernel import ControlKernel, MP_NAMES
-from head_control import HeadController, HeadPoseEstimator
+from head_control import HeadController, HeadPoseEstimator, _RelativeYawAxisV153
 
 
 def _point(x: float, y: float, z: float = 0.0, score: float = 0.98) -> dict:
@@ -66,6 +66,13 @@ def _calibrate(controller: HeadController, *, world: dict[str, dict], base_pose:
             break
     assert controller.calibrated
     assert not controller.calibrating
+
+
+def test_v153_drive_uses_frozen_minimum_without_name_error():
+    axis = _RelativeYawAxisV153()
+
+    assert axis._drive(1, 0.20) == pytest.approx(0.22)
+    assert axis._drive(-1, -0.20) == pytest.approx(-0.22)
 
 
 def test_full_pose_message_keeps_world_pose_separate_and_unmirrored():

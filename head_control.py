@@ -175,6 +175,7 @@ YAW_V2_OPPOSITE_REARM = 0.110
 YAW_V2_KEEP_VELOCITY = 0.025
 YAW_V2_OUTPUT_DECAY = 0.94
 YAW_V2_SPEED_KNEE = 0.16
+YAW_V2_MIN_DRIVE = 0.22
 
 # Six-channel 2D auxiliary yaw evidence (v115 stage candidate).
 #
