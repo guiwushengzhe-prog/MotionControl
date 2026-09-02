@@ -25,12 +25,10 @@ POSE_SOURCE_PREFIX = "mobile_pose:"
 SENSOR_SOURCE_PREFIX = "mobile_sensor:"
 VOICE_SOURCE_PREFIX = "mobile_voice:"
 
-# v0.9.6 mobile camera protocol.  Phones still run MediaPipe locally but no
-# longer send all 33 image landmarks plus 33 world landmarks every frame.
-# Only the 25 Pose landmarks required by the existing PC control algorithms
-# are packed as [x, y, z, visibility] in this fixed order.  The bridge expands
-# them back to a canonical 33-point pose locally so all downstream PC logic
-# remains the single source of truth.
+# Compact mobile camera protocols.  Phones still run MediaPipe locally and the
+# bridge expands packed landmarks back to the canonical 33-point pose.  Keep
+# mc25-v1 readable for already-installed phones; mc27-v2 adds the two inner-eye
+# points required by the audited frozen22 11-point face signature.
 MOBILE_POSE_FEATURE_INDICES = (
     0,   # nose
     2, 3, 5, 6,  # eyes + outer eyes used by scene/head control
@@ -40,6 +38,18 @@ MOBILE_POSE_FEATURE_INDICES = (
     29, 30, 31, 32,  # heels/foot indices
 )
 MOBILE_POSE_FEATURE_LAYOUT = "mc25-v1"
+MOBILE_POSE_FEATURE_INDICES_V2 = (
+    0, 1, 2, 3, 4, 5, 6,  # nose + complete MediaPipe eye landmarks
+    7, 8, 9, 10,  # ears + mouth
+    11, 12, 13, 14, 15, 16,  # shoulders/elbows/wrists
+    23, 24, 25, 26, 27, 28,  # hips/knees/ankles
+    29, 30, 31, 32,  # heels/foot indices
+)
+MOBILE_POSE_FEATURE_LAYOUT_V2 = "mc27-v2"
+MOBILE_POSE_FEATURE_LAYOUTS = {
+    MOBILE_POSE_FEATURE_LAYOUT: MOBILE_POSE_FEATURE_INDICES,
+    MOBILE_POSE_FEATURE_LAYOUT_V2: MOBILE_POSE_FEATURE_INDICES_V2,
+}
 
 SENSOR_BUTTON_ALIASES = {
     "A": "A",
@@ -228,8 +238,11 @@ def _validate_pose_frame(message: dict) -> None:
 def _validate_pose_features(message: dict) -> None:
     if message.get("type") != "pose_features_v1" or message.get("role") != "camera":
         raise ValueError("pose_features_v1 requires role=camera")
-    if message.get("layout") != MOBILE_POSE_FEATURE_LAYOUT:
-        raise ValueError(f"pose_features_v1 layout must be {MOBILE_POSE_FEATURE_LAYOUT}")
+    layout = message.get("layout")
+    indices = MOBILE_POSE_FEATURE_LAYOUTS.get(layout)
+    if indices is None:
+        supported = ", ".join(MOBILE_POSE_FEATURE_LAYOUTS)
+        raise ValueError(f"pose_features_v1 layout must be one of: {supported}")
     if not isinstance(message.get("device_id"), str) or not message["device_id"].strip():
         raise ValueError("device_id must be a non-empty string")
     if not _is_int(message.get("sequence")) or message["sequence"] < 0:
@@ -243,8 +256,8 @@ def _validate_pose_features(message: dict) -> None:
     if not isinstance(message.get("preview_mirrored"), bool) or not isinstance(message.get("coordinates_mirrored"), bool):
         raise ValueError("mirror flags must be boolean")
     points = message.get("points")
-    if not isinstance(points, list) or len(points) not in {0, len(MOBILE_POSE_FEATURE_INDICES)}:
-        raise ValueError(f"points must contain 0 or {len(MOBILE_POSE_FEATURE_INDICES)} packed landmarks")
+    if not isinstance(points, list) or len(points) not in {0, len(indices)}:
+        raise ValueError(f"points must contain 0 or {len(indices)} packed landmarks for {layout}")
     for point in points:
         if not isinstance(point, list) or len(point) != 4 or not all(_is_number(v) for v in point):
             raise ValueError("each packed point must be [x,y,z,visibility]")
@@ -258,18 +271,19 @@ def _validate_pose_features(message: dict) -> None:
 
 
 def _expand_pose_features(message: dict) -> dict:
-    """Expand mc25-v1 into the canonical pose_frame_v2 representation.
+    """Expand a supported compact layout into canonical pose_frame_v2.
 
-    This conversion happens only inside the PC process.  Omitted finger and
-    inner-eye landmarks are present with zero visibility so existing renderers
-    and algorithms can continue consuming a 33-landmark frame unchanged.
+    This conversion happens only inside the PC process.  Omitted landmarks are
+    present with zero visibility so existing renderers and algorithms can keep
+    consuming a 33-landmark frame unchanged.
     """
     _validate_pose_features(message)
+    indices = MOBILE_POSE_FEATURE_LAYOUTS[message["layout"]]
     packed = message.get("points") or []
     poses = []
     if packed:
         full = [{"x": 0.0, "y": 0.0, "z": 0.0, "visibility": 0.0} for _ in range(33)]
-        for index, values in zip(MOBILE_POSE_FEATURE_INDICES, packed):
+        for index, values in zip(indices, packed):
             full[index] = {
                 "x": float(values[0]), "y": float(values[1]),
                 "z": float(values[2]), "visibility": float(values[3]),

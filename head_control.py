@@ -2031,6 +2031,7 @@ class HeadController:
         # the audited R3 constants above.
         self.current_personal22_feature: tuple[float, ...] | None = None
         self.current_personal22_eye_px = math.nan
+        self.frozen22_missing_points: tuple[str, ...] = HEAD11_NAMES
         self.frozen22_center: tuple[float, ...] | None = None
         self.frozen22_sigma: tuple[float, ...] | None = None
         self.frozen22_yaw = math.nan
@@ -2121,6 +2122,7 @@ class HeadController:
         self._axis_active_y = False
         self.current_personal22_feature = None
         self.current_personal22_eye_px = math.nan
+        self.frozen22_missing_points = HEAD11_NAMES
         self.frozen22_yaw = math.nan
         self.frozen22_yaw_median = math.nan
         self._frozen22_history.clear()
@@ -2811,6 +2813,10 @@ class HeadController:
         self.current_world_yaw = _depth_yaw_proxy(world_pose_map)
         self.current_norm_z_yaw = _depth_yaw_proxy(pose)
         self.current_multi2d_proxy = _multi2d_yaw_proxy(pose, width, height)
+        self.frozen22_missing_points = tuple(
+            name for name in HEAD11_NAMES
+            if not _point_ok(pose.get(name) if isinstance(pose, dict) else None, 0.20)
+        )
         frozen_feature = _head11_local_feature(pose, width, height)
         if frozen_feature is None:
             self.current_personal22_feature = None
@@ -3154,8 +3160,20 @@ class HeadController:
             remaining = None
             quality = "等待校准（可说“开始校准”）"
         policy_name = str(self.config.get("horizontal_algorithm", "classic"))
-        if policy_name == "frozen22" and self.calibrated and not self.frozen22_calibration_valid:
-            quality = "Frozen22 需要重新校准"
+        if policy_name == "frozen22" and not self.calibrating:
+            if self.frozen22_missing_points:
+                point_labels = {
+                    "left_eye_inner": "左眼内侧",
+                    "right_eye_inner": "右眼内侧",
+                }
+                missing = "、".join(point_labels.get(name, name) for name in self.frozen22_missing_points)
+                quality = f"Frozen22 缺少关键点：{missing}"
+            elif self.calibrated and not self.frozen22_calibration_valid:
+                quality = "Frozen22 校准无效，请正视并保持稳定后重试"
+        horizontal_calibrated = bool(
+            self.calibrated
+            and (policy_name != "frozen22" or self.frozen22_calibration_valid)
+        )
         if policy_name == "classic":
             yaw_latched = bool(self._yaw_intent.return_latched)
             horizontal_version = HORIZONTAL_ALGORITHM_VERSIONS["classic"]
@@ -3169,7 +3187,9 @@ class HeadController:
             "available_horizontal_algorithms": list(HORIZONTAL_ALGORITHMS),
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
             "frozen22_controls_mouse": bool(policy_name == "frozen22"),
+            "horizontal_calibrated": horizontal_calibrated,
             "frozen22_calibration_valid": bool(self.frozen22_calibration_valid),
+            "frozen22_missing_points": list(self.frozen22_missing_points),
             "frozen22_frame_valid": bool(
                 self.frozen22_calibration_valid
                 and self.current_personal22_feature is not None

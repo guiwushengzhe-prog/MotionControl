@@ -145,7 +145,8 @@ function renderKernelState(runtime){
   const hs=k.head||{};
   if(Number.isFinite(hs.output_x)){
     const algo=hs.algorithm==='ratio'?'比例':'PnP';
-    $('#headStatus').textContent=hs.calibrated?`头控 ${algo} · 水平 ${Number(hs.output_x).toFixed(0)}%`:'头控：等待中心，可说“体感开始校准”';
+    const horizontalCalibrated=hs.horizontal_calibrated??hs.calibrated;
+    $('#headStatus').textContent=horizontalCalibrated?`头控 ${algo} · 水平 ${Number(hs.output_x).toFixed(0)}%`:'头控：等待中心，可说“体感开始校准”';
   }
   if(hs.calibrated!==undefined){
     $('#calBtn').textContent=hs.calibrating?'取消校准':'站好并校准';
