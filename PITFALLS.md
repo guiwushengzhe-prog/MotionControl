@@ -139,3 +139,9 @@
 
 - `mc25-v1` 为节省流量省略了 MediaPipe 索引 1/4（左右眼内侧），电脑扩展回 33 点时会把它们填为零；这会让依赖完整 11 个脸部点的 frozen22 永远无法形成有效校准样本。新手机使用 `mc27-v2` 补回 1/4，电脑必须继续兼容旧 `mc25-v1`，不能通过降低 frozen22 点阈值掩盖协议缺点。
 - 网页“已校准”必须使用所选横向算法的有效状态。通用中心完成但 `frozen22_calibration_valid=false` 时仍属于未校准，并应显示缺失关键点或稳定性原因。
+## 2026-09-03：vertical-hand-v160 适配边界
+
+- v160 以独立版本模块适配，`vertical_hand_control.py` 仍是生产兼容导入路径；既有 `point`、`range_y`、`deadzone` 配置和 `VerticalHandController.update/reset/status` 接口保持不变。
+- 既有 `lookGate` 仍是垂直手控的安全授权门；它只限制依赖右腕垂直动作的纵向意图，不会改变头控、语音、手持或其它输出来源。断流、换源和紧停继续由内核统一归零。
+- v160 的 `body_scale_normalization`、`camera_scale_deadband`、`nominal_torso_y` 使用候选脚本的内部默认值，未新增用户控件或持久化参数，避免把实验阈值误当成产品设置。
+- v160 的 `reset()` 会重建锚点 deque；内核必须同步刷新历史 `vertical_anchor_samples` 别名，否则状态页会显示旧的采样数，虽然输出本身仍会被清零。

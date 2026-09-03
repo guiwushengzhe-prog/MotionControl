@@ -216,6 +216,10 @@ class ControlKernel:
     def _sync_vertical_hand_locked(self, state: dict | None = None) -> None:
         """Mirror vertical-hand diagnostics kept for the public kernel API."""
         snapshot = state or self.vertical_hand_controller.status()
+        # v160.reset() rebuilds its bounded anchor deque.  Refresh the
+        # historical alias on every sync so status consumers never retain the
+        # deque from before a gate transition, source switch, or watchdog reset.
+        self.vertical_anchor_samples = self.vertical_hand_controller.anchor_samples
         self.vertical_wrist_anchor_y = snapshot.get("anchor_y")
         self.vertical_wrist_anchor_rel_y = snapshot.get("anchor_rel_y")
         self.vertical_wrist_filtered = float(snapshot.get("filtered", 0.0) or 0.0)
