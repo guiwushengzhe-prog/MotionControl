@@ -24,10 +24,9 @@ const BODY_ZONES = {leftHandUpper:{label:'Y',body:'左手',button:'Y'},leftHandL
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null};
-const head={algorithm:'pnp',horizontalAlgorithm:'classic',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand'};
-const motion={config:[]};
+const head={algorithm:'pnp',horizontalAlgorithm:'classic',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand',verticalExclusive:false};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
-const PROFILE_TRIGGERS=[
+const BASE_PROFILE_TRIGGERS=[
   {key:'zone.leftHandUpper',group:'zones',id:'leftHandUpper',name:'左手上区'},
   {key:'zone.leftHandLower',group:'zones',id:'leftHandLower',name:'左手下区'},
   {key:'zone.rightHandUpper',group:'zones',id:'rightHandUpper',name:'右手上区'},
@@ -38,21 +37,10 @@ const PROFILE_TRIGGERS=[
   {key:'motion.calf_back',group:'motions',id:'calf_back',name:'小腿向后'},
   {key:'motion.squat',group:'motions',id:'squat',name:'下蹲'},
   {key:'motion.hands_up',group:'motions',id:'hands_up',name:'双手举过头'},
+  {key:'motion.jumping_jack',group:'motions',id:'jumping_jack',name:'开合跳'},
+  {key:'motion.side_step_jack',group:'motions',id:'side_step_jack',name:'侧步开合'},
+  {key:'motion.cross_knee_elbow',group:'motions',id:'cross_knee_elbow',name:'提膝碰对侧肘'},
   {key:'pose.hands_cross',group:'poses',id:'hands_cross',name:'双手交叉',tapOnly:true},
-  {key:'pose.right_leg_cross_left',group:'poses',id:'right_leg_cross_left',name:'右腿向左交叉',tapOnly:true},
-  {key:'pose.left_leg_cross_right',group:'poses',id:'left_leg_cross_right',name:'左腿向右交叉',tapOnly:true},
-  {key:'voice.game.profile_slot_01',group:'voice',id:'game.profile_slot_01',name:'语音 · 体感功能一',tapOnly:true},
-  {key:'voice.game.profile_slot_02',group:'voice',id:'game.profile_slot_02',name:'语音 · 体感功能二',tapOnly:true},
-  {key:'voice.game.profile_slot_03',group:'voice',id:'game.profile_slot_03',name:'语音 · 体感功能三',tapOnly:true},
-  {key:'voice.game.profile_slot_04',group:'voice',id:'game.profile_slot_04',name:'语音 · 体感功能四',tapOnly:true},
-  {key:'voice.game.profile_slot_05',group:'voice',id:'game.profile_slot_05',name:'语音 · 体感功能五',tapOnly:true},
-  {key:'voice.game.profile_slot_06',group:'voice',id:'game.profile_slot_06',name:'语音 · 体感功能六',tapOnly:true},
-  {key:'voice.game.profile_slot_07',group:'voice',id:'game.profile_slot_07',name:'语音 · 体感功能七',tapOnly:true},
-  {key:'voice.game.profile_slot_08',group:'voice',id:'game.profile_slot_08',name:'语音 · 体感功能八',tapOnly:true},
-  {key:'voice.game.profile_slot_09',group:'voice',id:'game.profile_slot_09',name:'语音 · 体感功能九',tapOnly:true},
-  {key:'voice.game.profile_slot_10',group:'voice',id:'game.profile_slot_10',name:'语音 · 体感功能十',tapOnly:true},
-  {key:'voice.game.profile_slot_11',group:'voice',id:'game.profile_slot_11',name:'语音 · 体感功能十一',tapOnly:true},
-  {key:'voice.game.profile_slot_12',group:'voice',id:'game.profile_slot_12',name:'语音 · 体感功能十二',tapOnly:true},
 ];
 const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆'};
 const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',X2:'侧键 2',SCROLL_UP:'向上滚',SCROLL_DOWN:'向下滚',LT:'LT',RT:'RT',L3:'L3',R3:'R3',DPAD_UP:'十字键上',DPAD_DOWN:'十字键下',DPAD_LEFT:'十字键左',DPAD_RIGHT:'十字键右',START:'Start',BACK:'Back',LS_UP:'左摇杆上',LS_DOWN:'左摇杆下',LS_LEFT:'左摇杆左',LS_RIGHT:'左摇杆右'};
@@ -64,6 +52,17 @@ let zoneEditMode=false,zoneEditBackup=null,liveZoneDrag=null;
 const SCENE_LABELS={lookGate:'下巴左侧 · 左腕视角门',leftHandUpper:'头顶左 · Y',leftHandLower:'左耳外 · X',rightHandUpper:'头顶右 · B',rightHandLower:'右耳外 · A',leftFoot:'左脚可踢区 · LB',rightFoot:'右脚可踢区 · RB'};
 const COMMON_VOICE_IDS=['output.start','output.stop','scene.capture','head.calibrate','scene.rematch','head.center'];
 let voiceCatalog=[];
+
+function profileTriggers(){
+  const voiceTriggers=voiceCatalog
+    .filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_'))
+    .map(item=>({
+      key:`voice.${item.id}`,group:'voice',id:item.id,
+      name:`语音 · ${item.phrase}`,tapOnly:true,
+      defaultBinding:item.default_action?{label:item.label,action:item.default_action}:null,
+    }));
+  return [...BASE_PROFILE_TRIGGERS,...voiceTriggers];
+}
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function notice(t){$('#notice').textContent=t;$('#notice').style.display=t?'block':'none'}
@@ -134,13 +133,13 @@ function renderKernelState(runtime){
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
   currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
   const zonePad={leftHandUpper:'#padY',leftHandLower:'#padX',rightHandUpper:'#padB',rightHandLower:'#padA',leftFoot:'#padLB',rightFoot:'#padRB'};
-  const activeZones=[];for(const trigger of PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
+  const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
-  const active=new Set(k.motions||[]),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头']};
+  const active=new Set(k.motions||[]),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头'],jumping_jack:['#motionJumpingJack','开合跳'],side_step_jack:['#motionSideStepJack','侧步开合'],cross_knee_elbow:['#motionCrossKneeElbow','提膝碰对侧肘']};
   for(const[id,[sel]]of Object.entries(chips))$(sel)?.classList.toggle('active',active.has(id));
-  const poses=new Set(k.poses_active||[]),poseChips={hands_cross:'#poseHandsCross',right_leg_cross_left:'#poseRightCross',left_leg_cross_right:'#poseLeftCross'};
+  const poses=new Set(k.poses_active||[]),poseChips={hands_cross:'#poseHandsCross'};
   for(const[id,sel]of Object.entries(poseChips))$(sel)?.classList.toggle('active',poses.has(id));
-  const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(id=>chips[id]?.[1]||id).join(' + '));if(poses.size)statusParts.push('姿势：'+[...poses].map(id=>PROFILE_TRIGGERS.find(t=>t.id===id)?.name||id).join(' + '));
+  const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(id=>chips[id]?.[1]||id).join(' + '));if(poses.size)statusParts.push('动作：'+[...poses].map(id=>BASE_PROFILE_TRIGGERS.find(t=>t.id===id)?.name||id).join(' + '));
   $('#motionStatus').textContent=statusParts.join(' · ')||'动作：未触发';
   const hs=k.head||{};
   if(Number.isFinite(hs.output_x)){
@@ -160,7 +159,9 @@ function renderKernelState(runtime){
     head.horizontalAlgorithm=['classic','gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'classic';
     if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
     head.verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'head':'hand';
+    head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
     if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookSource;
+    if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;
     document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));
     $('#deadzone').value=Math.round(Number(hs.deadzone||.10)*100);
     $('#speedX').value=Number(hs.sensitivity_x||58);$('#speedY').value=Number(hs.sensitivity_y||46);
@@ -174,7 +175,7 @@ function renderKernelState(runtime){
   }
   $('#cameraPill').textContent=(sourceMode==='phone'||cameraRunning)?'摄像头 ✓':'摄像头';$('#cameraPill').className='pill '+(sourceMode==='phone'||cameraRunning?'ok':'bad');
   // phonePill is owned by renderInputStatus (/api/input/status); kernel status has no transport state.
-  $('#posePill').textContent=currentPoseMap?'人体 ✓':'人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){gateStatus.textContent=gateActive?`上下视角已开启 · ${verticalSource}控制上下`:'上下视角待机 · 左手放入绿色区域开启';gateStatus.className='look-gate-status '+(gateActive?'active':'')}renderOverlay(currentPoseMap);renderMainStatus();
+  $('#posePill').textContent=currentPoseMap?'人体 ✓':'人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){const paused=!!hs.horizontal_paused_by_vertical_gate;gateStatus.textContent=gateActive?`上下视角已开启 · ${verticalSource}控制上下${paused?' · 左右暂停':''}`:'上下视角待机 · 左手放入绿色区域开启';gateStatus.className='look-gate-status '+(gateActive?'active':'')}renderOverlay(currentPoseMap);renderMainStatus();
   const main=$('#mainActionBtn');if(main){main.textContent=!sessionStarted?'开始体感':(output.enabled?'停止游戏控制':'开始游戏控制');main.className=`btn ${output.enabled?'danger':'primary'} main-action-btn`}
 }
 function renderInputStatus(status){const connected=!!(status?.mobile_pose_connected||status?.handheld_connected),pill=$('#mobileStatus');pill.textContent=connected?'手机已连接':'手机未连接';pill.className='pill '+(connected?'ok':'bad');const top=$('#phonePill');if(top){top.textContent=connected?'手机 ✓':'手机';top.className='pill '+(connected?'ok':'optional')}const field=$('#phoneWsUrl');if(field)field.value=status?.phone_ws_urls?.[0]||'连接服务器后显示'}
@@ -182,7 +183,8 @@ async function refreshKernel(){try{renderKernelState(await api('/api/kernel/stat
 async function refreshInput(){try{renderInputStatus(await api('/api/input/status?brief=1'))}catch{}}
 
 function bindingFor(trigger){
-  return gameProfile.selected?.bindings?.[trigger.group]?.[trigger.id]||null;
+  const binding=gameProfile.selected?.bindings?.[trigger.group]?.[trigger.id];
+  return binding===undefined?(trigger.defaultBinding||null):binding;
 }
 function targetLabel(action){
   if(!action)return '未映射';
@@ -198,7 +200,7 @@ function bindingLabel(binding){
 }
 function syncProfileZoneLabels(){
   const zonePad={leftHandUpper:'#padY',leftHandLower:'#padX',rightHandUpper:'#padB',rightHandLower:'#padA',leftFoot:'#padLB',rightFoot:'#padRB'};
-  for(const trigger of PROFILE_TRIGGERS.filter(t=>t.group==='zones')){
+  for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){
     const binding=bindingFor(trigger),label=bindingLabel(binding);
     if(BODY_ZONES[trigger.id])BODY_ZONES[trigger.id].label=label;
     const el=$(zonePad[trigger.id]);if(el)el.textContent=label;
@@ -214,7 +216,7 @@ function profileMetaText(profile){
   const bindings=profile.bindings||{};
   const zones=Object.keys(bindings.zones||{}).length;
   const motions=Object.keys(bindings.motions||{}).length+Object.keys(bindings.poses||{}).length;
-  const voice=Object.keys(bindings.voice||{}).length;
+  const voice=voiceCatalog.filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_')&&item.effective_action).length;
   const coverage=`${zones} 区域 · ${motions} 动作 · ${voice} 语音`;
   return `${appid?`Steam ${appid} · `:''}${sourceName}${verified} · ${coverage}`;
 }
@@ -246,7 +248,7 @@ async function refreshProfile(){
 async function applySelectedProfile(){
   const id=$('#profileSelect').value;if(!id)return;
   const data=await post('/api/game-profiles/select',{id});
-  gameProfile.selected=data.profile;gameProfile.overrides={};renderProfileHeader();renderProfileBindingRows();
+  gameProfile.selected=data.profile;gameProfile.overrides={};await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
   notice(`已切换游戏：${gameProfile.selected?.name||id}`);
 }
 function makeTypeSelect(binding){
@@ -274,20 +276,34 @@ function fillBehaviorControl(container,trigger,type,value){
 function renderProfileBindingRows(){
   const box=$('#profileBindingRows');if(!box)return;box.replaceChildren();
   if(!gameProfile.selected){box.innerHTML='<div class="profile-empty">还没有可编辑的游戏 Profile。</div>';return}
-  for(const trigger of PROFILE_TRIGGERS){
-    const binding=bindingFor(trigger),action=binding?.disabled?null:binding?.action;
-    const row=document.createElement('div');row.className='binding-row';row.dataset.trigger=trigger.key;
-    const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
-    const type=makeTypeSelect(binding);
-    const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
-    const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||'hold');
-    type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,'hold')});
-    row.append(name,type,target,behavior);box.appendChild(row);
+  const triggers=profileTriggers();
+  const groups=[
+    {id:'zones',title:'Zone 圈',help:'手或脚进入固定圈时触发',filter:t=>t.group==='zones',open:true},
+    {id:'body',title:'身体动作',help:'识别到动作时触发；左右腿交叉已移除',filter:t=>t.group==='motions'||t.group==='poses',open:true},
+    {id:'voice',title:'语音',help:'说出完整口令后触发一次；系统安全口令不可改',filter:t=>t.group==='voice',open:false},
+  ];
+  for(const group of groups){
+    const items=triggers.filter(group.filter);if(!items.length)continue;
+    const details=document.createElement('details');details.className='binding-group';details.open=group.open;
+    const summary=document.createElement('summary');summary.textContent=`${group.title} · ${items.length} 项`;
+    const help=document.createElement('div');help.className='binding-group-help';help.textContent=group.help;
+    const rows=document.createElement('div');rows.className='binding-group-rows';
+    for(const trigger of items){
+      const binding=bindingFor(trigger),action=binding?.disabled?null:binding?.action;
+      const row=document.createElement('div');row.className='binding-row';row.dataset.trigger=trigger.key;
+      const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
+      const type=makeTypeSelect(binding);
+      const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
+      const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||'hold');
+      type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,'hold')});
+      row.append(name,type,target,behavior);rows.appendChild(row);
+    }
+    details.append(summary,help,rows);box.appendChild(details);
   }
 }
 function readProfileOverrides(){
   const overrides={};
-  for(const trigger of PROFILE_TRIGGERS){
+  for(const trigger of profileTriggers()){
     const row=document.querySelector(`.binding-row[data-trigger="${trigger.key}"]`);if(!row)continue;
     const type=row.querySelector('.binding-type')?.value||'';
     if(!type){overrides[trigger.key]=null;continue}
@@ -300,12 +316,12 @@ function readProfileOverrides(){
 }
 async function saveProfileBindings(){
   const data=await post('/api/game-profiles/overrides',{overrides:readProfileOverrides()});
-  gameProfile.selected=data.profile;gameProfile.overrides=gameProfile.selected?.overrides||{};renderProfileHeader();renderProfileBindingRows();
+  gameProfile.selected=data.profile;gameProfile.overrides=gameProfile.selected?.overrides||{};await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
   notice('当前游戏的体感映射已保存。');
 }
 async function resetProfileBindings(){
   const data=await post('/api/game-profiles/overrides',{overrides:{}});
-  gameProfile.selected=data.profile;gameProfile.overrides={};renderProfileHeader();renderProfileBindingRows();
+  gameProfile.selected=data.profile;gameProfile.overrides={};await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
   notice('已恢复这个游戏的内置默认映射。');
 }
 
@@ -401,10 +417,6 @@ function renderOverlay(map=currentPoseMap){
 
 async function toggleOverlay(){if(overlay.win&&!overlay.win.closed){try{overlay.win.close()}catch{}overlay.win=null;overlay.canvas=null;overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗';return}if(!window.documentPictureInPicture?.requestWindow){notice('当前浏览器不支持置顶游戏悬浮窗。');return}try{const pip=await window.documentPictureInPicture.requestWindow({width:420,height:315});pip.document.title='MotionControl';pip.document.body.style.cssText='margin:0;overflow:hidden;background:#050608;width:100vw;height:100vh';const c=pip.document.createElement('canvas');c.width=640;c.height=480;c.style.cssText='display:block;width:100vw;height:100vh;object-fit:contain;background:#050608';pip.document.body.appendChild(c);overlay.win=pip;overlay.canvas=c;overlay.ctx=c.getContext('2d');pip.addEventListener('pagehide',()=>{overlay.win=overlay.canvas=overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗'},{once:true});$('#overlayBtn').textContent='关闭悬浮';renderOverlay(currentPoseMap)}catch(e){notice('悬浮窗启动失败：'+(e?.message||e))}}
 
-function renderMotionRows(items){motion.config=items||[];const box=$('#motionRows');box.replaceChildren();for(const m of motion.config){const row=document.createElement('div');row.className='motion-row';row.dataset.id=m.id;const enabled=document.createElement('input');enabled.type='checkbox';enabled.className='motion-enabled';enabled.checked=!!m.enabled;const name=document.createElement('div');name.className='motion-name';name.textContent=m.name;const type=document.createElement('select');type.className='motion-type';for(const[v,t]of[['keyboard','键盘'],['gamepad','Xbox 按键'],['gamepad_axis','Xbox 左摇杆']]){const o=document.createElement('option');o.value=v;o.textContent=t;type.appendChild(o)}type.value=m.type;const target=document.createElement('input');target.type='text';target.className='motion-target';target.value=m.target||'';target.placeholder=type.value==='gamepad_axis'?'LS_UP / LS_DOWN / LS_LEFT / LS_RIGHT':(type.value==='gamepad'?'A / B / X / Y / LB / RB':'W / SPACE / CTRL+W');row.append(enabled,name,type,target);box.appendChild(row)}}
-function readMotionRows(){const items=[];for(const row of document.querySelectorAll('.motion-row')){const old=motion.config.find(x=>x.id===row.dataset.id),enabled=row.querySelector('.motion-enabled').checked,type=row.querySelector('.motion-type').value,target=row.querySelector('.motion-target').value.trim().toUpperCase();if(enabled&&!target)throw new Error(`${old?.name||row.dataset.id} 已启用但没有设置输出`);items.push({id:row.dataset.id,name:old?.name||'',enabled,type,target})}return items}
-async function refreshMotionConfig(){try{renderMotionRows((await api('/api/motion/config')).motions||[])}catch(e){notice('动作设置读取失败：'+e.message)}}
-async function saveMotionConfig(){const s=await post('/api/motion/config',{motions:readMotionRows()});renderMotionRows(s.motions||[]);return s}
 
 function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=document.createElement('div');row.className='voice-row';const phrase=document.createElement('input');phrase.className='voice-phrase';phrase.placeholder='说：例如 地图';phrase.value=mapping.phrase||'';const type=document.createElement('select');type.className='voice-type';for(const[value,label]of[['keyboard','键盘/组合键'],['gamepad','Xbox 键'],['system','系统命令']]){const o=document.createElement('option');o.value=value;o.textContent=label;type.appendChild(o)}type.value=mapping.type||'keyboard';const target=document.createElement('input');target.className='voice-target';target.value=mapping.target||'';const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});row.append(phrase,type,target,remove);$('#voiceRows').appendChild(row)}
 function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=row.querySelector('.voice-target').value.trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('语音命令必须同时填写“说什么”和“输出什么”');const item={phrase,type,target},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
@@ -422,14 +434,15 @@ function renderVoiceStatus(s=voice.status){
 
 async function saveVoiceMappings(){const s=await post('/api/voice/config',{mappings:readVoiceMappings()});voice.status=s;renderVoiceStatus(s);return s}
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{}}
-function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.label||'';card.append(phrase,label);return card}
+function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)}`}
+function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?`${command.label||''} · 系统固定`:`${command.label||''} · ${voiceActionLabel(command.effective_action)}`;card.append(phrase,label);return card}
 function renderVoiceCommandCatalog(commands){voiceCatalog=Array.isArray(commands)?commands:[];const countBtn=$('#voiceCommandsBtn');if(countBtn)countBtn.textContent=`查看全部 ${voiceCatalog.length} 条语音指令`;const common=$('#commonVoiceCommands'),full=$('#voiceCommandGrid');if(!common||!full)return;common.replaceChildren();full.replaceChildren();const byId=new Map(voiceCatalog.map(item=>[item.id,item]));for(const id of COMMON_VOICE_IDS){const item=byId.get(id);if(item)common.appendChild(renderVoiceCommandCard(item))}const isProfile=c=>String(c.id||'').startsWith('game.profile_slot_');const groups=[['系统与体感控制',c=>c.kind==='system'],['常规游戏操作',c=>String(c.id||'').startsWith('game.')&&!isProfile(c)],['当前游戏补充功能',c=>isProfile(c)],['菜单操作',c=>!String(c.id||'').startsWith('game.')&&c.kind!=='system']];for(const[name,filter]of groups){const items=voiceCatalog.filter(filter);if(!items.length)continue;const section=document.createElement('section');section.className='voice-group';const h=document.createElement('h3');h.textContent=name;const grid=document.createElement('div');grid.className='voice-command-grid full';for(const item of items)grid.appendChild(renderVoiceCommandCard(item));section.append(h,grid);full.appendChild(section)}}
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['classic','gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'classic';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
-async function pushHeadConfig(){const previousHorizontalAlgorithm=head.horizontalAlgorithm;syncControlLabels();try{renderKernelState(await post('/api/head/config',{algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,invert_x:head.invertX,invert_y:head.invertY,vertical_look_source:head.verticalLookSource}));if(sceneConfigured&&scene.zones&&Object.keys(scene.zones).length){scene.vertical={...scene.vertical,source:head.verticalLookSource,verticalLookSource:head.verticalLookSource};await post('/api/scene/layout',{zones:scene.zones,vertical_look:scene.vertical})}if(head.horizontalAlgorithm!==previousHorizontalAlgorithm)notice('横向头控已切换，需要重新执行头控校准。')}catch(e){if($('#headHorizontalAlgorithm')&&previousHorizontalAlgorithm)$('#headHorizontalAlgorithm').value=previousHorizontalAlgorithm;head.horizontalAlgorithm=previousHorizontalAlgorithm;notice('头控设置保存失败：'+(e?.message||e))}}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['classic','gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'classic';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+async function pushHeadConfig(){const previousHorizontalAlgorithm=head.horizontalAlgorithm;syncControlLabels();try{renderKernelState(await post('/api/head/config',{algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,invert_x:head.invertX,invert_y:head.invertY,vertical_look_source:head.verticalLookSource,vertical_exclusive:head.verticalExclusive}));if(sceneConfigured&&scene.zones&&Object.keys(scene.zones).length){scene.vertical={...scene.vertical,source:head.verticalLookSource,verticalLookSource:head.verticalLookSource,exclusive_axes:head.verticalExclusive};await post('/api/scene/layout',{zones:scene.zones,vertical_look:scene.vertical})}if(head.horizontalAlgorithm!==previousHorizontalAlgorithm)notice('横向头控已切换，需要重新执行头控校准。')}catch(e){if($('#headHorizontalAlgorithm')&&previousHorizontalAlgorithm)$('#headHorizontalAlgorithm').value=previousHorizontalAlgorithm;head.horizontalAlgorithm=previousHorizontalAlgorithm;notice('头控设置保存失败：'+(e?.message||e))}}
 function sceneResultText(st){const r=st?.last_result||{};const bits=[r.message||''];if(Number.isFinite(r.confidence))bits.push('可信度 '+Math.round(r.confidence*100)+'%');if(r.matches)bits.push('匹配点 '+r.matches);if(Number.isFinite(r.inlier_ratio))bits.push('内点 '+Math.round(r.inlier_ratio*100)+'%');if(Number.isFinite(r.reprojection_error_px))bits.push('误差 '+r.reprojection_error_px+'px');if(Number.isFinite(r.rotation_deg))bits.push('旋转 '+r.rotation_deg+'°');return bits.filter(Boolean).join(' · ')}
-function renderSceneEditor(st){scene.status=st||{};scene.zones=structuredClone(st?.zones||{});scene.vertical=structuredClone(st?.vertical_look||{});if(scene.vertical.source==='head'||scene.vertical.verticalLookSource==='head'){head.verticalLookSource='head';if($('#verticalLookSource'))$('#verticalLookSource').value='head'}const configured=!!st?.configured;sceneConfigured=configured;$('#sceneEditor').hidden=!configured;$('#sceneTools').hidden=!configured;$('#sceneStatus').textContent=configured?(st.adapted?'本次已手动重新匹配并锁定':'已载入参考布局；本次没有自动适配'):'尚未记录参考场景';$('#sceneMetrics').textContent=sceneResultText(st);const image=$('#sceneReference');if(configured&&st.reference_image_url){image.src=st.reference_image_url+'?t='+Date.now()}const select=$('#sceneZoneSelect');select.replaceChildren();for(const id of Object.keys(scene.zones)){const o=document.createElement('option');o.value=id;o.textContent=SCENE_LABELS[id]||id;select.appendChild(o)}if(!scene.zones[scene.selected])scene.selected=Object.keys(scene.zones)[0]||'';select.value=scene.selected;renderSceneEditableZones();syncSceneTools();syncControlLabels();renderMainStatus()}
+function renderSceneEditor(st){scene.status=st||{};scene.zones=structuredClone(st?.zones||{});scene.vertical=structuredClone(st?.vertical_look||{});head.verticalLookSource=(scene.vertical.source==='head'||scene.vertical.verticalLookSource==='head')?'head':'hand';head.verticalExclusive=!!scene.vertical.exclusive_axes;if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookSource;if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;const configured=!!st?.configured;sceneConfigured=configured;$('#sceneEditor').hidden=!configured;$('#sceneTools').hidden=!configured;$('#sceneStatus').textContent=configured?(st.adapted?'本次已手动重新匹配并锁定':'已载入参考布局；本次没有自动适配'):'尚未记录参考场景';$('#sceneMetrics').textContent=sceneResultText(st);const image=$('#sceneReference');if(configured&&st.reference_image_url){image.src=st.reference_image_url+'?t='+Date.now()}const select=$('#sceneZoneSelect');select.replaceChildren();for(const id of Object.keys(scene.zones)){const o=document.createElement('option');o.value=id;o.textContent=SCENE_LABELS[id]||id;select.appendChild(o)}if(!scene.zones[scene.selected])scene.selected=Object.keys(scene.zones)[0]||'';select.value=scene.selected;renderSceneEditableZones();syncSceneTools();syncControlLabels();renderMainStatus()}
 function renderSceneEditableZones(){const layer=$('#sceneEditorZones');layer.replaceChildren();for(const[id,z]of Object.entries(scene.zones)){const el=document.createElement('div');el.className='scene-edit-zone'+(id==='lookGate'?' gate':'');el.dataset.id=id;el.textContent=SCENE_LABELS[id]||id;const r=Number(z.r)||.07;el.style.left=((Number(z.cx)-r)*100)+'%';el.style.top=((Number(z.cy)-r)*100)+'%';el.style.width=(2*r*100)+'%';el.style.height=(2*r*100)+'%';el.style.fontSize='11px';el.addEventListener('pointerdown',startSceneDrag);layer.appendChild(el)}const line=$('#sceneVerticalCenter');const cy=Number(scene.vertical.center_y??.5);line.style.top=(cy*100)+'%';line.hidden=!scene.status?.configured}
 function startSceneDrag(e){e.preventDefault();scene.selected=e.currentTarget.dataset.id;$('#sceneZoneSelect').value=scene.selected;syncSceneTools();scene.drag={id:scene.selected};e.currentTarget.setPointerCapture?.(e.pointerId)}
 function updateSceneDrag(e){if(!scene.drag)return;const rect=$('#sceneEditorZones').getBoundingClientRect();const z=scene.zones[scene.drag.id];if(!z)return;z.cx=clamp((e.clientX-rect.left)/rect.width,0,1);z.cy=clamp((e.clientY-rect.top)/rect.height,0,1);renderSceneEditableZones()}
@@ -472,7 +485,7 @@ function cancelLiveZones(){if(zoneEditBackup)scene.zones=structuredClone(zoneEdi
 async function captureScene(){try{const r=await post('/api/scene/capture',{});if(r.pending){notice('已请求手机发送一张场景截图，请保持站位。')}else{notice('参考场景已记录，可以回到电脑调整圆圈。')}await refreshScene()}catch(e){notice('记录场景失败：'+e.message)}}
 async function rematchScene(){try{const r=await post('/api/scene/rematch',{});if(r.pending)notice('已请求手机截图用于重新匹配，请保持游戏站位。');else notice('本次场景重新匹配成功，区域已锁定。');await refreshScene()}catch(e){notice('重新匹配失败：'+e.message);await refreshScene()}}
 async function saveScene(){try{const r=await post('/api/scene/layout',{zones:scene.zones,vertical_look:scene.vertical});renderSceneEditor(r);notice('固定空间区域已保存。')}catch(e){notice('保存区域失败：'+e.message)}}
-async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到摄像头模型')}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshVoiceCommands();await refreshMotionConfig();try{await refreshProfile()}catch(e){notice('游戏 Profile 读取失败：'+(e?.message||e))}await refreshCameraConfig();await refreshPerformance();await refreshScene();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
+async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到摄像头模型')}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshVoiceCommands();try{await refreshProfile()}catch(e){notice('游戏 Profile 读取失败：'+(e?.message||e))}await refreshCameraConfig();await refreshPerformance();await refreshScene();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
 
 $('#profileSearchBtn')?.addEventListener('click',()=>searchProfiles().catch(e=>notice('搜索游戏失败：'+(e?.message||e))));
 $('#profileSearch')?.addEventListener('keydown',e=>{if(e.key==='Enter')searchProfiles().catch(err=>notice('搜索游戏失败：'+(err?.message||err)))});
@@ -527,7 +540,7 @@ $('#strength').addEventListener('change', () => post('/api/output/config', outpu
   output.server = r;
   renderOutput(r);
 }).catch(e => notice(e.message)));
-for (const id of ['headAlgorithm','headHorizontalAlgorithm','verticalLookSource','deadzone','speedX','speedY']) {
+for (const id of ['headAlgorithm','headHorizontalAlgorithm','verticalLookSource','verticalExclusive','deadzone','speedX','speedY']) {
   $('#' + id).addEventListener('change', pushHeadConfig);
 }
 $('#headEnable').addEventListener('change', pushHeadConfig);
@@ -551,9 +564,6 @@ $('#closeSettingsBtn').addEventListener('click', () => {
 $('#settingsMask').addEventListener('click', e => {
   if (e.target === $('#settingsMask')) $('#closeSettingsBtn').click();
 });
-$('#saveMotionBtn').addEventListener('click', () => saveMotionConfig()
-  .then(() => notice('四个动作映射已保存。'))
-  .catch(e => notice('动作设置保存失败：' + (e?.message || e))));
 window.addEventListener('beforeunload', () => {
   try { overlay.win?.close(); } catch {}
 });

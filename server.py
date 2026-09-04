@@ -127,10 +127,15 @@ def execute_voice_action(action: dict) -> dict:
         command_id = str(action.get("command_id", "")).strip()
         if command_id:
             binding = KERNEL.control_bindings.get(f"voice.{command_id}")
-            if isinstance(binding, dict) and not binding.get("disabled") and isinstance(binding.get("action"), dict):
-                mapped = dict(binding["action"])
-                mapped["source"] = action.get("source", "voice")
-                return OUTPUT.execute_action(mapped)
+            if isinstance(binding, dict):
+                if binding.get("disabled"):
+                    return {"executed": False, "reason": "当前游戏未启用这条语音"}
+                if isinstance(binding.get("action"), dict):
+                    mapped = dict(binding["action"])
+                    mapped["source"] = action.get("source", "voice")
+                    return OUTPUT.execute_action(mapped)
+            if command_id.startswith("game.profile_slot_"):
+                return {"executed": False, "reason": "当前游戏未设置这条备用语音"}
         return OUTPUT.execute_action(action)
     target = str(action.get("target", "")).strip().upper()
     # Output start/stop
@@ -194,31 +199,62 @@ if provider is not None:
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
 MOTION_CONFIG_FILE = CONFIG_DIR / "motion_mappings.json"
-VOICE_COMMAND_FILE = CONFIG_DIR / "voice_commands_v094.json"
 DEFAULT_MOTIONS = [
     {"id": "march", "name": "原地踏步", "enabled": False, "type": "gamepad_axis", "target": "LS_UP"},
     {"id": "calf_back", "name": "小腿向后（左/右）", "enabled": False, "type": "gamepad", "target": "B"},
     {"id": "squat", "name": "下蹲", "enabled": False, "type": "gamepad", "target": "X"},
     {"id": "hands_up", "name": "双手举过头顶", "enabled": False, "type": "gamepad", "target": "Y"},
+    {"id": "jumping_jack", "name": "开合跳", "enabled": False, "type": "gamepad", "target": "A"},
+    {"id": "side_step_jack", "name": "侧步开合", "enabled": False, "type": "gamepad", "target": "B"},
+    {"id": "cross_knee_elbow", "name": "提膝碰对侧肘", "enabled": False, "type": "gamepad", "target": "X"},
 ]
 
 
+def _effective_voice_catalog_action(item: dict, voice_bindings: dict) -> dict | None:
+    if str(item.get("kind", "")) == "system":
+        return {"type": "system", "target": str(item.get("default_target", "")), "behavior": "tap"}
+    ident = str(item.get("id", ""))
+    binding = voice_bindings.get(ident) if isinstance(voice_bindings, dict) else None
+    if isinstance(binding, dict):
+        if binding.get("disabled"):
+            return None
+        action = binding.get("action")
+        return dict(action) if isinstance(action, dict) else None
+    # Numbered slots are compatibility vocabulary, not active F-key commands.
+    if ident.startswith("game.profile_slot_"):
+        return None
+    return {
+        "type": str(item.get("kind", "")),
+        "target": str(item.get("default_target", "")),
+        "behavior": "tap",
+    }
+
+
 def voice_command_catalog() -> dict:
-    """Return the user-language command catalog without exposing KWS internals."""
-    try:
-        data = json.loads(VOICE_COMMAND_FILE.read_text(encoding="utf-8"))
-        commands = [
-            {
-                "id": str(item.get("id", "")),
-                "label": str(item.get("label", item.get("phrase", ""))),
-                "phrase": str(item.get("phrase", "")),
-                "kind": str(item.get("kind", "")),
-            }
-            for item in data.get("commands", [])
-            if isinstance(item, dict) and item.get("phrase")
-        ]
-    except (OSError, ValueError, TypeError):
-        commands = []
+    """Return the recognizer's exact phrases and what each does right now."""
+    profile = PROFILES.effective_profile() if "PROFILES" in globals() else {"bindings": {}}
+    voice_bindings = profile.get("bindings", {}).get("voice", {})
+    commands = []
+    # Use the same registry VoiceService actually parses.  Keeping a second UI
+    # catalog here allowed a phrase to be shown even when the recognizer did
+    # not own it, or to display a stale default after the vocabulary changed.
+    for item in VOICE.command_registry.values():
+        if not isinstance(item, dict) or not item.get("phrase"):
+            continue
+        kind = str(item.get("kind", ""))
+        commands.append({
+            "id": str(item.get("id", "")),
+            "label": str(item.get("label", item.get("phrase", ""))),
+            "phrase": str(item.get("phrase", "")),
+            "kind": kind,
+            "system_fixed": kind == "system",
+            "default_action": {
+                "type": kind,
+                "target": str(item.get("default_target", "")),
+                "behavior": "tap",
+            },
+            "effective_action": _effective_voice_catalog_action(item, voice_bindings),
+        })
     return {"version": VERSION, "count": len(commands), "commands": commands}
 
 def _normalize_motion_config(items):
@@ -670,6 +706,7 @@ class Handler(SimpleHTTPRequestHandler):
                     invert_x=body.get("invert_x"), invert_y=body.get("invert_y"),
                     horizontal_algorithm=body.get("horizontal_algorithm"),
                     vertical_look_source=body.get("vertical_look_source", body.get("verticalLookSource")),
+                    vertical_exclusive=body.get("vertical_exclusive", body.get("exclusive_axes")),
                 )
                 self._send_json({"ok": True, **RUNTIME.status()})
             except Exception as exc:

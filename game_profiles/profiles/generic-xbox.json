@@ -14,9 +14,7 @@
     },
     "motions": {},
     "poses": {
-      "hands_cross": {"label": "双手交叉", "action": {"type": "gamepad", "target": "START", "behavior": "tap"}},
-      "right_leg_cross_left": {"label": "右腿向左交叉", "action": {"type": "gamepad", "target": "DPAD_LEFT", "behavior": "tap"}},
-      "left_leg_cross_right": {"label": "左腿向右交叉", "action": {"type": "gamepad", "target": "DPAD_RIGHT", "behavior": "tap"}}
+      "hands_cross": {"label": "双手交叉", "action": {"type": "gamepad", "target": "START", "behavior": "tap"}}
     },
     "voice": {}
   }

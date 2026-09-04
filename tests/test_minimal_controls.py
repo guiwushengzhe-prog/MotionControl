@@ -24,7 +24,7 @@ def test_only_full_model_is_registered():
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    for required in ['1.00', '开始体感', '站好并校准', '重新识别我的位置', '视角回正', 'Xbox 360 右摇杆', '紧急停止 · F9', 'id="settingsBtn"', '体感映射', '兼容语音映射', '头控', '3D 头姿（推荐）', '查看全部语音指令', '区域不准？直接拖动调整', '当前游戏', 'profileBindingRows']:
+    for required in ['1.00', '开始体感', '站好并校准', '重新识别我的位置', '视角回正', 'Xbox 360 右摇杆', '紧急停止 · F9', 'id="settingsBtn"', '当前游戏的输入映射', '旧版语音别名', '头控', '3D 头姿（推荐）', '查看全部语音指令', '区域不准？直接拖动调整', '当前游戏', 'profileBindingRows']:
         assert required in page
     assert '开始游戏控制' in app and '停止游戏控制' in app
     for removed in ['开始 30 秒性能测试', '静止抖动测试', '实时性能数据', 'Lite / Full 对比结果', 'modelSelect']:
@@ -40,8 +40,10 @@ def test_v100_command_catalog_and_head_ui():
     assert catalog['product_version'] == '1.00'
     assert len(catalog['commands']) >= 39
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert "开始游戏控制" in app and "停止游戏控制" in app
     assert "· Y ${Number(hs.output_y)" not in app
+    assert 'for item in VOICE.command_registry.values()' in server
 
 
 def test_body_relative_zones_use_both_wrists_and_both_feet():
@@ -441,18 +443,24 @@ def test_pure_head_pitch_never_reaches_final_mouse_y():
         kernel.close()
 
 
-def test_look_gate_captures_stable_body_relative_anchor_without_freezing_horizontal_head():
+def test_look_gate_captures_stable_body_relative_anchor_without_freezing_horizontal_head(monkeypatch):
     output = KernelOutput()
     kernel = ControlKernel(output)
     try:
+        clock = [0.0]
+        monkeypatch.setattr('control_kernel.time.monotonic', lambda: clock[0])
+        def feed(pose, count):
+            for _ in range(count):
+                clock[0] += 0.10
+                kernel.handle_pose_map('camera', pose, width=640, height=480)
+
         _stub_head_controller(kernel, pitch=-.9)
         kernel.configure_scene_layout({
             'zones': {'lookGate': {'cx': .2, 'cy': .2, 'r': .15}},
             'vertical_look': {'enabled': True, 'point': 'right_wrist', 'range_y': .18, 'deadzone': .08},
         })
         neutral = _head_only_pose(left_wrist_y=.2, right_wrist_y=.5, right_shoulder_y=.32)
-        for _ in range(6):
-            kernel.handle_pose_map('camera', neutral, width=640, height=480)
+        feed(neutral, 8)
         assert kernel.vertical_gate_active is True
         assert kernel.vertical_wrist_anchor_rel_y is not None
         assert abs(kernel.vertical_wrist_anchor_rel_y - .18) < 1e-6
@@ -462,27 +470,51 @@ def test_look_gate_captures_stable_body_relative_anchor_without_freezing_horizon
         assert output.applied[-1][1] == 0.0
 
         moved = _head_only_pose(left_wrist_y=.2, right_wrist_y=.62, right_shoulder_y=.32)
-        for _ in range(3):
-            kernel.handle_pose_map('camera', moved, width=640, height=480)
+        feed(moved, 3)
         assert output.applied[-1][0] == pytest.approx(.2)
         assert output.applied[-1][1] > 0.0
 
         before = output.applied[-1][1]
         horizontal = _head_only_pose(left_wrist_y=.2, right_wrist_y=.62, right_wrist_x=.95, right_shoulder_y=.32)
-        kernel.handle_pose_map('camera', horizontal, width=640, height=480)
+        feed(horizontal, 1)
         assert abs(output.applied[-1][1] - before) < .20
 
         # Body bobbing: wrist and shoulder move together, so relative Y returns
         # toward neutral instead of following absolute image coordinates.
         bobbed = _head_only_pose(left_wrist_y=.2, right_wrist_y=.60, right_shoulder_y=.42)
-        for _ in range(8):
-            kernel.handle_pose_map('camera', bobbed, width=640, height=480)
+        feed(bobbed, 8)
         assert abs(output.applied[-1][1]) < .08
 
         outside = _head_only_pose(left_wrist_x=.9, left_wrist_y=.2, right_wrist_y=.60, right_shoulder_y=.42)
-        kernel.handle_pose_map('camera', outside, width=640, height=480)
+        feed(outside, 1)
         assert kernel.vertical_gate_active is False
         assert kernel.vertical_wrist_anchor_rel_y is None
         assert output.applied[-1][1] == 0.0
+    finally:
+        kernel.close()
+
+
+def test_optional_vertical_gate_exclusivity_pauses_only_horizontal_output():
+    output = KernelOutput()
+    kernel = ControlKernel(output)
+    try:
+        _stub_head_controller(kernel, pitch=0.0)
+        kernel.configure_scene_layout({
+            'zones': {'lookGate': {'cx': .2, 'cy': .2, 'r': .15}},
+            'vertical_look': {'enabled': True, 'point': 'right_wrist', 'range_y': .18, 'deadzone': .08},
+        })
+        kernel.configure_head(vertical_exclusive=True)
+        inside = _head_only_pose(left_wrist_x=.2, left_wrist_y=.2)
+        for _ in range(3):
+            state = kernel.handle_pose_map('camera', inside, width=640, height=480)
+        assert state['vertical_gate_active'] is True
+        assert state['head']['horizontal_paused_by_vertical_gate'] is True
+        assert output.applied[-1][0] == 0.0
+
+        outside = _head_only_pose(left_wrist_x=.9, left_wrist_y=.2)
+        state = kernel.handle_pose_map('camera', outside, width=640, height=480)
+        assert state['vertical_gate_active'] is False
+        assert state['head']['horizontal_paused_by_vertical_gate'] is False
+        assert output.applied[-1][0] == pytest.approx(.2)
     finally:
         kernel.close()
