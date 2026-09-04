@@ -1,6 +1,6 @@
 {
   "schema": "motioncontrol.game_catalog.v1",
-  "count": 199,
+  "count": 200,
   "games": [
     {
       "id": "generic-xbox",
@@ -1801,6 +1801,16 @@
       "name": "Total War: WARHAMMER III",
       "appid": 1142710,
       "profile": "profiles/steam-1142710-total-war-warhammer-iii.json",
+      "source": "steaminputdb",
+      "verified": false,
+      "zone_coverage": 6,
+      "official": false
+    },
+    {
+      "id": "steam-1659420-uncharted",
+      "name": "UNCHARTED™: 盗贼传奇合辑",
+      "appid": 1659420,
+      "profile": "profiles/steam-1659420-uncharted.json",
       "source": "steaminputdb",
       "verified": false,
       "zone_coverage": 6,
