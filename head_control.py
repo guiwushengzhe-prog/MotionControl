@@ -120,11 +120,14 @@ PITCH_INTENT_STOP_VELOCITY = 0.026
 # geometry switch and the calibration flow are shared; only the yaw intent
 # machine and the yaw branch of update() differ.
 
-HORIZONTAL_ALGORITHMS = ("classic", "gesture_v153", "frozen22")
+HORIZONTAL_ALGORITHMS = ("classic", "gesture_v153", "frozen22", "gesture_v188")
+V153_POLICIES = frozenset(("gesture_v153", "gesture_v188"))
+FROZEN22_POLICIES = frozenset(("frozen22",))
 HORIZONTAL_ALGORITHM_VERSIONS = {
     "classic": "v4.4-gated-pitch-ratchet-baseline",
     "gesture_v153": "relative-ratchet-v153-personal-pnp-g12-calib-derotate-hardened",
     "frozen22": "real-ab-equalmean-20260830-v1",
+    "gesture_v188": "relative-ratchet-v188-frozen22-pitch-guard",
 }
 
 # frozen22 is the audited R3 11-point / 22-dimensional horizontal
@@ -147,6 +150,23 @@ FROZEN22_SIGMA_FLOOR = 1e-4
 # frozen22 returns a degree-like yaw measurement.  This is only the output
 # normalization span; it does not alter the audited 22-D signature.
 FROZEN22_YAW_SPAN_DEG = PNP_YAW_SPAN_DEG
+FROZEN22_GATE_FAST_WINDOW_S = 0.267
+FROZEN22_GATE_FAST_BASE_DELTA_DEG = 1.40
+FROZEN22_GATE_FAST_SIGMA_MULT = 1.50
+FROZEN22_GATE_FAST_PITCH_RATIO = 0.80
+FROZEN22_GATE_FAST_CONFIRM_FRAMES = 2
+FROZEN22_GATE_FAST_LEASE_S = 0.200
+FROZEN22_GATE_SLOW_WINDOW_S = 0.800
+FROZEN22_GATE_SLOW_BASE_DELTA_DEG = 1.00
+FROZEN22_GATE_SLOW_SIGMA_MULT = 1.00
+FROZEN22_GATE_SLOW_WORLD_DELTA_DEG = 1.00
+FROZEN22_GATE_SLOW_PITCH_RATIO = 0.80
+FROZEN22_GATE_SLOW_LEASE_S = 0.200
+FROZEN22_GATE_COMMITTED_FALLBACK_SCALE = 0.00
+FROZEN22_GATE_HISTORY_S = 1.20
+FROZEN22_GATE_MAX_SAMPLE_AGE_S = 0.12
+V188_PITCH_GUARD_MIN_DEG = 1.50
+V188_PITCH_GUARD_YAW_TO_PITCH = 0.35
 HEAD11_NAMES = (
     "nose", "left_eye_inner", "left_eye", "left_eye_outer",
     "right_eye_inner", "right_eye", "right_eye_outer",
@@ -2041,6 +2061,21 @@ class HeadController:
         self.frozen22_world_resid_rel = math.inf
         self.frozen22_calibration_valid = False
         self._frozen22_history: list[float] = []
+        self._base_output_x = 0.0
+        self._frozen22_gate_history: list[tuple[float, float, float, float]] = []
+        self._frozen22_gate_direction = 0
+        self._frozen22_gate_fast_count = 0
+        self._frozen22_gate_lease_direction = 0
+        self._frozen22_gate_lease_until = 0.0
+        self.frozen22_gate_scale = 1.0
+        self.frozen22_gate_source = "DISABLED"
+        self.frozen22_gate_fast_delta_deg = math.nan
+        self.frozen22_gate_slow_delta_deg = math.nan
+        self.frozen22_gate_slow_world_delta_deg = math.nan
+        self.frozen22_gate_pitch_delta_deg = math.nan
+        self.frozen22_gate_fast_threshold_deg = math.nan
+        self.frozen22_gate_slow_threshold_deg = math.nan
+        self.v188_pitch_guard_active = False
         self.center_personal22_feature_samples: list[tuple[float, ...]] = []
         self.center_world_head11_samples: list[tuple[tuple[float, float, float], ...]] = []
         self._calibration_restore_frozen22: tuple[
@@ -2086,7 +2121,7 @@ class HeadController:
         self._load_profile()
 
     def _span(self) -> tuple[float, float]:
-        if self.config.get("horizontal_algorithm") == "frozen22":
+        if self.config.get("horizontal_algorithm") in FROZEN22_POLICIES:
             pitch_span = PNP_PITCH_SPAN_DEG if self.config["algorithm"] == "pnp" else RATIO_PITCH_SPAN
             return FROZEN22_YAW_SPAN_DEG, pitch_span
         if self.config["algorithm"] == "pnp":
@@ -2098,6 +2133,8 @@ class HeadController:
         self._pitch_filter.reset()
         self._head_point_filter.reset()
         self._x_intent_v153.reset()
+        self._reset_frozen22_gate()
+        self.v188_pitch_guard_active = False
         self._cross_axis_lock.reset()
         self.filtered_yaw = math.nan
         self.filtered_pitch = math.nan
@@ -2313,7 +2350,7 @@ class HeadController:
                 set_model(None)
         self.personal_pnp_active = False
         self.personal_pnp_center_depth = math.nan
-        if policy in {"classic", "frozen22"}:
+        if policy == "classic" or policy in FROZEN22_POLICIES:
             # Classic is an intentional compatibility policy, not a rejected
             # personal model.  Frozen22 has its own fixed 2D signature and does
             # not use the personal PnP model either.
@@ -2354,7 +2391,7 @@ class HeadController:
                 self.frozen22_calibration_valid = False
                 self._reset_filters()
                 # Policies share the estimator, but the personal PnP model is
-                # gesture_v153-only and is swapped here.
+                # Personal-PnP policies share the same model lifecycle.
                 self._apply_policy_model()
         if algorithm is not None:
             algorithm = str(algorithm).lower().strip()
@@ -2645,8 +2682,9 @@ class HeadController:
 
                 # Generic center snapshot: the center every non-v153 policy uses.
                 self._generic_center = (self.center_yaw, self.noise_yaw, self.center_pitch, self.noise_pitch)
-                if str(self.config.get("horizontal_algorithm", "classic")) == "gesture_v153" and self._activate_personal_pnp_from_center():
-                    self._personal_policy_store["gesture_v153"] = {
+                active_policy = str(self.config.get("horizontal_algorithm", "classic"))
+                if active_policy in V153_POLICIES and self._activate_personal_pnp_from_center():
+                    self._personal_policy_store[active_policy] = {
                         "model": self.center_world_face_template,
                         "center": (self.center_yaw, self.noise_yaw, self.center_pitch, self.noise_pitch),
                         "depth": self.personal_pnp_center_depth,
@@ -2710,6 +2748,159 @@ class HeadController:
         self.center_roll_samples = []
         self.notice_until = time.monotonic() + 3.0
         self._reset_filters()
+
+    def _reset_frozen22_gate(self) -> None:
+        self._base_output_x = 0.0
+        self._frozen22_gate_history = []
+        self._frozen22_gate_direction = 0
+        self._frozen22_gate_fast_count = 0
+        self._frozen22_gate_lease_direction = 0
+        self._frozen22_gate_lease_until = 0.0
+        self.frozen22_gate_scale = 1.0
+        self.frozen22_gate_source = "DISABLED"
+        self.frozen22_gate_fast_delta_deg = math.nan
+        self.frozen22_gate_slow_delta_deg = math.nan
+        self.frozen22_gate_slow_world_delta_deg = math.nan
+        self.frozen22_gate_pitch_delta_deg = math.nan
+        self.frozen22_gate_fast_threshold_deg = math.nan
+        self.frozen22_gate_slow_threshold_deg = math.nan
+        self.v188_pitch_guard_active = False
+
+    def _frozen22_gate_sample(self, now: float, window_s: float) -> tuple[float, float, float] | None:
+        target = now - window_s
+        for t, yaw, pitch, world in reversed(self._frozen22_gate_history):
+            if t <= target:
+                if target - t > FROZEN22_GATE_MAX_SAMPLE_AGE_S:
+                    return None
+                return yaw, pitch, world
+        return None
+
+    def _frozen22_uncertainty_scale(self, vx: float, now: float) -> float:
+        """Gate the completed v153 output without feeding back into its ratchet."""
+        sign = -1.0 if self.config.get("invert_x") else 1.0
+        fy = float(self.frozen22_yaw_median) * sign if math.isfinite(self.frozen22_yaw_median) else math.nan
+        fp = float(self.filtered_pitch) if math.isfinite(self.filtered_pitch) else math.nan
+        wy = float(self.current_world_rigid_yaw) * sign if math.isfinite(self.current_world_rigid_yaw) else math.nan
+
+        if math.isfinite(fy) and math.isfinite(fp):
+            self._frozen22_gate_history.append((now, fy, fp, wy))
+            cutoff = now - FROZEN22_GATE_HISTORY_S
+            while self._frozen22_gate_history and self._frozen22_gate_history[0][0] < cutoff:
+                del self._frozen22_gate_history[0]
+
+        self.frozen22_gate_fast_delta_deg = math.nan
+        self.frozen22_gate_slow_delta_deg = math.nan
+        self.frozen22_gate_slow_world_delta_deg = math.nan
+        self.frozen22_gate_pitch_delta_deg = math.nan
+        valid = bool(
+            self.frozen22_calibration_valid
+            and math.isfinite(self.frozen22_cal_sigma_deg)
+            and math.isfinite(fy)
+            and math.isfinite(fp)
+        )
+        if not valid:
+            self._frozen22_gate_direction = 0
+            self._frozen22_gate_fast_count = 0
+            self._frozen22_gate_lease_direction = 0
+            self._frozen22_gate_lease_until = 0.0
+            self.frozen22_gate_scale = 1.0
+            self.frozen22_gate_source = "DISABLED"
+            return 1.0
+
+        sigma = max(0.0, float(self.frozen22_cal_sigma_deg))
+        fast_thr = max(FROZEN22_GATE_FAST_BASE_DELTA_DEG, FROZEN22_GATE_FAST_SIGMA_MULT * sigma)
+        slow_thr = max(FROZEN22_GATE_SLOW_BASE_DELTA_DEG, FROZEN22_GATE_SLOW_SIGMA_MULT * sigma)
+        self.frozen22_gate_fast_threshold_deg = fast_thr
+        self.frozen22_gate_slow_threshold_deg = slow_thr
+
+        direction = 1 if vx > 1e-12 else (-1 if vx < -1e-12 else 0)
+        if direction == 0:
+            self.frozen22_gate_scale = 0.0
+            self.frozen22_gate_source = "ZERO"
+            return 0.0
+        if direction != self._frozen22_gate_direction:
+            self._frozen22_gate_direction = direction
+            self._frozen22_gate_fast_count = 0
+            self._frozen22_gate_lease_direction = 0
+            self._frozen22_gate_lease_until = 0.0
+
+        fast_ok = False
+        slow_ok = False
+        old = self._frozen22_gate_sample(now, FROZEN22_GATE_FAST_WINDOW_S)
+        if old is not None:
+            oy, op, _ = old
+            dy = fy - oy
+            dp = fp - op
+            self.frozen22_gate_fast_delta_deg = dy
+            self.frozen22_gate_pitch_delta_deg = dp
+            fast_ok = bool(
+                direction * dy >= fast_thr
+                and abs(dy) >= FROZEN22_GATE_FAST_PITCH_RATIO * abs(dp)
+            )
+        if fast_ok:
+            self._frozen22_gate_fast_count += 1
+        else:
+            self._frozen22_gate_fast_count = max(0, self._frozen22_gate_fast_count - 1)
+
+        committed = bool(getattr(self._x_intent_v153, "committed", False))
+        old = self._frozen22_gate_sample(now, FROZEN22_GATE_SLOW_WINDOW_S)
+        world_reliable = bool(
+            math.isfinite(wy)
+            and math.isfinite(self.noise_world_rigid_yaw)
+            and self.noise_world_rigid_yaw <= PERSONAL_PNP_MAX_WORLD_RIGID_SIGMA_DEG
+        )
+        if committed and old is not None and world_reliable:
+            oy, op, ow = old
+            if math.isfinite(ow):
+                dy = fy - oy
+                dp = fp - op
+                dw = wy - ow
+                self.frozen22_gate_slow_delta_deg = dy
+                self.frozen22_gate_slow_world_delta_deg = dw
+                if not math.isfinite(self.frozen22_gate_pitch_delta_deg):
+                    self.frozen22_gate_pitch_delta_deg = dp
+                slow_ok = bool(
+                    direction * dy >= slow_thr
+                    and direction * dw >= FROZEN22_GATE_SLOW_WORLD_DELTA_DEG
+                    and abs(dy) >= FROZEN22_GATE_SLOW_PITCH_RATIO * abs(dp)
+                )
+
+        pitch_offset = abs(fp - float(self.center_pitch))
+        yaw_offset = abs(fy)
+        self.v188_pitch_guard_active = bool(
+            pitch_offset >= V188_PITCH_GUARD_MIN_DEG
+            and yaw_offset < V188_PITCH_GUARD_YAW_TO_PITCH * pitch_offset
+            and not slow_ok
+        )
+        if self.v188_pitch_guard_active:
+            self.frozen22_gate_scale = 0.0
+            self.frozen22_gate_source = "PITCH_GUARD"
+            return 0.0
+        if self._frozen22_gate_fast_count >= FROZEN22_GATE_FAST_CONFIRM_FRAMES:
+            self._frozen22_gate_lease_direction = direction
+            self._frozen22_gate_lease_until = now + FROZEN22_GATE_FAST_LEASE_S
+            self.frozen22_gate_scale = 1.0
+            self.frozen22_gate_source = "FAST"
+            return 1.0
+        if slow_ok:
+            self._frozen22_gate_lease_direction = direction
+            self._frozen22_gate_lease_until = now + FROZEN22_GATE_SLOW_LEASE_S
+            self.frozen22_gate_scale = 1.0
+            self.frozen22_gate_source = "SLOW"
+            return 1.0
+        if self._frozen22_gate_lease_direction == direction and now <= self._frozen22_gate_lease_until:
+            self.frozen22_gate_scale = 1.0
+            self.frozen22_gate_source = "LEASE"
+            return 1.0
+        self._frozen22_gate_lease_direction = 0
+        self._frozen22_gate_lease_until = 0.0
+        if committed:
+            self.frozen22_gate_scale = FROZEN22_GATE_COMMITTED_FALLBACK_SCALE
+            self.frozen22_gate_source = "FALLBACK"
+            return FROZEN22_GATE_COMMITTED_FALLBACK_SCALE
+        self.frozen22_gate_scale = 0.0
+        self.frozen22_gate_source = "BLOCK"
+        return 0.0
 
     def _recompute_deadzone(self) -> None:
         span_x, span_y = self._span()
@@ -2851,7 +3042,7 @@ class HeadController:
                 self.current_world_rigid_fit = rfit
         policy = str(self.config.get("horizontal_algorithm", "classic"))
         estimate_pose = pose
-        if policy == "gesture_v153":
+        if policy in V153_POLICIES:
             estimate_pose = self._head_point_filter.apply(pose, HeadPoseEstimator._PNP_NAMES, now)
         estimate = self.estimator.estimate(estimate_pose, width, height, self.config["algorithm"])
         self.raw = estimate
@@ -2872,7 +3063,7 @@ class HeadController:
 
         span_x, span_y = self._span()
 
-        if self.calibrated and policy == "frozen22":
+        if self.calibrated and policy in FROZEN22_POLICIES:
             # The fixed-signature projection is already neutral-centred; do
             # not feed the unrelated sparse-PnP yaw into this policy.
             control_yaw = self.frozen22_yaw_median
@@ -2986,15 +3177,15 @@ class HeadController:
         # its personal PnP model; the classic policy keeps the raw scale.
         yaw_gain = (
             PERSONAL_PNP_YAW_GAIN
-            if (policy == "gesture_v153" and self.config["algorithm"] == "pnp" and self.personal_pnp_active)
+            if (policy in V153_POLICIES and self.config["algorithm"] == "pnp" and self.personal_pnp_active)
             else 1.0
         )
         frozen22_ready = bool(
-            policy == "frozen22"
+            policy in FROZEN22_POLICIES
             and self.frozen22_calibration_valid
             and math.isfinite(self.frozen22_yaw_median)
         )
-        if policy == "frozen22":
+        if policy in FROZEN22_POLICIES:
             raw_x = _clamp(
                 self.frozen22_yaw_median / max(FROZEN22_YAW_SPAN_DEG, 1e-6),
                 -1.0,
@@ -3008,7 +3199,7 @@ class HeadController:
         if self.config["invert_y"]:
             raw_y = -raw_y
 
-        if policy == "frozen22":
+        if policy in FROZEN22_POLICIES:
             intent_raw_x = _clamp(
                 control_yaw / max(FROZEN22_YAW_SPAN_DEG, 1e-6), -1.0, 1.0
             ) if frozen22_ready and math.isfinite(control_yaw) else 0.0
@@ -3031,7 +3222,7 @@ class HeadController:
                 vx = self._axis_curve(raw_x, "x")
             else:
                 self._axis_active_x = False
-        elif policy == "gesture_v153":
+        elif policy in V153_POLICIES:
             start_x = _clamp(max(self.effective_deadzone_x * 0.58, 0.055), 0.045, 0.18)
             self.personal_pnp_current_depth = getattr(self.estimator, "pnp_depth", math.nan)
             self.personal_pnp_far_depth_ratio = 1.0
@@ -3113,6 +3304,7 @@ class HeadController:
                 # The fixed 22-D source is already a separate, direction-fixed
                 # measurement.  Do not apply the PnP/multi-2D cross-axis gate.
                 self._cross_axis_lock.reset()
+                self.v188_pitch_guard_active = False
         pitch_intent = self._pitch_intent.step(
             raw_y, now,
             angle_threshold=PITCH_INTENT_ANGLE,
@@ -3138,7 +3330,14 @@ class HeadController:
         target_y = vy * float(self.config["sensitivity_y"])
         dt = _clamp(now - self._last_update, 0.0, 0.08) if self._last_update else 1.0 / 30.0
         self._last_update = now
-        self.output_x = self._slew(self.output_x, target_x, dt)
+        if policy == "gesture_v188":
+            self._base_output_x = self._slew(self._base_output_x, target_x, dt)
+            self.output_x = self._base_output_x * self._frozen22_uncertainty_scale(
+                self._base_output_x, now
+            )
+        else:
+            self._base_output_x = 0.0
+            self.output_x = self._slew(self.output_x, target_x, dt)
         self.output_y = self._slew(self.output_y, target_y, dt)
         return self.output_x / 100.0, self.output_y / 100.0
 
@@ -3161,7 +3360,7 @@ class HeadController:
             remaining = None
             quality = "等待校准（可说“开始校准”）"
         policy_name = str(self.config.get("horizontal_algorithm", "classic"))
-        if policy_name == "frozen22" and not self.calibrating:
+        if policy_name in FROZEN22_POLICIES and not self.calibrating:
             if self.frozen22_missing_points:
                 point_labels = {
                     "left_eye_inner": "左眼内侧",
@@ -3173,7 +3372,7 @@ class HeadController:
                 quality = "Frozen22 校准无效，请正视并保持稳定后重试"
         horizontal_calibrated = bool(
             self.calibrated
-            and (policy_name != "frozen22" or self.frozen22_calibration_valid)
+            and (policy_name not in FROZEN22_POLICIES or self.frozen22_calibration_valid)
         )
         if policy_name == "classic":
             yaw_latched = bool(self._yaw_intent.return_latched)
@@ -3187,7 +3386,8 @@ class HeadController:
             "horizontal_algorithm_version": horizontal_version,
             "available_horizontal_algorithms": list(HORIZONTAL_ALGORITHMS),
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
-            "frozen22_controls_mouse": bool(policy_name == "frozen22"),
+            "frozen22_controls_mouse": bool(policy_name in FROZEN22_POLICIES),
+            "v188_pitch_guard_active": bool(getattr(self, "v188_pitch_guard_active", False)),
             "horizontal_calibrated": horizontal_calibrated,
             "frozen22_calibration_valid": bool(self.frozen22_calibration_valid),
             "frozen22_missing_points": list(self.frozen22_missing_points),
@@ -3218,13 +3418,31 @@ class HeadController:
             "personal_pnp_active": bool(self.personal_pnp_active),
             "personal_pnp_template_quality": (
                 "active" if self.personal_pnp_active
-                else "unavailable" if policy_name != "gesture_v153"
+                else "unavailable" if policy_name not in V153_POLICIES
                 else "rejected" if self.personal_pnp_rejection_reason not in {"", "未尝试", "校准数据检查中", "未启用个人模型"}
                 else "unavailable"
             ),
             "personal_pnp_rejection_reason": (
                 self.personal_pnp_rejection_reason or None
-            ) if policy_name == "gesture_v153" else None,
+            ) if policy_name in V153_POLICIES else None,
+            "frozen22_gate_source": self.frozen22_gate_source,
+            "frozen22_gate_scale": round(float(self.frozen22_gate_scale), 5),
+            "frozen22_gate_fast_delta_deg": (
+                round(float(self.frozen22_gate_fast_delta_deg), 5)
+                if math.isfinite(self.frozen22_gate_fast_delta_deg) else None
+            ),
+            "frozen22_gate_slow_delta_deg": (
+                round(float(self.frozen22_gate_slow_delta_deg), 5)
+                if math.isfinite(self.frozen22_gate_slow_delta_deg) else None
+            ),
+            "frozen22_gate_slow_world_delta_deg": (
+                round(float(self.frozen22_gate_slow_world_delta_deg), 5)
+                if math.isfinite(self.frozen22_gate_slow_world_delta_deg) else None
+            ),
+            "frozen22_gate_pitch_delta_deg": (
+                round(float(self.frozen22_gate_pitch_delta_deg), 5)
+                if math.isfinite(self.frozen22_gate_pitch_delta_deg) else None
+            ),
             "personal_pnp_yaw_gain": PERSONAL_PNP_YAW_GAIN if self.personal_pnp_active else 1.0,
             "personal_pnp_valid_samples": int(self.personal_pnp_valid_samples),
             "personal_pnp_median_reprojection": (
