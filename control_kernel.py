@@ -139,6 +139,9 @@ class ControlKernel:
             # gate; later starts load that fixed gate without auto-rematching.
             "enabled": True, "gate_zone_id": "lookGate", "point": "right_wrist",
             "source": "hand", "verticalLookSource": "hand",
+            # Optional axis exclusivity: entering the left-hand gate may pause
+            # horizontal head output while vertical view control is active.
+            "exclusive_axes": False,
             "center_x": 0.5, "center_y": 0.5, "range_y": 0.18, "deadzone": 0.10,
         }
         self.vertical_gate_active = False
@@ -177,7 +180,10 @@ class ControlKernel:
         self.motion_active: set[str] = set()
         self.motion_debounce = {
             key: {"active": False, "on": 0, "off": 0}
-            for key in ("march", "calf_back", "squat", "hands_up")
+            for key in (
+                "march", "calf_back", "squat", "hands_up",
+                "jumping_jack", "side_step_jack", "cross_knee_elbow",
+            )
         }
         self.step = {"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0}
         self.last_motion_emit = 0.0
@@ -190,7 +196,7 @@ class ControlKernel:
         self.pose_confidence: dict[str, float] = {}
         self.pose_debounce = {
             key: {"active": False, "on": 0, "off": 0}
-            for key in ("hands_cross", "right_leg_cross_left", "left_leg_cross_right")
+            for key in ("hands_cross",)
         }
 
         # Head control is intentionally isolated from body actions.  The clean
@@ -305,7 +311,8 @@ class ControlKernel:
 
     def configure_head(self, *, algorithm=None, deadzone=None, sensitivity_x=None,
                        sensitivity_y=None, enabled=None, invert_x=None, invert_y=None,
-                       horizontal_algorithm=None, vertical_look_source=None) -> dict:
+                       horizontal_algorithm=None, vertical_look_source=None,
+                       vertical_exclusive=None) -> dict:
         with self._lock:
             self.head_controller.configure(
                 algorithm=algorithm,
@@ -328,6 +335,8 @@ class ControlKernel:
                 self.vertical_look["source"] = source
                 self.vertical_look["verticalLookSource"] = source
                 self._reset_vertical_head_locked()
+            if vertical_exclusive is not None:
+                self.vertical_look["exclusive_axes"] = bool(vertical_exclusive)
             self.head = self.head_controller.status(time.monotonic())
             return self.status_locked(time.monotonic())
 
@@ -352,6 +361,7 @@ class ControlKernel:
                     "point": str(vertical.get("point", "right_wrist")),
                     "source": source,
                     "verticalLookSource": source,
+                    "exclusive_axes": bool(vertical.get("exclusive_axes", self.vertical_look.get("exclusive_axes", False))),
                     "center_x": _clamp(vertical.get("center_x", 0.5), 0.0, 1.0),
                     "center_y": _clamp(vertical.get("center_y", 0.5), 0.0, 1.0),
                     "range_y": _clamp(vertical.get("range_y", 0.18), 0.05, 0.45),
@@ -687,6 +697,7 @@ class ControlKernel:
         hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"]) if self._points_good(pose_map, ("left_hip", "right_hip")) else None
         torso = max(0.025, abs(hip["y"] - shoulder["y"])) if shoulder and hip else math.nan
         hands_raw = squat_raw = calf_raw = march_raw = False
+        jumping_jack_raw = side_step_jack_raw = cross_knee_elbow_raw = False
         if math.isfinite(torso) and self._points_good(pose_map, ("nose", "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist")):
             hands_raw = (
                 pose_map["left_wrist"]["y"] < pose_map["nose"]["y"] - 0.06 * torso
@@ -717,13 +728,73 @@ class ControlKernel:
             if now - self.step["last_at"] > 1.20:
                 self.step["last_side"], self.step["active_until"] = "", 0.0
             march_raw = not squat_raw and not calf_raw and now < self.step["active_until"]
+
+            # Wider, body-relative poses are intentionally detected from a
+            # small group of joints instead of one fragile wrist/ankle point.
+            # The state becomes a normal configurable trigger below; game
+            # profiles decide whether it is unused, held or tapped.
+            upper_good = self._points_good(
+                pose_map,
+                ("left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist"),
+                0.38,
+            )
+            if upper_good:
+                ls, rs = pose_map["left_shoulder"], pose_map["right_shoulder"]
+                lh, rh = pose_map["left_hip"], pose_map["right_hip"]
+                la, ra = pose_map["left_ankle"], pose_map["right_ankle"]
+                lw, rw = pose_map["left_wrist"], pose_map["right_wrist"]
+                left_ankle_lat = self._lateral_coordinate(la, ls, rs)
+                right_ankle_lat = self._lateral_coordinate(ra, ls, rs)
+                foot_span = right_ankle_lat - left_ankle_lat
+                left_wrist_lat = self._lateral_coordinate(lw, ls, rs)
+                right_wrist_lat = self._lateral_coordinate(rw, ls, rs)
+                wrist_span = right_wrist_lat - left_wrist_lat
+                feet_wide = foot_span > 1.42
+                arms_overhead = (
+                    float(lw["y"]) < float(ls["y"]) - 0.28 * torso
+                    and float(rw["y"]) < float(rs["y"]) - 0.28 * torso
+                )
+                arms_sideways = (
+                    wrist_span > 1.72
+                    and max(float(lw["y"]), float(rw["y"])) < float(hip["y"]) - 0.08 * torso
+                    and min(float(lw["y"]), float(rw["y"])) > float(shoulder["y"]) - 0.48 * torso
+                )
+                jumping_jack_raw = feet_wide and arms_overhead
+                side_step_jack_raw = feet_wide and arms_sideways and not jumping_jack_raw
+
         else:
             self.step.update({"left_was": False, "right_was": False, "active_until": 0.0})
+
+        # This action deliberately does not depend on either wrist or ankle.
+        # During exercise both are commonly occluded, while the semantic event
+        # is still observable from the raised knee and the opposite elbow.
+        elbow_knee_good = math.isfinite(torso) and self._points_good(
+            pose_map,
+            ("left_hip", "right_hip", "left_elbow", "right_elbow", "left_knee", "right_knee"),
+            0.36,
+        )
+        if elbow_knee_good:
+            def body_distance(a: dict, b: dict) -> float:
+                dx = (float(a["x"]) - float(b["x"])) * self.width
+                dy = (float(a["y"]) - float(b["y"])) * self.height
+                return math.hypot(dx, dy) / max(1e-6, torso * self.height)
+
+            lh, rh = pose_map["left_hip"], pose_map["right_hip"]
+            left_knee_raised = float(pose_map["left_knee"]["y"]) < float(lh["y"]) + 0.58 * torso
+            right_knee_raised = float(pose_map["right_knee"]["y"]) < float(rh["y"]) + 0.58 * torso
+            cross_knee_elbow_raw = (
+                left_knee_raised and body_distance(pose_map["left_knee"], pose_map["right_elbow"]) < 0.72
+            ) or (
+                right_knee_raised and body_distance(pose_map["right_knee"], pose_map["left_elbow"]) < 0.72
+            )
         active = set()
         if self._set_motion_debounced("march", march_raw, 1, 2): active.add("march")
         if self._set_motion_debounced("calf_back", calf_raw, 3, 4): active.add("calf_back")
         if self._set_motion_debounced("squat", squat_raw, 3, 4): active.add("squat")
         if self._set_motion_debounced("hands_up", hands_raw, 3, 4): active.add("hands_up")
+        if self._set_motion_debounced("jumping_jack", jumping_jack_raw, 2, 3): active.add("jumping_jack")
+        if self._set_motion_debounced("side_step_jack", side_step_jack_raw, 2, 3): active.add("side_step_jack")
+        if self._set_motion_debounced("cross_knee_elbow", cross_knee_elbow_raw, 2, 3): active.add("cross_knee_elbow")
         changed = active != self.motion_active
         self.motion_active = active
         if changed:
@@ -756,7 +827,7 @@ class ControlKernel:
 
     def _update_cross_poses_locked(self, pose_map: dict[str, dict], now: float) -> None:
         active: set[str] = set()
-        confidence = {"hands_cross": 0.0, "right_leg_cross_left": 0.0, "left_leg_cross_right": 0.0}
+        confidence = {"hands_cross": 0.0}
 
         torso_good = self._points_good(pose_map, ("left_shoulder", "right_shoulder", "left_hip", "right_hip"), 0.45)
         if torso_good:
@@ -801,39 +872,8 @@ class ControlKernel:
                 cross_depth = max(0.0, min(1.0, (left_lat - right_lat - 0.07) / 0.52))
                 confidence["hands_cross"] = round(0.58 + 0.38 * cross_depth, 3) if hands_raw else round(0.30 * cross_depth, 3)
 
-            # Leg crossing is driven by hip/knee/ankle geometry. Shoulder/pelvis
-            # side shift only contributes a small confidence bonus and is never a
-            # mandatory condition, matching the product requirement.
-            legs_good = self._points_good(pose_map, ("left_knee", "right_knee", "left_ankle", "right_ankle"), 0.46)
-            right_cross_raw = left_cross_raw = False
-            if legs_good:
-                lk, rk = pose_map["left_knee"], pose_map["right_knee"]
-                la, ra = pose_map["left_ankle"], pose_map["right_ankle"]
-                lk_lat = self._lateral_coordinate(lk, lh, rh)
-                rk_lat = self._lateral_coordinate(rk, lh, rh)
-                la_lat = self._lateral_coordinate(la, lh, rh)
-                ra_lat = self._lateral_coordinate(ra, lh, rh)
-                # The crossing ankle is usually visibly lifted while its knee
-                # remains near the original side. Do not require the knee to
-                # cross the centre too; that caused misses in the supplied video.
-                right_lifted = float(ra["y"]) < float(la["y"]) - 0.055 * torso
-                left_lifted = float(la["y"]) < float(ra["y"]) - 0.055 * torso
-                right_cross_raw = ra_lat < -0.035 and rk_lat < 0.34 and right_lifted
-                left_cross_raw = la_lat > 0.035 and lk_lat > -0.34 and left_lifted
-                hip_span = max(1e-5, abs(float(rh["x"]) - float(lh["x"])))
-                side_sign = 1.0 if float(rh["x"]) >= float(lh["x"]) else -1.0
-                shoulder_vs_hip = ((float(shoulder_mid["x"]) - float(hip_mid["x"])) * side_sign) / hip_span
-                right_depth = max(0.0, min(1.0, (-ra_lat - 0.035) / 0.58))
-                left_depth = max(0.0, min(1.0, (la_lat - 0.035) / 0.58))
-                confidence["right_leg_cross_left"] = round(min(1.0, (0.62 if right_cross_raw else 0.20) + 0.30 * right_depth + 0.08 * max(0.0, -shoulder_vs_hip)), 3)
-                confidence["left_leg_cross_right"] = round(min(1.0, (0.62 if left_cross_raw else 0.20) + 0.30 * left_depth + 0.08 * max(0.0, shoulder_vs_hip)), 3)
-
             if self._set_pose_debounced("hands_cross", hands_raw):
                 active.add("hands_cross")
-            if self._set_pose_debounced("right_leg_cross_left", right_cross_raw):
-                active.add("right_leg_cross_left")
-            if self._set_pose_debounced("left_leg_cross_right", left_cross_raw):
-                active.add("left_leg_cross_right")
         else:
             for ident in self.pose_debounce:
                 self._set_pose_debounced(ident, False)
@@ -980,6 +1020,9 @@ class ControlKernel:
 
         if not self.vertical_gate_active:
             self._reset_vertical_head_locked()
+        horizontal_paused = bool(self.vertical_gate_active and self.vertical_look.get("exclusive_axes", False))
+        if horizontal_paused:
+            x = 0.0
         self.vertical_wrist_norm = _clamp(y, -1.0, 1.0)
         self.head["normalized_x"] = round(float(x), 4)
         self.head["output_x"] = round(float(x), 3)
@@ -987,6 +1030,7 @@ class ControlKernel:
         self.head["output_y"] = round(float(y), 3)
         self.head["vertical_look_source"] = source
         self.head["verticalLookSource"] = source
+        self.head["horizontal_paused_by_vertical_gate"] = horizontal_paused
         self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
         self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)
         self.head["vertical_pitch_velocity"] = round(float(self.vertical_pitch_velocity), 4)
@@ -1070,6 +1114,11 @@ class ControlKernel:
         self.head["vertical_look_source"] = source
         self.head["verticalLookSource"] = source
         self.head["vertical_gate_active"] = bool(self.vertical_gate_active)
+        horizontal_paused = bool(self.vertical_gate_active and self.vertical_look.get("exclusive_axes", False))
+        self.head["horizontal_paused_by_vertical_gate"] = horizontal_paused
+        if horizontal_paused:
+            self.head["normalized_x"] = 0.0
+            self.head["output_x"] = 0.0
         self.head["vertical_wrist_norm"] = round(float(self.vertical_wrist_norm), 4)
         self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
         self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)

@@ -309,6 +309,9 @@ class VoiceService:
             for mapping in self.mappings:
                 commands = [mapping["phrase"], *mapping.get("synonyms", [])]
                 phrases.extend(f"{self.wake_word}{command}" for command in commands)
+            # The user-facing command catalog is canonical. Legacy mappings
+            # remain aliases, but they are no longer a separate behavior path.
+            phrases.extend(command.get("phrase", "") for command in self.command_registry.values())
             self.recognizer = VoskCommandRecognizer(self.model_path, phrases, self.sample_rate)
             self.recognizer_mode = self.recognizer.mode
             self.supported_count = len(self.recognizer.supported)
@@ -535,6 +538,14 @@ class VoiceService:
             else:
                 self.wake_until = 0.0
                 return {"matched": False, "reason": "wake_word_required"}
+        # Resolve the canonical catalog first so the current Game Profile is
+        # honored for both computer audio and phone voice_text.
+        registry_command = self.command_registry.get(got)
+        if registry_command is None and wake:
+            registry_command = self.command_registry.get(compact_text(f"{self.wake_word}{command}"))
+        if registry_command is not None:
+            return self._execute_command_action(registry_command, source_id=source_id)
+
         match = None
         for mapping in self.mappings:
             phrases = [mapping["phrase"], *mapping.get("synonyms", [])]

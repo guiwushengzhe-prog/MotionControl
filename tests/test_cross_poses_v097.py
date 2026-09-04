@@ -40,15 +40,37 @@ def test_hands_cross_is_mirror_invariant_and_debounced():
     finally:k.close()
 
 
-def test_leg_cross_uses_leg_geometry_without_shoulders_shift_requirement():
+def test_leg_cross_actions_are_removed():
     out=Output(); k=ControlKernel(out)
     try:
         p=base_pose(); p["right_knee"]=pt(.49,.82); p["right_ankle"]=pt(.42,.90)
         update_twice(k,p)
-        assert "right_leg_cross_left" in k.pose_active
-        p=base_pose(); p["left_knee"]=pt(.51,.82); p["left_ankle"]=pt(.58,.90)
-        for ident in k.pose_debounce:k.pose_debounce[ident]={"on":0,"off":0,"active":False}
-        update_twice(k,p); assert "left_leg_cross_right" in k.pose_active
+        assert k.pose_active == set()
+        assert set(k.pose_debounce) == {"hands_cross"}
+        assert set(k.pose_confidence) == {"hands_cross"}
+    finally:k.close()
+
+
+def test_new_body_actions_are_detected_as_configurable_motion_triggers():
+    out=Output(); k=ControlKernel(out)
+    try:
+        jumping=base_pose()
+        jumping.update({"left_wrist":pt(.20,.25),"right_wrist":pt(.80,.25),"left_ankle":pt(.25,.95),"right_ankle":pt(.75,.95)})
+        k._update_motion_locked(jumping,0.0); k._update_motion_locked(jumping,.03)
+        assert "jumping_jack" in k.motion_active
+
+        for state in k.motion_debounce.values(): state.update({"on":0,"off":0,"active":False})
+        side=base_pose()
+        side.update({"left_wrist":pt(.20,.47),"right_wrist":pt(.80,.47),"left_ankle":pt(.25,.95),"right_ankle":pt(.75,.95)})
+        k._update_motion_locked(side,.06); k._update_motion_locked(side,.09)
+        assert "side_step_jack" in k.motion_active
+
+        for state in k.motion_debounce.values(): state.update({"on":0,"off":0,"active":False})
+        cross=base_pose(); cross["left_knee"]=pt(.64,.57)
+        # Wrist visibility is irrelevant to the knee-to-opposite-elbow event.
+        cross["left_wrist"]["score"]=0.0; cross["right_wrist"]["score"]=0.0
+        k._update_motion_locked(cross,.12); k._update_motion_locked(cross,.15)
+        assert "cross_knee_elbow" in k.motion_active
     finally:k.close()
 
 
