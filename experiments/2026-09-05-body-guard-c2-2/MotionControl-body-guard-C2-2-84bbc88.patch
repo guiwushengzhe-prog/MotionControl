@@ -1,0 +1,90 @@
+From 84bbc880b30f65ee84b2045ffd31a5c9ac16eacf Mon Sep 17 00:00:00 2001
+From: MotionControl Sandbox <motioncontrol-sandbox@local>
+Date: Sat, 5 Sep 2026 07:16:47 +0000
+Subject: [PATCH] fix: bridge transient body evidence across head-output lag
+
+---
+ control_kernel.py                    |  9 ++++++++-
+ tests/test_body_motion_head_guard.py | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+), 1 deletion(-)
+
+diff --git a/control_kernel.py b/control_kernel.py
+index 0fcb826..7ffc287 100644
+--- a/control_kernel.py
++++ b/control_kernel.py
+@@ -205,6 +205,7 @@ class ControlKernel:
+         self.body_motion_guard_previous: dict[str, tuple[float, float]] = {}
+         self.body_motion_guard_previous_centers: tuple[float, float] | None = None
+         self.body_motion_guard_early_evidence = False
++        self.body_motion_guard_early_until = 0.0
+         self.body_motion_guard_last_at = 0.0
+         self.body_motion_guard_hold_until = 0.0
+         self.body_motion_guard_settle_frames = 0
+@@ -561,6 +562,7 @@ class ControlKernel:
+         self.body_motion_guard_previous = {}
+         self.body_motion_guard_previous_centers = None
+         self.body_motion_guard_early_evidence = False
++        self.body_motion_guard_early_until = 0.0
+         self.body_motion_guard_last_at = 0.0
+         self.body_motion_guard_hold_until = 0.0
+         self.body_motion_guard_settle_frames = 0
+@@ -638,6 +640,11 @@ class ControlKernel:
+         # validated C1 raw/EMA/action evidence, preventing repeated early
+         # triggers from stretching guard occupancy across a whole exercise.
+         self.body_motion_guard_early_evidence = bool(early_limb_onset or vertical_body_onset)
++        if self.body_motion_guard_early_evidence:
++            # Bridge the estimator/output phase lag without granting early
++            # evidence ownership of the persistent guard lifecycle. 67 ms is
++            # roughly two 30 FPS frames and remains time-based at other FPS.
++            self.body_motion_guard_early_until = max(self.body_motion_guard_early_until, now + 0.067)
+         if (
+             raw_onset
+             or self.body_motion_guard_score >= 2.50
+@@ -654,7 +661,7 @@ class ControlKernel:
+         if not self.body_motion_guard_enabled:
+             return float(x)
+         if not self.body_motion_guard_active:
+-            return 0.0 if self.body_motion_guard_early_evidence else float(x)
++            return 0.0 if now <= self.body_motion_guard_early_until else float(x)
+         if now < self.body_motion_guard_hold_until or self.body_motion_guard_score >= 1.625:
+             self.body_motion_guard_settle_frames = 0
+         elif abs(float(x)) <= 0.01:
+diff --git a/tests/test_body_motion_head_guard.py b/tests/test_body_motion_head_guard.py
+index f564a86..8c39251 100644
+--- a/tests/test_body_motion_head_guard.py
++++ b/tests/test_body_motion_head_guard.py
+@@ -274,3 +274,32 @@ def test_coherent_horizontal_body_translation_does_not_use_vertical_path(tmp_pat
+         assert kernel.body_motion_guard_active is False
+     finally:
+         kernel.close()
++
++
++def test_early_evidence_bridges_short_output_lag_without_persistent_guard(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        moved = pose()
++        moved["left_wrist"]["x"] += 0.035
++        moved["left_elbow"]["x"] += 0.020
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(moved, now)
++        assert kernel.body_motion_guard_active is False
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
++
++        # Evidence can disappear on the next frame while the short output-only
++        # bridge still suppresses delayed head jitter.
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(moved, now)
++        assert kernel.body_motion_guard_early_evidence is False
++        assert kernel.body_motion_guard_active is False
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
++
++        now += 0.07
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
++        assert kernel.body_motion_guard_active is False
++    finally:
++        kernel.close()
+-- 
+2.47.3
