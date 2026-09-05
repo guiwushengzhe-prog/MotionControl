@@ -1,0 +1,265 @@
+From 527604e465c48c0dd977c934bff32730bb4ce731 Mon Sep 17 00:00:00 2001
+From: MotionControl Sandbox <motioncontrol-sandbox@local>
+Date: Sat, 5 Sep 2026 09:02:36 +0000
+Subject: [PATCH] fix: time-normalize body-guard action risk
+
+---
+ control_kernel.py                    |  63 ++++++++++++++-
+ tests/test_body_motion_head_guard.py | 117 ++++++++++++++++++++++++++-
+ 2 files changed, 177 insertions(+), 3 deletions(-)
+
+diff --git a/control_kernel.py b/control_kernel.py
+index 5a97c93..e4d06d0 100644
+--- a/control_kernel.py
++++ b/control_kernel.py
+@@ -67,6 +67,18 @@ BODY_MOTION_GUARD_POINTS = (
+ BODY_MOTION_CHAIN_CONFIRM_S = 0.030
+ BODY_MOTION_STRONG_BURST_CONFIRM_S = 0.095
+ BODY_MOTION_SETTLE_S = 0.060
++# Body-guard-only mirror of the existing action debounce semantics at 30 FPS.
++# This does not alter motion_active or any game/action trigger; it only prevents
++# the body guard from inheriting frame-rate-dependent activation times.
++BODY_MOTION_ACTION_RISK_TIMING = {
++    "march": (0.000, 0.030),
++    "calf_back": (0.060, 0.095),
++    "squat": (0.060, 0.095),
++    "hands_up": (0.060, 0.095),
++    "jumping_jack": (0.030, 0.060),
++    "side_step_jack": (0.030, 0.060),
++    "cross_knee_elbow": (0.030, 0.060),
++}
+ 
+ 
+ def _clamp(value: float, low: float, high: float) -> float:
+@@ -200,6 +212,14 @@ class ControlKernel:
+                 "jumping_jack", "side_step_jack", "cross_knee_elbow",
+             )
+         }
++        self.body_motion_action_risk: set[str] = set()
++        self.body_motion_action_risk_debounce = {
++            key: {"active": False, "on_since": 0.0, "off_since": 0.0}
++            for key in (
++                "march", "calf_back", "squat", "hands_up",
++                "jumping_jack", "side_step_jack", "cross_knee_elbow",
++            )
++        }
+         self.step = {"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0}
+         self.last_motion_emit = 0.0
+ 
+@@ -784,7 +804,7 @@ class ControlKernel:
+         if (
+             raw_onset
+             or self.body_motion_guard_score >= 2.50
+-            or bool(self.motion_active)
++            or bool(self.body_motion_action_risk)
+         ):
+             self.body_motion_guard_active = True
+             self.body_motion_guard_hold_until = now + 0.10
+@@ -1003,6 +1023,28 @@ class ControlKernel:
+                 state["active"] = False
+         return bool(state["active"])
+ 
++    def _set_body_motion_action_risk_timed(
++        self, ident: str, raw: bool, now: float, on_s: float, off_s: float
++    ) -> bool:
++        state = self.body_motion_action_risk_debounce[ident]
++        if raw:
++            state["off_since"] = 0.0
++            if not state["active"]:
++                if state["on_since"] <= 0.0:
++                    state["on_since"] = now
++                if now - state["on_since"] >= on_s:
++                    state["active"] = True
++        else:
++            state["on_since"] = 0.0
++            if state["active"]:
++                if state["off_since"] <= 0.0:
++                    state["off_since"] = now
++                if now - state["off_since"] >= off_s:
++                    state["active"] = False
++            else:
++                state["off_since"] = 0.0
++        return bool(state["active"])
++
+     def _update_motion_locked(self, pose_map: dict[str, dict], now: float) -> None:
+         shoulder = _midpoint(pose_map["left_shoulder"], pose_map["right_shoulder"]) if self._points_good(pose_map, ("left_shoulder", "right_shoulder")) else None
+         hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"]) if self._points_good(pose_map, ("left_hip", "right_hip")) else None
+@@ -1098,6 +1140,22 @@ class ControlKernel:
+             ) or (
+                 right_knee_raised and body_distance(pose_map["right_knee"], pose_map["left_elbow"]) < 0.72
+             )
++        raw_motion = {
++            "march": march_raw,
++            "calf_back": calf_raw,
++            "squat": squat_raw,
++            "hands_up": hands_raw,
++            "jumping_jack": jumping_jack_raw,
++            "side_step_jack": side_step_jack_raw,
++            "cross_knee_elbow": cross_knee_elbow_raw,
++        }
++        risk = set()
++        for ident, raw in raw_motion.items():
++            on_s, off_s = BODY_MOTION_ACTION_RISK_TIMING[ident]
++            if self._set_body_motion_action_risk_timed(ident, raw, now, on_s, off_s):
++                risk.add(ident)
++        self.body_motion_action_risk = risk
++
+         active = set()
+         if self._set_motion_debounced("march", march_raw, 1, 2): active.add("march")
+         if self._set_motion_debounced("calf_back", calf_raw, 3, 4): active.add("calf_back")
+@@ -1379,6 +1437,9 @@ class ControlKernel:
+         self.motion_active.clear()
+         for state in self.motion_debounce.values():
+             state.update({"active": False, "on": 0, "off": 0})
++        self.body_motion_action_risk.clear()
++        for state in self.body_motion_action_risk_debounce.values():
++            state.update({"active": False, "on_since": 0.0, "off_since": 0.0})
+         self.pose_active.clear()
+         self.pose_confidence = {}
+         for state in self.pose_debounce.values():
+diff --git a/tests/test_body_motion_head_guard.py b/tests/test_body_motion_head_guard.py
+index aef17b7..7ae40ff 100644
+--- a/tests/test_body_motion_head_guard.py
++++ b/tests/test_body_motion_head_guard.py
+@@ -161,13 +161,13 @@ def test_raw_fast_path_requires_eight_common_velocity_points(tmp_path, monkeypat
+         kernel.close()
+ 
+ 
+-def test_motion_active_still_starts_guard_without_raw_fast_path(tmp_path, monkeypatch):
++def test_body_motion_action_risk_starts_guard_without_raw_fast_path(tmp_path, monkeypatch):
+     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+     kernel = ControlKernel(Output())
+     try:
+         now = 10.0
+         kernel._update_body_motion_guard_locked(pose(), now)
+-        kernel.motion_active.add("squat")
++        kernel.body_motion_action_risk.add("squat")
+         now += 1 / 30
+         kernel._update_body_motion_guard_locked(pose(), now)
+         assert kernel.body_motion_guard_raw < 2.50
+@@ -176,6 +176,22 @@ def test_motion_active_still_starts_guard_without_raw_fast_path(tmp_path, monkey
+         kernel.close()
+ 
+ 
++def test_motion_active_alone_no_longer_starts_body_guard(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        kernel.motion_active.add("squat")
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(pose(), now)
++        assert kernel.body_motion_guard_raw < 2.50
++        assert kernel.body_motion_action_risk == set()
++        assert kernel.body_motion_guard_active is False
++    finally:
++        kernel.close()
++
++
+ def test_raw_fast_path_does_not_keep_renewing_hold_while_already_active(tmp_path, monkeypatch):
+     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+     kernel = ControlKernel(Output())
+@@ -625,3 +641,100 @@ def test_guard_recovery_settle_uses_time_not_three_frames(tmp_path, monkeypatch)
+             assert 0.060 - 1e-6 <= elapsed <= 0.101
+         finally:
+             kernel.close()
++
++
++def _sample_action_risk_transition(kernel, ident, fps, on_s, off_s, activating=True):
++    state = kernel.body_motion_action_risk_debounce[ident]
++    if not activating:
++        state.update({"active": True, "on_since": 0.0, "off_since": 0.0})
++    start = 20.0
++    first = None
++    for frame in range(1, 20):
++        now = start + frame / float(fps)
++        if first is None:
++            first = now
++        active = kernel._set_body_motion_action_risk_timed(
++            ident, activating, now, on_s, off_s
++        )
++        if activating and active:
++            return now - first
++        if not activating and not active:
++            return now - first
++    raise AssertionError(f"action risk did not transition: {ident} {fps} FPS")
++
++
++def test_action_risk_preserves_30fps_motion_debounce_semantics(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    cases = (
++        ("march", 1, 2, 0.000, 0.030),
++        ("squat", 3, 4, 0.060, 0.095),
++        ("cross_knee_elbow", 2, 3, 0.030, 0.060),
++    )
++    for ident, on_frames, off_frames, on_s, off_s in cases:
++        old = ControlKernel(Output())
++        timed = ControlKernel(Output())
++        try:
++            start = 30.0
++            old_on = timed_on = None
++            for frame in range(1, 10):
++                now = start + frame / 30.0
++                if old._set_motion_debounced(ident, True, on_frames, off_frames) and old_on is None:
++                    old_on = frame
++                if timed._set_body_motion_action_risk_timed(ident, True, now, on_s, off_s) and timed_on is None:
++                    timed_on = frame
++            assert timed_on == old_on
++
++            old.motion_debounce[ident].update({"active": True, "on": 0, "off": 0})
++            timed.body_motion_action_risk_debounce[ident].update(
++                {"active": True, "on_since": 0.0, "off_since": 0.0}
++            )
++            old_off = timed_off = None
++            for frame in range(1, 10):
++                now = start + 1.0 + frame / 30.0
++                if not old._set_motion_debounced(ident, False, on_frames, off_frames) and old_off is None:
++                    old_off = frame
++                if not timed._set_body_motion_action_risk_timed(ident, False, now, on_s, off_s) and timed_off is None:
++                    timed_off = frame
++            assert timed_off == old_off
++        finally:
++            old.close()
++            timed.close()
++
++
++def test_action_risk_time_semantics_do_not_shrink_at_high_fps(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    for fps in (20, 30, 45, 60):
++        kernel = ControlKernel(Output())
++        try:
++            on_delay = _sample_action_risk_transition(
++                kernel, "squat", fps, 0.060, 0.095, activating=True
++            )
++            assert 0.060 - 1e-6 <= on_delay <= 0.101
++        finally:
++            kernel.close()
++
++        kernel = ControlKernel(Output())
++        try:
++            off_delay = _sample_action_risk_transition(
++                kernel, "squat", fps, 0.060, 0.095, activating=False
++            )
++            assert 0.095 - 1e-6 <= off_delay <= 0.151
++        finally:
++            kernel.close()
++
++
++def test_clear_body_resets_action_risk_state(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        kernel.body_motion_action_risk.add("squat")
++        kernel.body_motion_action_risk_debounce["squat"].update(
++            {"active": True, "on_since": 10.0, "off_since": 11.0}
++        )
++        kernel._clear_body_outputs_locked()
++        assert kernel.body_motion_action_risk == set()
++        assert kernel.body_motion_action_risk_debounce["squat"] == {
++            "active": False, "on_since": 0.0, "off_since": 0.0
++        }
++    finally:
++        kernel.close()
+-- 
+2.47.3
