@@ -1,0 +1,294 @@
+From 34bc7e8fee0c9cb5d7c3b66d881840ce244bc5d3 Mon Sep 17 00:00:00 2001
+From: MotionControl Sandbox <motioncontrol-sandbox@local>
+Date: Sat, 5 Sep 2026 08:51:03 +0000
+Subject: [PATCH] fix: make body-guard timing frame-rate invariant
+
+---
+ control_kernel.py                    |  64 +++++++++++++--
+ tests/test_body_motion_head_guard.py | 114 +++++++++++++++++++++++++++
+ 2 files changed, 171 insertions(+), 7 deletions(-)
+
+diff --git a/control_kernel.py b/control_kernel.py
+index 424a3eb..5a97c93 100644
+--- a/control_kernel.py
++++ b/control_kernel.py
+@@ -60,6 +60,14 @@ BODY_MOTION_GUARD_POINTS = (
+     "left_knee", "right_knee", "left_ankle", "right_ankle",
+ )
+ 
++# Body-guard temporal semantics are expressed in seconds, not frame counts.
++# The values preserve the promoted 30 FPS behavior while avoiding materially
++# earlier confirmation/recovery at 45/60 FPS. Sampling still quantizes the
++# observed transition time, especially at 20 FPS.
++BODY_MOTION_CHAIN_CONFIRM_S = 0.030
++BODY_MOTION_STRONG_BURST_CONFIRM_S = 0.095
++BODY_MOTION_SETTLE_S = 0.060
++
+ 
+ def _clamp(value: float, low: float, high: float) -> float:
+     return max(low, min(high, float(value)))
+@@ -207,17 +215,26 @@ class ControlKernel:
+         self.body_motion_guard_early_evidence = False
+         self.body_motion_guard_early_until = 0.0
+         self.body_motion_guard_early_run = 0
++        self.body_motion_guard_early_started_at = 0.0
++        self.body_motion_guard_early_last_at = 0.0
+         self.body_motion_guard_postburst_budget = 0
+         self.body_motion_guard_postburst_until = 0.0
+         self.body_motion_guard_distal_runs = {
+             "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+         }
++        self.body_motion_guard_distal_since = {
++            "left_arm": 0.0, "right_arm": 0.0, "left_leg": 0.0, "right_leg": 0.0
++        }
+         self.body_motion_guard_segment_runs = {
+             "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+         }
++        self.body_motion_guard_segment_since = {
++            "left_arm": 0.0, "right_arm": 0.0, "left_leg": 0.0, "right_leg": 0.0
++        }
+         self.body_motion_guard_last_at = 0.0
+         self.body_motion_guard_hold_until = 0.0
+         self.body_motion_guard_settle_frames = 0
++        self.body_motion_guard_settle_started_at = 0.0
+ 
+         # v0.9.7 unified trigger -> output layer. Profile bindings are stored
+         # independently from recognition so changing games never changes pose rules.
+@@ -573,17 +590,26 @@ class ControlKernel:
+         self.body_motion_guard_early_evidence = False
+         self.body_motion_guard_early_until = 0.0
+         self.body_motion_guard_early_run = 0
++        self.body_motion_guard_early_started_at = 0.0
++        self.body_motion_guard_early_last_at = 0.0
+         self.body_motion_guard_postburst_budget = 0
+         self.body_motion_guard_postburst_until = 0.0
+         self.body_motion_guard_distal_runs = {
+             "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+         }
++        self.body_motion_guard_distal_since = {
++            "left_arm": 0.0, "right_arm": 0.0, "left_leg": 0.0, "right_leg": 0.0
++        }
+         self.body_motion_guard_segment_runs = {
+             "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+         }
++        self.body_motion_guard_segment_since = {
++            "left_arm": 0.0, "right_arm": 0.0, "left_leg": 0.0, "right_leg": 0.0
++        }
+         self.body_motion_guard_last_at = 0.0
+         self.body_motion_guard_hold_until = 0.0
+         self.body_motion_guard_settle_frames = 0
++        self.body_motion_guard_settle_started_at = 0.0
+ 
+     def _update_body_motion_guard_locked(self, pose_map: dict[str, dict], now: float) -> None:
+         """Measure exercise motion without modifying the selected head algorithm."""
+@@ -683,8 +709,13 @@ class ControlKernel:
+             self.body_motion_guard_distal_runs[chain_name] = (
+                 self.body_motion_guard_distal_runs.get(chain_name, 0) + 1 if supported else 0
+             )
+-            if self.body_motion_guard_distal_runs[chain_name] >= 2:
+-                distal_chain_onset = True
++            if supported:
++                if self.body_motion_guard_distal_since.get(chain_name, 0.0) <= 0.0:
++                    self.body_motion_guard_distal_since[chain_name] = now
++                if now - self.body_motion_guard_distal_since[chain_name] >= BODY_MOTION_CHAIN_CONFIRM_S:
++                    distal_chain_onset = True
++            else:
++                self.body_motion_guard_distal_since[chain_name] = 0.0
+ 
+         # C2.6: articulation changes the distal-minus-proximal segment vector,
+         # unlike rigid translation of the whole limb. Two consecutive frames
+@@ -716,8 +747,13 @@ class ControlKernel:
+             self.body_motion_guard_segment_runs[chain_name] = (
+                 self.body_motion_guard_segment_runs.get(chain_name, 0) + 1 if supported else 0
+             )
+-            if self.body_motion_guard_segment_runs[chain_name] >= 2:
+-                segment_articulation_onset = True
++            if supported:
++                if self.body_motion_guard_segment_since.get(chain_name, 0.0) <= 0.0:
++                    self.body_motion_guard_segment_since[chain_name] = now
++                if now - self.body_motion_guard_segment_since[chain_name] >= BODY_MOTION_CHAIN_CONFIRM_S:
++                    segment_articulation_onset = True
++            else:
++                self.body_motion_guard_segment_since[chain_name] = 0.0
+         # Early evidence is deliberately transient: it can suppress the current
+         # horizontal output frame, but it does not own the persistent guard
+         # lifecycle. Persistent activation remains restricted to the already
+@@ -731,13 +767,20 @@ class ControlKernel:
+         strong_burst_ended = False
+         if self.body_motion_guard_early_evidence:
+             self.body_motion_guard_early_run += 1
++            if not previous_early:
++                self.body_motion_guard_early_started_at = now
++            self.body_motion_guard_early_last_at = now
+             # Bridge the estimator/output phase lag without granting early
+             # evidence ownership of the persistent guard lifecycle. 67 ms is
+-            # roughly two 30 FPS frames and remains time-based at other FPS.
++            # time-based and therefore stable across camera frame rates.
+             self.body_motion_guard_early_until = max(self.body_motion_guard_early_until, now + 0.067)
+         else:
+-            strong_burst_ended = bool(previous_early and self.body_motion_guard_early_run >= 4)
++            if previous_early and self.body_motion_guard_early_started_at > 0.0:
++                burst_duration = max(0.0, self.body_motion_guard_early_last_at - self.body_motion_guard_early_started_at)
++                strong_burst_ended = burst_duration >= BODY_MOTION_STRONG_BURST_CONFIRM_S
+             self.body_motion_guard_early_run = 0
++            self.body_motion_guard_early_started_at = 0.0
++            self.body_motion_guard_early_last_at = 0.0
+         if (
+             raw_onset
+             or self.body_motion_guard_score >= 2.50
+@@ -746,9 +789,11 @@ class ControlKernel:
+             self.body_motion_guard_active = True
+             self.body_motion_guard_hold_until = now + 0.10
+             self.body_motion_guard_settle_frames = 0
++            self.body_motion_guard_settle_started_at = 0.0
+         elif self.body_motion_guard_active and self.body_motion_guard_score >= 1.625:
+             self.body_motion_guard_hold_until = now + 0.10
+             self.body_motion_guard_settle_frames = 0
++            self.body_motion_guard_settle_started_at = 0.0
+ 
+         if self.body_motion_guard_active:
+             # Persistent guard owns this phase; discard any transient tail so it
+@@ -777,13 +822,18 @@ class ControlKernel:
+             return float(x)
+         if now < self.body_motion_guard_hold_until or self.body_motion_guard_score >= 1.625:
+             self.body_motion_guard_settle_frames = 0
++            self.body_motion_guard_settle_started_at = 0.0
+         elif abs(float(x)) <= 0.01:
+             self.body_motion_guard_settle_frames += 1
+-            if self.body_motion_guard_settle_frames >= 3:
++            if self.body_motion_guard_settle_started_at <= 0.0:
++                self.body_motion_guard_settle_started_at = now
++            if now - self.body_motion_guard_settle_started_at >= BODY_MOTION_SETTLE_S:
+                 self.body_motion_guard_active = False
+                 self.body_motion_guard_settle_frames = 0
++                self.body_motion_guard_settle_started_at = 0.0
+         else:
+             self.body_motion_guard_settle_frames = 0
++            self.body_motion_guard_settle_started_at = 0.0
+         return 0.0 if self.body_motion_guard_active else float(x)
+ 
+     def _compute_body_zones(self, pose_map: dict[str, dict]) -> dict[str, dict]:
+diff --git a/tests/test_body_motion_head_guard.py b/tests/test_body_motion_head_guard.py
+index e5bcb4a..aef17b7 100644
+--- a/tests/test_body_motion_head_guard.py
++++ b/tests/test_body_motion_head_guard.py
+@@ -511,3 +511,117 @@ def test_rigid_limb_translation_does_not_use_segment_articulation_path(tmp_path,
+         assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
+     finally:
+         kernel.close()
++
++
++def _distal_confirmation_delay_at_fps(kernel, fps):
++    """Return observed confirmation delay after the first supported sample."""
++    base = pose()
++    start = 10.0
++    kernel._update_body_motion_guard_locked(base, start)
++    first_supported_at = None
++    # Translate wrist+elbow together at ~1.5 torso-lengths/s. This exercises
++    # the C2.5 distal path without using C2.6 segment deformation or the global
++    # peak>=2.40 early-pair path.
++    for frame in range(1, 12):
++        elapsed = frame / float(fps)
++        moved = pose()
++        dx = 0.375 * elapsed  # torso is 0.25 -> normalized speed ~= 1.5/s
++        moved["left_wrist"]["x"] += dx
++        moved["left_elbow"]["x"] += dx
++        now = start + elapsed
++        kernel._update_body_motion_guard_locked(moved, now)
++        if first_supported_at is None:
++            first_supported_at = now
++        if kernel.body_motion_guard_early_evidence:
++            return now - first_supported_at
++    raise AssertionError(f"distal evidence did not confirm at {fps} FPS")
++
++
++def test_distal_confirmation_uses_time_not_frame_count_across_fps(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    delays = {}
++    for fps in (20, 30, 45, 60):
++        kernel = ControlKernel(Output())
++        try:
++            delays[fps] = _distal_confirmation_delay_at_fps(kernel, fps)
++        finally:
++            kernel.close()
++    # A 30 ms confirmation requirement is quantized by camera sampling. At
++    # 20 FPS the next available sample is 50 ms; higher FPS must not collapse
++    # the confirmation to one 16-22 ms interval merely because more frames are
++    # available.
++    assert all(0.030 - 1e-6 <= delay <= 0.051 for delay in delays.values())
++
++
++def _drive_early_pair_for_frames(kernel, fps, frame_count, start=10.0):
++    current = pose()
++    kernel._update_body_motion_guard_locked(current, start)
++    for frame in range(1, frame_count + 1):
++        elapsed = frame / float(fps)
++        moved = pose()
++        # peak ~=3.0, second ~=0.6 normalized torso lengths/s: enough for the
++        # global transient pair but far below persistent fastest-half raw=2.5.
++        moved["left_wrist"]["x"] += 0.75 * elapsed
++        moved["left_elbow"]["x"] += 0.15 * elapsed
++        kernel._update_body_motion_guard_locked(moved, start + elapsed)
++        assert kernel.body_motion_guard_early_evidence is True
++        assert kernel.body_motion_guard_active is False
++        current = moved
++    end = start + (frame_count + 1) / float(fps)
++    kernel._update_body_motion_guard_locked(current, end)
++    assert kernel.body_motion_guard_early_evidence is False
++    return end
++
++
++def test_strong_burst_confirmation_is_time_based_across_fps(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    import math
++    for fps in (20, 30, 45, 60):
++        kernel = ControlKernel(Output())
++        try:
++            # ceil(0.13*fps) yields a sampled burst whose first-to-last evidence
++            # duration is >=~95 ms at every target FPS.
++            frames = int(math.ceil(0.13 * fps))
++            _drive_early_pair_for_frames(kernel, fps, frames)
++            assert kernel.body_motion_guard_postburst_budget == 2
++        finally:
++            kernel.close()
++
++
++def test_four_frame_burst_at_60fps_is_not_mistaken_for_100ms_burst(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        _drive_early_pair_for_frames(kernel, 60, 4)
++        # Four 60 FPS evidence frames span only 50 ms from first to last. The
++        # old frame-count rule incorrectly treated this as equivalent to four
++        # 30 FPS frames (~100 ms).
++        assert kernel.body_motion_guard_postburst_budget == 0
++    finally:
++        kernel.close()
++
++
++def test_guard_recovery_settle_uses_time_not_three_frames(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    for fps in (20, 30, 45, 60):
++        kernel = ControlKernel(Output())
++        try:
++            kernel.body_motion_guard_active = True
++            kernel.body_motion_guard_hold_until = 0.0
++            kernel.body_motion_guard_score = 0.0
++            now = 10.0
++            first_zero_at = None
++            released_at = None
++            for _ in range(10):
++                now += 1 / float(fps)
++                if first_zero_at is None:
++                    first_zero_at = now
++                kernel._guard_horizontal_output_locked(0.0, now)
++                if not kernel.body_motion_guard_active:
++                    released_at = now
++                    break
++            assert released_at is not None
++            elapsed = released_at - first_zero_at
++            assert 0.060 - 1e-6 <= elapsed <= 0.101
++        finally:
++            kernel.close()
+-- 
+2.47.3
