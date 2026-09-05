@@ -54,6 +54,12 @@ BODY_ZONES = {
     "rightFoot": {"label": "RB", "button": "RB", "points": ("right_ankle", "right_heel", "right_foot_index"), "kind": "foot"},
 }
 
+BODY_MOTION_GUARD_POINTS = (
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist", "left_hip", "right_hip",
+    "left_knee", "right_knee", "left_ankle", "right_ankle",
+)
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, float(value)))
@@ -142,6 +148,7 @@ class ControlKernel:
             # Optional axis exclusivity: entering the left-hand gate may pause
             # horizontal head output while vertical view control is active.
             "exclusive_axes": False,
+            "body_motion_guard": True,
             "center_x": 0.5, "center_y": 0.5, "range_y": 0.18, "deadzone": 0.10,
         }
         self.vertical_gate_active = False
@@ -187,6 +194,18 @@ class ControlKernel:
         }
         self.step = {"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0}
         self.last_motion_emit = 0.0
+
+        # Head estimation keeps observing frames, but strong exercise motion
+        # must not move the in-game camera. This guard uses body-normalized
+        # limb velocity because action labels can be intermittent or absent.
+        self.body_motion_guard_enabled = True
+        self.body_motion_guard_active = False
+        self.body_motion_guard_raw = 0.0
+        self.body_motion_guard_score = 0.0
+        self.body_motion_guard_previous: dict[str, tuple[float, float]] = {}
+        self.body_motion_guard_last_at = 0.0
+        self.body_motion_guard_hold_until = 0.0
+        self.body_motion_guard_settle_frames = 0
 
         # v0.9.7 unified trigger -> output layer. Profile bindings are stored
         # independently from recognition so changing games never changes pose rules.
@@ -312,7 +331,7 @@ class ControlKernel:
     def configure_head(self, *, algorithm=None, deadzone=None, sensitivity_x=None,
                        sensitivity_y=None, enabled=None, invert_x=None, invert_y=None,
                        horizontal_algorithm=None, vertical_look_source=None,
-                       vertical_exclusive=None) -> dict:
+                       vertical_exclusive=None, body_motion_guard=None) -> dict:
         with self._lock:
             self.head_controller.configure(
                 algorithm=algorithm,
@@ -337,6 +356,11 @@ class ControlKernel:
                 self._reset_vertical_head_locked()
             if vertical_exclusive is not None:
                 self.vertical_look["exclusive_axes"] = bool(vertical_exclusive)
+            if body_motion_guard is not None:
+                self.body_motion_guard_enabled = bool(body_motion_guard)
+                self.vertical_look["body_motion_guard"] = self.body_motion_guard_enabled
+                if not self.body_motion_guard_enabled:
+                    self._reset_body_motion_guard_locked()
             self.head = self.head_controller.status(time.monotonic())
             return self.status_locked(time.monotonic())
 
@@ -362,11 +386,13 @@ class ControlKernel:
                     "source": source,
                     "verticalLookSource": source,
                     "exclusive_axes": bool(vertical.get("exclusive_axes", self.vertical_look.get("exclusive_axes", False))),
+                    "body_motion_guard": bool(vertical.get("body_motion_guard", self.body_motion_guard_enabled)),
                     "center_x": _clamp(vertical.get("center_x", 0.5), 0.0, 1.0),
                     "center_y": _clamp(vertical.get("center_y", 0.5), 0.0, 1.0),
                     "range_y": _clamp(vertical.get("range_y", 0.18), 0.05, 0.45),
                     "deadzone": _clamp(vertical.get("deadzone", 0.10), 0.0, 0.35),
                 })
+                self.body_motion_guard_enabled = bool(self.vertical_look["body_motion_guard"])
             else:
                 self.vertical_look["enabled"] = False
             for state in self.zone_state.values():
@@ -523,7 +549,76 @@ class ControlKernel:
         self._update_motion_locked(pose_map, now)
         self._update_cross_poses_locked(pose_map, now)
         self._dispatch_controls_locked(now)
+        self._update_body_motion_guard_locked(pose_map, now)
         self._update_head_locked(pose_map, now, world_pose)
+
+    def _reset_body_motion_guard_locked(self) -> None:
+        self.body_motion_guard_active = False
+        self.body_motion_guard_raw = 0.0
+        self.body_motion_guard_score = 0.0
+        self.body_motion_guard_previous = {}
+        self.body_motion_guard_last_at = 0.0
+        self.body_motion_guard_hold_until = 0.0
+        self.body_motion_guard_settle_frames = 0
+
+    def _update_body_motion_guard_locked(self, pose_map: dict[str, dict], now: float) -> None:
+        """Measure exercise motion without modifying the selected head algorithm."""
+        core = ("left_shoulder", "right_shoulder", "left_hip", "right_hip")
+        if not self.body_motion_guard_enabled or not self._points_good(pose_map, core, 0.35):
+            self._reset_body_motion_guard_locked()
+            return
+        shoulder = _midpoint(pose_map["left_shoulder"], pose_map["right_shoulder"])
+        hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"])
+        torso = max(0.04, _distance(shoulder, hip))
+        current: dict[str, tuple[float, float]] = {}
+        for name in BODY_MOTION_GUARD_POINTS:
+            point = pose_map.get(name)
+            if _score(point) >= 0.35:
+                current[name] = (
+                    (float(point["x"]) - float(hip["x"])) / torso,
+                    (float(point["y"]) - float(hip["y"])) / torso,
+                )
+
+        raw = 0.0
+        dt = now - self.body_motion_guard_last_at if self.body_motion_guard_last_at else 0.0
+        if 1.0 / 90.0 <= dt <= 0.12:
+            speeds = [
+                math.hypot(value[0] - self.body_motion_guard_previous[name][0],
+                           value[1] - self.body_motion_guard_previous[name][1]) / dt
+                for name, value in current.items()
+                if name in self.body_motion_guard_previous
+            ]
+            if len(speeds) >= 2:
+                speeds.sort(reverse=True)
+                fastest_half = speeds[:max(1, len(speeds) // 2)]
+                raw = float(statistics.fmean(fastest_half))
+        self.body_motion_guard_previous = current
+        self.body_motion_guard_last_at = now
+        self.body_motion_guard_raw = raw
+        alpha = 1.0 - math.exp(-max(0.0, min(0.12, dt)) / 0.10) if dt > 0.0 else 1.0
+        self.body_motion_guard_score += alpha * (raw - self.body_motion_guard_score)
+
+        if self.body_motion_guard_score >= 2.50 or bool(self.motion_active):
+            self.body_motion_guard_active = True
+            self.body_motion_guard_hold_until = now + 0.10
+            self.body_motion_guard_settle_frames = 0
+        elif self.body_motion_guard_active and self.body_motion_guard_score >= 1.625:
+            self.body_motion_guard_hold_until = now + 0.10
+            self.body_motion_guard_settle_frames = 0
+
+    def _guard_horizontal_output_locked(self, x: float, now: float) -> float:
+        if not self.body_motion_guard_enabled or not self.body_motion_guard_active:
+            return float(x)
+        if now < self.body_motion_guard_hold_until or self.body_motion_guard_score >= 1.625:
+            self.body_motion_guard_settle_frames = 0
+        elif abs(float(x)) <= 0.01:
+            self.body_motion_guard_settle_frames += 1
+            if self.body_motion_guard_settle_frames >= 3:
+                self.body_motion_guard_active = False
+                self.body_motion_guard_settle_frames = 0
+        else:
+            self.body_motion_guard_settle_frames = 0
+        return 0.0 if self.body_motion_guard_active else float(x)
 
     def _compute_body_zones(self, pose_map: dict[str, dict]) -> dict[str, dict]:
         iw, ih = self.width, self.height
@@ -1023,6 +1118,7 @@ class ControlKernel:
         horizontal_paused = bool(self.vertical_gate_active and self.vertical_look.get("exclusive_axes", False))
         if horizontal_paused:
             x = 0.0
+        x = self._guard_horizontal_output_locked(x, now)
         self.vertical_wrist_norm = _clamp(y, -1.0, 1.0)
         self.head["normalized_x"] = round(float(x), 4)
         self.head["output_x"] = round(float(x), 3)
@@ -1031,6 +1127,7 @@ class ControlKernel:
         self.head["vertical_look_source"] = source
         self.head["verticalLookSource"] = source
         self.head["horizontal_paused_by_vertical_gate"] = horizontal_paused
+        self.head["horizontal_paused_by_body_motion"] = bool(self.body_motion_guard_active)
         self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
         self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)
         self.head["vertical_pitch_velocity"] = round(float(self.vertical_pitch_velocity), 4)
@@ -1059,6 +1156,7 @@ class ControlKernel:
             state.update({"inside": 0, "outside": 0, "pressed": False})
         self.zone_rects = {}
         self.vertical_gate_active = False
+        self._reset_body_motion_guard_locked()
         self._reset_vertical_hand_locked()
         self.vertical_head_anchor_samples.clear()
         self._reset_vertical_head_locked()
@@ -1116,9 +1214,10 @@ class ControlKernel:
         self.head["vertical_gate_active"] = bool(self.vertical_gate_active)
         horizontal_paused = bool(self.vertical_gate_active and self.vertical_look.get("exclusive_axes", False))
         self.head["horizontal_paused_by_vertical_gate"] = horizontal_paused
-        if horizontal_paused:
+        if horizontal_paused or self.body_motion_guard_active:
             self.head["normalized_x"] = 0.0
             self.head["output_x"] = 0.0
+        self.head["horizontal_paused_by_body_motion"] = bool(self.body_motion_guard_active)
         self.head["vertical_wrist_norm"] = round(float(self.vertical_wrist_norm), 4)
         self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
         self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)
@@ -1138,6 +1237,10 @@ class ControlKernel:
             if self.vertical_wrist_anchor_rel_y is not None else None
         )
         self.head["vertical_anchor_samples"] = len(self.vertical_anchor_samples)
+        self.head["body_motion_guard_enabled"] = bool(self.body_motion_guard_enabled)
+        self.head["body_motion_guard_active"] = bool(self.body_motion_guard_active)
+        self.head["body_motion_guard_score"] = round(float(self.body_motion_guard_score), 4)
+        self.head["body_motion_guard_raw"] = round(float(self.body_motion_guard_raw), 4)
         # Always expose the final output Y, never the diagnostic pitch value.
         self.head["normalized_y"] = round(
             float(vertical_output) if self.vertical_gate_active else 0.0, 4
@@ -1170,6 +1273,9 @@ class ControlKernel:
             "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_provisional",
             "vertical_look": copy.deepcopy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),
+            "body_motion_guard_enabled": bool(self.body_motion_guard_enabled),
+            "body_motion_guard_active": bool(self.body_motion_guard_active),
+            "body_motion_guard_score": round(float(self.body_motion_guard_score), 4),
             "vertical_wrist_norm": round(float(self.vertical_wrist_norm), 4),
             "vertical_look_source": source,
             "vertical_pitch_relative": round(float(self.vertical_pitch_relative), 4),

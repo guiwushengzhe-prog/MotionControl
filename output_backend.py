@@ -155,10 +155,20 @@ class KeyboardOutput:
     """Small SendInput keyboard backend for voice single keys and combos."""
 
     INPUT_KEYBOARD = 1
+    MAPVK_VK_TO_VSC = 0
     KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    KEYEVENTF_SCANCODE = 0x0008
+    EXTENDED_KEYS = {
+        "WIN", "DELETE", "HOME", "END", "PAGEUP", "PAGEDOWN",
+        "LEFT", "UP", "RIGHT", "DOWN",
+    }
 
-    def __init__(self) -> None:
-        self.available = os.name == "nt"
+    def __init__(self, *, user32=None) -> None:
+        self._user32 = user32
+        if self._user32 is None and os.name == "nt":
+            self._user32 = ctypes.windll.user32
+        self.available = self._user32 is not None
         self.pressed: set[str] = set()
         self.last_error: str | None = None
 
@@ -177,10 +187,22 @@ class KeyboardOutput:
             raise ValueError(f"不支持的键盘键：{key}")
         if not self.available:
             raise RuntimeError("键盘输出仅支持 Windows")
+        scan_code = int(self._user32.MapVirtualKeyW(code, self.MAPVK_VK_TO_VSC))
+        if scan_code <= 0:
+            raise RuntimeError(f"无法取得键盘扫描码：{key}")
+        flags = self.KEYEVENTF_SCANCODE
+        if key in self.EXTENDED_KEYS:
+            flags |= self.KEYEVENTF_EXTENDEDKEY
+        if not pressed:
+            flags |= self.KEYEVENTF_KEYUP
         event = _KEYINPUT()
         event.type = self.INPUT_KEYBOARD
-        event.ki = _KEYBDINPUT(code, 0, 0 if pressed else self.KEYEVENTF_KEYUP, 0, None)
-        sent = ctypes.windll.user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(_KEYINPUT))
+        # Games commonly consume physical scan codes through Raw Input or
+        # DirectInput.  A virtual-key-only SendInput event can work in desktop
+        # apps yet be ignored by a game, which is why Xbox mappings appeared to
+        # work while an otherwise valid W mapping did not.
+        event.ki = _KEYBDINPUT(0, scan_code, flags, 0, None)
+        sent = self._user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(_KEYINPUT))
         if sent != 1:
             self.last_error = f"SendInput failed: {key}"
             raise RuntimeError(self.last_error)

@@ -1,6 +1,7 @@
+import ctypes
 import time
 
-from output_backend import OutputManager, XUSB_GAMEPAD_BUTTONS
+from output_backend import KeyboardOutput, OutputManager, XUSB_GAMEPAD_BUTTONS, _KEYINPUT
 
 
 class Mouse:
@@ -33,6 +34,15 @@ class Pad:
     def close(self): pass
 
 
+class FakeUser32:
+    def __init__(self): self.events=[]
+    def MapVirtualKeyW(self,code,mode): return {ord('W'):0x11,0x26:0x48}.get(int(code),0x1e)
+    def SendInput(self,count,event_ptr,size):
+        event=ctypes.cast(event_ptr,ctypes.POINTER(_KEYINPUT)).contents
+        self.events.append((event.ki.wVk,event.ki.wScan,event.ki.dwFlags))
+        return 1
+
+
 def manager(tmp_path):
     mouse=Mouse(); keyboard=Keyboard(); out=OutputManager(tmp_path,mouse=mouse,keyboard=keyboard); pad=Pad(); out._pad=pad; out.set_config(enabled=True)
     return out,mouse,keyboard,pad
@@ -41,6 +51,16 @@ def manager(tmp_path):
 def test_extended_xbox_buttons_include_stick_clicks():
     assert XUSB_GAMEPAD_BUTTONS["L3"] == 0x0040
     assert XUSB_GAMEPAD_BUTTONS["R3"] == 0x0080
+
+
+def test_keyboard_uses_game_compatible_scan_codes():
+    user32=FakeUser32(); keyboard=KeyboardOutput(user32=user32)
+    keyboard.set_key('W',True); keyboard.set_key('W',False)
+    keyboard.set_key('UP',True); keyboard.set_key('UP',False)
+    assert user32.events[0] == (0,0x11,KeyboardOutput.KEYEVENTF_SCANCODE)
+    assert user32.events[1] == (0,0x11,KeyboardOutput.KEYEVENTF_SCANCODE|KeyboardOutput.KEYEVENTF_KEYUP)
+    assert user32.events[2] == (0,0x48,KeyboardOutput.KEYEVENTF_SCANCODE|KeyboardOutput.KEYEVENTF_EXTENDEDKEY)
+    assert user32.events[3] == (0,0x48,KeyboardOutput.KEYEVENTF_SCANCODE|KeyboardOutput.KEYEVENTF_EXTENDEDKEY|KeyboardOutput.KEYEVENTF_KEYUP)
 
 
 def test_unified_holds_drive_mouse_trigger_axis_and_button(tmp_path):
@@ -58,6 +78,16 @@ def test_unified_holds_drive_mouse_trigger_axis_and_button(tmp_path):
         assert "L3" in pad.buttons
         out.set_action_holds([])
         assert not mouse.pressed and pad.triggers==(0.0,0.0) and pad.left_stick==(0.0,0.0) and "L3" not in pad.buttons
+    finally: out.close()
+
+
+def test_unified_holds_drive_keyboard_mapping(tmp_path):
+    out,_,keyboard,_=manager(tmp_path)
+    try:
+        out.set_action_holds([{"id":"zone.a","action":{"type":"keyboard","target":"W"}}])
+        assert keyboard.pressed == {"W"}
+        out.set_action_holds([])
+        assert keyboard.pressed == set()
     finally: out.close()
 
 

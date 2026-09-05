@@ -24,8 +24,9 @@ const BODY_ZONES = {leftHandUpper:{label:'Y',body:'左手',button:'Y'},leftHandL
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null};
-const head={algorithm:'pnp',horizontalAlgorithm:'classic',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand',verticalExclusive:false};
+const head={algorithm:'pnp',horizontalAlgorithm:'classic',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand',verticalExclusive:false,bodyMotionGuard:true};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
+let profileAutoSaveTimer=null;
 const BASE_PROFILE_TRIGGERS=[
   {key:'zone.leftHandUpper',group:'zones',id:'leftHandUpper',name:'左手上区'},
   {key:'zone.leftHandLower',group:'zones',id:'leftHandLower',name:'左手下区'},
@@ -145,7 +146,7 @@ function renderKernelState(runtime){
   if(Number.isFinite(hs.output_x)){
     const algo=hs.algorithm==='ratio'?'比例':'PnP';
     const horizontalCalibrated=hs.horizontal_calibrated??hs.calibrated;
-    $('#headStatus').textContent=horizontalCalibrated?`头控 ${algo} · 水平 ${Number(hs.output_x).toFixed(0)}%`:'头控：等待中心，可说“体感开始校准”';
+    $('#headStatus').textContent=horizontalCalibrated?(hs.body_motion_guard_active?'身体动作中 · 左右视角已稳定':`头控 ${algo} · 水平 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说“体感开始校准”';
   }
   if(hs.calibrated!==undefined){
     $('#calBtn').textContent=hs.calibrating?'取消校准':'站好并校准';
@@ -160,8 +161,10 @@ function renderKernelState(runtime){
     if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
     head.verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'head':'hand';
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
+    head.bodyMotionGuard=k.vertical_look?.body_motion_guard!==false;
     if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookSource;
     if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;
+    if($('#bodyMotionGuard'))$('#bodyMotionGuard').checked=head.bodyMotionGuard;
     document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));
     $('#deadzone').value=Math.round(Number(hs.deadzone||.10)*100);
     $('#speedX').value=Number(hs.sensitivity_x||58);$('#speedY').value=Number(hs.sensitivity_y||46);
@@ -315,9 +318,27 @@ function readProfileOverrides(){
   return overrides;
 }
 async function saveProfileBindings(){
+  if(profileAutoSaveTimer){clearTimeout(profileAutoSaveTimer);profileAutoSaveTimer=null}
   const data=await post('/api/game-profiles/overrides',{overrides:readProfileOverrides()});
   gameProfile.selected=data.profile;gameProfile.overrides=gameProfile.selected?.overrides||{};await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
   notice('当前游戏的体感映射已保存。');
+}
+function scheduleProfileAutoSave(){
+  if(profileAutoSaveTimer)clearTimeout(profileAutoSaveTimer);
+  const button=$('#saveProfileBindingsBtn');if(button)button.textContent='正在自动保存…';
+  profileAutoSaveTimer=setTimeout(async()=>{
+    profileAutoSaveTimer=null;
+    try{
+      const data=await post('/api/game-profiles/overrides',{overrides:readProfileOverrides()});
+      gameProfile.selected=data.profile;gameProfile.overrides=gameProfile.selected?.overrides||{};
+      await refreshVoiceCommands();renderProfileHeader();
+      if(button)button.textContent='映射已自动保存';
+      notice('映射已自动保存并立即生效。');
+    }catch(e){
+      if(button)button.textContent='保存当前游戏映射';
+      notice('自动保存失败：'+(e?.message||e));
+    }
+  },350);
 }
 async function resetProfileBindings(){
   const data=await post('/api/game-profiles/overrides',{overrides:{}});
@@ -439,8 +460,8 @@ function renderVoiceCommandCard(command){const card=document.createElement('div'
 function renderVoiceCommandCatalog(commands){voiceCatalog=Array.isArray(commands)?commands:[];const countBtn=$('#voiceCommandsBtn');if(countBtn)countBtn.textContent=`查看全部 ${voiceCatalog.length} 条语音指令`;const common=$('#commonVoiceCommands'),full=$('#voiceCommandGrid');if(!common||!full)return;common.replaceChildren();full.replaceChildren();const byId=new Map(voiceCatalog.map(item=>[item.id,item]));for(const id of COMMON_VOICE_IDS){const item=byId.get(id);if(item)common.appendChild(renderVoiceCommandCard(item))}const isProfile=c=>String(c.id||'').startsWith('game.profile_slot_');const groups=[['系统与体感控制',c=>c.kind==='system'],['常规游戏操作',c=>String(c.id||'').startsWith('game.')&&!isProfile(c)],['当前游戏补充功能',c=>isProfile(c)],['菜单操作',c=>!String(c.id||'').startsWith('game.')&&c.kind!=='system']];for(const[name,filter]of groups){const items=voiceCatalog.filter(filter);if(!items.length)continue;const section=document.createElement('section');section.className='voice-group';const h=document.createElement('h3');h.textContent=name;const grid=document.createElement('div');grid.className='voice-command-grid full';for(const item of items)grid.appendChild(renderVoiceCommandCard(item));section.append(h,grid);full.appendChild(section)}}
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['classic','gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'classic';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
-async function pushHeadConfig(){const previousHorizontalAlgorithm=head.horizontalAlgorithm;syncControlLabels();try{renderKernelState(await post('/api/head/config',{algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,invert_x:head.invertX,invert_y:head.invertY,vertical_look_source:head.verticalLookSource,vertical_exclusive:head.verticalExclusive}));if(sceneConfigured&&scene.zones&&Object.keys(scene.zones).length){scene.vertical={...scene.vertical,source:head.verticalLookSource,verticalLookSource:head.verticalLookSource,exclusive_axes:head.verticalExclusive};await post('/api/scene/layout',{zones:scene.zones,vertical_look:scene.vertical})}if(head.horizontalAlgorithm!==previousHorizontalAlgorithm)notice('横向头控已切换，需要重新执行头控校准。')}catch(e){if($('#headHorizontalAlgorithm')&&previousHorizontalAlgorithm)$('#headHorizontalAlgorithm').value=previousHorizontalAlgorithm;head.horizontalAlgorithm=previousHorizontalAlgorithm;notice('头控设置保存失败：'+(e?.message||e))}}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['classic','gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'classic';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+async function pushHeadConfig(){const previousHorizontalAlgorithm=head.horizontalAlgorithm;syncControlLabels();try{renderKernelState(await post('/api/head/config',{algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,invert_x:head.invertX,invert_y:head.invertY,vertical_look_source:head.verticalLookSource,vertical_exclusive:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard}));if(sceneConfigured&&scene.zones&&Object.keys(scene.zones).length){scene.vertical={...scene.vertical,source:head.verticalLookSource,verticalLookSource:head.verticalLookSource,exclusive_axes:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard};await post('/api/scene/layout',{zones:scene.zones,vertical_look:scene.vertical})}if(head.horizontalAlgorithm!==previousHorizontalAlgorithm)notice('横向头控已切换，需要重新执行头控校准。')}catch(e){if($('#headHorizontalAlgorithm')&&previousHorizontalAlgorithm)$('#headHorizontalAlgorithm').value=previousHorizontalAlgorithm;head.horizontalAlgorithm=previousHorizontalAlgorithm;notice('头控设置保存失败：'+(e?.message||e))}}
 function sceneResultText(st){const r=st?.last_result||{};const bits=[r.message||''];if(Number.isFinite(r.confidence))bits.push('可信度 '+Math.round(r.confidence*100)+'%');if(r.matches)bits.push('匹配点 '+r.matches);if(Number.isFinite(r.inlier_ratio))bits.push('内点 '+Math.round(r.inlier_ratio*100)+'%');if(Number.isFinite(r.reprojection_error_px))bits.push('误差 '+r.reprojection_error_px+'px');if(Number.isFinite(r.rotation_deg))bits.push('旋转 '+r.rotation_deg+'°');return bits.filter(Boolean).join(' · ')}
 function renderSceneEditor(st){scene.status=st||{};scene.zones=structuredClone(st?.zones||{});scene.vertical=structuredClone(st?.vertical_look||{});head.verticalLookSource=(scene.vertical.source==='head'||scene.vertical.verticalLookSource==='head')?'head':'hand';head.verticalExclusive=!!scene.vertical.exclusive_axes;if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookSource;if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;const configured=!!st?.configured;sceneConfigured=configured;$('#sceneEditor').hidden=!configured;$('#sceneTools').hidden=!configured;$('#sceneStatus').textContent=configured?(st.adapted?'本次已手动重新匹配并锁定':'已载入参考布局；本次没有自动适配'):'尚未记录参考场景';$('#sceneMetrics').textContent=sceneResultText(st);const image=$('#sceneReference');if(configured&&st.reference_image_url){image.src=st.reference_image_url+'?t='+Date.now()}const select=$('#sceneZoneSelect');select.replaceChildren();for(const id of Object.keys(scene.zones)){const o=document.createElement('option');o.value=id;o.textContent=SCENE_LABELS[id]||id;select.appendChild(o)}if(!scene.zones[scene.selected])scene.selected=Object.keys(scene.zones)[0]||'';select.value=scene.selected;renderSceneEditableZones();syncSceneTools();syncControlLabels();renderMainStatus()}
 function renderSceneEditableZones(){const layer=$('#sceneEditorZones');layer.replaceChildren();for(const[id,z]of Object.entries(scene.zones)){const el=document.createElement('div');el.className='scene-edit-zone'+(id==='lookGate'?' gate':'');el.dataset.id=id;el.textContent=SCENE_LABELS[id]||id;const r=Number(z.r)||.07;el.style.left=((Number(z.cx)-r)*100)+'%';el.style.top=((Number(z.cy)-r)*100)+'%';el.style.width=(2*r*100)+'%';el.style.height=(2*r*100)+'%';el.style.fontSize='11px';el.addEventListener('pointerdown',startSceneDrag);layer.appendChild(el)}const line=$('#sceneVerticalCenter');const cy=Number(scene.vertical.center_y??.5);line.style.top=(cy*100)+'%';line.hidden=!scene.status?.configured}
@@ -492,6 +513,12 @@ $('#profileSearch')?.addEventListener('keydown',e=>{if(e.key==='Enter')searchPro
 $('#profileApplyBtn')?.addEventListener('click',()=>applySelectedProfile().catch(e=>notice('切换游戏失败：'+(e?.message||e))));
 $('#saveProfileBindingsBtn')?.addEventListener('click',()=>saveProfileBindings().catch(e=>notice('保存映射失败：'+(e?.message||e))));
 $('#resetProfileBindingsBtn')?.addEventListener('click',()=>resetProfileBindings().catch(e=>notice('恢复映射失败：'+(e?.message||e))));
+$('#profileBindingRows')?.addEventListener('change',e=>{
+  const control=e.target?.closest?.('.binding-type,.binding-target,.binding-behavior');if(!control)return;
+  if(control.classList.contains('binding-type')&&gameProfile.actions?.[control.value]?.free_text)return;
+  scheduleProfileAutoSave();
+});
+$('#profileBindingRows')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target?.classList?.contains('binding-target'))e.target.blur()});
 $('#cameraBtn').addEventListener('click', toggleLocalCamera);
 $('#mainActionBtn').addEventListener('click', handleMainAction);
 $('#overlayBtn').addEventListener('click', toggleOverlay);
@@ -540,7 +567,7 @@ $('#strength').addEventListener('change', () => post('/api/output/config', outpu
   output.server = r;
   renderOutput(r);
 }).catch(e => notice(e.message)));
-for (const id of ['headAlgorithm','headHorizontalAlgorithm','verticalLookSource','verticalExclusive','deadzone','speedX','speedY']) {
+for (const id of ['headAlgorithm','headHorizontalAlgorithm','verticalLookSource','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY']) {
   $('#' + id).addEventListener('change', pushHeadConfig);
 }
 $('#headEnable').addEventListener('change', pushHeadConfig);
