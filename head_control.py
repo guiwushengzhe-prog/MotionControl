@@ -196,6 +196,19 @@ YAW_V2_KEEP_VELOCITY = 0.025
 YAW_V2_OUTPUT_DECAY = 0.94
 YAW_V2_SPEED_KNEE = 0.16
 YAW_V2_MIN_DRIVE = 0.22
+# The return clutch is intentionally stricter than normal TURN activation.
+# Once a committed turn starts moving back, stop the relative output early;
+# the head must then settle in the calibrated centre corridor before the
+# normal start detector is allowed to run again.
+YAW_V2_RETURN_EARLY_RETREAT = 0.025
+YAW_V2_RETURN_EARLY_TREND = 0.045
+YAW_V2_RETURN_CENTER_STABLE_S = 0.14
+# After the signal has visibly crossed the calibrated centre, the opposite
+# side must be a deliberate, sustained turn.  The old low gate let a normal
+# return overshoot (around -0.14) re-arm the other direction.
+YAW_V2_OPPOSITE_REARM_AFTER_CENTER = 0.18
+YAW_V2_OPPOSITE_REARM_AFTER_CENTER_VELOCITY = 0.10
+YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S = 0.16
 
 # Six-channel 2D auxiliary yaw evidence (v115 stage candidate).
 #
@@ -1458,7 +1471,7 @@ class _RelativeYawAxisV153:
         self._last_t=float(now) if now else 0.0; self._last_norm=norm; self._last_raw_norm=norm
         self._motion_evidence=0.0; self._evidence_direction=0; self._evidence_age_s=0.0
         self._active_direction=0; self._active_age_s=0.0; self._committed=False
-        self._return_latched=False; self._return_from_direction=0; self._return_evidence=0.0
+        self._return_latched=False; self._return_from_direction=0; self._return_center_seen=False; self._return_evidence=0.0
         self._resume_s=0.0; self._cross_evidence=0.0; self._center_zone=YAW_V2_CENTER_ZONE
         self._history=[]; self._peak_norm=abs(norm); self._turn_baseline=0.0; self._baseline_ready_s=0.0
         self._stop_s=0.0; self._turn_mode=''; self._center_stable_s=0.0; self._active_center_s=0.0; self._return_confirm_s=0.0
@@ -1521,6 +1534,7 @@ class _RelativeYawAxisV153:
 
     def _begin(self,direction:int,now:float,norm:float) -> float:
         self._active_direction=direction; self._active_age_s=0.0; self._committed=False; self._active_center_s=0.0; self._held_from_turn=False
+        self._return_center_seen=False
         self._peak_norm=direction*norm; self._turn_baseline=0.0; self._baseline_ready_s=0.0
         self._stop_s=0.0; self._return_confirm_s=0.0; self._turn_mode=self._classify_mode(direction,now)
         # Targeted uncertainty guard: a strong medium filtered trend combined
@@ -1558,17 +1572,25 @@ class _RelativeYawAxisV153:
                 # Keep the return clutch latched while short-window motion is
                 # still significant; otherwise a small overshoot can be
                 # misread as a brand-new opposite turn.
+                self._return_center_seen=True
+                self._cross_evidence=0.0
                 qdir=orig if orig else 1
                 qs,_,qd,_=self._trend(now,qdir,.18); qrs,_,qrd,_=self._trend(now,qdir,.18,raw=True)
                 quiet_center=abs(qs)<0.060 and abs(qrs)<0.100 and abs(qd)<0.020 and abs(qrd)<0.026
                 if quiet_center:self._center_stable_s+=dt
                 else:self._center_stable_s=0.0
-                if self._center_stable_s>=0.14:
-                    self._return_latched=False;self._return_from_direction=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='CENTER';self._history=[(now,norm,raw)]
+                if self._center_stable_s>=YAW_V2_RETURN_CENTER_STABLE_S:
+                    self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='CENTER';self._history=[(now,norm,raw)]
                 return 0.0
             self._center_stable_s=0.0
-            # false-return recovery on original side needs sustained outward trend
-            if orig and signal_dir==orig:
+            # Do not resume the original side before the calibrated centre has
+            # been reached and settled.  A returning head often bounces back
+            # on the same side; treating that bounce as a continuation is the
+            # source of the stray movement this clutch is meant to suppress.
+            # Before the centre is observed, retain the existing false-return
+            # recovery: a clear, sustained return toward the original side can
+            # be the filter briefly reversing during the same intentional turn.
+            if not self._return_center_seen and orig and signal_dir==orig:
                 sm,_,dm,em=self._trend(now,orig,.30); rsm,_,rdm,_=self._trend(now,orig,.30,raw=True)
                 recovery_pos=max(center*1.15,.050)
                 sshort,_,dshort,_=self._trend(now,orig,.18)
@@ -1581,21 +1603,38 @@ class _RelativeYawAxisV153:
                         self._return_latched=False;self._active_direction=orig;self._active_age_s=.2;self._committed=True
                         self._turn_mode=self._classify_mode(orig,now);self._turn_baseline=max(.035,sm*.75);self._resume_s=0;return self._drive(orig,norm)
                 else:self._resume_s=max(0,self._resume_s-dt)
-            raw_signal_dir=self._sign(raw,center*.55)
-            crossed_far=amount>=YAW_V2_OPPOSITE_REARM or (raw_signal_dir==opp and abs(raw)>=0.115)
-            if opp and crossed_far and (signal_dir==opp or raw_signal_dir==opp):
+            # A reverse may only re-arm after the centre has actually been
+            # observed.  A one-frame jump that never presents a centre sample
+            # therefore remains muted as well.
+            if not self._return_center_seen:
+                self._cross_evidence=0.0
+                return 0.0
+            crossed_far=(
+                opp
+                and signal_dir==opp
+                and amount>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER
+                and opp*self.velocity>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_VELOCITY
+            )
+            if crossed_far:
                 sm,_,dm,em=self._trend(now,opp,.32);rsm,_,rdm,_=self._trend(now,opp,.32,raw=True)
-                if dm>.030 and rdm>.022 and sm>.065 and rsm>.035 and em>.14:
+                if dm>.045 and rdm>.032 and sm>.090 and rsm>.050 and em>.18:
                     self._cross_evidence+=dt
-                    if self._cross_evidence>=0.05:
-                        self._return_latched=False;self._return_from_direction=0;self._cross_evidence=0
+                    if self._cross_evidence>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S:
+                        self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False;self._cross_evidence=0
                         self._active_direction=opp;self._active_age_s=.2;self._committed=True;self._turn_mode=self._classify_mode(opp,now);self._turn_baseline=max(.04,sm*.75);return self._drive(opp,norm)
                 else:self._cross_evidence=max(0,self._cross_evidence-dt)
+            else:
+                self._cross_evidence=max(0,self._cross_evidence-dt)
             return 0.0
 
         if amount<=center:
             if self._active_direction:
                 d=self._active_direction
+                if self._committed:
+                    # Preserve evidence that a committed turn actually
+                    # visited the calibrated centre, even if the clutch is
+                    # entered on the following opposite-side sample.
+                    self._return_center_seen=True
                 self._active_center_s+=dt
                 grace=.35 if self._committed else .18
                 if self._committed and self._active_center_s<=.09:
@@ -1614,7 +1653,8 @@ class _RelativeYawAxisV153:
             # turns simply cancel.
             if signal_dir==-d:
                 if self._committed:
-                    self._return_latched=True;self._return_from_direction=d;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0.0;return 0.0
+                    center_seen=self._return_center_seen
+                    self._return_latched=True;self._return_from_direction=d;self._return_center_seen=center_seen;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0.0;return 0.0
                 self._clear_active();self._clear_motion_evidence();self.state='STABLE_OFFSET';self.output=0.0;return 0.0
             if self._startup_guard:
                 self._startup_guard=False
@@ -1625,6 +1665,21 @@ class _RelativeYawAxisV153:
             s18,r218,d18,e18=self._trend(now,d,.18);rs18,_,rd18,_=self._trend(now,d,.18,raw=True)
             s45,r245,d45,e45=self._trend(now,d,.45);rs45,_,rd45,_=self._trend(now,d,.45,raw=True)
             s90,r290,d90,e90=self._trend(now,d,.90);rs90,_,rd90,_=self._trend(now,d,.90,raw=True)
+            # A committed turn must surrender the mouse as soon as a clear
+            # return trend starts.  Waiting for the signal to cross the centre
+            # leaves the old direction driving throughout most of the user's
+            # physical return.  The retreat and short-window slope together
+            # reject a single noisy sample while stopping the real return
+            # before it can be mistaken for a reverse turn.
+            retreat=self._peak_norm-proj
+            early_return=(
+                self._committed
+                and retreat>=YAW_V2_RETURN_EARLY_RETREAT
+                and d*fd<=-YAW_V2_MIN_DELTA
+                and s18<=-YAW_V2_RETURN_EARLY_TREND
+            )
+            if early_return:
+                self._return_latched=True;self._return_from_direction=d;self._return_center_seen=False;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0.0;return 0.0
             # commit is position/time plus coherent trend; no single derivative ticket
             if not self._committed and (proj>=YAW_V2_COMMIT_ANGLE or (self._active_age_s>=.16 and proj>=center*1.35)):
                 self._committed=True; self._turn_mode=self._classify_mode(d,now)
@@ -1638,7 +1693,6 @@ class _RelativeYawAxisV153:
                     target=min(cur,cap); alpha=1-math.exp(-dt/.75); self._turn_baseline+=alpha*(target-self._turn_baseline)
                 self._baseline_ready_s+=dt
             # immediate huge retreat kept for direct 9->6-style compatibility; ordinary PnP needs trend confirmation
-            retreat=self._peak_norm-proj
             huge=(d*rd<=-.13 and retreat>=.13)
             if self._turn_mode=='FAST': ret=retreat>=.045 and s18<=-.10 and (rs18<=-.06 or s45<=-.055); need=.07
             elif self._turn_mode=='NORMAL': ret=retreat>=.055 and s45<=-.045 and rs45<=-.025; need=.12
@@ -1646,7 +1700,7 @@ class _RelativeYawAxisV153:
             if self._committed and (huge or ret): self._return_confirm_s+=dt
             else:self._return_confirm_s=max(0,self._return_confirm_s-dt*.6)
             if self._committed and (huge or self._return_confirm_s>=need):
-                self._return_latched=True;self._return_from_direction=d;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0;return 0.0
+                self._return_latched=True;self._return_from_direction=d;self._return_center_seen=False;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0;return 0.0
             # Continue/stop relative to this action's own learned speed. Freeze mode for the whole turn.
             base=max(.012,self._turn_baseline)
             if self._turn_mode=='FAST': cur_speed=max(s18,s45*.7); ratio=.24; floor=.035; stop_need=.16
@@ -1668,7 +1722,7 @@ class _RelativeYawAxisV153:
             if side and side*norm < side*self._hold_anchor-max(.04,center*.8):
                 sm,_,dm,_=self._trend(now,side,.30);rsm,_,rdm,_=self._trend(now,side,.30,raw=True)
                 if sm<-.04 and (rsm<-.025 or dm<-.018):
-                    self._return_latched=True;self._return_from_direction=side;self.state='RETURNING';self.output=0;return 0.0
+                    self._return_latched=True;self._return_from_direction=side;self._return_center_seen=False;self._center_stable_s=0;self._cross_evidence=0;self.state='RETURNING';self.output=0;return 0.0
             if side and signal_dir==side and side*(norm-self._hold_anchor)>=max(.035,center*.65):
                 sm,_,dm,em=self._trend(now,side,.35);rsm,_,rdm,_=self._trend(now,side,.35,raw=True)
                 if sm>.045 and rsm>.025 and dm>.014:return self._begin(side,now,norm)
