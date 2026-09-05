@@ -11,3 +11,4 @@ backup*/
 test_results/**/*.wav
 output/**/*.zip
 output/**/*.log
+config/game_profile_selection.json

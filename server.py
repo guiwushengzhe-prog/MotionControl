@@ -707,6 +707,7 @@ class Handler(SimpleHTTPRequestHandler):
                     horizontal_algorithm=body.get("horizontal_algorithm"),
                     vertical_look_source=body.get("vertical_look_source", body.get("verticalLookSource")),
                     vertical_exclusive=body.get("vertical_exclusive", body.get("exclusive_axes")),
+                    body_motion_guard=body.get("body_motion_guard"),
                 )
                 self._send_json({"ok": True, **RUNTIME.status()})
             except Exception as exc:
