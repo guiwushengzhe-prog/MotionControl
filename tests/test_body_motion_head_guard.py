@@ -1,3 +1,5 @@
+import pytest
+
 from control_kernel import ControlKernel
 
 
@@ -745,7 +747,57 @@ def test_status_exposes_body_motion_guard_version(tmp_path, monkeypatch):
     kernel = ControlKernel(Output())
     try:
         state = kernel.status()
-        assert state["body_motion_guard_version"] == "C2.8"
-        assert state["head"]["body_motion_guard_version"] == "C2.8"
+        assert state["body_motion_guard_version"] == "C2.9"
+        assert state["head"]["body_motion_guard_version"] == "C2.9"
+    finally:
+        kernel.close()
+
+
+def test_output_veto_reports_only_frames_that_actually_block_x(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    kernel = ControlKernel(Output())
+    try:
+        kernel.body_motion_guard_early_until = 10.2
+        assert kernel._guard_horizontal_output_locked(0.5, 10.0) == 0.0
+        assert kernel.body_motion_guard_output_blocked is True
+        assert kernel.body_motion_guard_veto_reason == "early"
+
+        assert kernel._guard_horizontal_output_locked(0.0, 10.05) == 0.0
+        assert kernel.body_motion_guard_output_blocked is False
+        assert kernel.body_motion_guard_veto_reason == ""
+
+        kernel.body_motion_guard_early_until = 0.0
+        kernel.body_motion_guard_postburst_budget = 1
+        kernel.body_motion_guard_postburst_until = 10.5
+        assert kernel._guard_horizontal_output_locked(-0.5, 10.3) == 0.0
+        assert kernel.body_motion_guard_output_blocked is True
+        assert kernel.body_motion_guard_veto_reason == "postburst"
+
+        kernel.body_motion_guard_active = True
+        kernel.body_motion_guard_hold_until = 11.0
+        assert kernel._guard_horizontal_output_locked(0.5, 10.4) == 0.0
+        assert kernel.body_motion_guard_output_blocked is True
+        assert kernel.body_motion_guard_veto_reason == "persistent"
+    finally:
+        kernel.close()
+
+
+def test_guard_survives_brief_core_quality_drop_then_resets(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    kernel = ControlKernel(Output())
+    try:
+        kernel._update_body_motion_guard_locked(pose(), 10.0)
+        kernel.body_motion_guard_active = True
+        kernel.body_motion_guard_hold_until = 10.05
+        degraded = pose()
+        degraded["left_shoulder"]["score"] = 0.0
+
+        kernel._update_body_motion_guard_locked(degraded, 10.1)
+        assert kernel.body_motion_guard_active is True
+        assert kernel.body_motion_guard_hold_until == pytest.approx(10.16)
+
+        kernel._update_body_motion_guard_locked(degraded, 10.151)
+        assert kernel.body_motion_guard_active is False
+        assert kernel.body_motion_guard_last_at == 0.0
     finally:
         kernel.close()

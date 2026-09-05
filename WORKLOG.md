@@ -284,3 +284,10 @@
 - 映射编辑改为变更后自动保存并立即下发；`config/game_profile_selection.json` 作为用户运行数据忽略，不再污染 Git 工作树。
 - Windows 键盘输出从虚拟键事件改为扫描码 `SendInput`，提高使用 Raw Input/DirectInput 游戏对 W 等按键的兼容性；Xbox 输出路径未改。
 - 只执行相关语法检查及身体门控、输出、Profile、场景布局定向测试；真人游戏体验仍由用户实际运行确认。
+
+## 2026-09-05：v197 回正防跳与 Body Guard C2.9 网页接入
+
+- 以用户提供的 `MotionControl-v197-return-jump-guard-bodyguard-c2.9-20260905.zip` 为冻结输入；压缩包 SHA-256 为 `2B8E69A64E6319FB5D845EEA1F9EF7E795C20BED8EFBED3549596F1533376332`。包内 `head_control.py`、`control_kernel.py` 与本次接入后的核心逻辑逐行一致（仅工作树行尾格式不同）。
+- 保留持久化/接口算法值 `gesture_v188`，只把其实现版本升级为 `relative-ratchet-v197-realdata-low-angle-rearm-quarantine`，避免旧配置失效；`classic` 仍为默认，v153 与 Frozen22 入口保持不变。网页显示名更新为“稳健 v197（试用）”，切换后仍沿用原有重新校准提示。
+- Body Guard 升级到 C2.9：补充 0.15 秒短暂核心点低质量宽限，并把 `horizontal_paused_by_body_motion` 改为“本帧实际拦截 Mouse-X”；网页状态栏区分提前抑制、动作后抑制和持续防晃，不再仅凭内部 guard 活跃态宣称已拦截输出。
+- 定向与相关回归共 `141 passed, 19 skipped`；另通过 `py_compile`、`node --check web/app.js` 和 `git diff --check`。压缩包附带的真人数据结果属于冻结 RGB/Pose 离线回放材料；本次没有重启 8765 服务，也没有完成实时摄像头、OS 鼠标链路或游戏内真人验收。

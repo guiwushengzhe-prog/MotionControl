@@ -146,15 +146,18 @@ function renderKernelState(runtime){
   const guardVersion=String(hs.body_motion_guard_version||k.body_motion_guard_version||'未上报');
   const guardEnabled=hs.body_motion_guard_enabled??k.body_motion_guard_enabled;
   const guardActive=hs.body_motion_guard_active??k.body_motion_guard_active;
+  const guardBlocked=!!hs.horizontal_paused_by_body_motion;
+  const guardReason=String(hs.body_motion_guard_veto_reason||'');
+  const guardReasonLabel={early:'提前抑制',postburst:'动作后抑制',persistent:'持续防晃'}[guardReason]||'输出抑制';
   const guardStatus=$('#bodyMotionGuardStatus');
   if(guardStatus){
-    guardStatus.textContent=guardEnabled===false?`防晃 ${guardVersion} · 已关闭`:guardActive?`防晃 ${guardVersion} · 运行中 · 左右视角已稳定`:`防晃 ${guardVersion} · 已启用 · 待机`;
-    guardStatus.classList.toggle('active',!!guardActive&&guardEnabled!==false);
+    guardStatus.textContent=guardEnabled===false?`防晃 ${guardVersion} · 已关闭`:guardBlocked?`防晃 ${guardVersion} · ${guardReasonLabel} · 左右视角已稳定`:guardActive?`防晃 ${guardVersion} · 监测中 · 当前未拦截左右视角`:`防晃 ${guardVersion} · 已启用 · 待机`;
+    guardStatus.classList.toggle('active',guardBlocked&&guardEnabled!==false);
   }
   if(Number.isFinite(hs.output_x)){
     const algo=hs.algorithm==='ratio'?'比例':'PnP';
     const horizontalCalibrated=hs.horizontal_calibrated??hs.calibrated;
-    $('#headStatus').textContent=horizontalCalibrated?(hs.body_motion_guard_active?'身体动作中 · 左右视角已稳定':`头控 ${algo} · 水平 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说“体感开始校准”';
+    $('#headStatus').textContent=horizontalCalibrated?(guardBlocked?'身体动作中 · 左右视角已稳定':`头控 ${algo} · 水平 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说“体感开始校准”';
   }
   if(hs.calibrated!==undefined){
     $('#calBtn').textContent=hs.calibrating?'取消校准':'站好并校准';
