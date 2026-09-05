@@ -60,6 +60,29 @@ BODY_MOTION_GUARD_POINTS = (
     "left_knee", "right_knee", "left_ankle", "right_ankle",
 )
 
+# Body-guard temporal semantics are expressed in seconds, not frame counts.
+# The values preserve the promoted 30 FPS behavior while avoiding materially
+# earlier confirmation/recovery at 45/60 FPS. Sampling still quantizes the
+# observed transition time, especially at 20 FPS.
+BODY_MOTION_CHAIN_CONFIRM_S = 0.030
+BODY_MOTION_STRONG_BURST_CONFIRM_S = 0.095
+BODY_MOTION_SETTLE_S = 0.060
+# Public runtime label for the body-motion guard implementation.  This is a
+# diagnostic/UI identifier only; it does not select or alter a head algorithm.
+BODY_MOTION_GUARD_VERSION = "C2.8"
+# Body-guard-only mirror of the existing action debounce semantics at 30 FPS.
+# This does not alter motion_active or any game/action trigger; it only prevents
+# the body guard from inheriting frame-rate-dependent activation times.
+BODY_MOTION_ACTION_RISK_TIMING = {
+    "march": (0.000, 0.030),
+    "calf_back": (0.060, 0.095),
+    "squat": (0.060, 0.095),
+    "hands_up": (0.060, 0.095),
+    "jumping_jack": (0.030, 0.060),
+    "side_step_jack": (0.030, 0.060),
+    "cross_knee_elbow": (0.030, 0.060),
+}
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, float(value)))
@@ -192,6 +215,14 @@ class ControlKernel:
                 "jumping_jack", "side_step_jack", "cross_knee_elbow",
             )
         }
+        self.body_motion_action_risk: set[str] = set()
+        self.body_motion_action_risk_debounce = {
+            key: {"active": False, "on_since": 0.0, "off_since": 0.0}
+            for key in (
+                "march", "calf_back", "squat", "hands_up",
+                "jumping_jack", "side_step_jack", "cross_knee_elbow",
+            )
+        }
         self.step = {"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0}
         self.last_motion_emit = 0.0
 
@@ -203,9 +234,30 @@ class ControlKernel:
         self.body_motion_guard_raw = 0.0
         self.body_motion_guard_score = 0.0
         self.body_motion_guard_previous: dict[str, tuple[float, float]] = {}
+        self.body_motion_guard_previous_centers: tuple[float, float] | None = None
+        self.body_motion_guard_early_evidence = False
+        self.body_motion_guard_early_until = 0.0
+        self.body_motion_guard_early_run = 0
+        self.body_motion_guard_early_started_at = 0.0
+        self.body_motion_guard_early_last_at = 0.0
+        self.body_motion_guard_postburst_budget = 0
+        self.body_motion_guard_postburst_until = 0.0
+        self.body_motion_guard_distal_runs = {
+            "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+        }
+        self.body_motion_guard_distal_since = {
+            "left_arm": 0.0, "right_arm": 0.0, "left_leg": 0.0, "right_leg": 0.0
+        }
+        self.body_motion_guard_segment_runs = {
+            "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+        }
+        self.body_motion_guard_segment_since = {
+            "left_arm": 0.0, "right_arm": 0.0, "left_leg": 0.0, "right_leg": 0.0
+        }
         self.body_motion_guard_last_at = 0.0
         self.body_motion_guard_hold_until = 0.0
         self.body_motion_guard_settle_frames = 0
+        self.body_motion_guard_settle_started_at = 0.0
 
         # v0.9.7 unified trigger -> output layer. Profile bindings are stored
         # independently from recognition so changing games never changes pose rules.
@@ -557,9 +609,30 @@ class ControlKernel:
         self.body_motion_guard_raw = 0.0
         self.body_motion_guard_score = 0.0
         self.body_motion_guard_previous = {}
+        self.body_motion_guard_previous_centers = None
+        self.body_motion_guard_early_evidence = False
+        self.body_motion_guard_early_until = 0.0
+        self.body_motion_guard_early_run = 0
+        self.body_motion_guard_early_started_at = 0.0
+        self.body_motion_guard_early_last_at = 0.0
+        self.body_motion_guard_postburst_budget = 0
+        self.body_motion_guard_postburst_until = 0.0
+        self.body_motion_guard_distal_runs = {
+            "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+        }
+        self.body_motion_guard_distal_since = {
+            "left_arm": 0.0, "right_arm": 0.0, "left_leg": 0.0, "right_leg": 0.0
+        }
+        self.body_motion_guard_segment_runs = {
+            "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+        }
+        self.body_motion_guard_segment_since = {
+            "left_arm": 0.0, "right_arm": 0.0, "left_leg": 0.0, "right_leg": 0.0
+        }
         self.body_motion_guard_last_at = 0.0
         self.body_motion_guard_hold_until = 0.0
         self.body_motion_guard_settle_frames = 0
+        self.body_motion_guard_settle_started_at = 0.0
 
     def _update_body_motion_guard_locked(self, pose_map: dict[str, dict], now: float) -> None:
         """Measure exercise motion without modifying the selected head algorithm."""
@@ -580,44 +653,210 @@ class ControlKernel:
                 )
 
         raw = 0.0
+        speed_count = 0
+        peak_speed = 0.0
+        second_speed = 0.0
+        coherent_vertical_speed = 0.0
         dt = now - self.body_motion_guard_last_at if self.body_motion_guard_last_at else 0.0
+        velocity_by_name: dict[str, tuple[float, float]] = {}
+        speed_by_name: dict[str, float] = {}
         if 1.0 / 90.0 <= dt <= 0.12:
-            speeds = [
-                math.hypot(value[0] - self.body_motion_guard_previous[name][0],
-                           value[1] - self.body_motion_guard_previous[name][1]) / dt
+            velocity_by_name = {
+                name: (
+                    (value[0] - self.body_motion_guard_previous[name][0]) / dt,
+                    (value[1] - self.body_motion_guard_previous[name][1]) / dt,
+                )
                 for name, value in current.items()
                 if name in self.body_motion_guard_previous
-            ]
-            if len(speeds) >= 2:
+            }
+            speed_by_name = {
+                name: math.hypot(*velocity) for name, velocity in velocity_by_name.items()
+            }
+            speeds = list(speed_by_name.values())
+            speed_count = len(speeds)
+            if speed_count >= 2:
                 speeds.sort(reverse=True)
+                peak_speed = float(speeds[0])
+                second_speed = float(speeds[1])
                 fastest_half = speeds[:max(1, len(speeds) // 2)]
                 raw = float(statistics.fmean(fastest_half))
+            if self.body_motion_guard_previous_centers is not None:
+                previous_shoulder_y, previous_hip_y = self.body_motion_guard_previous_centers
+                shoulder_vy = (float(shoulder["y"]) - previous_shoulder_y) / torso / dt
+                hip_vy = (float(hip["y"]) - previous_hip_y) / torso / dt
+                if shoulder_vy * hip_vy > 0.0:
+                    coherent_vertical_speed = min(abs(shoulder_vy), abs(hip_vy))
         self.body_motion_guard_previous = current
+        self.body_motion_guard_previous_centers = (float(shoulder["y"]), float(hip["y"]))
         self.body_motion_guard_last_at = now
         self.body_motion_guard_raw = raw
         alpha = 1.0 - math.exp(-max(0.0, min(0.12, dt)) / 0.10) if dt > 0.0 else 1.0
         self.body_motion_guard_score += alpha * (raw - self.body_motion_guard_score)
 
-        if self.body_motion_guard_score >= 2.50 or bool(self.motion_active):
+        raw_onset = (
+            not self.body_motion_guard_active
+            and speed_count >= 8
+            and raw >= 2.50
+        )
+        early_limb_onset = (
+            not self.body_motion_guard_active
+            and speed_count >= 8
+            and peak_speed >= 2.40
+            and second_speed >= 0.40
+        )
+        vertical_body_onset = (
+            not self.body_motion_guard_active
+            and speed_count >= 8
+            and coherent_vertical_speed >= 0.35
+        )
+
+        # C2.5: some articulated actions are dominated by one distal joint
+        # (wrist/ankle), while the elbow/knee only moves modestly. Requiring the
+        # global second-fastest point to be large misses these motions. Accept a
+        # distal-chain onset only after two consecutive supported frames, so a
+        # single-landmark one-frame spike cannot open the transient suppressor.
+        distal_specs = (
+            ("left_arm", "left_elbow", "left_wrist", 1.20),
+            ("right_arm", "right_elbow", "right_wrist", 1.20),
+            ("left_leg", "left_knee", "left_ankle", 1.35),
+            ("right_leg", "right_knee", "right_ankle", 1.35),
+        )
+        distal_chain_onset = False
+        for chain_name, proximal_name, distal_name, distal_threshold in distal_specs:
+            supported = bool(
+                not self.body_motion_guard_active
+                and speed_count >= 8
+                and speed_by_name.get(distal_name, 0.0) >= distal_threshold
+                and speed_by_name.get(proximal_name, 0.0) >= 0.10
+            )
+            self.body_motion_guard_distal_runs[chain_name] = (
+                self.body_motion_guard_distal_runs.get(chain_name, 0) + 1 if supported else 0
+            )
+            if supported:
+                if self.body_motion_guard_distal_since.get(chain_name, 0.0) <= 0.0:
+                    self.body_motion_guard_distal_since[chain_name] = now
+                if now - self.body_motion_guard_distal_since[chain_name] >= BODY_MOTION_CHAIN_CONFIRM_S:
+                    distal_chain_onset = True
+            else:
+                self.body_motion_guard_distal_since[chain_name] = 0.0
+
+        # C2.6: articulation changes the distal-minus-proximal segment vector,
+        # unlike rigid translation of the whole limb. Two consecutive frames
+        # are required so single-frame landmark deformation cannot open the
+        # transient suppressor. This complements C2.5 when wrist/ankle motion is
+        # real but the absolute distal speed stays below its higher threshold.
+        segment_specs = (
+            ("left_arm", "left_elbow", "left_wrist", 0.80),
+            ("right_arm", "right_elbow", "right_wrist", 0.80),
+            ("left_leg", "left_knee", "left_ankle", 1.20),
+            ("right_leg", "right_knee", "right_ankle", 1.20),
+        )
+        segment_articulation_onset = False
+        for chain_name, proximal_name, distal_name, segment_threshold in segment_specs:
+            proximal_velocity = velocity_by_name.get(proximal_name)
+            distal_velocity = velocity_by_name.get(distal_name)
+            segment_speed = 0.0
+            if proximal_velocity is not None and distal_velocity is not None:
+                segment_speed = math.hypot(
+                    distal_velocity[0] - proximal_velocity[0],
+                    distal_velocity[1] - proximal_velocity[1],
+                )
+            supported = bool(
+                not self.body_motion_guard_active
+                and speed_count >= 8
+                and speed_by_name.get(proximal_name, 0.0) >= 0.10
+                and segment_speed >= segment_threshold
+            )
+            self.body_motion_guard_segment_runs[chain_name] = (
+                self.body_motion_guard_segment_runs.get(chain_name, 0) + 1 if supported else 0
+            )
+            if supported:
+                if self.body_motion_guard_segment_since.get(chain_name, 0.0) <= 0.0:
+                    self.body_motion_guard_segment_since[chain_name] = now
+                if now - self.body_motion_guard_segment_since[chain_name] >= BODY_MOTION_CHAIN_CONFIRM_S:
+                    segment_articulation_onset = True
+            else:
+                self.body_motion_guard_segment_since[chain_name] = 0.0
+        # Early evidence is deliberately transient: it can suppress the current
+        # horizontal output frame, but it does not own the persistent guard
+        # lifecycle. Persistent activation remains restricted to the already
+        # validated C1 raw/EMA/action evidence, preventing repeated early
+        # triggers from stretching guard occupancy across a whole exercise.
+        previous_early = bool(self.body_motion_guard_early_evidence)
+        self.body_motion_guard_early_evidence = bool(
+            early_limb_onset or vertical_body_onset or distal_chain_onset
+            or segment_articulation_onset
+        )
+        strong_burst_ended = False
+        if self.body_motion_guard_early_evidence:
+            self.body_motion_guard_early_run += 1
+            if not previous_early:
+                self.body_motion_guard_early_started_at = now
+            self.body_motion_guard_early_last_at = now
+            # Bridge the estimator/output phase lag without granting early
+            # evidence ownership of the persistent guard lifecycle. 67 ms is
+            # time-based and therefore stable across camera frame rates.
+            self.body_motion_guard_early_until = max(self.body_motion_guard_early_until, now + 0.067)
+        else:
+            if previous_early and self.body_motion_guard_early_started_at > 0.0:
+                burst_duration = max(0.0, self.body_motion_guard_early_last_at - self.body_motion_guard_early_started_at)
+                strong_burst_ended = burst_duration >= BODY_MOTION_STRONG_BURST_CONFIRM_S
+            self.body_motion_guard_early_run = 0
+            self.body_motion_guard_early_started_at = 0.0
+            self.body_motion_guard_early_last_at = 0.0
+        if (
+            raw_onset
+            or self.body_motion_guard_score >= 2.50
+            or bool(self.body_motion_action_risk)
+        ):
             self.body_motion_guard_active = True
             self.body_motion_guard_hold_until = now + 0.10
             self.body_motion_guard_settle_frames = 0
+            self.body_motion_guard_settle_started_at = 0.0
         elif self.body_motion_guard_active and self.body_motion_guard_score >= 1.625:
             self.body_motion_guard_hold_until = now + 0.10
             self.body_motion_guard_settle_frames = 0
+            self.body_motion_guard_settle_started_at = 0.0
+
+        if self.body_motion_guard_active:
+            # Persistent guard owns this phase; discard any transient tail so it
+            # cannot survive a persistent-guard episode and fire on recovery.
+            self.body_motion_guard_postburst_budget = 0
+            self.body_motion_guard_postburst_until = 0.0
+        elif strong_burst_ended:
+            # A sustained early-evidence burst can be followed by one or two
+            # delayed horizontal spikes after the ordinary 67 ms bridge. Arm a
+            # tiny output-only veto budget instead of extending a blanket hold:
+            # at most two non-zero frames may be suppressed within 100 ms.
+            self.body_motion_guard_postburst_budget = 2
+            self.body_motion_guard_postburst_until = now + 0.10
 
     def _guard_horizontal_output_locked(self, x: float, now: float) -> float:
-        if not self.body_motion_guard_enabled or not self.body_motion_guard_active:
+        if not self.body_motion_guard_enabled:
+            return float(x)
+        if not self.body_motion_guard_active:
+            if now <= self.body_motion_guard_early_until:
+                return 0.0
+            if now > self.body_motion_guard_postburst_until:
+                self.body_motion_guard_postburst_budget = 0
+            if self.body_motion_guard_postburst_budget > 0 and abs(float(x)) > 0.01:
+                self.body_motion_guard_postburst_budget -= 1
+                return 0.0
             return float(x)
         if now < self.body_motion_guard_hold_until or self.body_motion_guard_score >= 1.625:
             self.body_motion_guard_settle_frames = 0
+            self.body_motion_guard_settle_started_at = 0.0
         elif abs(float(x)) <= 0.01:
             self.body_motion_guard_settle_frames += 1
-            if self.body_motion_guard_settle_frames >= 3:
+            if self.body_motion_guard_settle_started_at <= 0.0:
+                self.body_motion_guard_settle_started_at = now
+            if now - self.body_motion_guard_settle_started_at >= BODY_MOTION_SETTLE_S:
                 self.body_motion_guard_active = False
                 self.body_motion_guard_settle_frames = 0
+                self.body_motion_guard_settle_started_at = 0.0
         else:
             self.body_motion_guard_settle_frames = 0
+            self.body_motion_guard_settle_started_at = 0.0
         return 0.0 if self.body_motion_guard_active else float(x)
 
     def _compute_body_zones(self, pose_map: dict[str, dict]) -> dict[str, dict]:
@@ -787,6 +1026,28 @@ class ControlKernel:
                 state["active"] = False
         return bool(state["active"])
 
+    def _set_body_motion_action_risk_timed(
+        self, ident: str, raw: bool, now: float, on_s: float, off_s: float
+    ) -> bool:
+        state = self.body_motion_action_risk_debounce[ident]
+        if raw:
+            state["off_since"] = 0.0
+            if not state["active"]:
+                if state["on_since"] <= 0.0:
+                    state["on_since"] = now
+                if now - state["on_since"] >= on_s:
+                    state["active"] = True
+        else:
+            state["on_since"] = 0.0
+            if state["active"]:
+                if state["off_since"] <= 0.0:
+                    state["off_since"] = now
+                if now - state["off_since"] >= off_s:
+                    state["active"] = False
+            else:
+                state["off_since"] = 0.0
+        return bool(state["active"])
+
     def _update_motion_locked(self, pose_map: dict[str, dict], now: float) -> None:
         shoulder = _midpoint(pose_map["left_shoulder"], pose_map["right_shoulder"]) if self._points_good(pose_map, ("left_shoulder", "right_shoulder")) else None
         hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"]) if self._points_good(pose_map, ("left_hip", "right_hip")) else None
@@ -882,6 +1143,22 @@ class ControlKernel:
             ) or (
                 right_knee_raised and body_distance(pose_map["right_knee"], pose_map["left_elbow"]) < 0.72
             )
+        raw_motion = {
+            "march": march_raw,
+            "calf_back": calf_raw,
+            "squat": squat_raw,
+            "hands_up": hands_raw,
+            "jumping_jack": jumping_jack_raw,
+            "side_step_jack": side_step_jack_raw,
+            "cross_knee_elbow": cross_knee_elbow_raw,
+        }
+        risk = set()
+        for ident, raw in raw_motion.items():
+            on_s, off_s = BODY_MOTION_ACTION_RISK_TIMING[ident]
+            if self._set_body_motion_action_risk_timed(ident, raw, now, on_s, off_s):
+                risk.add(ident)
+        self.body_motion_action_risk = risk
+
         active = set()
         if self._set_motion_debounced("march", march_raw, 1, 2): active.add("march")
         if self._set_motion_debounced("calf_back", calf_raw, 3, 4): active.add("calf_back")
@@ -1163,6 +1440,9 @@ class ControlKernel:
         self.motion_active.clear()
         for state in self.motion_debounce.values():
             state.update({"active": False, "on": 0, "off": 0})
+        self.body_motion_action_risk.clear()
+        for state in self.body_motion_action_risk_debounce.values():
+            state.update({"active": False, "on_since": 0.0, "off_since": 0.0})
         self.pose_active.clear()
         self.pose_confidence = {}
         for state in self.pose_debounce.values():
@@ -1239,6 +1519,7 @@ class ControlKernel:
         self.head["vertical_anchor_samples"] = len(self.vertical_anchor_samples)
         self.head["body_motion_guard_enabled"] = bool(self.body_motion_guard_enabled)
         self.head["body_motion_guard_active"] = bool(self.body_motion_guard_active)
+        self.head["body_motion_guard_version"] = BODY_MOTION_GUARD_VERSION
         self.head["body_motion_guard_score"] = round(float(self.body_motion_guard_score), 4)
         self.head["body_motion_guard_raw"] = round(float(self.body_motion_guard_raw), 4)
         # Always expose the final output Y, never the diagnostic pitch value.
@@ -1275,6 +1556,7 @@ class ControlKernel:
             "vertical_gate_active": bool(self.vertical_gate_active),
             "body_motion_guard_enabled": bool(self.body_motion_guard_enabled),
             "body_motion_guard_active": bool(self.body_motion_guard_active),
+            "body_motion_guard_version": BODY_MOTION_GUARD_VERSION,
             "body_motion_guard_score": round(float(self.body_motion_guard_score), 4),
             "vertical_wrist_norm": round(float(self.vertical_wrist_norm), 4),
             "vertical_look_source": source,
