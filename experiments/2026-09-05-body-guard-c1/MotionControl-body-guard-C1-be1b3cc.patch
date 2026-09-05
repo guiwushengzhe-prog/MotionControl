@@ -1,0 +1,144 @@
+From be1b3cc0f71907628d23077b44815871552be288 Mon Sep 17 00:00:00 2001
+From: MotionControl Sandbox <motioncontrol-sandbox@local>
+Date: Sat, 5 Sep 2026 06:40:48 +0000
+Subject: [PATCH] fix: trigger body guard on strong raw motion onset
+
+---
+ control_kernel.py                    | 11 +++-
+ tests/test_body_motion_head_guard.py | 88 ++++++++++++++++++++++++++++
+ 2 files changed, 97 insertions(+), 2 deletions(-)
+
+diff --git a/control_kernel.py b/control_kernel.py
+index de7fd4e..32c133b 100644
+--- a/control_kernel.py
++++ b/control_kernel.py
+@@ -580,6 +580,7 @@ class ControlKernel:
+                 )
+ 
+         raw = 0.0
++        speed_count = 0
+         dt = now - self.body_motion_guard_last_at if self.body_motion_guard_last_at else 0.0
+         if 1.0 / 90.0 <= dt <= 0.12:
+             speeds = [
+@@ -588,7 +589,8 @@ class ControlKernel:
+                 for name, value in current.items()
+                 if name in self.body_motion_guard_previous
+             ]
+-            if len(speeds) >= 2:
++            speed_count = len(speeds)
++            if speed_count >= 2:
+                 speeds.sort(reverse=True)
+                 fastest_half = speeds[:max(1, len(speeds) // 2)]
+                 raw = float(statistics.fmean(fastest_half))
+@@ -598,7 +600,12 @@ class ControlKernel:
+         alpha = 1.0 - math.exp(-max(0.0, min(0.12, dt)) / 0.10) if dt > 0.0 else 1.0
+         self.body_motion_guard_score += alpha * (raw - self.body_motion_guard_score)
+ 
+-        if self.body_motion_guard_score >= 2.50 or bool(self.motion_active):
++        raw_onset = (
++            not self.body_motion_guard_active
++            and speed_count >= 8
++            and raw >= 2.50
++        )
++        if raw_onset or self.body_motion_guard_score >= 2.50 or bool(self.motion_active):
+             self.body_motion_guard_active = True
+             self.body_motion_guard_hold_until = now + 0.10
+             self.body_motion_guard_settle_frames = 0
+diff --git a/tests/test_body_motion_head_guard.py b/tests/test_body_motion_head_guard.py
+index ddc8309..143b829 100644
+--- a/tests/test_body_motion_head_guard.py
++++ b/tests/test_body_motion_head_guard.py
+@@ -109,3 +109,91 @@ def test_body_motion_guard_can_be_disabled(tmp_path, monkeypatch):
+         assert output.axes[-1] == (.7, 0.0)
+     finally:
+         kernel.close()
++
++
++def test_raw_fast_path_starts_before_ema_reaches_threshold(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(pose(.03), now)
++        assert kernel.body_motion_guard_raw >= 2.50
++        assert kernel.body_motion_guard_score < 2.50
++        assert kernel.body_motion_guard_active is True
++    finally:
++        kernel.close()
++
++
++def test_raw_fast_path_ignores_low_raw_motion(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(pose(.005), now)
++        assert kernel.body_motion_guard_raw < 2.50
++        assert kernel.body_motion_guard_active is False
++    finally:
++        kernel.close()
++
++
++def test_raw_fast_path_requires_eight_common_velocity_points(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        sparse = pose(.03)
++        keep = {
++            "left_shoulder", "right_shoulder", "left_hip", "right_hip",
++            "left_elbow", "right_elbow", "left_wrist",
++        }
++        sparse = {name: point for name, point in sparse.items() if name in keep}
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(sparse, now)
++        assert kernel.body_motion_guard_raw >= 2.50
++        assert kernel.body_motion_guard_score < 2.50
++        assert kernel.body_motion_guard_active is False
++    finally:
++        kernel.close()
++
++
++def test_motion_active_still_starts_guard_without_raw_fast_path(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        kernel.motion_active.add("squat")
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(pose(), now)
++        assert kernel.body_motion_guard_raw < 2.50
++        assert kernel.body_motion_guard_active is True
++    finally:
++        kernel.close()
++
++
++def test_raw_fast_path_does_not_keep_renewing_hold_while_already_active(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(pose(.03), now)
++        assert kernel.body_motion_guard_active is True
++        first_hold = kernel.body_motion_guard_hold_until
++
++        # Another raw spike while already active must not turn the new fast path
++        # into a persistence path. Legacy EMA/motion_active own persistence.
++        kernel.body_motion_guard_score = 0.0
++        kernel.motion_active.clear()
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(pose(.045), now)
++        assert kernel.body_motion_guard_raw >= 2.50
++        assert kernel.body_motion_guard_hold_until == first_hold
++    finally:
++        kernel.close()
+-- 
+2.47.3
