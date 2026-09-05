@@ -1,0 +1,164 @@
+From f8afc3f81a817a4557625703ed2780dd65bb375c Mon Sep 17 00:00:00 2001
+From: MotionControl Sandbox <motioncontrol-sandbox@local>
+Date: Sat, 5 Sep 2026 08:11:54 +0000
+Subject: [PATCH] fix: detect supported limb articulation transiently
+
+---
+ control_kernel.py                    | 52 ++++++++++++++++++++++++++--
+ tests/test_body_motion_head_guard.py | 34 ++++++++++++++++--
+ 2 files changed, 80 insertions(+), 6 deletions(-)
+
+diff --git a/control_kernel.py b/control_kernel.py
+index 70bd318..424a3eb 100644
+--- a/control_kernel.py
++++ b/control_kernel.py
+@@ -212,6 +212,9 @@ class ControlKernel:
+         self.body_motion_guard_distal_runs = {
+             "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+         }
++        self.body_motion_guard_segment_runs = {
++            "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
++        }
+         self.body_motion_guard_last_at = 0.0
+         self.body_motion_guard_hold_until = 0.0
+         self.body_motion_guard_settle_frames = 0
+@@ -575,6 +578,9 @@ class ControlKernel:
+         self.body_motion_guard_distal_runs = {
+             "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
+         }
++        self.body_motion_guard_segment_runs = {
++            "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
++        }
+         self.body_motion_guard_last_at = 0.0
+         self.body_motion_guard_hold_until = 0.0
+         self.body_motion_guard_settle_frames = 0
+@@ -603,14 +609,20 @@ class ControlKernel:
+         second_speed = 0.0
+         coherent_vertical_speed = 0.0
+         dt = now - self.body_motion_guard_last_at if self.body_motion_guard_last_at else 0.0
++        velocity_by_name: dict[str, tuple[float, float]] = {}
+         speed_by_name: dict[str, float] = {}
+         if 1.0 / 90.0 <= dt <= 0.12:
+-            speed_by_name = {
+-                name: math.hypot(value[0] - self.body_motion_guard_previous[name][0],
+-                                 value[1] - self.body_motion_guard_previous[name][1]) / dt
++            velocity_by_name = {
++                name: (
++                    (value[0] - self.body_motion_guard_previous[name][0]) / dt,
++                    (value[1] - self.body_motion_guard_previous[name][1]) / dt,
++                )
+                 for name, value in current.items()
+                 if name in self.body_motion_guard_previous
+             }
++            speed_by_name = {
++                name: math.hypot(*velocity) for name, velocity in velocity_by_name.items()
++            }
+             speeds = list(speed_by_name.values())
+             speed_count = len(speeds)
+             if speed_count >= 2:
+@@ -673,6 +685,39 @@ class ControlKernel:
+             )
+             if self.body_motion_guard_distal_runs[chain_name] >= 2:
+                 distal_chain_onset = True
++
++        # C2.6: articulation changes the distal-minus-proximal segment vector,
++        # unlike rigid translation of the whole limb. Two consecutive frames
++        # are required so single-frame landmark deformation cannot open the
++        # transient suppressor. This complements C2.5 when wrist/ankle motion is
++        # real but the absolute distal speed stays below its higher threshold.
++        segment_specs = (
++            ("left_arm", "left_elbow", "left_wrist", 0.80),
++            ("right_arm", "right_elbow", "right_wrist", 0.80),
++            ("left_leg", "left_knee", "left_ankle", 1.20),
++            ("right_leg", "right_knee", "right_ankle", 1.20),
++        )
++        segment_articulation_onset = False
++        for chain_name, proximal_name, distal_name, segment_threshold in segment_specs:
++            proximal_velocity = velocity_by_name.get(proximal_name)
++            distal_velocity = velocity_by_name.get(distal_name)
++            segment_speed = 0.0
++            if proximal_velocity is not None and distal_velocity is not None:
++                segment_speed = math.hypot(
++                    distal_velocity[0] - proximal_velocity[0],
++                    distal_velocity[1] - proximal_velocity[1],
++                )
++            supported = bool(
++                not self.body_motion_guard_active
++                and speed_count >= 8
++                and speed_by_name.get(proximal_name, 0.0) >= 0.10
++                and segment_speed >= segment_threshold
++            )
++            self.body_motion_guard_segment_runs[chain_name] = (
++                self.body_motion_guard_segment_runs.get(chain_name, 0) + 1 if supported else 0
++            )
++            if self.body_motion_guard_segment_runs[chain_name] >= 2:
++                segment_articulation_onset = True
+         # Early evidence is deliberately transient: it can suppress the current
+         # horizontal output frame, but it does not own the persistent guard
+         # lifecycle. Persistent activation remains restricted to the already
+@@ -681,6 +726,7 @@ class ControlKernel:
+         previous_early = bool(self.body_motion_guard_early_evidence)
+         self.body_motion_guard_early_evidence = bool(
+             early_limb_onset or vertical_body_onset or distal_chain_onset
++            or segment_articulation_onset
+         )
+         strong_burst_ended = False
+         if self.body_motion_guard_early_evidence:
+diff --git a/tests/test_body_motion_head_guard.py b/tests/test_body_motion_head_guard.py
+index 8f14d94..e5bcb4a 100644
+--- a/tests/test_body_motion_head_guard.py
++++ b/tests/test_body_motion_head_guard.py
+@@ -447,7 +447,7 @@ def test_distal_chain_requires_two_consecutive_supported_frames(tmp_path, monkey
+         kernel.close()
+ 
+ 
+-def test_distal_chain_ignores_two_frame_motion_below_distal_threshold(tmp_path, monkeypatch):
++def test_segment_articulation_can_cover_motion_below_distal_threshold(tmp_path, monkeypatch):
+     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+     kernel = ControlKernel(Output())
+     try:
+@@ -461,8 +461,13 @@ def test_distal_chain_ignores_two_frame_motion_below_distal_threshold(tmp_path,
+             kernel._update_body_motion_guard_locked(moved, now)
+         assert kernel.body_motion_guard_raw < 2.50
+         assert kernel.body_motion_guard_active is False
+-        assert kernel.body_motion_guard_early_evidence is False
+-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
++        # C2.5 distal evidence remains below threshold, while the orthogonal
++        # C2.6 segment-deformation path is allowed to recognize the sustained
++        # wrist-versus-elbow articulation.
++        assert kernel.body_motion_guard_distal_runs["left_arm"] == 0
++        assert kernel.body_motion_guard_segment_runs["left_arm"] >= 2
++        assert kernel.body_motion_guard_early_evidence is True
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
+     finally:
+         kernel.close()
+ 
+@@ -483,3 +488,26 @@ def test_distal_chain_requires_proximal_support(tmp_path, monkeypatch):
+         assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
+     finally:
+         kernel.close()
++
++
++def test_rigid_limb_translation_does_not_use_segment_articulation_path(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        for step in (1, 2):
++            moved = pose()
++            # Wrist and elbow translate together, so the forearm segment vector
++            # does not deform even though both landmarks have measurable speed.
++            moved["left_wrist"]["x"] += 0.008 * step
++            moved["left_elbow"]["x"] += 0.008 * step
++            now += 1 / 30
++            kernel._update_body_motion_guard_locked(moved, now)
++        assert kernel.body_motion_guard_active is False
++        assert kernel.body_motion_guard_distal_runs["left_arm"] == 0
++        assert kernel.body_motion_guard_segment_runs["left_arm"] == 0
++        assert kernel.body_motion_guard_early_evidence is False
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
++    finally:
++        kernel.close()
+-- 
+2.47.3
