@@ -1,0 +1,88 @@
+From 155ddf937d2e4bec86364005d4ed1d84ec99a48e Mon Sep 17 00:00:00 2001
+From: MotionControl Sandbox <motioncontrol-sandbox@local>
+Date: Sat, 5 Sep 2026 07:38:27 +0000
+Subject: [PATCH] fix: widen transient body-onset evidence safely
+
+---
+ control_kernel.py                    |  6 ++--
+ tests/test_body_motion_head_guard.py | 47 ++++++++++++++++++++++++++++
+ 2 files changed, 50 insertions(+), 3 deletions(-)
+
+diff --git a/control_kernel.py b/control_kernel.py
+index 7ffc287..aaa62b5 100644
+--- a/control_kernel.py
++++ b/control_kernel.py
+@@ -626,13 +626,13 @@ class ControlKernel:
+         early_limb_onset = (
+             not self.body_motion_guard_active
+             and speed_count >= 8
+-            and peak_speed >= 2.60
+-            and second_speed >= 0.50
++            and peak_speed >= 2.40
++            and second_speed >= 0.40
+         )
+         vertical_body_onset = (
+             not self.body_motion_guard_active
+             and speed_count >= 8
+-            and coherent_vertical_speed >= 0.50
++            and coherent_vertical_speed >= 0.35
+         )
+         # Early evidence is deliberately transient: it can suppress the current
+         # horizontal output frame, but it does not own the persistent guard
+diff --git a/tests/test_body_motion_head_guard.py b/tests/test_body_motion_head_guard.py
+index 8c39251..f2beba7 100644
+--- a/tests/test_body_motion_head_guard.py
++++ b/tests/test_body_motion_head_guard.py
+@@ -303,3 +303,50 @@ def test_early_evidence_bridges_short_output_lag_without_persistent_guard(tmp_pa
+         assert kernel.body_motion_guard_active is False
+     finally:
+         kernel.close()
++
++
++def test_early_limb_threshold_keeps_return_like_noise_below_trigger(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        base = pose()
++        kernel._update_body_motion_guard_locked(base, now)
++        # Small multi-point displacement stays below the promoted C2.3 limb
++        # onset boundary and must not create an output-only transient lease.
++        moved = pose()
++        moved["left_wrist"]["x"] += 0.018
++        moved["left_elbow"]["x"] += 0.004
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(moved, now)
++        assert kernel.body_motion_guard_active is False
++        assert kernel.body_motion_guard_early_evidence is False
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
++    finally:
++        kernel.close()
++
++
++def test_coherent_vertical_threshold_promotes_body_translation_only(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        base = pose()
++        kernel._update_body_motion_guard_locked(base, now)
++        moved = pose()
++        # Translate the torso/legs coherently in Y while preserving local limb
++        # geometry. This is the path that recovers squat/onset motion removed by
++        # hip-centering, and should remain output-only rather than persistent.
++        for name in (
++            "left_shoulder", "right_shoulder", "left_hip", "right_hip",
++            "left_knee", "right_knee", "left_ankle", "right_ankle",
++            "left_elbow", "right_elbow", "left_wrist", "right_wrist",
++        ):
++            moved[name]["y"] += 0.004
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(moved, now)
++        assert kernel.body_motion_guard_active is False
++        assert kernel.body_motion_guard_early_evidence is True
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
++    finally:
++        kernel.close()
+-- 
+2.47.3
