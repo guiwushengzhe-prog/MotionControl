@@ -1,56 +1,63 @@
-# MotionControl 状态 — 2026-09-05 C2.1 body-motion head guard
+# MotionControl 状态 — 2026-09-05 C2.2 body-motion head guard
 
 ## 当前晋级候选
 - 产品来源基线：`d8d1ffc702b1b5685eab65b8291951024f6d4dcf`
 - C1 本地 commit：`be1b3cc0f71907628d23077b44815871552be288`
-- 当前 C2.1 本地 commit：`a78b3e37f882fe6efdf0eb59501d51edbf1a78ad`
-- GitHub 分支：`head-body-guard-transient-early-c2-20260905`
-- 结论：PROMOTE C2.1（独立分支，未合并产品主线）
+- C2.1 本地 commit：`a78b3e37f882fe6efdf0eb59501d51edbf1a78ad`
+- 当前 C2.2 本地 commit：`84bbc880b30f65ee84b2045ffd31a5c9ac16eacf`
+- GitHub 分支：`head-body-guard-transient-hold-c2-2-20260905`
+- 结论：PROMOTE C2.2（独立分支，未合并产品主线）
 
-## C2.1 核心改动
-C1 的 raw/EMA/action persistent guard 完全保留。新增两类只作用于当前帧的 early evidence：
+## C2.2 核心改动
+保持 C2.1 的 early-evidence 阈值和 C1 persistent guard 全部不变。唯一新增：early evidence 出现时记录一个 67 ms 的 output-only transient suppression 窗口，用来桥接身体运动证据与头控误 X 之间约 1–2 个 30 FPS 帧的时序错位。
 
-1. 局部肢体启动：>=8 共同速度点，peak >= 2.60 且 second >= 0.50。
-2. 躯干整体垂直运动：>=8 共同速度点，肩中心与髋中心同向垂直速度较小值 >= 0.50。
+67 ms transient bridge：
+- 不设置 `body_motion_guard_active`；
+- 不续 persistent hold；
+- 不修改 raw / EMA / motion_active；
+- 不修改 settle / recovery；
+- persistent guard 序列与 C1/C2.1 逐帧完全一致。
 
-Early evidence 只对当前横向输出归零，不设置 active/hold，不续期，也不改变 C1 的 EMA、迟滞、settle 或 recovery。因此 C2.1 能抢动作开头，但不会把 guard 占用拉长。
+不采用 100–150 ms：现有离线数据虽然还能继续降低误输出，但缺“强身体运动 + 同时故意持续 yaw”的冻结真人联合真值，扩大临时屏蔽时间会增加未量化的合法 yaw 风险。
 
 ## 真人 A/B
-8522 全视频，相对 C1：
-- 横向非零帧：622 -> 502（-19.29%）
-- 横向绝对输出和：28831.490 -> 23745.966（-17.64%）
-- 方向切换：48 -> 32
-- persistent guard 帧：635 -> 635（逐帧一致）
+C2.1 -> C2.2，8522 全视频：
+- 横向非零帧：502 -> 472（-5.98%）
+- 横向绝对输出和：23745.966 -> 22314.499（-6.03%）
+- persistent guard：635 -> 635（逐帧一致）
 
-16 个 RGB 人工冻结身体动作窗口：
-- 非零帧：181 -> 122（-32.60%）
-- 绝对输出和：8366.406 -> 5834.564（-30.26%）
-- 方向切换：13 -> 8
+C2.1 -> C2.2，16 个 RGB 人工冻结身体动作窗口：
+- 非零帧：122 -> 107（-12.30%）
+- 绝对输出和：5834.564 -> 5083.937（-12.86%）
 - persistent guard：165 -> 165
 
-独立 RGB 人工动作起点：
-- 前 50 ms：12 -> 10 非零帧
-- 前 100 ms：20 -> 16
-- 前 150 ms：32 -> 22
+相对 C1 的累计收益：
+- 全视频非零帧：622 -> 472（-24.12%）
+- 全视频绝对输出：28831.490 -> 22314.499（-22.60%）
+- 动作窗口非零帧：181 -> 107（-40.88%）
+- 动作窗口绝对输出：8366.406 -> 5083.937（-39.23%）
+- RGB 动作起点前 50/100/150 ms 非零帧：12/20/32 -> 10/16/20
 
-这是本轮第一次在真实人工动作起点 50/100/150 ms 上得到改善。
+五组冻结真人 Pose，C2.1 -> C2.2：
+- 39997：全视频 changed 0
+- 30dd：全视频 changed 0
+- af4e：全视频 changed 0
+- ed114：全视频 changed 0
+- 6d210：全视频 changed 0
 
-五组冻结真人 Pose 完整回归：
-- neutral_static 798 帧：changed 0
-- pitch_only 1518 帧：changed 0
-- return 582 帧：changed 0
-- clear_yaw 450 帧：changed 0
-- 五个视频所有帧合计：changed 0
+因此 neutral_static / pitch_only / return / clear_yaw 全部无新增输出差异。
 
 工程检查：
-- `pytest -q tests/test_body_motion_head_guard.py`: 11 passed
+- `pytest -q tests/test_body_motion_head_guard.py`: 12 passed
 - `py_compile`: pass
 - `git diff --check`: pass
 
-## 当前边界
-仍缺“强身体运动 + 同时故意持续 yaw”的冻结真人联合数据。因此不能宣称 C2.1 已解决运动中主动转头保留，也不应仅凭 8522 继续机械降低 early thresholds。
+## 当前残差
+目前 16 个动作窗口里两个重复动作几乎完全没有从 C2.1/C2.2 获益：
+- `calf_back_03`：22 个非零帧，abs X 1033.214；
+- `hands_cross_03`：11 个非零帧，abs X 520.327。
 
-## 下一步
-1. C2.1 作为当前已确认净收益回退点冻结，不覆盖。
-2. 阈值 sweep 只作为 C2.2 探索；除非在现有冻结真人回归零退化之外还能获得足够大的跨窗口净收益，否则不晋级。
-3. 优先补采“身体运动 + 故意左右转头”的真人联合数据；之后再研究 head-relative-to-torso yaw evidence/override，而不是简单软放行整个 body guard。
+下一步先解释这两个窗口为什么没有形成可用 early evidence，重点看：speed_count/core visibility、peak/second 速度、coherent vertical、raw/EMA、证据与 X 的时间关系。禁止为了两个单独重复动作直接降低全局阈值或继续拉长 transient hold。
+
+## 未验证边界
+仍缺“强身体运动 + 同时故意持续 yaw”的冻结真人联合数据。C2.2 只证明纯身体动作误晃抑制有净收益，以及现有静止/普通 clear-yaw/pitch/return 真人数据不退化；不能宣称运动中主动 yaw 已解决。
