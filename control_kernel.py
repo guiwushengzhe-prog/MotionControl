@@ -67,9 +67,10 @@ BODY_MOTION_GUARD_POINTS = (
 BODY_MOTION_CHAIN_CONFIRM_S = 0.030
 BODY_MOTION_STRONG_BURST_CONFIRM_S = 0.095
 BODY_MOTION_SETTLE_S = 0.060
+BODY_MOTION_QUALITY_GRACE_S = 0.150
 # Public runtime label for the body-motion guard implementation.  This is a
 # diagnostic/UI identifier only; it does not select or alter a head algorithm.
-BODY_MOTION_GUARD_VERSION = "C2.8"
+BODY_MOTION_GUARD_VERSION = "C2.9"
 # Body-guard-only mirror of the existing action debounce semantics at 30 FPS.
 # This does not alter motion_active or any game/action trigger; it only prevents
 # the body guard from inheriting frame-rate-dependent activation times.
@@ -258,6 +259,8 @@ class ControlKernel:
         self.body_motion_guard_hold_until = 0.0
         self.body_motion_guard_settle_frames = 0
         self.body_motion_guard_settle_started_at = 0.0
+        self.body_motion_guard_output_blocked = False
+        self.body_motion_guard_veto_reason = ""
 
         # v0.9.7 unified trigger -> output layer. Profile bindings are stored
         # independently from recognition so changing games never changes pose rules.
@@ -633,11 +636,34 @@ class ControlKernel:
         self.body_motion_guard_hold_until = 0.0
         self.body_motion_guard_settle_frames = 0
         self.body_motion_guard_settle_started_at = 0.0
+        self.body_motion_guard_output_blocked = False
+        self.body_motion_guard_veto_reason = ""
 
     def _update_body_motion_guard_locked(self, pose_map: dict[str, dict], now: float) -> None:
         """Measure exercise motion without modifying the selected head algorithm."""
         core = ("left_shoulder", "right_shoulder", "left_hip", "right_hip")
-        if not self.body_motion_guard_enabled or not self._points_good(pose_map, core, 0.35):
+        if not self.body_motion_guard_enabled:
+            self._reset_body_motion_guard_locked()
+            return
+        if not self._points_good(pose_map, core, 0.35):
+            # Large body motion can briefly degrade shoulder/hip confidence.
+            # Do not drop an already-open transient/persistent guard on the
+            # exact frame where tracking quality becomes worst. Preserve its
+            # existing timers for a short bounded grace, then reset if the
+            # torso really remains unavailable.
+            recent_valid = bool(
+                self.body_motion_guard_last_at > 0.0
+                and now - self.body_motion_guard_last_at <= BODY_MOTION_QUALITY_GRACE_S
+            )
+            guard_in_flight = bool(
+                self.body_motion_guard_active
+                or now <= self.body_motion_guard_early_until
+                or (self.body_motion_guard_postburst_budget > 0 and now <= self.body_motion_guard_postburst_until)
+            )
+            if recent_valid and guard_in_flight:
+                if self.body_motion_guard_active:
+                    self.body_motion_guard_hold_until = max(self.body_motion_guard_hold_until, now + 0.060)
+                return
             self._reset_body_motion_guard_locked()
             return
         shoulder = _midpoint(pose_map["left_shoulder"], pose_map["right_shoulder"])
@@ -832,21 +858,29 @@ class ControlKernel:
             self.body_motion_guard_postburst_until = now + 0.10
 
     def _guard_horizontal_output_locked(self, x: float, now: float) -> float:
+        self.body_motion_guard_output_blocked = False
+        self.body_motion_guard_veto_reason = ""
+        x = float(x)
         if not self.body_motion_guard_enabled:
-            return float(x)
+            return x
         if not self.body_motion_guard_active:
             if now <= self.body_motion_guard_early_until:
+                if abs(x) > 0.01:
+                    self.body_motion_guard_output_blocked = True
+                    self.body_motion_guard_veto_reason = "early"
                 return 0.0
             if now > self.body_motion_guard_postburst_until:
                 self.body_motion_guard_postburst_budget = 0
-            if self.body_motion_guard_postburst_budget > 0 and abs(float(x)) > 0.01:
+            if self.body_motion_guard_postburst_budget > 0 and abs(x) > 0.01:
                 self.body_motion_guard_postburst_budget -= 1
+                self.body_motion_guard_output_blocked = True
+                self.body_motion_guard_veto_reason = "postburst"
                 return 0.0
-            return float(x)
+            return x
         if now < self.body_motion_guard_hold_until or self.body_motion_guard_score >= 1.625:
             self.body_motion_guard_settle_frames = 0
             self.body_motion_guard_settle_started_at = 0.0
-        elif abs(float(x)) <= 0.01:
+        elif abs(x) <= 0.01:
             self.body_motion_guard_settle_frames += 1
             if self.body_motion_guard_settle_started_at <= 0.0:
                 self.body_motion_guard_settle_started_at = now
@@ -857,7 +891,12 @@ class ControlKernel:
         else:
             self.body_motion_guard_settle_frames = 0
             self.body_motion_guard_settle_started_at = 0.0
-        return 0.0 if self.body_motion_guard_active else float(x)
+        if self.body_motion_guard_active:
+            if abs(x) > 0.01:
+                self.body_motion_guard_output_blocked = True
+                self.body_motion_guard_veto_reason = "persistent"
+            return 0.0
+        return x
 
     def _compute_body_zones(self, pose_map: dict[str, dict]) -> dict[str, dict]:
         iw, ih = self.width, self.height
@@ -1404,7 +1443,8 @@ class ControlKernel:
         self.head["vertical_look_source"] = source
         self.head["verticalLookSource"] = source
         self.head["horizontal_paused_by_vertical_gate"] = horizontal_paused
-        self.head["horizontal_paused_by_body_motion"] = bool(self.body_motion_guard_active)
+        self.head["horizontal_paused_by_body_motion"] = bool(self.body_motion_guard_output_blocked)
+        self.head["body_motion_guard_veto_reason"] = str(self.body_motion_guard_veto_reason)
         self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
         self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)
         self.head["vertical_pitch_velocity"] = round(float(self.vertical_pitch_velocity), 4)
@@ -1494,10 +1534,11 @@ class ControlKernel:
         self.head["vertical_gate_active"] = bool(self.vertical_gate_active)
         horizontal_paused = bool(self.vertical_gate_active and self.vertical_look.get("exclusive_axes", False))
         self.head["horizontal_paused_by_vertical_gate"] = horizontal_paused
-        if horizontal_paused or self.body_motion_guard_active:
+        if horizontal_paused or self.body_motion_guard_output_blocked:
             self.head["normalized_x"] = 0.0
             self.head["output_x"] = 0.0
-        self.head["horizontal_paused_by_body_motion"] = bool(self.body_motion_guard_active)
+        self.head["horizontal_paused_by_body_motion"] = bool(self.body_motion_guard_output_blocked)
+        self.head["body_motion_guard_veto_reason"] = str(self.body_motion_guard_veto_reason)
         self.head["vertical_wrist_norm"] = round(float(self.vertical_wrist_norm), 4)
         self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
         self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)

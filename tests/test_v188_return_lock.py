@@ -85,7 +85,7 @@ def test_pre_center_false_return_can_recover_sustained_original_turn():
     assert not axis.return_latched
 
 
-def test_return_lock_requires_center_settle_and_delays_opposite_rearm():
+def test_return_lock_quarantines_low_angle_opposite_rearm_output():
     axis = _RelativeYawAxisV153()
     axis._return_latched = True
     axis._return_from_direction = 1
@@ -97,13 +97,44 @@ def test_return_lock_requires_center_settle_and_delays_opposite_rearm():
     assert axis.return_latched
     assert axis._return_center_seen
 
-    # A clearly sustained opposite turn is the only path that can re-arm
-    # before a neutral settle window completes.
-    opposite_outputs = [_step(axis, norm, index + len(outputs)) for index, norm in enumerate((-0.13, -0.14, -0.15, -0.16, -0.17, -0.18, -0.19, -0.20, -0.21, -0.22))]
-    assert opposite_outputs[:2] == pytest.approx([0.0, 0.0])
-    assert any(output < 0.0 for output in opposite_outputs)
+    # A clearly sustained low-angle opposite turn may re-arm the internal
+    # state, but v197 keeps Mouse-X muted for a short quarantine window so a
+    # normal return overshoot cannot escape as a new reverse turn.
+    records = []
+    rearmed_at = None
+    guard_until = None
+    opposite_norms = tuple(-0.13 - 0.01 * index for index in range(40))
+    for index, norm in enumerate(opposite_norms, start=len(outputs)):
+        now = index / 30.0
+        output = _step(axis, norm, index)
+        records.append((now, output))
+        if rearmed_at is None and not axis.return_latched:
+            rearmed_at = now
+            guard_until = axis._opposite_rearm_guard_until
+
+    assert rearmed_at is not None
+    assert guard_until - rearmed_at == pytest.approx(0.28)
+    assert all(output == pytest.approx(0.0) for now, output in records if rearmed_at <= now < guard_until)
+    assert any(output < 0.0 for now, output in records if now >= guard_until)
     assert axis.state == "TURN_LEFT"
     assert not axis.return_latched
+
+
+def test_return_lock_does_not_quarantine_clear_high_angle_opposite_turn():
+    axis = _RelativeYawAxisV153()
+    axis._return_latched = True
+    axis._return_from_direction = 1
+
+    assert _step(axis, 0.0, 0) == pytest.approx(0.0)
+    outputs = [
+        _step(axis, norm, index)
+        for index, norm in enumerate((-0.66, -0.70, -0.74, -0.78, -0.82, -0.86, -0.90, -0.94), start=1)
+    ]
+
+    assert not axis.return_latched
+    assert axis.state == "TURN_LEFT"
+    assert axis._opposite_rearm_guard_until == pytest.approx(0.0)
+    assert any(output < 0.0 for output in outputs)
 
 
 def test_center_settle_unlocks_normal_new_turn_detection():

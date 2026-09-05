@@ -127,7 +127,7 @@ HORIZONTAL_ALGORITHM_VERSIONS = {
     "classic": "v4.4-gated-pitch-ratchet-baseline",
     "gesture_v153": "relative-ratchet-v153-personal-pnp-g12-calib-derotate-hardened",
     "frozen22": "real-ab-equalmean-20260830-v1",
-    "gesture_v188": "relative-ratchet-v188-frozen22-pitch-guard",
+    "gesture_v188": "relative-ratchet-v197-realdata-low-angle-rearm-quarantine",
 }
 
 # frozen22 is the audited R3 11-point / 22-dimensional horizontal
@@ -209,6 +209,8 @@ YAW_V2_RETURN_CENTER_STABLE_S = 0.14
 YAW_V2_OPPOSITE_REARM_AFTER_CENTER = 0.18
 YAW_V2_OPPOSITE_REARM_AFTER_CENTER_VELOCITY = 0.10
 YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S = 0.16
+YAW_V2_OPPOSITE_REARM_OUTPUT_GUARD_S = 0.28
+YAW_V2_OPPOSITE_REARM_GUARD_MAX_ANGLE = 0.65
 
 # Six-channel 2D auxiliary yaw evidence (v115 stage candidate).
 #
@@ -1472,6 +1474,7 @@ class _RelativeYawAxisV153:
         self._motion_evidence=0.0; self._evidence_direction=0; self._evidence_age_s=0.0
         self._active_direction=0; self._active_age_s=0.0; self._committed=False
         self._return_latched=False; self._return_from_direction=0; self._return_center_seen=False; self._return_evidence=0.0
+        self._opposite_rearm_guard_until=0.0
         self._resume_s=0.0; self._cross_evidence=0.0; self._center_zone=YAW_V2_CENTER_ZONE
         self._history=[]; self._peak_norm=abs(norm); self._turn_baseline=0.0; self._baseline_ready_s=0.0
         self._stop_s=0.0; self._turn_mode=''; self._center_stable_s=0.0; self._active_center_s=0.0; self._return_confirm_s=0.0
@@ -1621,7 +1624,12 @@ class _RelativeYawAxisV153:
                     self._cross_evidence+=dt
                     if self._cross_evidence>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S:
                         self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False;self._cross_evidence=0
-                        self._active_direction=opp;self._active_age_s=.2;self._committed=True;self._turn_mode=self._classify_mode(opp,now);self._turn_baseline=max(.04,sm*.75);return self._drive(opp,norm)
+                        self._active_direction=opp;self._active_age_s=.2;self._committed=True;self._turn_mode=self._classify_mode(opp,now);self._turn_baseline=max(.04,sm*.75)
+                        if amount<YAW_V2_OPPOSITE_REARM_GUARD_MAX_ANGLE:
+                            self._opposite_rearm_guard_until=now+YAW_V2_OPPOSITE_REARM_OUTPUT_GUARD_S
+                            self._drive(opp,norm);self.output=0.0;return 0.0
+                        self._opposite_rearm_guard_until=0.0
+                        return self._drive(opp,norm)
                 else:self._cross_evidence=max(0,self._cross_evidence-dt)
             else:
                 self._cross_evidence=max(0,self._cross_evidence-dt)
@@ -1711,7 +1719,11 @@ class _RelativeYawAxisV153:
             else:self._stop_s+=dt
             if self._committed and self._stop_s>=stop_need:
                 self._hold_anchor=norm;self._held_from_turn=True;self._clear_active();self._clear_motion_evidence();self.state='STABLE_OFFSET';self.output=0;self._history=[(now,norm,raw)];return 0.0
-            return self._drive(d,norm)
+            full=self._drive(d,norm)
+            if now<self._opposite_rearm_guard_until:
+                self.output=0.0
+                return 0.0
+            return full
 
         # A completed TURN owns a real hold anchor.  An untriggered head that
         # merely drifted outside centre does *not*; it must keep evaluating the
