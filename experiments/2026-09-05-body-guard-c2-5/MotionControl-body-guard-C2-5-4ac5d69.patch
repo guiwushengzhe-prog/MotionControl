@@ -1,0 +1,174 @@
+From 4ac5d69af5aaa6210a8bb1e4524cfc8cf9ec5840 Mon Sep 17 00:00:00 2001
+From: MotionControl Sandbox <motioncontrol-sandbox@local>
+Date: Sat, 5 Sep 2026 08:02:16 +0000
+Subject: [PATCH] fix: detect supported distal limb motion transiently
+
+---
+ control_kernel.py                    | 45 ++++++++++++++++--
+ tests/test_body_motion_head_guard.py | 68 ++++++++++++++++++++++++++++
+ 2 files changed, 108 insertions(+), 5 deletions(-)
+
+diff --git a/control_kernel.py b/control_kernel.py
+index 3645e3d..70bd318 100644
+--- a/control_kernel.py
++++ b/control_kernel.py
+@@ -209,6 +209,9 @@ class ControlKernel:
+         self.body_motion_guard_early_run = 0
+         self.body_motion_guard_postburst_budget = 0
+         self.body_motion_guard_postburst_until = 0.0
++        self.body_motion_guard_distal_runs = {
++            "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
++        }
+         self.body_motion_guard_last_at = 0.0
+         self.body_motion_guard_hold_until = 0.0
+         self.body_motion_guard_settle_frames = 0
+@@ -569,6 +572,9 @@ class ControlKernel:
+         self.body_motion_guard_early_run = 0
+         self.body_motion_guard_postburst_budget = 0
+         self.body_motion_guard_postburst_until = 0.0
++        self.body_motion_guard_distal_runs = {
++            "left_arm": 0, "right_arm": 0, "left_leg": 0, "right_leg": 0
++        }
+         self.body_motion_guard_last_at = 0.0
+         self.body_motion_guard_hold_until = 0.0
+         self.body_motion_guard_settle_frames = 0
+@@ -597,13 +603,15 @@ class ControlKernel:
+         second_speed = 0.0
+         coherent_vertical_speed = 0.0
+         dt = now - self.body_motion_guard_last_at if self.body_motion_guard_last_at else 0.0
++        speed_by_name: dict[str, float] = {}
+         if 1.0 / 90.0 <= dt <= 0.12:
+-            speeds = [
+-                math.hypot(value[0] - self.body_motion_guard_previous[name][0],
+-                           value[1] - self.body_motion_guard_previous[name][1]) / dt
++            speed_by_name = {
++                name: math.hypot(value[0] - self.body_motion_guard_previous[name][0],
++                                 value[1] - self.body_motion_guard_previous[name][1]) / dt
+                 for name, value in current.items()
+                 if name in self.body_motion_guard_previous
+-            ]
++            }
++            speeds = list(speed_by_name.values())
+             speed_count = len(speeds)
+             if speed_count >= 2:
+                 speeds.sort(reverse=True)
+@@ -640,13 +648,40 @@ class ControlKernel:
+             and speed_count >= 8
+             and coherent_vertical_speed >= 0.35
+         )
++
++        # C2.5: some articulated actions are dominated by one distal joint
++        # (wrist/ankle), while the elbow/knee only moves modestly. Requiring the
++        # global second-fastest point to be large misses these motions. Accept a
++        # distal-chain onset only after two consecutive supported frames, so a
++        # single-landmark one-frame spike cannot open the transient suppressor.
++        distal_specs = (
++            ("left_arm", "left_elbow", "left_wrist", 1.20),
++            ("right_arm", "right_elbow", "right_wrist", 1.20),
++            ("left_leg", "left_knee", "left_ankle", 1.35),
++            ("right_leg", "right_knee", "right_ankle", 1.35),
++        )
++        distal_chain_onset = False
++        for chain_name, proximal_name, distal_name, distal_threshold in distal_specs:
++            supported = bool(
++                not self.body_motion_guard_active
++                and speed_count >= 8
++                and speed_by_name.get(distal_name, 0.0) >= distal_threshold
++                and speed_by_name.get(proximal_name, 0.0) >= 0.10
++            )
++            self.body_motion_guard_distal_runs[chain_name] = (
++                self.body_motion_guard_distal_runs.get(chain_name, 0) + 1 if supported else 0
++            )
++            if self.body_motion_guard_distal_runs[chain_name] >= 2:
++                distal_chain_onset = True
+         # Early evidence is deliberately transient: it can suppress the current
+         # horizontal output frame, but it does not own the persistent guard
+         # lifecycle. Persistent activation remains restricted to the already
+         # validated C1 raw/EMA/action evidence, preventing repeated early
+         # triggers from stretching guard occupancy across a whole exercise.
+         previous_early = bool(self.body_motion_guard_early_evidence)
+-        self.body_motion_guard_early_evidence = bool(early_limb_onset or vertical_body_onset)
++        self.body_motion_guard_early_evidence = bool(
++            early_limb_onset or vertical_body_onset or distal_chain_onset
++        )
+         strong_burst_ended = False
+         if self.body_motion_guard_early_evidence:
+             self.body_motion_guard_early_run += 1
+diff --git a/tests/test_body_motion_head_guard.py b/tests/test_body_motion_head_guard.py
+index 06da08e..8f14d94 100644
+--- a/tests/test_body_motion_head_guard.py
++++ b/tests/test_body_motion_head_guard.py
+@@ -415,3 +415,71 @@ def test_short_early_burst_does_not_arm_postburst_veto(tmp_path, monkeypatch):
+         assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
+     finally:
+         kernel.close()
++
++
++def test_distal_chain_requires_two_consecutive_supported_frames(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        base = pose()
++        kernel._update_body_motion_guard_locked(base, now)
++
++        first = pose()
++        first["left_wrist"]["x"] += 0.012
++        first["left_elbow"]["x"] += 0.001
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(first, now)
++        assert kernel.body_motion_guard_raw < 2.50
++        assert kernel.body_motion_guard_active is False
++        assert kernel.body_motion_guard_early_evidence is False
++
++        second = pose()
++        second["left_wrist"]["x"] += 0.024
++        second["left_elbow"]["x"] += 0.002
++        now += 1 / 30
++        kernel._update_body_motion_guard_locked(second, now)
++        assert kernel.body_motion_guard_raw < 2.50
++        assert kernel.body_motion_guard_active is False
++        assert kernel.body_motion_guard_early_evidence is True
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
++    finally:
++        kernel.close()
++
++
++def test_distal_chain_ignores_two_frame_motion_below_distal_threshold(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        for step in (1, 2):
++            moved = pose()
++            moved["left_wrist"]["x"] += 0.008 * step
++            moved["left_elbow"]["x"] += 0.001 * step
++            now += 1 / 30
++            kernel._update_body_motion_guard_locked(moved, now)
++        assert kernel.body_motion_guard_raw < 2.50
++        assert kernel.body_motion_guard_active is False
++        assert kernel.body_motion_guard_early_evidence is False
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
++    finally:
++        kernel.close()
++
++
++def test_distal_chain_requires_proximal_support(tmp_path, monkeypatch):
++    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
++    kernel = ControlKernel(Output())
++    try:
++        now = 10.0
++        kernel._update_body_motion_guard_locked(pose(), now)
++        for step in (1, 2):
++            moved = pose()
++            moved["left_wrist"]["x"] += 0.012 * step
++            now += 1 / 30
++            kernel._update_body_motion_guard_locked(moved, now)
++        assert kernel.body_motion_guard_active is False
++        assert kernel.body_motion_guard_early_evidence is False
++        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
++    finally:
++        kernel.close()
+-- 
+2.47.3
