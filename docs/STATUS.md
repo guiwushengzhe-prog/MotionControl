@@ -1,4 +1,4 @@
-# MotionControl 状态 — 2026-09-05 C2.6 body-motion head guard
+# MotionControl 状态 — 2026-09-05 C2.7 FPS-invariant body-motion head guard
 
 ## 当前晋级候选
 - 产品来源基线：`d8d1ffc702b1b5685eab65b8291951024f6d4dcf`
@@ -8,58 +8,59 @@
 - C2.3：`155ddf937d2e4bec86364005d4ed1d84ec99a48e`
 - C2.4：`c54f54deb0cf5a41ac4033ba44ef3e71ed044957`
 - C2.5：`4ac5d69af5aaa6210a8bb1e4524cfc8cf9ec5840`
-- 当前 C2.6：`f8afc3f81a817a4557625703ed2780dd65bb375c`
-- GitHub 分支：`head-body-guard-segment-articulation-c2-6-20260905`
-- 结论：PROMOTE C2.6（独立分支，未合并产品主线）
+- C2.6：`f8afc3f81a817a4557625703ed2780dd65bb375c`
+- 当前 C2.7：`34bc7e8fee0c9cb5d7c3b66d881840ce244bc5d3`
+- GitHub 分支：`head-body-guard-time-normalized-c2-7-20260905`
+- 结论：PROMOTE C2.7（独立分支，未合并产品主线）
 
-## C2.6 核心改动
-保留 C2.5 distal evidence、C2.4 的 67 ms bridge / bounded post-burst veto，以及 C1 raw/EMA/persistent guard/recovery。
+## C2.7 核心改动
+C2.7 不增加新的身体动作抑制规则，只把 C2.4–C2.6 中残留的帧计数时间语义改为单调时钟语义：
+- distal/segment chain：`2 帧` -> `30 ms`；
+- strong early burst：`4 帧` -> `95 ms`；
+- persistent guard 回零 settle：`3 帧` -> `60 ms`。
 
-新增“肢体段形变速度”证据，只进入 transient output suppression：
-- 计算 wrist-elbow 或 ankle-knee 向量的逐帧变化速度，自动消掉整条肢体的刚性平移；
-- 手臂段连续 2 帧 >=0.80；
-- 腿段连续 2 帧 >=1.20；
-- 同链近端关节速度必须 >=0.10；
-- 仍要求 >=8 个共同速度点；
-- 不能直接启动或续期 persistent guard。
+67 ms transient bridge、100 ms post-burst token TTL、raw/EMA、persistent guard 阈值/hold、C2.5 distal 阈值、C2.6 segment 阈值全部保持不变。
 
-冻结合法头动的两帧连续形变上界：left/right arm 约 0.224/0.188，left/right leg 约 0.671/0.797，因此晋级阈值仍保留明确安全间隔。rigid-limb translation 有独立负测试。
+## 30 FPS 真人精确回归
+C2.6 -> C2.7，同进程、同 Pose Full 输入：
+- 8522：X changed 0；persistent guard changed 0；score changed 0。
+- 39997：X changed 0；guard changed 0；score changed 0。
+- 30dd：X changed 0；guard changed 0；score changed 0。
+- af4e：X changed 0；guard changed 0；score changed 0。
+- ed114：X changed 0；guard changed 0；score changed 0。
+- 6d210：X changed 0；guard changed 0；score changed 0。
 
-## 真人 A/B
-C2.5 -> C2.6，8522 全视频：
-- 非零 X：380 -> 355（-6.58%）
-- 绝对 X：18151.743 -> 16813.304（-7.37%）
-- persistent guard：635 -> 635，完全一致
+因此 C2.6 已验证的 30 FPS 抑制收益与 clear-yaw / pitch / return 保留逐帧不变。
 
-16 个 RGB 人工冻结动作窗口：
-- 非零 X：78 -> 70（-10.26%）
-- 绝对 X：3823.951 -> 3367.943（-11.93%）
-- sign switches：8 -> 8
-- 前 50/100/150 ms：8/12/13 -> 8/12/13
+## 多 FPS 时间语义
+实测 sampled delay：
 
-主要新增收益：
-- squat_01：5 -> 2
-- calf_back_04：18 -> 14
-- cross_knee_elbow_02：6 -> 5
+| FPS | C2.6 distal | C2.7 distal | C2.6 strong burst | C2.7 strong burst | C2.6 settle | C2.7 settle |
+|---:|---:|---:|---:|---:|---:|---:|
+| 20 | 50.0 ms | 50.0 ms | 150.0 ms | 100.0 ms | 100.0 ms | 100.0 ms |
+| 30 | 33.3 ms | 33.3 ms | 100.0 ms | 100.0 ms | 66.7 ms | 66.7 ms |
+| 45 | 22.2 ms | 44.4 ms | 66.7 ms | 111.1 ms | 44.4 ms | 66.7 ms |
+| 60 | 16.7 ms | 33.3 ms | 50.0 ms | 100.0 ms | 33.3 ms | 66.7 ms |
 
-五组冻结真人完整同进程 C2.5/C2.6 A/B：39997 / 30dd / af4e / ed114 / 6d210 的 X changed、persistent guard changed、score changed 均为 0。
+C2.6 在 45/60 FPS 会随着帧率升高而明显提前确认/恢复；C2.7 把它们恢复到接近 30/95/60 ms 的时间尺度，只剩采样量化误差。
 
-`6d210` 新增 transient evidence 仍只落在冻结的 `front-facing head + large arm motion` neutral 区及 excluded 部分；clear-yaw、return、pitch-only 均无新增 evidence。
+## 当前正式头控配置重验证
+此前已对 d8 -> C2.6 在相同 `head_control.py` 下重新排名：
+- 全视频非零 X：59 -> 20；
+- 全视频绝对 X：1367.528 -> 452.418；
+- 16 个冻结身体动作窗口非零 X：19 -> 3；
+- 动作窗口绝对 X：319.226 -> 25.058。
 
-工程检查：
-- `pytest -q tests/test_body_motion_head_guard.py`：20 passed
+C2.7 在这批 30 FPS 数据上逐帧等同 C2.6，所以以上当前配置收益全部保留。
+
+## 工程检查
+- `pytest -q tests/test_body_motion_head_guard.py`：24 passed
 - `py_compile`：pass
 - `git diff --check`：pass
-
-## 累计相对 C1
-- 全视频非零 X：622 -> 355（-42.93%）
-- 全视频绝对 X：28831.490 -> 16813.304（-41.68%）
-- 动作窗口非零 X：181 -> 70（-61.33%）
-- 动作窗口绝对 X：8366.406 -> 3367.943（-59.75%）
-- RGB 起点前 50/100/150 ms：12/20/32 -> 8/12/13
+- 本地工作树：clean
 
 ## 下一步
-C2.6 后动作窗口仍有 70 个非零帧，主要集中在 calf_back_03（21）、calf_back_04（14）、hands_cross_03（8）等。下一阶段只研究剩余残差与已验证 evidence 的相位关系/周期结构；不再通过降低全局阈值或拉长 blanket hold 挤收益。
+停止继续围绕历史残差堆 body-guard 规则。当前配置下 16 个冻结身体动作窗口仅剩 3 个非零 X 帧，继续压低收益已经很小。下一阶段最高价值数据缺口是“强身体运动 + 同时故意持续 yaw”的冻结真人联合真值；在补齐前，不再增加更长 hold、更低阈值或更多 veto。
 
 ## 未验证边界
-仍缺“强身体运动 + 同时故意持续 yaw”的冻结真人联合数据。C2.6 不宣称 mixed-intent 已解决。
+仍缺“强身体运动 + 同时故意持续 yaw”的冻结真人联合数据。C2.7 不宣称 mixed-intent 已解决。
