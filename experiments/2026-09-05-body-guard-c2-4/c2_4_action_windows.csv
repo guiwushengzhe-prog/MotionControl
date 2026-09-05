@@ -1,0 +1,17 @@
+id,kind,c23_nonzero,c24_nonzero,c23_abs,c24_abs,c23_switches,c24_switches,c23_first50,c24_first50,c23_first100,c24_first100,c23_first150,c24_first150
+squat_01,squat,7,5,350.371,280.371,0,0,0,0,0,0,0,0
+squat_02,squat,8,6,368.695,298.695,1,1,2,2,3,3,3,3
+squat_03,squat,1,0,34.997,0.0,0,0,0,0,0,0,0,0
+squat_04,squat,0,0,0.0,0.0,0,0,0,0,0,0,0,0
+calf_back_01,calf_back,0,0,0.0,0.0,0,0,0,0,0,0,0,0
+calf_back_02,calf_back,5,5,258.0,258.0,1,1,0,0,1,1,1,1
+calf_back_03,calf_back,22,22,1033.214,1033.214,0,0,2,2,3,3,4,4
+calf_back_04,calf_back,21,21,1036.0,1036.0,1,1,1,1,2,2,3,3
+hands_cross_01,hands_cross,0,0,0.0,0.0,0,0,0,0,0,0,0,0
+hands_cross_02,hands_cross,4,4,154.471,154.471,0,0,0,0,0,0,0,0
+hands_cross_03,hands_cross,11,11,520.327,520.327,0,0,0,0,0,0,0,0
+hands_cross_04,hands_cross,0,0,0.0,0.0,0,0,0,0,0,0,0,0
+cross_knee_elbow_01,cross_knee_elbow,5,5,170.761,170.761,0,0,1,1,1,1,1,1
+cross_knee_elbow_02,cross_knee_elbow,11,11,599.0,599.0,1,1,2,2,3,3,4,4
+cross_knee_elbow_03,cross_knee_elbow,2,2,116.0,116.0,0,0,2,2,2,2,2,2
+cross_knee_elbow_04,cross_knee_elbow,2,2,98.0,98.0,0,0,0,0,0,0,0,0
