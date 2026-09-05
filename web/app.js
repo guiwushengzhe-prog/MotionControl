@@ -143,6 +143,14 @@ function renderKernelState(runtime){
   const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(id=>chips[id]?.[1]||id).join(' + '));if(poses.size)statusParts.push('动作：'+[...poses].map(id=>BASE_PROFILE_TRIGGERS.find(t=>t.id===id)?.name||id).join(' + '));
   $('#motionStatus').textContent=statusParts.join(' · ')||'动作：未触发';
   const hs=k.head||{};
+  const guardVersion=String(hs.body_motion_guard_version||k.body_motion_guard_version||'未上报');
+  const guardEnabled=hs.body_motion_guard_enabled??k.body_motion_guard_enabled;
+  const guardActive=hs.body_motion_guard_active??k.body_motion_guard_active;
+  const guardStatus=$('#bodyMotionGuardStatus');
+  if(guardStatus){
+    guardStatus.textContent=guardEnabled===false?`防晃 ${guardVersion} · 已关闭`:guardActive?`防晃 ${guardVersion} · 运行中 · 左右视角已稳定`:`防晃 ${guardVersion} · 已启用 · 待机`;
+    guardStatus.classList.toggle('active',!!guardActive&&guardEnabled!==false);
+  }
   if(Number.isFinite(hs.output_x)){
     const algo=hs.algorithm==='ratio'?'比例':'PnP';
     const horizontalCalibrated=hs.horizontal_calibrated??hs.calibrated;
