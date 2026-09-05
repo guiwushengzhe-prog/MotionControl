@@ -1,4 +1,4 @@
-# MotionControl C2.7 FPS-invariance promotion report — 2026-09-05
+# MotionControl C2.7 body-guard internal timing normalization report — 2026-09-05
 
 ## Decision
 PROMOTE C2.7 on an independent branch. Do not merge product main automatically.
@@ -38,7 +38,9 @@ Measured sampled transition delays (first supported/evidence sample to transitio
 | 45 | 22.2 ms | 44.4 ms | 66.7 ms | 111.1 ms | 44.4 ms | 66.7 ms |
 | 60 | 16.7 ms | 33.3 ms | 50.0 ms | 100.0 ms | 33.3 ms | 66.7 ms |
 
-C2.6 therefore became materially more permissive at 45/60 FPS. C2.7 restores approximately 30/95/60 ms semantics, subject only to camera sampling quantization. 20 FPS remains coarsely quantized because one frame is 50 ms.
+C2.6 internal body-guard timing became materially more permissive at 45/60 FPS. C2.7 restores approximately 30/95/60 ms semantics for these internal paths, subject only to camera sampling quantization. 20 FPS remains coarsely quantized because one frame is 50 ms.
+
+Important scope limit: the pre-existing `motion_active` action classifier still uses frame-count debounce and can also start the persistent body guard. C2.7 deliberately does not modify action-recognition semantics. A shadow removal of `motion_active` produced 115 persistent-guard state differences on 8522 (while X happened to remain unchanged), proving that path is not dead and must not be silently removed. Therefore C2.7 is an internal timing normalization, not a claim that every body-guard dependency is fully FPS invariant.
 
 ## Engineering checks
 - `pytest -q tests/test_body_motion_head_guard.py`: 24 passed
@@ -51,4 +53,4 @@ C2.6 therefore became materially more permissive at 45/60 FPS. C2.7 restores app
 - `tests/test_body_motion_head_guard.py`
 
 ## Safety boundary
-The main unresolved evidence gap remains unchanged: no frozen real-human joint-truth set for simultaneous strong body motion + intentional sustained yaw. C2.7 does not claim that mixed-intent case is solved. Its promotion rationale is engineering invariance, not additional suppression on the 30 FPS datasets.
+The main unresolved evidence gap remains unchanged: no frozen real-human joint-truth set for simultaneous strong body motion + intentional sustained yaw. C2.7 does not claim that mixed-intent case is solved. Its promotion rationale is engineering timing normalization, not additional suppression on the 30 FPS datasets.
