@@ -266,6 +266,20 @@ def _validate_pose_features(message: dict) -> None:
             raise ValueError("packed pose coordinate exceeds safety limit")
         if not 0.0 <= visibility <= 1.0:
             raise ValueError("packed pose visibility must be in [0,1]")
+    world_points = message.get("world_points")
+    if world_points is not None:
+        if layout != MOBILE_POSE_FEATURE_LAYOUT_V2:
+            raise ValueError("world_points requires mc27-v2")
+        if not isinstance(world_points, list) or len(world_points) != 33:
+            raise ValueError("world_points must contain exactly 33 packed landmarks")
+        for point in world_points:
+            if not isinstance(point, list) or len(point) != 4 or not all(_is_number(v) for v in point):
+                raise ValueError("each packed world point must be [x,y,z,visibility]")
+            x, y, z, visibility = map(float, point)
+            if max(abs(x), abs(y), abs(z)) > LANDMARK_COORDINATE_ABS_LIMIT:
+                raise ValueError("packed world coordinate exceeds safety limit")
+            if not 0.0 <= visibility <= 1.0:
+                raise ValueError("packed world visibility must be in [0,1]")
     if not _is_number(message.get("inference_ms", 0)) or float(message.get("inference_ms", 0)) < 0:
         raise ValueError("inference_ms must be >= 0")
 
@@ -280,6 +294,16 @@ def _expand_pose_features(message: dict) -> dict:
     _validate_pose_features(message)
     indices = MOBILE_POSE_FEATURE_LAYOUTS[message["layout"]]
     packed = message.get("points") or []
+    world_points = message.get("world_points")
+    world_pose = None
+    if world_points is not None:
+        world_pose = [
+            {
+                "x": float(values[0]), "y": float(values[1]),
+                "z": float(values[2]), "visibility": float(values[3]),
+            }
+            for values in world_points
+        ]
     poses = []
     if packed:
         full = [{"x": 0.0, "y": 0.0, "z": 0.0, "visibility": 0.0} for _ in range(33)]
@@ -288,7 +312,7 @@ def _expand_pose_features(message: dict) -> dict:
                 "x": float(values[0]), "y": float(values[1]),
                 "z": float(values[2]), "visibility": float(values[3]),
             }
-        poses = [{"detection_id": None, "pose": full, "world_pose": None}]
+        poses = [{"detection_id": None, "pose": full, "world_pose": world_pose}]
     return {
         "type": "pose_frame_v2",
         "role": "camera",

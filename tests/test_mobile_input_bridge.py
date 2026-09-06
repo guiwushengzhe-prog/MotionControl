@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from input_bridge import (
     InputBridge,
     MOBILE_POSE_FEATURE_INDICES,
@@ -155,6 +157,50 @@ def test_mc27_phone_pose_preserves_inner_eye_points_for_frozen22():
     assert pose[4]["visibility"] == 0.96
     assert pose[1]["x"] == points[MOBILE_POSE_FEATURE_INDICES_V2.index(1)][0]
     assert pose[4]["x"] == points[MOBILE_POSE_FEATURE_INDICES_V2.index(4)][0]
+
+
+def test_mc27_phone_pose_expands_optional_world_points():
+    points = [
+        [0.30 + index * 0.001, 0.40, 0.0, 0.96]
+        for index, _ in enumerate(MOBILE_POSE_FEATURE_INDICES_V2)
+    ]
+    world_points = [
+        [index * 0.01, -index * 0.02, index * 0.03, 0.90]
+        for index in range(33)
+    ]
+    message = {
+        **pose_features(),
+        "layout": "mc27-v2",
+        "points": points,
+        "world_points": world_points,
+    }
+
+    expanded = _expand_pose_features(message)
+    world_pose = expanded["poses"][0]["world_pose"]
+    assert len(world_pose) == 33
+    assert world_pose[0] == {"x": 0.0, "y": 0.0, "z": 0.0, "visibility": 0.9}
+    assert world_pose[32] == {"x": 0.32, "y": -0.64, "z": 0.96, "visibility": 0.9}
+
+
+@pytest.mark.parametrize(
+    "world_points",
+    [
+        [[0.0, 0.0, 0.0, 0.9] for _ in range(32)],
+        [[float("nan"), 0.0, 0.0, 0.9] for _ in range(33)],
+        [[0.0, 0.0, 0.0, 1.1] for _ in range(33)],
+        [[0.0, 0.0, 0.0] for _ in range(33)],
+    ],
+)
+def test_mc27_world_points_use_strict_packed_landmark_validation(world_points):
+    message = {
+        **pose_features(),
+        "layout": "mc27-v2",
+        "points": [[0.5, 0.5, 0.0, 0.95] for _ in MOBILE_POSE_FEATURE_INDICES_V2],
+        "world_points": world_points,
+    }
+
+    with pytest.raises(ValueError):
+        _expand_pose_features(message)
 
 def test_sensor_frame_drives_button_trigger_and_stick_then_disconnect_zeros():
     output = FakeOutput()
