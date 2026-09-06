@@ -98,8 +98,8 @@ def test_return_lock_quarantines_low_angle_opposite_rearm_output():
     assert axis._return_center_seen
 
     # A clearly sustained low-angle opposite turn may re-arm the internal
-    # state, but v197 keeps Mouse-X muted for a short quarantine window so a
-    # normal return overshoot cannot escape as a new reverse turn.
+    # state, but the v197-origin guard retained by v207 keeps Mouse-X muted for
+    # a short window so a normal return overshoot cannot escape as a new turn.
     records = []
     rearmed_at = None
     guard_until = None

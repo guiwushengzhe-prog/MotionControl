@@ -20,7 +20,7 @@ def test_v188_policy_is_selectable_and_requires_a_fresh_center(tmp_path):
     controller.configure(horizontal_algorithm="gesture_v188")
     state = controller.status(1.0)
     assert state["horizontal_algorithm"] == "gesture_v188"
-    assert state["horizontal_algorithm_version"] == "relative-ratchet-v197-realdata-low-angle-rearm-quarantine"
+    assert state["horizontal_algorithm_version"] == "relative-ratchet-v207-gap040-same-side-rescue"
     assert controller.calibrated is False
 
 
