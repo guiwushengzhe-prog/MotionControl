@@ -127,7 +127,7 @@ HORIZONTAL_ALGORITHM_VERSIONS = {
     "classic": "v4.4-gated-pitch-ratchet-baseline",
     "gesture_v153": "relative-ratchet-v153-personal-pnp-g12-calib-derotate-hardened",
     "frozen22": "real-ab-equalmean-20260830-v1",
-    "gesture_v188": "relative-ratchet-v197-realdata-low-angle-rearm-quarantine",
+    "gesture_v188": "relative-ratchet-v207-gap040-same-side-rescue",
 }
 
 # frozen22 is the audited R3 11-point / 22-dimensional horizontal
@@ -211,6 +211,25 @@ YAW_V2_OPPOSITE_REARM_AFTER_CENTER_VELOCITY = 0.10
 YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S = 0.16
 YAW_V2_OPPOSITE_REARM_OUTPUT_GUARD_S = 0.28
 YAW_V2_OPPOSITE_REARM_GUARD_MAX_ANGLE = 0.65
+
+# v202 output-only safety layers.  They never feed back into the ratchet, PnP,
+# filters, or slew state.
+V202_REARM_MIN_VISIBLE_QUIET_S = 0.40
+V202_PITCH_CLEAN_RESET_S = 0.10
+V202_PITCH_VETO_MIN_PITCH_DEG = 4.00
+V202_PITCH_VETO_MAX_FROZEN22_YAW_DEG = 4.00
+V202_PITCH_VETO_MAX_WORLD_RIGID_YAW_DEG = 5.00
+
+# v205 output-only recovery for a false RETURNING latch.  It never changes
+# _RelativeYawAxisV153 state.  Frozen real-window prescan: this conjunction
+# occurs only in v3_yaw_left_01 and v5_yaw_left_02, and in zero annotated
+# return/pitch/neutral frames.
+V205_SAME_SIDE_RESCUE_MIN_NORM = 0.55
+V205_SAME_SIDE_RESCUE_MIN_VELOCITY = 0.50
+V205_SAME_SIDE_RESCUE_MIN_FROZEN22_DEG = 2.80
+V205_SAME_SIDE_RESCUE_MIN_WORLD_DEG = 7.00
+V205_SAME_SIDE_RESCUE_MAX_PITCH_DEG = 6.50
+V205_SAME_SIDE_RESCUE_HOLD_S = 0.067
 
 # Six-channel 2D auxiliary yaw evidence (v115 stage candidate).
 #
@@ -2142,6 +2161,19 @@ class HeadController:
         self.frozen22_gate_fast_threshold_deg = math.nan
         self.frozen22_gate_slow_threshold_deg = math.nan
         self.v188_pitch_guard_active = False
+        self.v202_pitch_output_veto_active = False
+        self.v202_return_output_veto_active = False
+        self._v202_prev_return_latched = False
+        self._v202_return_from_direction = 0
+        self._v202_last_visible_output_direction = 0
+        self._v202_last_visible_output_t = -math.inf
+        self._v202_rearm_block_direction = 0
+        self._v202_rearm_quiet_hold_direction = 0
+        self._v202_pitch_clean_s = 0.0
+        self._v202_pitch_clean_reset_ready = False
+        self._v205_same_side_rescue_s = 0.0
+        self._v205_same_side_rescue_last_t = 0.0
+        self.v205_same_side_rescue_active = False
         self.center_personal22_feature_samples: list[tuple[float, ...]] = []
         self.center_world_head11_samples: list[tuple[tuple[float, float, float], ...]] = []
         self._calibration_restore_frozen22: tuple[
@@ -3321,6 +3353,39 @@ class HeadController:
                 acceleration_stop=1.15,
                 curve_gamma=1.30,
             )
+            # v205: output-only same-side rescue.  Keep the RETURNING state
+            # untouched; only provide a conservative minimum drive when the
+            # original side is demonstrably moving outward again and both
+            # independent yaw witnesses agree.
+            xi_v205 = self._x_intent_v153
+            orig_v205 = int(getattr(xi_v205, "_return_from_direction", 0))
+            f22_v205 = float(self.frozen22_yaw_median) if math.isfinite(self.frozen22_yaw_median) else math.nan
+            world_v205 = float(self.current_world_rigid_yaw) if math.isfinite(self.current_world_rigid_yaw) else math.nan
+            pitch_v205 = abs(float(self.filtered_pitch) - float(self.center_pitch))
+            rescue_evidence_v205 = bool(
+                getattr(xi_v205, "return_latched", False)
+                and orig_v205 in (-1, 1)
+                and raw_x * orig_v205 >= V205_SAME_SIDE_RESCUE_MIN_NORM
+                and float(getattr(xi_v205, "velocity", 0.0)) * orig_v205 >= V205_SAME_SIDE_RESCUE_MIN_VELOCITY
+                and math.isfinite(f22_v205)
+                and f22_v205 * orig_v205 >= V205_SAME_SIDE_RESCUE_MIN_FROZEN22_DEG
+                and math.isfinite(world_v205)
+                and world_v205 * orig_v205 >= V205_SAME_SIDE_RESCUE_MIN_WORLD_DEG
+                and pitch_v205 <= V205_SAME_SIDE_RESCUE_MAX_PITCH_DEG
+            )
+            last_rescue_t_v205 = float(getattr(self, "_v205_same_side_rescue_last_t", 0.0))
+            rescue_dt_v205 = _clamp(now - last_rescue_t_v205, 0.0, 0.10) if last_rescue_t_v205 else 1.0 / 30.0
+            self._v205_same_side_rescue_last_t = now
+            if rescue_evidence_v205:
+                self._v205_same_side_rescue_s += rescue_dt_v205
+            else:
+                self._v205_same_side_rescue_s = 0.0
+            self.v205_same_side_rescue_active = bool(
+                rescue_evidence_v205 and self._v205_same_side_rescue_s >= V205_SAME_SIDE_RESCUE_HOLD_S
+            )
+            if self.v205_same_side_rescue_active and abs(vx) <= 1e-12:
+                vx = orig_v205 * YAW_V2_MIN_DRIVE
+
             self.yaw_intent_state = self._x_intent_v153.state
             self.yaw_velocity = float(self._x_intent_v153.velocity)
             self.yaw_acceleration = float(self._x_intent_v153.acceleration)
@@ -3401,6 +3466,89 @@ class HeadController:
             self.output_x = self._base_output_x * self._frozen22_uncertainty_scale(
                 self._base_output_x, now
             )
+
+            # First identify strong pitch-only cross-axis evidence.
+            self.v202_pitch_output_veto_active = False
+            pitch_delta_v202 = abs(float(self.filtered_pitch) - float(self.center_pitch))
+            f22_v202 = abs(float(self.frozen22_yaw_median)) if math.isfinite(self.frozen22_yaw_median) else math.inf
+            world_v202 = abs(float(self.current_world_rigid_yaw)) if math.isfinite(self.current_world_rigid_yaw) else math.inf
+            pitch_cross_axis_v202 = bool(
+                pitch_delta_v202 >= V202_PITCH_VETO_MIN_PITCH_DEG
+                and f22_v202 < V202_PITCH_VETO_MAX_FROZEN22_YAW_DEG
+                and world_v202 < V202_PITCH_VETO_MAX_WORLD_RIGID_YAW_DEG
+            )
+            if pitch_cross_axis_v202:
+                self._v202_pitch_clean_s += dt
+                self.output_x = 0.0
+                self.v202_pitch_output_veto_active = True
+                if self._v202_pitch_clean_s >= V202_PITCH_CLEAN_RESET_S:
+                    self._v202_pitch_clean_reset_ready = True
+                    self._v202_rearm_block_direction = 0
+                    self._v202_rearm_quiet_hold_direction = 0
+            else:
+                self._v202_pitch_clean_s = 0.0
+
+            # Return/re-arm provenance guard.  A RETURNING -> opposite TURN
+            # transition is suspicious when the direction being returned from
+            # never produced a visible output.  A sustained pitch-only veto is
+            # an explicit clean-reset exception because it proves the stale yaw
+            # state came from cross-axis motion, not a delivered camera turn.
+            self.v202_return_output_veto_active = False
+            xi = self._x_intent_v153
+            current_return = bool(getattr(xi, "return_latched", False))
+            current_return_from = int(getattr(xi, "_return_from_direction", 0))
+            active_dir_v202 = int(getattr(xi, "_active_direction", 0))
+            if current_return and current_return_from in (-1, 1):
+                self._v202_return_from_direction = current_return_from
+            prev_return = bool(getattr(self, "_v202_prev_return_latched", False))
+            prior_from = int(getattr(self, "_v202_return_from_direction", 0))
+            direct_opposite_rearm = bool(
+                prev_return
+                and not current_return
+                and prior_from in (-1, 1)
+                and active_dir_v202 == -prior_from
+            )
+            if direct_opposite_rearm:
+                last_dir = int(getattr(self, "_v202_last_visible_output_direction", 0))
+                last_t = float(getattr(self, "_v202_last_visible_output_t", -math.inf))
+                if bool(getattr(self, "_v202_pitch_clean_reset_ready", False)):
+                    self._v202_pitch_clean_reset_ready = False
+                    self._v202_rearm_block_direction = 0
+                    self._v202_rearm_quiet_hold_direction = 0
+                elif last_dir != prior_from:
+                    self._v202_rearm_block_direction = active_dir_v202
+                elif now - last_t < V202_REARM_MIN_VISIBLE_QUIET_S:
+                    self._v202_rearm_quiet_hold_direction = active_dir_v202
+
+            block_dir = int(getattr(self, "_v202_rearm_block_direction", 0))
+            quiet_dir = int(getattr(self, "_v202_rearm_quiet_hold_direction", 0))
+            last_t = float(getattr(self, "_v202_last_visible_output_t", -math.inf))
+            # A hard orphan block lasts only for that internal turn episode; if
+            # it falls back to RETURNING/CENTER, the next re-arm is re-evaluated.
+            if block_dir in (-1, 1) and (current_return or active_dir_v202 != block_dir):
+                self._v202_rearm_block_direction = 0
+                block_dir = 0
+            if quiet_dir in (-1, 1) and now - last_t >= V202_REARM_MIN_VISIBLE_QUIET_S:
+                self._v202_rearm_quiet_hold_direction = 0
+                quiet_dir = 0
+            if (
+                (block_dir in (-1, 1) and self.output_x * block_dir > 1e-12)
+                or (quiet_dir in (-1, 1) and self.output_x * quiet_dir > 1e-12)
+            ):
+                self.output_x = 0.0
+                self.v202_return_output_veto_active = True
+
+            # Update visible-output provenance only after every veto has run.
+            if abs(self.output_x) > 1e-12:
+                self._v202_last_visible_output_direction = 1 if self.output_x > 0 else -1
+                self._v202_last_visible_output_t = now
+            self._v202_prev_return_latched = current_return
+
+            # A rescue may stop abruptly when the user physically starts
+            # returning.  Do not leak the output slew tail through RETURNING.
+            # This is output-only and cannot alter later intent state.
+            if bool(getattr(self._x_intent_v153, "return_latched", False)) and not bool(getattr(self, "v205_same_side_rescue_active", False)):
+                self.output_x = 0.0
         else:
             self._base_output_x = 0.0
             self.output_x = self._slew(self.output_x, target_x, dt)
@@ -3454,6 +3602,12 @@ class HeadController:
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
             "frozen22_controls_mouse": bool(policy_name in FROZEN22_POLICIES),
             "v188_pitch_guard_active": bool(getattr(self, "v188_pitch_guard_active", False)),
+            "v202_pitch_output_veto_active": bool(getattr(self, "v202_pitch_output_veto_active", False)),
+            "v202_return_output_veto_active": bool(getattr(self, "v202_return_output_veto_active", False)),
+            "v202_rearm_block_direction": int(getattr(self, "_v202_rearm_block_direction", 0)),
+            "v202_rearm_quiet_hold_direction": int(getattr(self, "_v202_rearm_quiet_hold_direction", 0)),
+            "v202_pitch_clean_reset_ready": bool(getattr(self, "_v202_pitch_clean_reset_ready", False)),
+            "v205_same_side_rescue_active": bool(getattr(self, "v205_same_side_rescue_active", False)),
             "horizontal_calibrated": horizontal_calibrated,
             "frozen22_calibration_valid": bool(self.frozen22_calibration_valid),
             "frozen22_missing_points": list(self.frozen22_missing_points),

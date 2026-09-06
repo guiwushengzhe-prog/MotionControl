@@ -291,3 +291,10 @@
 - 保留持久化/接口算法值 `gesture_v188`，只把其实现版本升级为 `relative-ratchet-v197-realdata-low-angle-rearm-quarantine`，避免旧配置失效；`classic` 仍为默认，v153 与 Frozen22 入口保持不变。网页显示名更新为“稳健 v197（试用）”，切换后仍沿用原有重新校准提示。
 - Body Guard 升级到 C2.9：补充 0.15 秒短暂核心点低质量宽限，并把 `horizontal_paused_by_body_motion` 改为“本帧实际拦截 Mouse-X”；网页状态栏区分提前抑制、动作后抑制和持续防晃，不再仅凭内部 guard 活跃态宣称已拦截输出。
 - 定向与相关回归共 `141 passed, 19 skipped`；另通过 `py_compile`、`node --check web/app.js` 和 `git diff --check`。压缩包附带的真人数据结果属于冻结 RGB/Pose 离线回放材料；本次没有重启 8765 服务，也没有完成实时摄像头、OS 鼠标链路或游戏内真人验收。
+
+## 2026-09-06：v207 零误触安全层与同侧救援网页接入
+
+- 以用户提供的 `MotionControl-v207-realdata-rescue-zero-return-bodyguard-c2.9-20260906.zip` 为冻结输入；压缩包 SHA-256 为 `A01AAC9417BAD082E838D69F80D6ABFE53A6A26F0D0DBC4D4A4C5B6DAB4C5236`，包内清单 `10/10` 文件哈希匹配。
+- 包内 `head_control.py` 作为 v207 累计实现接入，与本次生产文件逐行一致（仅工作树行尾格式不同）；包内 `control_kernel.py` 与已有 Body Guard C2.9 完全一致，因此不重复修改内核。v207 增加 v202 输出层俯仰/回正安全闸及 v205 同侧误锁救援，并保留 v197 的低幅反向重开静音。
+- 网页显示名更新为“稳健 v207（试用）”，持久化/API 值继续使用 `gesture_v188`，`classic` 默认、v153、Frozen22 和重新校准流程均保持不变。
+- 相关回归共 `144 passed, 19 skipped`，并通过 Python 编译、`node --check web/app.js` 与 `git diff --check`。包内真人指标来自冻结 Pose Full 离线回放，原始回放输入不在压缩包内；本次未重启正在运行的 8765 服务，也未宣称实时摄像头、USB 手机、OS 鼠标或真实游戏验收。
