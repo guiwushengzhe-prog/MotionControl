@@ -68,3 +68,11 @@ def test_invalid_profile_action_is_rejected(tmp_path):
     store.select("demo")
     with pytest.raises(ValueError):
         store.set_overrides({"zone.rightHandLower": {"action": {"type": "mouse_wheel", "target": "SIDEWAYS"}}})
+
+
+def test_unmapped_pose_and_voice_survive_binding_normalization():
+    from game_profiles import flatten_bindings
+    result = flatten_bindings({'poses':{'hands_cross':{'disabled':True}}, 'voice':{'jump':{'disabled':True}}, 'motions':{'march':{'action':{'type':'gamepad','target':'B'}}}})
+    assert result['pose.hands_cross'] == {'disabled':True}
+    assert result['voice.jump'] == {'disabled':True}
+    assert result['motion.march']['action']['target'] == 'B'
