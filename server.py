@@ -617,10 +617,6 @@ class Handler(SimpleHTTPRequestHandler):
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "game profile changes are loopback-only"}, 403)
                 return
-            body = self._body()
-            if body is None:
-                self._send_json({"ok": False, "error": "invalid JSON"}, 400)
-                return
             try:
                 if route.endswith("/select"):
                     profile = PROFILES.select(str(body.get("id", "")))
