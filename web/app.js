@@ -274,6 +274,16 @@ function makeTypeSelect(binding){
 function fillTargetControl(container,type,value=''){
   container.replaceChildren();if(!type)return;
   const meta=gameProfile.actions?.[type]||{};
+  if(type==='gamepad'){
+    const select=document.createElement('select');select.className='binding-target';
+    for(const key of meta.targets||['A','B','X','Y','LB','RB','L3','R3','START','BACK','DPAD_UP','DPAD_DOWN','DPAD_LEFT','DPAD_RIGHT']){const option=document.createElement('option');option.value=key;option.textContent=TARGET_LABELS[key]||key;select.appendChild(option)}
+    const custom=document.createElement('option');custom.value='__combo__';custom.textContent='组合键…';select.appendChild(custom);
+    const raw=Array.isArray(value)?value.join('+'):String(value||'A');
+    const combo=document.createElement('input');combo.type='text';combo.placeholder='例如 LB+A';combo.value=raw.includes('+')?raw:'';
+    const update=()=>{const isCombo=select.value==='__combo__';select.className=isCombo?'binding-gamepad-select':'binding-target';combo.className=isCombo?'binding-target':'';combo.hidden=!isCombo};
+    select.value=[...select.options].some(o=>o.value===raw)?raw:'__combo__';
+    select.addEventListener('change',update);update();container.append(select,combo);return;
+  }
   if(meta.free_text){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder=meta.placeholder||'例如 W / SPACE / CTRL+W';input.value=Array.isArray(value)?value.join('+'):(value||'');container.appendChild(input);return}
   const select=document.createElement('select');select.className='binding-target';
   for(const target of meta.targets||[]){const o=document.createElement('option');o.value=target;o.textContent=TARGET_LABELS[target]||target;select.appendChild(o)}

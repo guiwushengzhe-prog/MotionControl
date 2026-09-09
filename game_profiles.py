@@ -300,7 +300,7 @@ def action_catalog() -> dict:
         "keyboard": {"free_text": True},
         "mouse_button": {"targets": sorted(MOUSE_BUTTONS)},
         "mouse_wheel": {"targets": sorted(MOUSE_WHEEL), "behavior": "tap"},
-        "gamepad": {"free_text": True, "placeholder": "A 或 LB+A（同时按下）"},
+        "gamepad": {"targets": sorted(GAMEPAD_BUTTONS), "allow_combo": True},
         "gamepad_trigger": {"targets": sorted(GAMEPAD_TRIGGERS)},
         "gamepad_axis": {"targets": sorted(GAMEPAD_AXES)},
     }
