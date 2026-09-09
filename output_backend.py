@@ -10,6 +10,9 @@ import time
 from pathlib import Path
 
 
+_UNSET = object()
+
+
 class _MOUSEINPUT(ctypes.Structure):
     _fields_ = [
         ("dx", ctypes.c_long),
@@ -279,6 +282,98 @@ class XUSB_REPORT(ctypes.Structure):
     ]
 
 
+class XINPUT_GAMEPAD(ctypes.Structure):
+    """Windows XInput physical-gamepad state (原始物理手柄状态)."""
+
+    _fields_ = [
+        ("wButtons", ctypes.c_ushort),
+        ("bLeftTrigger", ctypes.c_ubyte),
+        ("bRightTrigger", ctypes.c_ubyte),
+        ("sThumbLX", ctypes.c_short),
+        ("sThumbLY", ctypes.c_short),
+        ("sThumbRX", ctypes.c_short),
+        ("sThumbRY", ctypes.c_short),
+    ]
+
+
+class XINPUT_STATE(ctypes.Structure):
+    _fields_ = [
+        ("dwPacketNumber", ctypes.c_uint32),
+        ("Gamepad", XINPUT_GAMEPAD),
+    ]
+
+
+XINPUT_ERROR_DEVICE_NOT_CONNECTED = 1167
+
+
+class XInputReader:
+    """Small standard-library XInput reader; it never creates another pad."""
+
+    USER_SLOTS = tuple(range(4))
+
+    def __init__(self, loader=None) -> None:
+        self._get_state = None
+        self.backend_name: str | None = None
+        self.last_error: str | None = None
+        if os.name != "nt":
+            return
+        load = loader or ctypes.WinDLL
+        for name in ("xinput1_4.dll", "xinput9_1_0.dll", "xinput1_3.dll"):
+            try:
+                dll = load(name)
+                fn = dll.XInputGetState
+                fn.argtypes = (ctypes.c_uint, ctypes.POINTER(XINPUT_STATE))
+                fn.restype = ctypes.c_uint
+                self._get_state = fn
+                self.backend_name = name
+                break
+            except Exception as exc:
+                self.last_error = str(exc)
+
+    @property
+    def available(self) -> bool:
+        return self._get_state is not None
+
+    @staticmethod
+    def _button_names(mask: int) -> set[str]:
+        return {
+            name for name, value in XUSB_GAMEPAD_BUTTONS.items()
+            if int(mask) & int(value)
+        }
+
+    @staticmethod
+    def _axis(value: int) -> float:
+        value = int(value)
+        return max(-1.0, min(1.0, value / 32768.0 if value < 0 else value / 32767.0))
+
+    def read(self, user_index: int) -> dict | None:
+        if self._get_state is None:
+            return None
+        state = XINPUT_STATE()
+        try:
+            code = int(self._get_state(int(user_index), ctypes.byref(state)))
+        except Exception as exc:
+            self.last_error = str(exc)
+            return None
+        if code != 0:
+            if code != XINPUT_ERROR_DEVICE_NOT_CONNECTED:
+                self.last_error = f"XInputGetState failed: 0x{code:08X}"
+            return None
+        pad = state.Gamepad
+        return {
+            "user_index": int(user_index),
+            "packet_number": int(state.dwPacketNumber),
+            "raw_report": bytes(pad),
+            "buttons": self._button_names(pad.wButtons),
+            "left_trigger": max(0.0, min(1.0, int(pad.bLeftTrigger) / 255.0)),
+            "right_trigger": max(0.0, min(1.0, int(pad.bRightTrigger) / 255.0)),
+            "left_x": self._axis(pad.sThumbLX),
+            "left_y": self._axis(pad.sThumbLY),
+            "right_x": self._axis(pad.sThumbRX),
+            "right_y": self._axis(pad.sThumbRY),
+        }
+
+
 VIGEM_ERRORS = {
     0xE0000001: "ViGEmBus driver not found",
     0xE0000002: "no free virtual gamepad slot",
@@ -386,6 +481,33 @@ class VX360Gamepad:
         dll.vigem_target_x360_update.argtypes = (ctypes.c_void_p, ctypes.c_void_p, XUSB_REPORT)
         dll.vigem_target_x360_update.restype = ctypes.c_uint
 
+    def xinput_user_index(self) -> int:
+        fn = self._dll.vigem_target_x360_get_user_index
+        fn.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32))
+        fn.restype = ctypes.c_uint
+        index = ctypes.c_uint32(0xFFFFFFFF)
+        _vigem_check(fn(self._client, self._target, ctypes.byref(index)), "查询虚拟手柄编号")
+        if index.value not in range(4):
+            raise RuntimeError("虚拟手柄编号尚未就绪")
+        return int(index.value)
+
+    def set_merged_report(self, state: dict, names) -> None:
+        raw = state.get("raw_report")
+        if raw is not None:
+            self.report = XUSB_REPORT.from_buffer_copy(raw)
+        else:
+            self.report = XUSB_REPORT()
+            for field, key in (("sThumbLX", "left_x"), ("sThumbLY", "left_y"),
+                               ("sThumbRX", "right_x"), ("sThumbRY", "right_y")):
+                value = max(-1.0, min(1.0, float(state.get(key, 0))))
+                setattr(self.report, field, round(value * (32768 if value < 0 else 32767)))
+            self.report.bLeftTrigger = round(float(state.get("left_trigger", 0)) * 255)
+            self.report.bRightTrigger = round(float(state.get("right_trigger", 0)) * 255)
+        # Preserve every physical bit, and publish the complete chord in one report.
+        for name in names:
+            self.report.wButtons |= XUSB_GAMEPAD_BUTTONS[name]
+        self.update()
+
     def set_left_stick(self, x: float, y: float = 0.0) -> None:
         x = max(-1.0, min(1.0, float(x)))
         y = max(-1.0, min(1.0, float(y)))
@@ -401,6 +523,14 @@ class VX360Gamepad:
         # XInput right-stick +Y is up, while mouse +Y is down. Invert here so
         # the same head-control signal feels the same in mouse and gamepad modes.
         self.report.sThumbRY = round(-y * 32767)
+        self.update()
+
+    def set_right_stick_raw(self, x: float, y: float = 0.0) -> None:
+        """Copy an XInput right stick without applying mouse-coordinate inversion."""
+        x = max(-1.0, min(1.0, float(x)))
+        y = max(-1.0, min(1.0, float(y)))
+        self.report.sThumbRX = round(x * 32767)
+        self.report.sThumbRY = round(y * 32767)
         self.update()
 
     def set_right_x(self, value: float) -> None:
@@ -450,7 +580,7 @@ class VX360Gamepad:
 class OutputManager:
     """Head-view output manager with watchdog zeroing for virtual sticks."""
 
-    def __init__(self, root: Path, mouse=None, keyboard=None) -> None:
+    def __init__(self, root: Path, mouse=None, keyboard=None, xinput_reader=None) -> None:
         self.root = root
         self.mouse = mouse or MouseOutput()
         self.keyboard = keyboard or KeyboardOutput()
@@ -476,12 +606,27 @@ class OutputManager:
         self._mouse_button_sources: dict[str, set[str]] = {}
         self._left_stick_sources: dict[str, tuple[float, float]] = {}
         self._trigger_sources: dict[str, tuple[float, float]] = {}
+        # Physical XInput is sampled and merged into this same virtual report.
+        # It is deliberately opt-in so the ordinary mouse/virtual-pad paths do
+        # not change for existing users.
+        self._xinput_reader = xinput_reader or XInputReader()
+        self._xinput_merge_enabled = False
+        self._xinput_selected_user: int | None = None
+        self._xinput_active_user: int | None = None
+        self._xinput_state: dict | None = None
+        self._xinput_source: str | None = None
+        self._xinput_connected_users: tuple[int, ...] = ()
+        self._xinput_last_poll = 0.0
+        self._xinput_last_error: str | None = None
+        self._xinput_poll_interval = 1.0 / 60.0
         self.last_button_update = 0.0
         self.last_hold_update = 0.0
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._watchdog = threading.Thread(target=self._watch_loop, daemon=True)
         self._watchdog.start()
+        self._xinput_thread = threading.Thread(target=self._xinput_loop, name="xinput-physical-merge", daemon=True)
+        self._xinput_thread.start()
 
     @property
     def vigem_dll(self) -> Path | None:
@@ -503,15 +648,142 @@ class OutputManager:
         self._pad = VX360Gamepad(dll)
         return self._pad
 
+    def _xinput_merge_active_locked(self) -> bool:
+        return bool(self._xinput_merge_enabled and self.mode == "gamepad")
+
+    @staticmethod
+    def _normalize_xinput_user(value) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            user = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("手柄编号必须是 0 到 3") from exc
+        if user not in XInputReader.USER_SLOTS:
+            raise ValueError("XInput 手柄索引必须是 0 到 3")
+        return user
+
+    def _clear_physical_xinput_locked(self) -> None:
+        if self._xinput_source:
+            self._button_sources.pop(self._xinput_source, None)
+        self._xinput_state = None
+        self._xinput_active_user = None
+        self._xinput_source = None
+        self._refresh_buttons_locked()
+        self._refresh_left_stick_locked()
+        self._refresh_triggers_locked()
+        self._refresh_right_stick_locked()
+
+    def _apply_xinput_state_locked(self, user: int | None, state: dict | None) -> None:
+        old_source = self._xinput_source
+        if old_source and (state is None or old_source != f"xinput:{user}"):
+            self._button_sources.pop(old_source, None)
+        if state is None:
+            self._xinput_state = None
+            self._xinput_active_user = None
+            self._xinput_source = None
+        else:
+            source = f"xinput:{int(user)}"
+            self._xinput_state = dict(state)
+            self._xinput_active_user = int(user)
+            self._xinput_source = source
+            self._button_sources[source] = set(state.get("buttons", set()))
+        self._refresh_buttons_locked()
+        self._refresh_left_stick_locked()
+        self._refresh_triggers_locked()
+        self._refresh_right_stick_locked()
+
+    def _xinput_loop(self) -> None:
+        while not self._stop.wait(self._xinput_poll_interval):
+            with self._lock:
+                if self._stop.is_set():
+                    return
+                try:
+                    virtual = self._pad.xinput_user_index() if self._pad is not None else None
+                    reader = self._xinput_reader
+                    connected = {}
+                    for user in getattr(reader, "USER_SLOTS", XInputReader.USER_SLOTS):
+                        if user == virtual:
+                            continue
+                        state = reader.read(user)
+                        if state is not None:
+                            connected[int(user)] = state
+                    self._xinput_connected_users = tuple(sorted(connected))
+                    self._xinput_last_poll = time.monotonic()
+                    self._xinput_last_error = getattr(reader, "last_error", None)
+                    if self._xinput_merge_active_locked():
+                        chosen = self._xinput_selected_user
+                        self._apply_xinput_state_locked(chosen, connected.get(chosen))
+                except Exception as exc:
+                    self._xinput_last_error = str(exc)
+                    self._xinput_connected_users = ()
+                    if self._xinput_merge_active_locked():
+                        self._apply_xinput_state_locked(None, None)
+
+    def configure_xinput_merge(self, *, enabled: bool | None = None, user=_UNSET) -> dict:
+        """Configure one physical XInput slot to merge into the virtual pad."""
+        with self._lock:
+            if user is not _UNSET:
+                normalized = self._normalize_xinput_user(user)
+                if normalized != self._xinput_selected_user:
+                    self._clear_physical_xinput_locked()
+                self._xinput_selected_user = normalized
+            if enabled is not None:
+                requested = bool(enabled)
+                if requested and self._xinput_selected_user is None:
+                    raise ValueError("请明确选择一个物理手柄")
+                if requested and self.mode != "gamepad":
+                    # The merge has one virtual Xbox report by definition.  A
+                    # mouse-mode session cannot silently consume the physical
+                    # controller, so enabling it promotes the mode explicitly.
+                    self._zero_locked(force_physical=True)
+                    self.mode = "gamepad"
+                if requested and not self._xinput_merge_enabled:
+                    self._ensure_pad()
+                if requested and not self._xinput_merge_enabled:
+                    self._zero_locked(force_physical=True)
+                self._xinput_merge_enabled = requested
+                if not requested:
+                    self._clear_physical_xinput_locked()
+            if self._xinput_merge_enabled:
+                self._ensure_pad()
+            return self.status()
+
+    def xinput_status(self) -> dict:
+        with self._lock:
+            reader = self._xinput_reader
+            state = self._xinput_state or {}
+            return {
+                "enabled": bool(self._xinput_merge_enabled),
+                "active": self._xinput_merge_active_locked(),
+                "selected_user": self._xinput_selected_user,
+                "active_user": self._xinput_active_user,
+                "connected_users": list(self._xinput_connected_users),
+                "connected": self._xinput_state is not None,
+                "backend": getattr(reader, "backend_name", None),
+                "available": bool(getattr(reader, "available", False)),
+                "last_poll_age_ms": round((time.monotonic() - self._xinput_last_poll) * 1000.0) if self._xinput_last_poll else None,
+                "last_error": self._xinput_last_error,
+                "buttons": sorted(str(x) for x in state.get("buttons", set())),
+                "left_stick": {"x": round(float(state.get("left_x", 0.0)), 4), "y": round(float(state.get("left_y", 0.0)), 4)},
+                "right_stick": {"x": round(float(state.get("right_x", 0.0)), 4), "y": round(float(state.get("right_y", 0.0)), 4)},
+                "triggers": {"left": round(float(state.get("left_trigger", 0.0)), 4), "right": round(float(state.get("right_trigger", 0.0)), 4)},
+            }
+
     def set_config(self, *, mode: str | None = None, enabled: bool | None = None,
-                   mouse_speed: float | None = None, mouse_speed_x: float | None = None, mouse_speed_y: float | None = None, gamepad_gain: float | None = None) -> dict:
+                   mouse_speed: float | None = None, mouse_speed_x: float | None = None, mouse_speed_y: float | None = None,
+                   gamepad_gain: float | None = None, xinput_merge_enabled: bool | None = None,
+                   physical_xinput_user=_UNSET) -> dict:
         with self._lock:
             if mode is not None:
                 if mode not in {"mouse", "gamepad"}:
                     raise ValueError("mode must be mouse or gamepad")
                 if mode != self.mode:
-                    self._zero_locked()
+                    self._zero_locked(force_physical=True)
                     self.mode = mode
+                    if mode != "gamepad":
+                        self._xinput_merge_enabled = False
+                        self._clear_physical_xinput_locked()
                 # Create the virtual Xbox controller as soon as gamepad mode is selected,
                 # even before output is enabled. This gives games a chance to enumerate it.
                 if self.mode == "gamepad":
@@ -526,6 +798,8 @@ class OutputManager:
                 self.mouse_speed_y = max(60.0, min(2500.0, float(mouse_speed_y)))
             if gamepad_gain is not None:
                 self.gamepad_gain = max(0.1, min(3.0, float(gamepad_gain)))
+            if xinput_merge_enabled is not None or physical_xinput_user is not _UNSET:
+                self.configure_xinput_merge(enabled=xinput_merge_enabled, user=physical_xinput_user)
             if enabled is not None:
                 if enabled and self.mode == "gamepad":
                     self._ensure_pad()
@@ -557,6 +831,10 @@ class OutputManager:
             if not self.enabled:
                 return
             try:
+                if self._xinput_merge_active_locked():
+                    # The physical controller owns both sticks and triggers in
+                    # merge mode. Motion input is intentionally button-only.
+                    return
                 if self.mode == "mouse":
                     # X has already been assigned by the labeled
                     # left/center/right head anchors in ControlKernel.  Keep
@@ -581,8 +859,19 @@ class OutputManager:
                 self._zero_locked()
 
     def _refresh_buttons_locked(self) -> None:
-        names = tuple(sorted(set().union(*self._button_sources.values()))) if self.enabled else ()
-        if names or self._pad is not None:
+        physical = set()
+        if self._xinput_merge_active_locked() and self._xinput_state is not None:
+            physical = set(self._xinput_state.get("buttons", set()))
+        motion = set()
+        if self.enabled:
+            motion = set().union(*[
+                values for source, values in self._button_sources.items()
+                if source != self._xinput_source
+            ]) if self._button_sources else set()
+        names = tuple(sorted(physical | motion))
+        if self._xinput_merge_active_locked() and self._pad is not None:
+            self._pad.set_merged_report(self._xinput_state or {}, names)
+        elif names or self._pad is not None:
             self._ensure_pad().set_buttons(names)
         self.last_buttons = names
 
@@ -597,7 +886,7 @@ class OutputManager:
         return keys
 
     def _refresh_keyboard_locked(self) -> None:
-        desired = set().union(*self._keyboard_sources.values()) if self.enabled and self._keyboard_sources else set()
+        desired = set().union(*self._keyboard_sources.values()) if self.enabled and not self._xinput_merge_active_locked() and self._keyboard_sources else set()
         current = set(self.keyboard.pressed)
         for key in sorted(current - desired, reverse=True):
             self.keyboard.set_key(key, False)
@@ -605,7 +894,7 @@ class OutputManager:
             self.keyboard.set_key(key, True)
 
     def _refresh_mouse_buttons_locked(self) -> None:
-        desired = set().union(*self._mouse_button_sources.values()) if self.enabled and self._mouse_button_sources else set()
+        desired = set().union(*self._mouse_button_sources.values()) if self.enabled and not self._xinput_merge_active_locked() and self._mouse_button_sources else set()
         current = set(getattr(self.mouse, "pressed", set()))
         for button in sorted(current - desired):
             self.mouse.set_button(button, False)
@@ -613,8 +902,14 @@ class OutputManager:
             self.mouse.set_button(button, True)
 
     def _refresh_left_stick_locked(self) -> None:
-        x = y = 0.0
-        if self.enabled:
+        if self._xinput_merge_active_locked():
+            return  # _refresh_buttons_locked publishes the complete merged report.
+        if self._xinput_merge_active_locked() and self._xinput_state is not None:
+            x = float(self._xinput_state.get("left_x", 0.0))
+            y = float(self._xinput_state.get("left_y", 0.0))
+        else:
+            x = y = 0.0
+        if self.enabled and not self._xinput_merge_active_locked():
             for sx, sy in self._left_stick_sources.values():
                 x += sx
                 y += sy
@@ -624,8 +919,14 @@ class OutputManager:
             self._ensure_pad().set_left_stick(x, y)
 
     def _refresh_triggers_locked(self) -> None:
-        left = right = 0.0
-        if self.enabled:
+        if self._xinput_merge_active_locked():
+            return  # _refresh_buttons_locked publishes the complete merged report.
+        if self._xinput_merge_active_locked() and self._xinput_state is not None:
+            left = float(self._xinput_state.get("left_trigger", 0.0))
+            right = float(self._xinput_state.get("right_trigger", 0.0))
+        else:
+            left = right = 0.0
+        if self.enabled and not self._xinput_merge_active_locked():
             for source_left, source_right in self._trigger_sources.values():
                 left = max(left, source_left)
                 right = max(right, source_right)
@@ -633,6 +934,44 @@ class OutputManager:
             setter = getattr(self._ensure_pad(), "set_triggers", None)
             if setter is not None:
                 setter(left, right)
+
+    def _refresh_right_stick_locked(self) -> None:
+        if self._xinput_merge_active_locked():
+            return  # _refresh_buttons_locked publishes the complete merged report.
+        if self._pad is None:
+            return
+        try:
+            if self._xinput_merge_active_locked() and self._xinput_state is not None:
+                setter = getattr(self._pad, "set_right_stick_raw", None)
+                if setter is not None:
+                    setter(self._xinput_state.get("right_x", 0.0), self._xinput_state.get("right_y", 0.0))
+                else:
+                    # Test doubles and legacy adapters may only expose the
+                    # semantic setter; preserve the physical sign as far as
+                    # that adapter permits.
+                    self._pad.set_right_stick(self._xinput_state.get("right_x", 0.0), -self._xinput_state.get("right_y", 0.0))
+            elif self.mode == "gamepad":
+                setter = getattr(self._pad, "set_right_stick_raw", None)
+                if setter is not None:
+                    setter(0.0, 0.0)
+                else:
+                    self._pad.set_right_stick(0.0, 0.0)
+        except Exception as exc:
+            self.last_error = str(exc)
+
+    @staticmethod
+    def _gamepad_targets(target) -> set[str]:
+        if isinstance(target, (list, tuple, set)):
+            parts = [str(item).strip().upper() for item in target]
+        else:
+            parts = [part.strip().upper() for part in str(target).replace(",", "+").split("+")]
+        parts = [part for part in parts if part]
+        if not parts:
+            raise ValueError("Xbox 按键不能为空")
+        invalid = [part for part in parts if part not in XUSB_GAMEPAD_BUTTONS]
+        if invalid:
+            raise ValueError("不支持的 Xbox 按键：" + ", ".join(sorted(set(invalid))))
+        return set(parts)
 
     def set_holds(self, holds, source_group: str = "motions") -> dict:
         """Replace one group's continuous keyboard/gamepad/left-stick holds."""
@@ -649,17 +988,21 @@ class OutputManager:
                     continue
                 ident = str(item.get("id", "")).strip()
                 action_type = str(item.get("type", "")).strip().lower()
-                target = str(item.get("target", "")).strip().upper()
+                target = item.get("target", "")
+                if not isinstance(target, (list, tuple, set)):
+                    target = str(target).strip().upper()
                 if not ident or not target:
                     continue
                 source = prefix + ident
                 if action_type == "gamepad":
-                    if target not in XUSB_GAMEPAD_BUTTONS:
-                        raise ValueError(f"不支持的 Xbox 键：{target}")
-                    self._button_sources[source] = {target}
+                    self._button_sources[source] = self._gamepad_targets(target)
                 elif action_type == "keyboard":
+                    if self._xinput_merge_active_locked():
+                        continue
                     self._keyboard_sources[source] = self._combo_keys(target)
                 elif action_type == "gamepad_axis":
+                    if self._xinput_merge_active_locked():
+                        continue
                     if target not in GAMEPAD_AXES:
                         raise ValueError(f"不支持的 Xbox 摇杆方向：{target}")
                     self._left_stick_sources[source] = GAMEPAD_AXES[target]
@@ -698,25 +1041,33 @@ class OutputManager:
                 ident = str(item.get("id", "")).strip()
                 action = item.get("action") if isinstance(item.get("action"), dict) else item
                 action_type = str(action.get("type", "")).strip().lower()
-                target = str(action.get("target", "")).strip().upper()
+                target = action.get("target", "")
+                if not isinstance(target, (list, tuple, set)):
+                    target = str(target).strip().upper()
                 if not ident or not target:
                     continue
                 source = prefix + ident
                 if action_type in {"gamepad", "gamepad_button", "xinput_button"}:
-                    if target not in XUSB_GAMEPAD_BUTTONS:
-                        raise ValueError(f"不支持的 Xbox 键：{target}")
-                    self._button_sources[source] = {target}
+                    self._button_sources[source] = self._gamepad_targets(target)
                 elif action_type == "keyboard":
+                    if self._xinput_merge_active_locked():
+                        continue
                     self._keyboard_sources[source] = self._combo_keys(target)
                 elif action_type == "mouse_button":
+                    if self._xinput_merge_active_locked():
+                        continue
                     if target not in {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}:
                         raise ValueError(f"不支持的鼠标按键：{target}")
                     self._mouse_button_sources[source] = {target}
                 elif action_type == "gamepad_axis":
+                    if self._xinput_merge_active_locked():
+                        continue
                     if target not in GAMEPAD_AXES:
                         raise ValueError(f"不支持的 Xbox 摇杆方向：{target}")
                     self._left_stick_sources[source] = GAMEPAD_AXES[target]
                 elif action_type == "gamepad_trigger":
+                    if self._xinput_merge_active_locked():
+                        continue
                     if target == "LT":
                         self._trigger_sources[source] = (1.0, 0.0)
                     elif target == "RT":
@@ -724,6 +1075,8 @@ class OutputManager:
                     else:
                         raise ValueError(f"不支持的 Xbox 扳机：{target}")
                 elif action_type == "mouse_wheel":
+                    if self._xinput_merge_active_locked():
+                        continue
                     raise ValueError("鼠标滚轮只能使用 tap，不能作为持续 hold")
                 else:
                     raise ValueError(f"不支持的持续输出类型：{action_type}")
@@ -815,14 +1168,12 @@ class OutputManager:
             return self.status()
 
     def tap_gamepad(self, button: str, duration: float = 0.10, source: str | None = None) -> None:
-        button = str(button).upper()
-        if button not in XUSB_GAMEPAD_BUTTONS:
-            raise ValueError(f"不支持的 Xbox 键：{button}")
+        buttons = self._gamepad_targets(button)
         source = str(source).strip() if source else f"voice-{time.monotonic_ns()}"
         with self._lock:
             if not self.enabled:
                 return
-            self._button_sources[source] = {button}
+            self._button_sources[source] = buttons
             self._refresh_buttons_locked()
         time.sleep(max(0.04, min(0.25, float(duration))))
         with self._lock:
@@ -833,7 +1184,7 @@ class OutputManager:
         source = str(source).strip() if source else f"voice-keyboard-{time.monotonic_ns()}"
         keys = self._combo_keys(combo)
         with self._lock:
-            if not self.enabled:
+            if not self.enabled or self._xinput_merge_active_locked():
                 return
             self._keyboard_sources[source] = keys
             self._refresh_keyboard_locked()
@@ -857,13 +1208,21 @@ class OutputManager:
         action_type = str(action.get("type", "")).strip().lower()
         aliases = {"gamepad_button": "gamepad", "xinput_button": "gamepad", "mouse": "mouse_button", "wheel": "mouse_wheel"}
         action_type = aliases.get(action_type, action_type)
-        target = str(action.get("target", "")).strip().upper()
+        target = action.get("target", "")
+        if not isinstance(target, (list, tuple, set)):
+            target = str(target).strip().upper()
         source = str(action.get("source", "")).strip() or f"pulse:{action_type}:{time.monotonic_ns()}"
         duration = float(action.get("duration", 0.08))
         nonblocking = bool(action.get("nonblocking", False))
         # Preserve the existing voice/API contract: ordinary keyboard/gamepad taps
         # are complete when execute_action returns. Pose edges opt into the timer
         # path so the camera/control thread never sleeps.
+        with self._lock:
+            merge_active = self._xinput_merge_active_locked()
+        if merge_active and action_type not in {"gamepad", "gamepad_button", "xinput_button"}:
+            return {"executed": False, "reason": "冰原狼2合流只允许 Xbox 按键输出"}
+        if action_type in {"gamepad_button", "xinput_button"}:
+            action_type = "gamepad"
         if not nonblocking and action_type == "gamepad":
             self.tap_gamepad(target, duration=duration, source=source)
             return {"executed": True, "action": f"{action_type}:{target}"}
@@ -871,10 +1230,10 @@ class OutputManager:
             self.tap_keyboard(target, duration=duration, source=source)
             return {"executed": True, "action": f"{action_type}:{target}"}
         with self._lock:
+            if not self.enabled or (self._xinput_merge_active_locked() and action_type != "gamepad"):
+                return {"executed": False, "reason": "输出已关闭或合流仅允许手柄按钮"}
             if action_type == "gamepad":
-                if target not in XUSB_GAMEPAD_BUTTONS:
-                    raise ValueError(f"不支持的 Xbox 键：{target}")
-                self._button_sources[source] = {target}
+                self._button_sources[source] = self._gamepad_targets(target)
                 self._refresh_buttons_locked()
             elif action_type == "keyboard":
                 self._keyboard_sources[source] = self._combo_keys(target)
@@ -908,7 +1267,33 @@ class OutputManager:
         self._release_later(source, duration)
         return {"executed": True, "action": f"{action_type}:{target}"}
 
-    def _zero_locked(self) -> None:
+    def _clear_motion_locked(self) -> None:
+        self.last_value = 0.0
+        self.last_x = 0.0
+        self.last_y = 0.0
+        physical = {}
+        if self._xinput_merge_active_locked() and self._xinput_source:
+            physical[self._xinput_source] = set(self._xinput_state.get("buttons", set()) if self._xinput_state else set())
+        self._button_sources = physical or {"zones": set()}
+        self._keyboard_sources = {}
+        self._mouse_button_sources = {}
+        self._left_stick_sources = {}
+        self._trigger_sources = {}
+        self.keyboard.release_all()
+        release_mouse = getattr(self.mouse, "release_all", None)
+        if release_mouse is not None:
+            release_mouse()
+        self._mouse_residual_x = 0.0
+        self._mouse_residual_y = 0.0
+        self._refresh_buttons_locked()
+        self._refresh_left_stick_locked()
+        self._refresh_triggers_locked()
+        self._refresh_right_stick_locked()
+
+    def _zero_locked(self, *, force_physical: bool = False) -> None:
+        if self._xinput_merge_active_locked() and not force_physical:
+            self._clear_motion_locked()
+            return
         self.last_value = 0.0
         self.last_x = 0.0
         self.last_y = 0.0
@@ -941,7 +1326,7 @@ class OutputManager:
         while not self._stop.wait(0.05):
             with self._lock:
                 now = time.monotonic()
-                if self.enabled and self.mode == "gamepad" and self.last_update and now - self.last_update > 0.25:
+                if self.enabled and self.mode == "gamepad" and not self._xinput_merge_active_locked() and self.last_update and now - self.last_update > 0.25:
                     # Only center the stick; button watchdog below is independent.
                     if self._pad is not None:
                         try:
@@ -983,6 +1368,27 @@ class OutputManager:
             "vigem_dll": str(dll) if dll else None,
             "vigembus_running": self._vigembus_running_cached(),
             "gamepad_connected": self._pad is not None,
+            "xinput_merge_enabled": bool(self._xinput_merge_enabled),
+            "xinput_merge_active": self._xinput_merge_active_locked(),
+            "xinput_selected_user": self._xinput_selected_user,
+            "xinput_active_user": self._xinput_active_user,
+            "xinput_connected": self._xinput_state is not None,
+            "xinput_connected_users": list(self._xinput_connected_users),
+            "xinput_backend": getattr(self._xinput_reader, "backend_name", None),
+            "physical_buttons": sorted(str(x) for x in (self._xinput_state or {}).get("buttons", set())),
+            "physical_left_stick": {
+                "x": round(float((self._xinput_state or {}).get("left_x", 0.0)), 4),
+                "y": round(float((self._xinput_state or {}).get("left_y", 0.0)), 4),
+            },
+            "physical_right_stick": {
+                "x": round(float((self._xinput_state or {}).get("right_x", 0.0)), 4),
+                "y": round(float((self._xinput_state or {}).get("right_y", 0.0)), 4),
+            },
+            "physical_triggers": {
+                "left": round(float((self._xinput_state or {}).get("left_trigger", 0.0)), 4),
+                "right": round(float((self._xinput_state or {}).get("right_trigger", 0.0)), 4),
+            },
+            "xinput_last_error": self._xinput_last_error,
             "last_value": round(self.last_value, 4),
             "last_x": round(self.last_x, 4),
             "last_y": round(self.last_y, 4),
@@ -998,7 +1404,9 @@ class OutputManager:
         self._stop.set()
         with self._lock:
             self.enabled = False
-            self._zero_locked()
+            self._xinput_merge_enabled = False
+            self._zero_locked(force_physical=True)
+            self._clear_physical_xinput_locked()
             if self._pad is not None:
                 try:
                     self._pad.close()

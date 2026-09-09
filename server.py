@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
 from game_profiles import GameProfileStore, action_catalog
-from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager
+from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
 from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService
 from scene_layout import SceneLayoutManager
 
@@ -525,6 +525,9 @@ class Handler(SimpleHTTPRequestHandler):
             data["hotkeys"] = HOTKEYS.status()
             self._send_json(data)
             return
+        if route == "/api/output/xinput":
+            self._send_json({"version": VERSION, **OUTPUT.xinput_status()})
+            return
         if route == "/api/input/status":
             data = INPUT_BRIDGE.status()
             # Keep the historical full response by default.  The browser only
@@ -759,6 +762,13 @@ class Handler(SimpleHTTPRequestHandler):
                     mouse_speed_x=body.get("mouse_speed_x"),
                     mouse_speed_y=body.get("mouse_speed_y"),
                     gamepad_gain=body.get("gamepad_gain"),
+                    xinput_merge_enabled=(body.get("xinput_merge_enabled") if "xinput_merge_enabled" in body else None),
+                    physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
+                )
+            elif route == "/api/output/xinput":
+                data = OUTPUT.configure_xinput_merge(
+                    enabled=body.get("enabled") if "enabled" in body else None,
+                    user=(body.get("user") if "user" in body else body.get("physical_xinput_user")) if ("user" in body or "physical_xinput_user" in body) else _UNSET,
                 )
             elif route == "/api/output/frame":
                 OUTPUT.apply(float(body.get("x", 0.0)), float(body.get("y", 0.0)))
