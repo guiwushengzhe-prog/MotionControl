@@ -442,6 +442,9 @@ class VX360Gamepad:
             raise RuntimeError("Xbox output requires 64-bit Windows")
         if not dll_path.is_file():
             raise RuntimeError(f"ViGEmClient.dll not found: {dll_path}")
+        self._identity_reader = XInputReader()
+        self._users_before_attach = {i for i in XInputReader.USER_SLOTS if self._identity_reader.read(i) is not None}
+        self._identified_user = None
         self._dll = ctypes.CDLL(str(dll_path))
         self._bind()
         self._client = self._dll.vigem_alloc()
@@ -482,14 +485,18 @@ class VX360Gamepad:
         dll.vigem_target_x360_update.restype = ctypes.c_uint
 
     def xinput_user_index(self) -> int:
-        fn = self._dll.vigem_target_x360_get_user_index
-        fn.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32))
-        fn.restype = ctypes.c_uint
-        index = ctypes.c_uint32(0xFFFFFFFF)
-        _vigem_check(fn(self._client, self._target, ctypes.byref(index)), "查询虚拟手柄编号")
-        if index.value not in range(4):
-            raise RuntimeError("虚拟手柄编号尚未就绪")
-        return int(index.value)
+        # Some ViGEmBus versions report 0 even when this target occupies slot 1.
+        # Identify the single new XInput slot created by this attachment instead.
+        connected = {i for i in XInputReader.USER_SLOTS if self._identity_reader.read(i) is not None}
+        if self._identified_user is not None:
+            if self._identified_user in connected:
+                return self._identified_user
+            raise RuntimeError("虚拟手柄已断开，请重新启动输出服务")
+        added = connected - self._users_before_attach
+        if len(added) != 1:
+            raise RuntimeError("暂时无法唯一确认虚拟手柄编号，请保持其他手柄连接状态不变")
+        self._identified_user = added.pop()
+        return self._identified_user
 
     def set_merged_report(self, state: dict, names) -> None:
         raw = state.get("raw_report")

@@ -245,3 +245,29 @@ def test_switch_to_mouse_disables_merge_and_clears_physical_state(tmp_path):
         assert not out._pad.buttons
     finally:
         out.close()
+
+
+def test_virtual_identity_uses_new_slot_instead_of_incorrect_driver_zero():
+    from output_backend import VX360Gamepad
+    class Reader:
+        def read(self, user):
+            return {} if user in (0, 1) else None
+    pad = object.__new__(VX360Gamepad)
+    pad._identity_reader = Reader()
+    pad._users_before_attach = {0}
+    pad._identified_user = None
+    assert pad.xinput_user_index() == 1
+
+
+def test_virtual_identity_rejects_ambiguous_simultaneous_connections():
+    import pytest
+    from output_backend import VX360Gamepad
+    class Reader:
+        def read(self, user):
+            return {} if user in (0, 1, 2) else None
+    pad = object.__new__(VX360Gamepad)
+    pad._identity_reader = Reader()
+    pad._users_before_attach = {0}
+    pad._identified_user = None
+    with pytest.raises(RuntimeError):
+        pad.xinput_user_index()
