@@ -118,7 +118,7 @@ def normalize_bindings(bindings: dict | None) -> dict:
                 continue
             normalized = normalize_binding(binding, default_behavior=default_behavior)
             # Cross-pose actions are explicitly edge-triggered by product design.
-            if group in {"poses", "voice"}:
+            if group in {"poses", "voice"} and "action" in normalized:
                 normalized["action"]["behavior"] = "tap"
             out[group][ident] = normalized
     return out
@@ -152,7 +152,7 @@ def _merge_bindings(base: dict, overrides: dict) -> dict:
             continue
         default_behavior = "tap" if group in {"poses", "voice"} else "hold"
         normalized = normalize_binding(value, default_behavior=default_behavior)
-        if group in {"poses", "voice"}:
+        if group in {"poses", "voice"} and "action" in normalized:
             normalized["action"]["behavior"] = "tap"
         merged[group][ident] = normalized
     return merged
