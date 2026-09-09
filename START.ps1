@@ -1,7 +1,6 @@
 param(
     [int]$Port = 8765,
     [string]$ListenAddress = '0.0.0.0',
-    [ValidateSet('phone', 'computer')][string]$Source = 'phone',
     [switch]$NoBrowser,
     [switch]$NoAutoStart
 )
@@ -36,28 +35,19 @@ function Connect-PhoneUsb {
     )
     $adb = $adbCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $adb) {
-        Write-Host '未找到手机调试工具；电脑端仍会切到手机摄像头模式。' -ForegroundColor DarkYellow
+        Write-Host '未找到手机调试工具；电脑摄像头仍可启动。' -ForegroundColor DarkYellow
         return
     }
     $device = & $adb devices 2>$null |
         Select-String '^[^\s]+\s+device(?:\s|$)' |
         Select-Object -First 1
     if (-not $device) {
-        Write-Host '没有发现已授权手机；电脑端仍会切到手机摄像头模式。' -ForegroundColor DarkYellow
+        Write-Host '没有发现已授权手机；电脑摄像头仍可启动。' -ForegroundColor DarkYellow
         return
     }
     $serial = ($device.Line -split '\s+')[0]
     & $adb -s $serial reverse "tcp:$Port" "tcp:$Port" | Out-Null
     Write-Host "手机 USB 通道已连接：ws://127.0.0.1:$Port/ws/input" -ForegroundColor Green
-    if ($Source -eq 'phone') {
-        & $adb -s $serial shell am start -n 'cn.motionbridge.camera/.MainActivity' 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host '已打开手机 MotionBridge 摄像头应用；手机端仍需按“连接并开始”。' -ForegroundColor Green
-        }
-        else {
-            Write-Warning '已建立 USB 通道，但没有成功打开手机应用；请手动打开 MotionBridge。'
-        }
-    }
 }
 
 function Get-ExistingMotionControl {
@@ -99,34 +89,12 @@ function Start-ComputerCamera {
     }
 }
 
-function Start-PhoneSource {
-    if ($NoAutoStart) {
-        Write-Host '已跳过自动切换手机摄像头模式（-NoAutoStart）。' -ForegroundColor DarkYellow
-        return
-    }
-    try {
-        Invoke-LocalApi -Path '/api/input/source' -Method POST -Body @{ source = 'phone'; enabled = $true } -TimeoutSec 15 | Out-Null
-        Write-Host '电脑端已切换到手机摄像头模式；等待手机端连接并开始。' -ForegroundColor Green
-    }
-    catch {
-        Write-Warning ("切换手机摄像头模式失败：{0}" -f $_.Exception.Message)
-    }
-}
-
-function Start-SelectedSource {
-    if ($Source -eq 'phone') { Start-PhoneSource }
-    else { Start-ComputerCamera }
-}
-
 Connect-PhoneUsb
 
 $existing = Get-ExistingMotionControl
 if ($existing) {
     Write-Host "检测到已有 MotionControl 服务：$baseUrl" -ForegroundColor Cyan
-    if ($Source -eq 'phone') {
-        Start-PhoneSource
-    }
-    elseif ([string]$existing.body_mode -eq 'phone' -or $existing.mobile_pose_connected) {
+    if ([string]$existing.body_mode -eq 'phone' -or $existing.mobile_pose_connected) {
         Write-Host '已有服务正在使用手机身体源，启动脚本不会强制切换到电脑摄像头。' -ForegroundColor DarkYellow
     }
     else {
@@ -146,11 +114,9 @@ $python = $pythonCandidates | Select-Object -First 1
 if (-not $python) {
     throw '没有找到可用的 Python。请确认 F:\MotionControl\MediaPipe\.venv 存在。'
 }
-if ($Source -eq 'computer') {
-    $probe = & $python -c "import mediapipe, cv2, numpy, sounddevice" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Python 环境缺少电脑摄像头依赖：$python`n$probe"
-    }
+$probe = & $python -c "import mediapipe, cv2, numpy, sounddevice" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "Python 环境缺少电脑摄像头依赖：$python`n$probe"
 }
 $pythonVersion = & $python --version 2>&1
 Write-Host "使用正式 Python 环境：$python（$pythonVersion）" -ForegroundColor DarkGray
@@ -168,7 +134,7 @@ $serverProcess = Start-Process -FilePath $python `
 try {
     Wait-MotionControl -Process $serverProcess | Out-Null
     Write-Host "MotionControl 服务已启动：$openUrl" -ForegroundColor Cyan
-    Start-SelectedSource
+    Start-ComputerCamera
     if (-not $NoBrowser) { Start-Process $openUrl }
     Write-Host "网页：$openUrl"
     Write-Host '关闭此窗口会停止本次服务；输出仍保持关闭，需在网页中主动开启。' -ForegroundColor DarkGray
