@@ -50,11 +50,23 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
     action_type = aliases.get(action_type, action_type)
     if action_type not in ACTION_TYPES:
         raise ValueError(f"unsupported action type: {action_type}")
-    target = str(action.get("target", "")).strip().upper()
-    if not target:
-        raise ValueError("action target must not be empty")
-    if action_type == "gamepad" and target not in GAMEPAD_BUTTONS:
-        raise ValueError(f"unsupported Xbox button: {target}")
+    raw_target = action.get("target", "")
+    if action_type == "gamepad":
+        if isinstance(raw_target, (list, tuple, set)):
+            parts = [str(item).strip().upper() for item in raw_target]
+        else:
+            parts = [part.strip().upper() for part in str(raw_target).replace(",", "+").split("+")]
+        parts = [part for part in parts if part]
+        if not parts:
+            raise ValueError("Xbox 按键不能为空")
+        invalid = [part for part in parts if part not in GAMEPAD_BUTTONS]
+        if invalid:
+            raise ValueError("不支持的 Xbox 按键：" + ", ".join(sorted(set(invalid))))
+        target = parts[0] if len(parts) == 1 else parts
+    else:
+        target = str(raw_target).strip().upper()
+        if not target:
+            raise ValueError("action target must not be empty")
     if action_type == "gamepad_axis" and target not in GAMEPAD_AXES:
         raise ValueError(f"unsupported Xbox axis: {target}")
     if action_type == "gamepad_trigger" and target not in GAMEPAD_TRIGGERS:
@@ -288,7 +300,7 @@ def action_catalog() -> dict:
         "keyboard": {"free_text": True},
         "mouse_button": {"targets": sorted(MOUSE_BUTTONS)},
         "mouse_wheel": {"targets": sorted(MOUSE_WHEEL), "behavior": "tap"},
-        "gamepad": {"targets": sorted(GAMEPAD_BUTTONS)},
+        "gamepad": {"free_text": True, "placeholder": "A 或 LB+A（同时按下）"},
         "gamepad_trigger": {"targets": sorted(GAMEPAD_TRIGGERS)},
         "gamepad_axis": {"targets": sorted(GAMEPAD_AXES)},
     }

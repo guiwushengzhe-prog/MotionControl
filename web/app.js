@@ -23,7 +23,7 @@ const EDGES = [
 const BODY_ZONES = {leftHandUpper:{label:'Y',body:'左手',button:'Y'},leftHandLower:{label:'X',body:'左手',button:'X'},rightHandUpper:{label:'B',body:'右手',button:'B'},rightHandLower:{label:'A',body:'右手',button:'A'},leftFoot:{label:'LB',body:'左脚',button:'LB'},rightFoot:{label:'RB',body:'右脚',button:'RB'},lookGate:{label:'上下视角',body:'左手放这里',button:null,gate:true}};
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
-const output={enabled:false,mode:'mouse',strength:160,server:null};
+const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputUser:null,xinputStatus:null};
 const head={algorithm:'pnp',horizontalAlgorithm:'classic',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand',verticalExclusive:false,bodyMotionGuard:true};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null;
@@ -204,7 +204,7 @@ function targetLabel(action){
   if(!action)return '未映射';
   const t=String(action.target||'').toUpperCase();
   if(action.type==='keyboard')return t;
-  if(action.type==='gamepad'&&['A','B','X','Y','LB','RB'].includes(t))return t;
+  if(action.type==='gamepad'){const values=Array.isArray(action.target)?action.target: String(action.target||'').split('+');return values.map(v=>TARGET_LABELS[String(v).toUpperCase()]||String(v).toUpperCase()).join('+')}
   if(action.type==='gamepad_trigger')return t;
   return TARGET_LABELS[t]||t;
 }
@@ -274,7 +274,7 @@ function makeTypeSelect(binding){
 function fillTargetControl(container,type,value=''){
   container.replaceChildren();if(!type)return;
   const meta=gameProfile.actions?.[type]||{};
-  if(meta.free_text){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder='例如 W / SPACE / CTRL+W';input.value=value||'';container.appendChild(input);return}
+  if(meta.free_text){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder=meta.placeholder||'例如 W / SPACE / CTRL+W';input.value=Array.isArray(value)?value.join('+'):(value||'');container.appendChild(input);return}
   const select=document.createElement('select');select.className='binding-target';
   for(const target of meta.targets||[]){const o=document.createElement('option');o.value=target;o.textContent=TARGET_LABELS[target]||target;select.appendChild(o)}
   if(value&&[...select.options].some(o=>o.value===value))select.value=value;container.appendChild(select);
@@ -397,11 +397,14 @@ async function refreshPreview(){
   finally{perfUi.previewBusy=false}
 }
 
-function outputPayload(enabled=output.enabled){const gain=clamp(output.strength,60,300)/100;return{mode:output.mode,enabled,mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain}}
-function renderOutput(s=output.server){const on=!!(s?.enabled??output.enabled);output.enabled=on;output.mode=s?.mode||output.mode;$('#outputMode').value=output.mode;$('#outputPill').textContent=on?'输出 ✓':'输出';$('#outputPill').className='pill '+(on?'ok':'');$('#outputBtn').textContent=on?'关闭输出 F8':'开启输出 F8';const main=$('#mainActionBtn');if(main){main.textContent=!sessionStarted?'开始体感':(on?'停止游戏控制':'开始游戏控制');main.className=`btn ${on?'danger':'primary'} main-action-btn`}renderMainStatus();if(!s){$('#backendStatus').textContent='正在检查输出后端…';return}$('#backendStatus').textContent=`${s.mouse_available?'鼠标可用':'鼠标不可用'} · ${s.gamepad_connected?'Xbox 已连接':'Xbox 未连接'}`+(s.last_error?' · '+s.last_error:'')}
+function outputPayload(enabled=output.enabled){const gain=clamp(output.strength,60,300)/100;return{mode:output.mode,enabled,mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain,xinput_merge_enabled:output.xinputEnabled,physical_xinput_user:output.xinputUser}}
+function renderXinputStatus(s=output.xinputStatus){const select=$('#xinputMerge'),line=$('#xinputStatus');if(!select||!line)return;const users=Array.isArray(s?.connected_users)?s.connected_users:[];const current=s?.enabled&&s?.selected_user!==null&&s?.selected_user!==undefined?String(s.selected_user):'';const values=[['','关闭体感合流']];for(const user of users)values.push([String(user),`物理手柄 ${Number(user)+1}`]);if(current&&!values.some(([v])=>v===current))values.push([current,`手柄 ${Number(current)+1}（未连接）`]);const keep=current&&values.some(([v])=>v===current);select.replaceChildren(...values.map(([value,label])=>{const o=document.createElement('option');o.value=value;o.textContent=label;return o}));select.value=keep?current:(s?.enabled?'':'');output.xinputEnabled=!!s?.enabled;output.xinputUser=s?.selected_user??null;line.textContent=!s?.enabled?'未启用物理手柄合流':(s?.connected?`物理手柄已合流 · 手柄 ${Number(s.active_user??s.selected_user)+1}`:'已启用，等待物理手柄连接');if(s?.last_error)line.textContent+=' · '+s.last_error;line.className='statusline '+(s?.connected?'ok':'')}
+async function refreshXinput(){try{output.xinputStatus=await api('/api/output/xinput');renderXinputStatus(output.xinputStatus)}catch{}}
+async function setXinputMerge(){const select=$('#xinputMerge');const value=select?.value||'';try{const data=await post('/api/output/xinput',{enabled:!!value,user:value===''?null:Number(value)});output.server=data;renderOutput(data);await refreshXinput();notice(value?`已选择物理手柄 ${Number(value)+1}；体感只叠加 Xbox 按键`:'已关闭物理手柄合流')}catch(e){notice('物理手柄合流失败：'+(e?.message||e));await refreshXinput()}}
+function renderOutput(s=output.server){const on=!!(s?.enabled??output.enabled);output.enabled=on;output.mode=s?.mode||output.mode;$('#outputMode').value=output.mode;$('#outputPill').textContent=on?'输出 ✓':'输出';$('#outputPill').className='pill '+(on?'ok':'');$('#outputBtn').textContent=on?'关闭输出 F8':'开启输出 F8';const main=$('#mainActionBtn');if(main){main.textContent=!sessionStarted?'开始体感':(on?'停止游戏控制':'开始游戏控制');main.className=`btn ${on?'danger':'primary'} main-action-btn`}renderMainStatus();if(!s){$('#backendStatus').textContent='正在检查输出后端…';return}$('#backendStatus').textContent=`${s.mouse_available?'鼠标可用':'鼠标不可用'} · ${s.gamepad_connected?'Xbox 已连接':'Xbox 未连接'}`+(s.xinput_merge_active?(s.xinput_connected?' · 物理手柄已合流':' · 等待物理手柄'):'')+(s.last_error?' · '+s.last_error:'');if(s.xinput_merge_enabled!==undefined){output.xinputEnabled=!!s.xinput_merge_enabled;output.xinputUser=s.xinput_selected_user??null}}
 async function refreshOutput(){try{output.server=await api('/api/output-status');renderOutput(output.server)}catch{}}
 async function setOutput(enabled){try{output.server=await post('/api/output/config',outputPayload(enabled));renderOutput(output.server)}catch(e){notice('输出开启失败：'+(e?.message||e));renderOutput()}}
-async function emergencyStop(show=true){try{output.server=await post('/api/output/stop',{})}catch{}output.enabled=false;renderOutput(output.server);if(show)notice('本地服务已停止所有输出。')}
+async function emergencyStop(show=true){try{output.server=await post('/api/output/stop',{})}catch{}output.enabled=false;renderOutput(output.server);if(show)notice(output.xinputEnabled?'体感已停止，物理手柄继续透传。':'本地服务已停止所有输出。')}
 
 async function setSource(source,enabled=true){try{const result=await post('/api/input/source',{source,enabled});sourceMode=source;sessionStarted=!!enabled;renderKernelState(result);await refreshInput();notice('输入源已切换：'+(source==='phone'?'手机摄像头':'电脑摄像头'))}catch(e){notice('输入源切换失败：'+(e?.message||e));await refreshKernel()}}
 async function toggleLocalCamera(){if(sourceMode==='phone')return;try{const enabled=!cameraRunning;const result=await post('/api/input/source',{source:'computer',enabled});sessionStarted=enabled;renderKernelState(result)}catch(e){notice('本地摄像头操作失败：'+(e?.message||e));await refreshKernel()}}
@@ -517,7 +520,7 @@ function cancelLiveZones(){if(zoneEditBackup)scene.zones=structuredClone(zoneEdi
 async function captureScene(){try{const r=await post('/api/scene/capture',{});if(r.pending){notice('已请求手机发送一张场景截图，请保持站位。')}else{notice('参考场景已记录，可以回到电脑调整圆圈。')}await refreshScene()}catch(e){notice('记录场景失败：'+e.message)}}
 async function rematchScene(){try{const r=await post('/api/scene/rematch',{});if(r.pending)notice('已请求手机截图用于重新匹配，请保持游戏站位。');else notice('本次场景重新匹配成功，区域已锁定。');await refreshScene()}catch(e){notice('重新匹配失败：'+e.message);await refreshScene()}}
 async function saveScene(){try{const r=await post('/api/scene/layout',{zones:scene.zones,vertical_look:scene.vertical});renderSceneEditor(r);notice('固定空间区域已保存。')}catch(e){notice('保存区域失败：'+e.message)}}
-async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到摄像头模型')}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();await refreshKernel();await refreshInput();await refreshOutput();await refreshVoice();await refreshVoiceCommands();try{await refreshProfile()}catch(e){notice('游戏 Profile 读取失败：'+(e?.message||e))}await refreshCameraConfig();await refreshPerformance();await refreshScene();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
+async function init(){try{const d=await api('/api/models');modelAvailable=!!d.models?.[0]?.available;if(!modelAvailable)notice('本地服务未找到摄像头模型')}catch(e){notice('服务器连接失败：'+e.message)}syncControlLabels();await refreshKernel();await refreshInput();await refreshOutput();await refreshXinput();await refreshVoice();await refreshVoiceCommands();try{await refreshProfile()}catch(e){notice('游戏 Profile 读取失败：'+(e?.message||e))}await refreshCameraConfig();await refreshPerformance();await refreshScene();renderVoiceRows(voice.status?.mappings||[]);setInterval(refreshKernel,250);setInterval(refreshInput,700);setInterval(refreshOutput,700);setInterval(refreshXinput,700);setInterval(refreshVoice,900);setInterval(refreshPerformance,700);setInterval(refreshPreview,150)}
 
 $('#profileSearchBtn')?.addEventListener('click',()=>searchProfiles().catch(e=>notice('搜索游戏失败：'+(e?.message||e))));
 $('#profileSearch')?.addEventListener('keydown',e=>{if(e.key==='Enter')searchProfiles().catch(err=>notice('搜索游戏失败：'+(err?.message||err)))});
@@ -566,6 +569,7 @@ $('#cameraBackend').addEventListener('change', async e => {
 });
 $('#outputMode').addEventListener('change', async () => {
   output.mode = $('#outputMode').value;
+  if(output.mode!=='gamepad')output.xinputEnabled=false;
   try {
     output.server = await post('/api/output/config', outputPayload(output.enabled));
     renderOutput(output.server);
@@ -573,6 +577,7 @@ $('#outputMode').addEventListener('change', async () => {
     notice('输出模式切换失败：' + (e?.message || e));
   }
 });
+$('#xinputMerge')?.addEventListener('change', () => void setXinputMerge());
 $('#strength').addEventListener('input', syncControlLabels);
 $('#strength').addEventListener('change', () => post('/api/output/config', outputPayload(output.enabled)).then(r => {
   output.server = r;

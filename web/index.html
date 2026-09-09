@@ -117,7 +117,8 @@
 
   <div class="settings-section">
     <div class="title">游戏输出</div>
-    <div class="controls"><label>视角输出<select id="outputMode"><option value="mouse">鼠标视角</option><option value="gamepad">Xbox 360 右摇杆</option></select></label></div>
+    <div class="controls"><label>视角输出<select id="outputMode"><option value="mouse">鼠标视角</option><option value="gamepad">Xbox 360 右摇杆</option></select></label><label>物理手柄合流<select id="xinputMerge"><option value="">关闭体感合流</option></select></label></div>
+    <div id="xinputStatus" class="statusline">未启用物理手柄合流</div>
     <div class="slider"><label>游戏速度倍率 <b id="strengthValue">160%</b></label><input id="strength" type="range" min="60" max="300" step="10" value="160"></div>
   </div>
 
