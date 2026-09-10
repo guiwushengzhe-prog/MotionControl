@@ -28,6 +28,7 @@ from head_control import (
     HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION,
 )
 from game_profiles import flatten_bindings
+from motion_conflicts import validate_motion_config
 from vertical_hand_control import VerticalHandController
 
 
@@ -91,7 +92,7 @@ BODY_MOTION_SETTLE_S = 0.060
 BODY_MOTION_QUALITY_GRACE_S = 0.150
 # Public runtime label for the body-motion guard implementation.  This is a
 # diagnostic/UI identifier only; it does not select or alter a head algorithm.
-BODY_MOTION_GUARD_VERSION = "C2.9"
+BODY_MOTION_GUARD_VERSION = "C2.10"
 # Body-guard-only mirror of the existing action debounce semantics at 30 FPS.
 # This does not alter motion_active or any game/action trigger; it only prevents
 # the body guard from inheriting frame-rate-dependent activation times.
@@ -472,13 +473,24 @@ class ControlKernel:
 
     def configure_motions(self, items) -> None:
         with self._lock:
-            self.motion_config = [copy.deepcopy(item) for item in (items or []) if isinstance(item, dict)]
+            new_config = [copy.deepcopy(item) for item in (items or []) if isinstance(item, dict)]
+            validate_motion_config(new_config)
+            self.motion_config = new_config
+            self._prune_body_motion_action_risk_locked()
+            # Apply enable/disable/remap changes to currently held controls now,
+            # instead of waiting for the next Pose frame or watchdog tick.
+            # Recognition/debounce state is intentionally preserved.
+            self._dispatch_controls_locked(time.monotonic())
 
     def configure_bindings(self, bindings: dict | None) -> None:
         """Install one effective Game Profile without touching recognition thresholds."""
         with self._lock:
             self.control_bindings = flatten_bindings(bindings)
             self.trigger_previous.clear()
+            # A profile switch can disable a motion while its guard-risk debounce
+            # is still active. Drop only now-unmapped action-derived evidence;
+            # raw/EMA body-motion evidence continues to own the safety guard.
+            self._prune_body_motion_action_risk_locked()
             # Release any output contributed by the previous profile immediately.
             setter = getattr(self.output, "set_action_holds", None)
             if setter is not None:
@@ -1189,6 +1201,35 @@ class ControlKernel:
                 state["active"] = False
         return bool(state["active"])
 
+    def _motion_has_effective_binding_locked(self, ident: str) -> bool:
+        """Return whether a motion is allowed to affect gameplay right now.
+
+        Recognition remains available for diagnostics/UI even when a motion is
+        disabled. Action-derived head-guard evidence, however, follows the
+        same effective mapping decision as game output so an unused detector
+        cannot suppress horizontal head control.
+        """
+        binding = self._effective_binding_locked(f"motion.{ident}")
+        if not isinstance(binding, dict):
+            return False
+        action = binding.get("action")
+        return bool(
+            isinstance(action, dict)
+            and str(action.get("type", "")).strip()
+            and str(action.get("target", "")).strip()
+        )
+
+    def _prune_body_motion_action_risk_locked(self) -> None:
+        """Immediately forget action-risk state for motions that are not mapped."""
+        enabled = {
+            ident for ident in self.body_motion_action_risk_debounce
+            if self._motion_has_effective_binding_locked(ident)
+        }
+        self.body_motion_action_risk.intersection_update(enabled)
+        for ident, state in self.body_motion_action_risk_debounce.items():
+            if ident not in enabled:
+                state.update({"active": False, "on_since": 0.0, "off_since": 0.0})
+
     def _set_body_motion_action_risk_timed(
         self, ident: str, raw: bool, now: float, on_s: float, off_s: float
     ) -> bool:
@@ -1317,6 +1358,15 @@ class ControlKernel:
         }
         risk = set()
         for ident, raw in raw_motion.items():
+            # Keep detection/status independent from output configuration, but
+            # only an effectively mapped action may contribute action-derived
+            # evidence to the horizontal head-motion guard. Unused detectors
+            # therefore cannot suppress Mouse-X / right-stick X.
+            if not self._motion_has_effective_binding_locked(ident):
+                self.body_motion_action_risk_debounce[ident].update(
+                    {"active": False, "on_since": 0.0, "off_since": 0.0}
+                )
+                continue
             on_s, off_s = BODY_MOTION_ACTION_RISK_TIMING[ident]
             if self._set_body_motion_action_risk_timed(ident, raw, now, on_s, off_s):
                 risk.add(ident)
@@ -1702,6 +1752,7 @@ class ControlKernel:
         self.head["body_motion_guard_version"] = BODY_MOTION_GUARD_VERSION
         self.head["body_motion_guard_score"] = round(float(self.body_motion_guard_score), 4)
         self.head["body_motion_guard_raw"] = round(float(self.body_motion_guard_raw), 4)
+        self.head["body_motion_action_risk"] = sorted(self.body_motion_action_risk)
         # Always expose the final output Y, never the diagnostic pitch value.
         self.head["normalized_y"] = round(
             float(vertical_output) if self.vertical_gate_active else 0.0, 4
@@ -1738,6 +1789,7 @@ class ControlKernel:
             "body_motion_guard_active": bool(self.body_motion_guard_active),
             "body_motion_guard_version": BODY_MOTION_GUARD_VERSION,
             "body_motion_guard_score": round(float(self.body_motion_guard_score), 4),
+            "body_motion_action_risk": sorted(self.body_motion_action_risk),
             "vertical_wrist_norm": round(float(self.vertical_wrist_norm), 4),
             "vertical_look_source": source,
             "vertical_pitch_relative": round(float(self.vertical_pitch_relative), 4),

@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
 from game_profiles import GameProfileStore, action_catalog
+from motion_conflicts import motion_conflict_payload, validate_motion_config
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
 from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService
 from scene_layout import SceneLayoutManager
@@ -282,6 +283,7 @@ def _normalize_motion_config(items):
             "enabled": enabled,
             "type": action_type, "target": target,
         })
+    validate_motion_config(out)
     return out
 
 def load_motion_config():
@@ -294,7 +296,10 @@ def load_motion_config():
 def save_motion_config(items):
     motions = _normalize_motion_config(items)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    MOTION_CONFIG_FILE.write_text(json.dumps({"motions": motions}, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 原子写入：异常退出或掉电时不会留下半个动作配置文件。
+    temp = MOTION_CONFIG_FILE.with_suffix(MOTION_CONFIG_FILE.suffix + ".tmp")
+    temp.write_text(json.dumps({"motions": motions}, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temp, MOTION_CONFIG_FILE)
     return motions
 
 MOTION_CONFIG = load_motion_config()
@@ -519,6 +524,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if route == "/api/motion/config":
             self._send_json({"version": VERSION, "motions": MOTION_CONFIG})
+            return
+        if route == "/api/motion/conflicts":
+            self._send_json({"version": VERSION, "groups": motion_conflict_payload()})
             return
         if route == "/api/output-status":
             data = OUTPUT.status()
