@@ -50,6 +50,7 @@ const perfUi={latest:null,renderTimes:[],previewBusy:false,previewTimer:null};
 const scene={status:{},zones:{},vertical:{},selected:'',drag:null};
 let zoneEditMode=false,zoneEditBackup=null,liveZoneDrag=null;
 const SCENE_LABELS={lookGate:'下巴左侧 · 左腕视角门',leftHand:'左手触发区 · X',rightHand:'右手触发区 · B',leftFoot:'左脚侧抬区 · LB',rightFoot:'右脚侧抬区 · RB',headJump:'头顶跳跃区 · A',leftHandUpper:'旧左手上区',leftHandLower:'旧左手下区',rightHandUpper:'旧右手上区',rightHandLower:'旧右手下区'};
+const LEGACY_ZONE_ALIASES={leftHand:['leftHandUpper','leftHandLower'],rightHand:['rightHandUpper','rightHandLower']};
 const SCENE_EDIT_ZONE_IDS=['leftHand','rightHand','leftFoot','rightFoot','headJump','lookGate'];
 const COMMON_VOICE_IDS=['output.start','output.stop','scene.capture','head.calibrate','scene.rematch','head.center'];
 let voiceCatalog=[];
@@ -197,8 +198,12 @@ async function refreshKernel(){try{renderKernelState(await api('/api/kernel/stat
 async function refreshInput(){try{renderInputStatus(await api('/api/input/status?brief=1'))}catch{}}
 
 function bindingFor(trigger){
-  const binding=gameProfile.selected?.bindings?.[trigger.group]?.[trigger.id];
-  return binding===undefined?(trigger.defaultBinding||null):binding;
+  const items=gameProfile.selected?.bindings?.[trigger.group]||{};
+  if(Object.prototype.hasOwnProperty.call(items,trigger.id))return items[trigger.id];
+  if(trigger.group==='zones'){
+    for(const alias of LEGACY_ZONE_ALIASES[trigger.id]||[]){if(Object.prototype.hasOwnProperty.call(items,alias))return items[alias]}
+  }
+  return trigger.defaultBinding||null;
 }
 function targetLabel(action){
   if(!action)return '未映射';
