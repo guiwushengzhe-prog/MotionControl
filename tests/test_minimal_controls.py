@@ -53,8 +53,9 @@ def test_body_relative_zones_use_both_wrists_and_both_feet():
         assert name in kernel
     for zone in ['leftHandUpper','leftHandLower','rightHandUpper','rightHandLower','leftFoot','rightFoot']:
         assert zone in kernel
-    assert '0.36 * torso_px' in kernel
-    assert '0.42 * torso_px' in kernel
+    assert '0.40 * torso_px' in kernel and '0.66 * torso_px' in kernel
+    assert '0.58 * torso_px' in kernel and '0.52 * torso_px' in kernel
+    assert 'headJump' in kernel and 'headJump' in app
     assert 'state["inside"] >= 2' in kernel and 'exit_frames = 1 if name == "lookGate" else 2' in kernel
     assert 'set_action_holds' in kernel
     assert 'zone.' in kernel

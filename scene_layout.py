@@ -9,7 +9,16 @@ from typing import Any
 
 
 SCENE_VERSION = 2
+# Persisted identifier kept for v2 files already on disk. Runtime now exposes
+# six canonical regions; changing this string would invalidate old profiles.
 SCENE_LAYOUT_PROFILE = "seven-zone-body-recommended-v1"
+CANONICAL_ZONE_IDS = ("leftHand", "rightHand", "leftFoot", "rightFoot", "headJump", "lookGate")
+LEGACY_ZONE_ALIASES = {
+    "leftHandUpper": "leftHand",
+    "leftHandLower": "leftHand",
+    "rightHandUpper": "rightHand",
+    "rightHandLower": "rightHand",
+}
 DEFAULT_MATCH_THRESHOLDS = {
     "min_matches": 30,
     "min_inlier_ratio": 0.45,
@@ -87,22 +96,57 @@ def _best_point(pose: dict[str, dict] | None, names: tuple[str, ...], min_score:
 
 
 def _resolve_placement_pose(pose: dict[str, dict]) -> tuple[dict[str, dict], list[str]]:
-    """Resolve robust ear/foot anchors for first-time seven-zone placement.
+    """Resolve robust anchors for first-time six-zone placement.
 
     Ear/ankle visibility often fluctuates even while the landmarks are visibly on
-    screen.  First capture therefore uses the best lower-limb point and can
-    estimate an ear from the eye/shoulder geometry instead of failing the whole
-    operation because one single-frame confidence score dipped.
+    screen. First capture only needs a head anchor and both shoulders. Missing
+    hips/feet are estimated from a generic shoulder-to-body proportion so the
+    user does not have to fit their whole body in the first setup frame.
     """
+    pose = pose if isinstance(pose, dict) else {}
     resolved = {name: dict(point) for name, point in pose.items() if isinstance(point, dict)}
     fallback: list[str] = []
     ls, rs = pose["left_shoulder"], pose["right_shoulder"]
-    lh, rh = pose["left_hip"], pose["right_hip"]
     shoulder_width = max(0.06, math.hypot(ls["x"] - rs["x"], ls["y"] - rs["y"]))
     shoulder_mid_x = (ls["x"] + rs["x"]) / 2.0
-    torso = max(0.08, math.hypot((ls["x"] + rs["x"] - lh["x"] - rh["x"]) / 2.0, (ls["y"] + rs["y"] - lh["y"] - rh["y"]) / 2.0))
     left_dir = -1.0 if ls["x"] <= rs["x"] else 1.0
     right_dir = -left_dir
+
+    # A visible hip pair is preferred, but it is not a setup prerequisite. Use
+    # the shoulder width as a scale ruler for a conservative lower-body estimate
+    # when the camera framing contains only the upper body.
+    lh, rh = pose.get("left_hip"), pose.get("right_hip")
+    if (
+        isinstance(lh, dict) and isinstance(rh, dict)
+        and _score(lh) >= 0.03 and _score(rh) >= 0.03
+        and _point_in_frame(lh) and _point_in_frame(rh)
+    ):
+        hip_mid = {"x": (lh["x"] + rh["x"]) / 2.0, "y": (lh["y"] + rh["y"]) / 2.0}
+        torso = max(0.08, math.hypot(shoulder_mid_x - hip_mid["x"], ((ls["y"] + rs["y"]) / 2.0) - hip_mid["y"]))
+    else:
+        hip_mid = {
+            "x": shoulder_mid_x,
+            "y": _clamp(((ls["y"] + rs["y"]) / 2.0) + shoulder_width * 1.55, 0.0, 1.0),
+        }
+        torso = max(0.08, shoulder_width * 1.55)
+        hip_half = shoulder_width * 0.30
+        lh = {"x": _clamp(hip_mid["x"] + left_dir * hip_half, 0.0, 1.0), "y": hip_mid["y"], "score": 0.01}
+        rh = {"x": _clamp(hip_mid["x"] + right_dir * hip_half, 0.0, 1.0), "y": hip_mid["y"], "score": 0.01}
+        fallback.append("hips")
+    resolved["left_hip"], resolved["right_hip"] = lh, rh
+    torso = max(0.08, float(torso))
+
+    # Keep a canonical nose anchor even when MediaPipe supplied only eyes/ears;
+    # this lets the head-jump target and ear fallbacks share one stable center.
+    nose = _best_point(pose, ("nose", "left_eye", "right_eye", "left_ear", "right_ear"), 0.03)
+    if nose is None:
+        nose = {
+            "x": _clamp(shoulder_mid_x, 0.0, 1.0),
+            "y": _clamp(((ls["y"] + rs["y"]) / 2.0) - shoulder_width * 0.72, 0.0, 1.0),
+            "score": 0.01,
+        }
+        fallback.append("nose")
+    resolved["nose"] = nose
 
     for side, direction in (("left", left_dir), ("right", right_dir)):
         ear = _best_point(pose, (f"{side}_ear",), 0.06)
@@ -111,7 +155,6 @@ def _resolve_placement_pose(pose: dict[str, dict]) -> tuple[dict[str, dict], lis
             if eye is not None:
                 ear = {**eye, "x": _clamp(eye["x"] + direction * shoulder_width * 0.16, 0.0, 1.0), "score": max(_score(eye), 0.05)}
             else:
-                nose = pose["nose"]
                 ear = {"x": _clamp(nose["x"] + direction * shoulder_width * 0.24, 0.0, 1.0), "y": nose["y"], "score": 0.01}
             fallback.append(f"{side}_ear")
         resolved[f"{side}_ear"] = ear
@@ -121,7 +164,7 @@ def _resolve_placement_pose(pose: dict[str, dict]) -> tuple[dict[str, dict], lis
             # If the lower-limb landmark scores collapse for one frame, estimate
             # the standing foot from the corresponding hip and body scale. This
             # is only an initial recommendation; the user can still drag the zone.
-            hip = pose[f"{side}_hip"]
+            hip = resolved[f"{side}_hip"]
             foot = {
                 "x": _clamp(hip["x"] + direction * shoulder_width * 0.04, 0.0, 1.0),
                 "y": _clamp(hip["y"] + torso * 0.95, 0.0, 1.0),
@@ -134,36 +177,32 @@ def _resolve_placement_pose(pose: dict[str, dict]) -> tuple[dict[str, dict], lis
 
 
 def _pose_ready(pose: dict[str, dict] | None, *, require_placement: bool = False) -> tuple[bool, str]:
-    """Return whether there is enough body geometry to author the seven circles.
+    """Return whether there is enough upper-body geometry to author six circles.
 
-    Only the stable torso anchors are mandatory.  Wrists, ears and feet are
-    deliberately *not* hard gates: they fluctuate much more in MediaPipe and
-    all of them can be estimated well enough for an initial recommended layout.
-    The generated circles are editable recommendations, not a measurement that
-    warrants blocking the whole setup on one low-confidence limb landmark.
+    Both shoulders and one head anchor are mandatory. Hips, wrists, ears and
+    feet are deliberately *not* hard gates: they fluctuate more in MediaPipe,
+    and missing lower-body points are estimated for the editable initial layout.
     """
     del require_placement
-    core = ("nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip")
+    core = ("left_shoulder", "right_shoulder")
     missing_core = [
         name for name in core
         if not pose or _score(pose.get(name)) < 0.24 or not _point_in_frame(pose.get(name))
     ]
     if missing_core:
         labels = {
-            "nose": "头部",
             "left_shoulder": "左肩",
             "right_shoulder": "右肩",
-            "left_hip": "左髋",
-            "right_hip": "右髋",
         }
         missing_text = "、".join(labels.get(name, name) for name in missing_core)
-        return False, f"还缺少稳定骨架：{missing_text}；请让头、双肩和髋部进入画面"
+        return False, f"还缺少稳定骨架：{missing_text}；请让双肩进入画面（不要求全身入镜）"
+    face = _best_point(pose, ("nose", "left_eye", "right_eye", "left_ear", "right_ear"), 0.03)
+    if face is None:
+        return False, "还缺少头部定位点；请让脸部或耳朵进入画面（不要求髋部和脚入镜）"
     ls, rs = pose["left_shoulder"], pose["right_shoulder"]
-    lh, rh = pose["left_hip"], pose["right_hip"]
     shoulder_width = math.hypot(ls["x"] - rs["x"], ls["y"] - rs["y"])
-    torso = math.hypot((ls["x"] + rs["x"] - lh["x"] - rh["x"]) / 2.0, (ls["y"] + rs["y"] - lh["y"] - rh["y"]) / 2.0)
-    if shoulder_width < 0.055 or torso < 0.065:
-        return False, "人物在画面中过小，请稍微靠近摄像头；只需保证头、双肩和髋部清楚可见"
+    if shoulder_width < 0.055:
+        return False, "人物在画面中过小，请稍微靠近摄像头；只需保证头和双肩清楚可见"
     return True, "ok"
 
 
@@ -176,6 +215,58 @@ def _circle_from_rect(rect: dict | None, fallback: tuple[float, float, float]) -
         cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
         radius = max(0.025, min(0.16, ((x2 - x1) + (y2 - y1)) / 4.0))
     return {"shape": "circle", "cx": _clamp(cx, 0.0, 1.0), "cy": _clamp(cy, 0.0, 1.0), "r": _clamp(radius, 0.025, 0.20)}
+
+
+def _enclose_circles(circles: list[dict]) -> dict | None:
+    """Build one editable circle containing a pair of legacy hand circles."""
+    valid = []
+    for item in circles:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cx, cy, radius = float(item["cx"]), float(item["cy"]), float(item["r"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not all(math.isfinite(v) for v in (cx, cy, radius)) or radius <= 0.0:
+            continue
+        valid.append((cx, cy, radius))
+    if not valid:
+        return None
+    if len(valid) == 1:
+        cx, cy, radius = valid[0]
+    else:
+        x1 = min(cx - radius for cx, _cy, radius in valid)
+        x2 = max(cx + radius for cx, _cy, radius in valid)
+        y1 = min(cy - radius for _cx, cy, radius in valid)
+        y2 = max(cy + radius for _cx, cy, radius in valid)
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        radius = max(math.hypot(cx - px, cy - py) + pr for px, py, pr in valid)
+    radius = _clamp(radius, 0.025, 0.30)
+    return {"shape": "circle", "cx": _clamp(cx, radius, 1.0 - radius), "cy": _clamp(cy, radius, 1.0 - radius), "r": radius}
+
+
+def _canonicalize_zones(zones: dict | None) -> dict:
+    """Add merged hand/head-jump zones while retaining legacy coordinates."""
+    source = zones if isinstance(zones, dict) else {}
+    result = {name: copy.deepcopy(value) for name, value in source.items() if isinstance(value, dict)}
+    for canonical, aliases in (
+        ("leftHand", ("leftHandUpper", "leftHandLower")),
+        ("rightHand", ("rightHandUpper", "rightHandLower")),
+    ):
+        if not isinstance(result.get(canonical), dict):
+            merged = _enclose_circles([source.get(alias) for alias in aliases])
+            if merged:
+                result[canonical] = merged
+    if "headJump" not in result:
+        merged = _enclose_circles([source.get("leftHandUpper"), source.get("rightHandUpper")])
+        if merged:
+            result["headJump"] = {
+                "shape": "circle",
+                "cx": merged["cx"],
+                "cy": _clamp(merged["cy"] - merged["r"] * 1.65, merged["r"], 1.0 - merged["r"]),
+                "r": _clamp(merged["r"] * 0.90, 0.04, 0.12),
+            }
+    return result
 
 
 class SceneLayoutManager:
@@ -203,6 +294,8 @@ class SceneLayoutManager:
                 return
             if not self.reference_path.is_file():
                 return
+            data = copy.deepcopy(data)
+            data["zones"] = _canonicalize_zones(data.get("zones"))
             self.reference = data
             # On every program start, use the original reference coordinates.
             # Nothing adapts until the user explicitly requests a rematch.
@@ -226,19 +319,20 @@ class SceneLayoutManager:
 
     @staticmethod
     def _initial_layout(pose: dict[str, dict], dynamic_rects: dict[str, dict] | None) -> tuple[dict, dict]:
-        """Generate the seven recommended fixed circles from the first pose.
+        """Generate the merged hand/foot/head-jump circles from first pose.
 
         The legacy dynamic rectangles are intentionally ignored.  The body is
         used once as an ergonomic ruler; after capture the returned circles are
         camera-space coordinates and never follow the player.
 
-        Existing zone IDs/buttons are preserved for compatibility:
-          leftHandUpper  -> Y  -> left wrist, above-left of head
-          leftHandLower  -> X  -> left wrist, outside left ear
-          rightHandUpper -> B  -> right wrist, above-right of head
-          rightHandLower -> A  -> right wrist, outside right ear
+        New runtime zones use one broad hand circle per side.  The four old
+        hand circles remain as coordinate aliases in the saved document so
+        older profile editors can still read their original positions.
+          leftHand      -> X  -> left wrist, broad side area
+          rightHand     -> B  -> right wrist, broad side area
           leftFoot       -> LB -> left foot kick target
           rightFoot      -> RB -> right foot kick target
+          headJump      -> A  -> nose entering the space above the head
           lookGate       -> no button; left wrist near the left side of chin
         """
         del dynamic_rects  # compatibility parameter; never seed fixed zones from moving rectangles
@@ -265,7 +359,7 @@ class SceneLayoutManager:
         right_foot_dir = -left_foot_dir
 
         # Right wrist is useful only for the initial hand-controlled vertical
-        # center.  It must never block seven-zone creation.  If it is absent or
+        # center. It must never block six-zone creation. If it is absent or
         # confidence dips on the capture frame, place a conservative neutral
         # hand center from the shoulder/torso geometry; the user can still drag
         # or recalibrate it later.
@@ -278,17 +372,17 @@ class SceneLayoutManager:
             }
 
         hand_r = _clamp(shoulder_width * 0.24, 0.040, 0.080)
-        foot_r = _clamp(shoulder_width * 0.28, 0.045, 0.090)
+        foot_r = _clamp(shoulder_width * 0.30, 0.050, 0.095)
         gate_r = _clamp(shoulder_width * 0.22, 0.040, 0.072)
+        jump_r = _clamp(shoulder_width * 0.22, 0.045, 0.075)
 
-        # 1-2: two circles extending outward from the ears.
+        # 1-2: one broad circle per hand containing the old ear/head targets.
         ear_offset = max(head_width * 0.85, shoulder_width * 0.30)
         left_ear_zone = (le["x"] + left_dir * ear_offset, le["y"] + torso * 0.01)
         right_ear_zone = (re["x"] + right_dir * ear_offset, re["y"] + torso * 0.01)
 
-        # 3-4: two circles above the head.  Estimate the head top from the
-        # ear-to-shoulder distance, then leave a small gap so raised wrists can
-        # enter the zones without the circles sitting on the face.
+        # Preserve the former two head-side targets as aliases, then use their
+        # enclosing circle as the single side-hand trigger region.
         head_top_y = ear_mid["y"] - 0.52 * head_to_shoulder
         head_zone_y = head_top_y - 0.34 * head_to_shoulder
         head_side_offset = max(head_width * 0.72, shoulder_width * 0.32)
@@ -298,10 +392,14 @@ class SceneLayoutManager:
         # 5-6: outward/upward kick targets.  They are deliberately not placed
         # directly on the resting feet, otherwise standing still would trigger.
         leg_span = max(0.04, abs(la["x"] - ra["x"]))
-        kick_offset = max(shoulder_width * 0.55, leg_span * 0.80)
-        kick_lift = max(torso * 0.12, 0.025)
+        kick_offset = max(shoulder_width * 0.48, leg_span * 0.55)
+        kick_lift = max(torso * 0.36, 0.040)
         left_foot_zone = (la["x"] + left_foot_dir * kick_offset, la["y"] - kick_lift)
         right_foot_zone = (ra["x"] + right_foot_dir * kick_offset, ra["y"] - kick_lift)
+
+        # The nose must rise a modest, bounded distance into this target; the
+        # standing nose remains below it, while a small jump can enter it.
+        head_jump_zone = (pose["nose"]["x"], pose["nose"]["y"] - 0.30 * torso)
 
         # 7: a compact left-of-chin gate. MediaPipe Pose has no chin landmark,
         # so estimate chin from the ear line toward the shoulder line.
@@ -317,14 +415,24 @@ class SceneLayoutManager:
                 "r": radius,
             }
 
+        left_head_circle = circle(left_head_zone, hand_r)
+        left_ear_circle = circle(left_ear_zone, hand_r)
+        right_head_circle = circle(right_head_zone, hand_r)
+        right_ear_circle = circle(right_ear_zone, hand_r)
         zones = {
-            "leftHandUpper": circle(left_head_zone, hand_r),
-            "leftHandLower": circle(left_ear_zone, hand_r),
-            "rightHandUpper": circle(right_head_zone, hand_r),
-            "rightHandLower": circle(right_ear_zone, hand_r),
+            "leftHand": _enclose_circles([left_head_circle, left_ear_circle]),
+            "rightHand": _enclose_circles([right_head_circle, right_ear_circle]),
             "leftFoot": circle(left_foot_zone, foot_r),
             "rightFoot": circle(right_foot_zone, foot_r),
+            "headJump": circle(head_jump_zone, jump_r),
             "lookGate": circle(gate, gate_r),
+            # Legacy coordinates are retained as read-only aliases. Runtime
+            # evaluation uses only leftHand/rightHand, so there is one visual
+            # and one trigger region per hand.
+            "leftHandUpper": left_head_circle,
+            "leftHandLower": left_ear_circle,
+            "rightHandUpper": right_head_circle,
+            "rightHandLower": right_ear_circle,
         }
         vertical = {
             "enabled": True,
@@ -375,7 +483,7 @@ class SceneLayoutManager:
         self.session = copy.deepcopy(data)
         self.session["adapted"] = False
         self._save()
-        message = "参考场景已记录，已按人体自动生成 7 个固定圈"
+        message = "参考场景已记录，已按人体自动生成 6 个固定触发区"
         if fallback:
             message += "；部分腕/耳/脚关键点本帧不稳定，已自动估算初始位置，请按需要拖动微调"
         self.last_result = {
@@ -391,16 +499,23 @@ class SceneLayoutManager:
         if not isinstance(zones, dict):
             raise ValueError("zones 必须是对象")
         current = copy.deepcopy(self.reference.get("zones") or {})
-        allowed = {"leftHandUpper", "leftHandLower", "rightHandUpper", "rightHandLower", "leftFoot", "rightFoot", "lookGate"}
+        allowed = set(CANONICAL_ZONE_IDS) | set(LEGACY_ZONE_ALIASES)
         for name, raw in zones.items():
             if name not in allowed or not isinstance(raw, dict):
                 continue
-            current[name] = {
+            normalized = {
                 "shape": "circle",
                 "cx": _clamp(raw.get("cx", current.get(name, {}).get("cx", 0.5)), 0.0, 1.0),
                 "cy": _clamp(raw.get("cy", current.get(name, {}).get("cy", 0.5)), 0.0, 1.0),
                 "r": _clamp(raw.get("r", current.get(name, {}).get("r", 0.07)), 0.025, 0.20),
             }
+            target = LEGACY_ZONE_ALIASES.get(name, name)
+            current[target] = normalized
+            # Keep a legacy alias in the saved document when an old client
+            # edits it, but make the canonical merged circle authoritative.
+            if name in LEGACY_ZONE_ALIASES:
+                current[name] = copy.deepcopy(normalized)
+        current = _canonicalize_zones(current)
         self.reference["zones"] = current
         vertical = body.get("vertical_look")
         if isinstance(vertical, dict):

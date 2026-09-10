@@ -20,7 +20,7 @@ const EDGES = [
   ['right_hip','right_knee'],['right_knee','right_ankle'],['right_ankle','right_heel'],['right_heel','right_foot_index'],
   ['right_ankle','right_foot_index'],
 ];
-const BODY_ZONES = {leftHandUpper:{label:'Y',body:'左手',button:'Y'},leftHandLower:{label:'X',body:'左手',button:'X'},rightHandUpper:{label:'B',body:'右手',button:'B'},rightHandLower:{label:'A',body:'右手',button:'A'},leftFoot:{label:'LB',body:'左脚',button:'LB'},rightFoot:{label:'RB',body:'右脚',button:'RB'},lookGate:{label:'上下视角',body:'左手放这里',button:null,gate:true}};
+const BODY_ZONES = {leftHand:{label:'X',body:'左手',button:'X'},rightHand:{label:'B',body:'右手',button:'B'},leftFoot:{label:'LB',body:'左脚',button:'LB'},rightFoot:{label:'RB',body:'右脚',button:'RB'},headJump:{label:'A',body:'头顶跳跃',button:'A'},lookGate:{label:'上下视角',body:'左手放这里',button:null,gate:true}};
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
@@ -28,12 +28,11 @@ const head={algorithm:'pnp',horizontalAlgorithm:'classic',deadzone:.10,sensitivi
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null;
 const BASE_PROFILE_TRIGGERS=[
-  {key:'zone.leftHandUpper',group:'zones',id:'leftHandUpper',name:'左手上区'},
-  {key:'zone.leftHandLower',group:'zones',id:'leftHandLower',name:'左手下区'},
-  {key:'zone.rightHandUpper',group:'zones',id:'rightHandUpper',name:'右手上区'},
-  {key:'zone.rightHandLower',group:'zones',id:'rightHandLower',name:'右手下区'},
+  {key:'zone.leftHand',group:'zones',id:'leftHand',name:'左手区'},
+  {key:'zone.rightHand',group:'zones',id:'rightHand',name:'右手区'},
   {key:'zone.leftFoot',group:'zones',id:'leftFoot',name:'左脚区'},
   {key:'zone.rightFoot',group:'zones',id:'rightFoot',name:'右脚区'},
+  {key:'zone.headJump',group:'zones',id:'headJump',name:'头顶跳跃区'},
   {key:'motion.march',group:'motions',id:'march',name:'原地踏步'},
   {key:'motion.calf_back',group:'motions',id:'calf_back',name:'小腿向后'},
   {key:'motion.squat',group:'motions',id:'squat',name:'下蹲'},
@@ -50,7 +49,8 @@ const overlay={win:null,canvas:null,ctx:null};
 const perfUi={latest:null,renderTimes:[],previewBusy:false,previewTimer:null};
 const scene={status:{},zones:{},vertical:{},selected:'',drag:null};
 let zoneEditMode=false,zoneEditBackup=null,liveZoneDrag=null;
-const SCENE_LABELS={lookGate:'下巴左侧 · 左腕视角门',leftHandUpper:'头顶左 · Y',leftHandLower:'左耳外 · X',rightHandUpper:'头顶右 · B',rightHandLower:'右耳外 · A',leftFoot:'左脚可踢区 · LB',rightFoot:'右脚可踢区 · RB'};
+const SCENE_LABELS={lookGate:'下巴左侧 · 左腕视角门',leftHand:'左手触发区 · X',rightHand:'右手触发区 · B',leftFoot:'左脚侧抬区 · LB',rightFoot:'右脚侧抬区 · RB',headJump:'头顶跳跃区 · A',leftHandUpper:'旧左手上区',leftHandLower:'旧左手下区',rightHandUpper:'旧右手上区',rightHandLower:'旧右手下区'};
+const SCENE_EDIT_ZONE_IDS=['leftHand','rightHand','leftFoot','rightFoot','headJump','lookGate'];
 const COMMON_VOICE_IDS=['output.start','output.stop','scene.capture','head.calibrate','scene.rematch','head.center'];
 let voiceCatalog=[];
 
@@ -133,7 +133,7 @@ function renderKernelState(runtime){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
   currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
-  const zonePad={leftHandUpper:'#padY',leftHandLower:'#padX',rightHandUpper:'#padB',rightHandLower:'#padA',leftFoot:'#padLB',rightFoot:'#padRB'};
+  const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
   const active=new Set(k.motions||[]),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头'],jumping_jack:['#motionJumpingJack','开合跳'],side_step_jack:['#motionSideStepJack','侧步开合'],cross_knee_elbow:['#motionCrossKneeElbow','提膝碰对侧肘']};
@@ -213,7 +213,7 @@ function bindingLabel(binding){
   return String(binding.label||targetLabel(binding.action)||'—');
 }
 function syncProfileZoneLabels(){
-  const zonePad={leftHandUpper:'#padY',leftHandLower:'#padX',rightHandUpper:'#padB',rightHandLower:'#padA',leftFoot:'#padLB',rightFoot:'#padRB'};
+  const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){
     const binding=bindingFor(trigger),label=bindingLabel(binding);
     if(BODY_ZONES[trigger.id])BODY_ZONES[trigger.id].label=label;
@@ -426,13 +426,13 @@ async function ensureInitialSceneLayout(){
   if(scenePreparing)return false;
   try{
     const current=await api('/api/scene/status');renderSceneEditor(current);if(current?.configured)return true;
-    scenePreparing=true;renderMainStatus();notice('首次使用：请站到正常游戏位置，正在自动定位 7 个体感区域…');
-    if(!(await waitForPose(8000))){notice('还没有识别到完整人体。请站到镜头前后再点“开始游戏控制”。');return false}
+    scenePreparing=true;renderMainStatus();notice('首次使用：请站到正常游戏位置，正在自动定位 6 个体感区域…');
+    if(!(await waitForPose(8000))){notice('还没有识别到头和双肩。请站到镜头前后再点“开始游戏控制”。首次定位不要求全身入镜。');return false}
     const result=await post('/api/scene/capture',{});
-    if(result?.configured){renderSceneEditor(result);notice('7 个体感区域已自动定位。');return true}
-    if(result?.scene?.configured){renderSceneEditor(result.scene);notice('7 个体感区域已自动定位。');return true}
+    if(result?.configured){renderSceneEditor(result);notice('6 个体感区域已自动定位。');return true}
+    if(result?.scene?.configured){renderSceneEditor(result.scene);notice('6 个体感区域已自动定位。');return true}
     if(result?.pending){
-      const deadline=Date.now()+8000;while(Date.now()<deadline){await sleep(300);const st=await api('/api/scene/status');renderSceneEditor(st);if(st?.configured){notice('手机场景已收到，7 个体感区域已自动定位。');return true}}
+      const deadline=Date.now()+8000;while(Date.now()<deadline){await sleep(300);const st=await api('/api/scene/status');renderSceneEditor(st);if(st?.configured){notice('手机场景已收到，6 个体感区域已自动定位。');return true}}
       notice('正在等待手机返回场景截图。输出保持关闭，可稍后再点一次。');return false;
     }
     const st=await api('/api/scene/status');renderSceneEditor(st);return !!st?.configured;
@@ -440,7 +440,7 @@ async function ensureInitialSceneLayout(){
   finally{scenePreparing=false;renderMainStatus()}
 }
 async function handleMainAction(){try{
-  if(!sessionStarted){await setSource(sourceMode||'computer',true);await ensureInitialSceneLayout();notice(sceneConfigured?'体感识别已开始，7 个区域已就绪；游戏输出仍关闭。':'体感识别已开始；游戏输出仍关闭。');return}
+  if(!sessionStarted){await setSource(sourceMode||'computer',true);await ensureInitialSceneLayout();notice(sceneConfigured?'体感识别已开始，6 个区域已就绪；游戏输出仍关闭。':'体感识别已开始；游戏输出仍关闭。');return}
   await setOutput(!output.enabled)
 }catch(e){notice('主操作失败：'+(e?.message||e))}}
 async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'校准已取消':'校准已开始：看向游戏屏幕中心，保持自然姿势')}catch(e){notice('中心设置失败：'+(e?.message||e))}}
@@ -489,8 +489,8 @@ async function refreshVoiceCommands(){try{const data=await api('/api/voice/comma
 function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['classic','gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'classic';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){const previousHorizontalAlgorithm=head.horizontalAlgorithm;syncControlLabels();try{renderKernelState(await post('/api/head/config',{algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,invert_x:head.invertX,invert_y:head.invertY,vertical_look_source:head.verticalLookSource,vertical_exclusive:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard}));if(sceneConfigured&&scene.zones&&Object.keys(scene.zones).length){scene.vertical={...scene.vertical,source:head.verticalLookSource,verticalLookSource:head.verticalLookSource,exclusive_axes:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard};await post('/api/scene/layout',{zones:scene.zones,vertical_look:scene.vertical})}if(head.horizontalAlgorithm!==previousHorizontalAlgorithm)notice('横向头控已切换，需要重新执行头控校准。')}catch(e){if($('#headHorizontalAlgorithm')&&previousHorizontalAlgorithm)$('#headHorizontalAlgorithm').value=previousHorizontalAlgorithm;head.horizontalAlgorithm=previousHorizontalAlgorithm;notice('头控设置保存失败：'+(e?.message||e))}}
 function sceneResultText(st){const r=st?.last_result||{};const bits=[r.message||''];if(Number.isFinite(r.confidence))bits.push('可信度 '+Math.round(r.confidence*100)+'%');if(r.matches)bits.push('匹配点 '+r.matches);if(Number.isFinite(r.inlier_ratio))bits.push('内点 '+Math.round(r.inlier_ratio*100)+'%');if(Number.isFinite(r.reprojection_error_px))bits.push('误差 '+r.reprojection_error_px+'px');if(Number.isFinite(r.rotation_deg))bits.push('旋转 '+r.rotation_deg+'°');return bits.filter(Boolean).join(' · ')}
-function renderSceneEditor(st){scene.status=st||{};scene.zones=structuredClone(st?.zones||{});scene.vertical=structuredClone(st?.vertical_look||{});head.verticalLookSource=(scene.vertical.source==='head'||scene.vertical.verticalLookSource==='head')?'head':'hand';head.verticalExclusive=!!scene.vertical.exclusive_axes;if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookSource;if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;const configured=!!st?.configured;sceneConfigured=configured;$('#sceneEditor').hidden=!configured;$('#sceneTools').hidden=!configured;$('#sceneStatus').textContent=configured?(st.adapted?'本次已手动重新匹配并锁定':'已载入参考布局；本次没有自动适配'):'尚未记录参考场景';$('#sceneMetrics').textContent=sceneResultText(st);const image=$('#sceneReference');if(configured&&st.reference_image_url){image.src=st.reference_image_url+'?t='+Date.now()}const select=$('#sceneZoneSelect');select.replaceChildren();for(const id of Object.keys(scene.zones)){const o=document.createElement('option');o.value=id;o.textContent=SCENE_LABELS[id]||id;select.appendChild(o)}if(!scene.zones[scene.selected])scene.selected=Object.keys(scene.zones)[0]||'';select.value=scene.selected;renderSceneEditableZones();syncSceneTools();syncControlLabels();renderMainStatus()}
-function renderSceneEditableZones(){const layer=$('#sceneEditorZones');layer.replaceChildren();for(const[id,z]of Object.entries(scene.zones)){const el=document.createElement('div');el.className='scene-edit-zone'+(id==='lookGate'?' gate':'');el.dataset.id=id;el.textContent=SCENE_LABELS[id]||id;const r=Number(z.r)||.07;el.style.left=((Number(z.cx)-r)*100)+'%';el.style.top=((Number(z.cy)-r)*100)+'%';el.style.width=(2*r*100)+'%';el.style.height=(2*r*100)+'%';el.style.fontSize='11px';el.addEventListener('pointerdown',startSceneDrag);layer.appendChild(el)}const line=$('#sceneVerticalCenter');const cy=Number(scene.vertical.center_y??.5);line.style.top=(cy*100)+'%';line.hidden=!scene.status?.configured}
+function renderSceneEditor(st){scene.status=st||{};scene.zones=structuredClone(st?.zones||{});scene.vertical=structuredClone(st?.vertical_look||{});head.verticalLookSource=(scene.vertical.source==='head'||scene.vertical.verticalLookSource==='head')?'head':'hand';head.verticalExclusive=!!scene.vertical.exclusive_axes;if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookSource;if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;const configured=!!st?.configured;sceneConfigured=configured;$('#sceneEditor').hidden=!configured;$('#sceneTools').hidden=!configured;$('#sceneStatus').textContent=configured?(st.adapted?'本次已手动重新匹配并锁定':'已载入参考布局；本次没有自动适配'):'尚未记录参考场景';$('#sceneMetrics').textContent=sceneResultText(st);const image=$('#sceneReference');if(configured&&st.reference_image_url){image.src=st.reference_image_url+'?t='+Date.now()}const select=$('#sceneZoneSelect');select.replaceChildren();for(const id of SCENE_EDIT_ZONE_IDS){if(!scene.zones[id])continue;const o=document.createElement('option');o.value=id;o.textContent=SCENE_LABELS[id]||id;select.appendChild(o)}if(!scene.zones[scene.selected]||!SCENE_EDIT_ZONE_IDS.includes(scene.selected))scene.selected=SCENE_EDIT_ZONE_IDS.find(id=>scene.zones[id])||'';select.value=scene.selected;renderSceneEditableZones();syncSceneTools();syncControlLabels();renderMainStatus()}
+function renderSceneEditableZones(){const layer=$('#sceneEditorZones');layer.replaceChildren();for(const id of SCENE_EDIT_ZONE_IDS){const z=scene.zones[id];if(!z)continue;const el=document.createElement('div');el.className='scene-edit-zone'+(id==='lookGate'?' gate':'');el.dataset.id=id;el.textContent=SCENE_LABELS[id]||id;const r=Number(z.r)||.07;el.style.left=((Number(z.cx)-r)*100)+'%';el.style.top=((Number(z.cy)-r)*100)+'%';el.style.width=(2*r*100)+'%';el.style.height=(2*r*100)+'%';el.style.fontSize='11px';el.addEventListener('pointerdown',startSceneDrag);layer.appendChild(el)}const line=$('#sceneVerticalCenter');const cy=Number(scene.vertical.center_y??.5);line.style.top=(cy*100)+'%';line.hidden=!scene.status?.configured}
 function startSceneDrag(e){e.preventDefault();scene.selected=e.currentTarget.dataset.id;$('#sceneZoneSelect').value=scene.selected;syncSceneTools();scene.drag={id:scene.selected};e.currentTarget.setPointerCapture?.(e.pointerId)}
 function updateSceneDrag(e){if(!scene.drag)return;const rect=$('#sceneEditorZones').getBoundingClientRect();const z=scene.zones[scene.drag.id];if(!z)return;z.cx=clamp((e.clientX-rect.left)/rect.width,0,1);z.cy=clamp((e.clientY-rect.top)/rect.height,0,1);renderSceneEditableZones()}
 function endSceneDrag(){scene.drag=null}
@@ -499,7 +499,7 @@ async function refreshScene(){try{renderSceneEditor(await api('/api/scene/status
 async function openLiveZoneEditor(){
   try{
     if(output.enabled)await setOutput(false);
-    if(!sceneConfigured&&!(await ensureInitialSceneLayout())){notice('先识别到完整人体，建立 7 个区域后再调整。');return}
+    if(!sceneConfigured&&!(await ensureInitialSceneLayout())){notice('先识别到头和双肩，建立 6 个区域后再调整；首次定位不要求全身入镜。');return}
     await refreshScene();
     if(!sceneConfigured||!Object.keys(scene.zones||{}).length){notice('当前还没有可调整的固定区域。');return}
     zoneEditBackup=structuredClone(scene.zones);zoneEditMode=true;

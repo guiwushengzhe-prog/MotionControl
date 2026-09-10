@@ -54,6 +54,27 @@ BODY_ZONES = {
     "rightFoot": {"label": "RB", "button": "RB", "points": ("right_ankle", "right_heel", "right_foot_index"), "kind": "foot"},
 }
 
+# Runtime body zones use one broad hand area per side.  The four historical
+# hand ids remain in BODY_ZONES above so old profiles and API consumers keep
+# working; ZONE_ALIASES below maps them to the new physical regions.
+RUNTIME_BODY_ZONES = {
+    "leftHand": {"label": "X", "button": "X", "points": ("left_wrist",), "kind": "hand"},
+    "rightHand": {"label": "B", "button": "B", "points": ("right_wrist",), "kind": "hand"},
+    "leftFoot": BODY_ZONES["leftFoot"],
+    "rightFoot": BODY_ZONES["rightFoot"],
+    # A nose entering the fixed area above the head is the explicit jump
+    # trigger.  Its default A output is only a starting mapping and is
+    # editable through the normal game-profile settings.
+    "headJump": {"label": "A", "button": "A", "points": ("nose",), "kind": "head_jump"},
+}
+ZONE_ALIASES = {
+    "leftHandUpper": "leftHand",
+    "leftHandLower": "leftHand",
+    "rightHandUpper": "rightHand",
+    "rightHandLower": "rightHand",
+}
+RUNTIME_ZONE_NAMES = tuple(RUNTIME_BODY_ZONES)
+
 BODY_MOTION_GUARD_POINTS = (
     "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
     "left_wrist", "right_wrist", "left_hip", "right_hip",
@@ -131,6 +152,86 @@ def _rect_at(cx: float, cy: float, width_px: float, height_px: float, image_widt
     }
 
 
+def _enclose_rects(rects: list[dict]) -> dict | None:
+    """Return one camera-space rectangle containing the supplied rectangles."""
+    valid = [item for item in rects if isinstance(item, dict)]
+    if not valid:
+        return None
+    return {
+        "x1": _clamp(min(float(item.get("x1", 0.0)) for item in valid), 0.0, 1.0),
+        "x2": _clamp(max(float(item.get("x2", 1.0)) for item in valid), 0.0, 1.0),
+        "y1": _clamp(min(float(item.get("y1", 0.0)) for item in valid), 0.0, 1.0),
+        "y2": _clamp(max(float(item.get("y2", 1.0)) for item in valid), 0.0, 1.0),
+    }
+
+
+def _enclose_circles(circles: list[dict]) -> dict | None:
+    """Return one circle containing old per-side circles for migration."""
+    valid = []
+    for item in circles:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cx, cy, radius = float(item["cx"]), float(item["cy"]), float(item["r"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not all(math.isfinite(v) for v in (cx, cy, radius)) or radius <= 0.0:
+            continue
+        valid.append((cx, cy, radius))
+    if not valid:
+        return None
+    if len(valid) == 1:
+        cx, cy, radius = valid[0]
+    else:
+        x1 = min(cx - radius for cx, _cy, radius in valid)
+        x2 = max(cx + radius for cx, _cy, radius in valid)
+        y1 = min(cy - radius for _cx, cy, radius in valid)
+        y2 = max(cy + radius for _cx, cy, radius in valid)
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        radius = max(math.hypot(cx - px, cy - py) + pr for px, py, pr in valid)
+    radius = _clamp(radius, 0.025, 0.30)
+    return {
+        "shape": "circle",
+        "cx": _clamp(cx, radius, 1.0 - radius),
+        "cy": _clamp(cy, radius, 1.0 - radius),
+        "r": radius,
+    }
+
+
+def _canonical_fixed_zones(zones: dict | None) -> dict:
+    """Normalize old six-zone layouts to the merged hand/head-jump schema."""
+    source = zones if isinstance(zones, dict) else {}
+    result: dict = {}
+    for name in ("leftFoot", "rightFoot", "lookGate", "headJump"):
+        value = source.get(name)
+        if isinstance(value, dict):
+            result[name] = copy.deepcopy(value)
+    for name, aliases in (
+        ("leftHand", ("leftHandUpper", "leftHandLower")),
+        ("rightHand", ("rightHandUpper", "rightHandLower")),
+    ):
+        value = source.get(name)
+        if isinstance(value, dict):
+            result[name] = copy.deepcopy(value)
+        else:
+            merged = _enclose_circles([source.get(alias) for alias in aliases])
+            if merged:
+                result[name] = merged
+    # Old layouts had two head-side circles but no jump target.  Place the new
+    # target just above their combined center so a small head rise can enter it.
+    if "headJump" not in result:
+        upper = [source.get("leftHandUpper"), source.get("rightHandUpper")]
+        merged = _enclose_circles(upper)
+        if merged:
+            result["headJump"] = {
+                "shape": "circle",
+                "cx": merged["cx"],
+                "cy": _clamp(merged["cy"] - merged["r"] * 1.65, merged["r"], 1.0 - merged["r"]),
+                "r": _clamp(merged["r"] * 0.90, 0.04, 0.12),
+            }
+    return result
+
+
 class ControlKernel:
     """Thread-safe body/action/head kernel with its own watchdog."""
 
@@ -164,7 +265,7 @@ class ControlKernel:
         self.fixed_zones_enabled = False
         self.vertical_look = {
             # Before the first fixed-scene capture we still expose a provisional
-            # body-relative lookGate so the seventh region is visible and usable.
+            # body-relative lookGate so the six-region layout is visible and usable.
             # The first reference capture replaces it with the fixed scene-space
             # gate; later starts load that fixed gate without auto-rematching.
             "enabled": True, "gate_zone_id": "lookGate", "point": "right_wrist",
@@ -203,7 +304,7 @@ class ControlKernel:
         self.vertical_pitch_velocity = 0.0
         self.vertical_pitch_acceleration = 0.0
         self.vertical_pitch_intent_state = "IDLE"
-        self.zone_state = {name: {"inside": 0, "outside": 0, "pressed": False} for name in BODY_ZONES}
+        self.zone_state = {name: {"inside": 0, "outside": 0, "pressed": False} for name in RUNTIME_BODY_ZONES}
         self.zone_state["lookGate"] = {"inside": 0, "outside": 0, "pressed": False}
         self.last_zone_emit = 0.0
 
@@ -428,7 +529,9 @@ class ControlKernel:
         """
         with self._lock:
             zones = (layout or {}).get("zones") if isinstance(layout, dict) else None
-            self.fixed_zones = copy.deepcopy(zones) if isinstance(zones, dict) else {}
+            # Accept the previous four-hand-circle layout, but run only the
+            # two merged hand regions plus the two feet and head-jump region.
+            self.fixed_zones = _canonical_fixed_zones(zones)
             self.fixed_zones_enabled = bool(self.fixed_zones)
             vertical = (layout or {}).get("vertical_look") if isinstance(layout, dict) else None
             if isinstance(vertical, dict):
@@ -918,21 +1021,33 @@ class ControlKernel:
         elif nose and _score(nose) >= 0.35:
             head_center = nose
         if head_center:
-            hand_w, hand_h = 0.36 * torso_px, 0.30 * torso_px
-            for name, direction, dy in (
-                ("leftHandUpper", left_dir, -0.14), ("leftHandLower", left_dir, 0.22),
-                ("rightHandUpper", right_dir, -0.14), ("rightHandLower", right_dir, 0.22),
-            ):
+            # One broad region per hand contains the old ear-side and
+            # head-above targets.  Its center is halfway between those targets
+            # and its vertical span is deliberately continuous, so every hand
+            # position inside the safe side area has the same trigger meaning.
+            hand_w, hand_h = 0.40 * torso_px, 0.66 * torso_px
+            for name, direction in (("leftHand", left_dir), ("rightHand", right_dir)):
                 next_rect = _rect_at(
                     head_center["x"] + direction * 0.82 * torso_px / iw,
-                    head_center["y"] + dy * torso_px / ih,
+                    head_center["y"] + 0.04 * torso_px / ih,
                     hand_w, hand_h, iw, ih,
                 )
                 old = self.zone_rects.get(name)
                 rects[name] = self._smooth_rect(old, next_rect)
 
-            # Provisional seventh region for first-run UX.  It intentionally
-            # exists only while no fixed Scene Layout has been captured.  Once
+            # A small rise of the head/nose into the space above it is a
+            # separate jump trigger.  The nose is the only point used, so an
+            # arm passing above the head cannot fire this region by accident.
+            jump_anchor = nose if nose and _score(nose) >= 0.35 else head_center
+            jump_rect = _rect_at(
+                jump_anchor["x"],
+                jump_anchor["y"] - 0.30 * torso_px / ih,
+                0.52 * torso_px, 0.28 * torso_px, iw, ih,
+            )
+            rects["headJump"] = self._smooth_rect(self.zone_rects.get("headJump"), jump_rect)
+
+            # Provisional look-gate region for first-run UX. It intentionally
+            # exists only while no fixed Scene Layout has been captured. Once
             # a reference is recorded the fixed camera-space lookGate takes
             # over and no region follows the player.
             gate_w, gate_h = 0.44 * torso_px, 0.30 * torso_px
@@ -946,15 +1061,24 @@ class ControlKernel:
         if la and ra and max(_score(la), _score(ra)) >= 0.4:
             visible = [item for item in (la, ra) if _score(item) >= 0.4]
             floor_y = max(item["y"] for item in visible)
-            foot_w, foot_h = 0.42 * torso_px, 0.38 * torso_px
+            # Foot targets are outward and slightly above the standing ankle:
+            # standing still stays outside, while a lateral lift/step enters
+            # the broad trigger space without requiring a high kick.
+            foot_w, foot_h = 0.58 * torso_px, 0.52 * torso_px
             for name, side_hip, direction in (("leftFoot", lh, left_dir), ("rightFoot", rh, right_dir)):
                 next_rect = _rect_at(
-                    side_hip["x"] + direction * 0.78 * torso_px / iw,
-                    floor_y - 0.50 * torso_px / ih,
+                    side_hip["x"] + direction * 0.64 * torso_px / iw,
+                    floor_y - 0.40 * torso_px / ih,
                     foot_w, foot_h, iw, ih,
                 )
                 old = self.zone_rects.get(name)
                 rects[name] = self._smooth_rect(old, next_rect)
+        # Keep old zone ids visible to older clients/tests, but make each one
+        # refer to the exact same merged hand geometry rather than creating a
+        # second trigger area.
+        for alias, canonical in ZONE_ALIASES.items():
+            if canonical in rects:
+                rects[alias] = copy.deepcopy(rects[canonical])
         return rects
 
     @staticmethod
@@ -987,13 +1111,13 @@ class ControlKernel:
             self.zone_rects = self._compute_body_zones(pose_map)
         changed = False
         gate_available = (self.fixed_zones_enabled and "lookGate" in self.fixed_zones) or (not self.fixed_zones_enabled and "lookGate" in self.zone_rects)
-        zone_names = list(BODY_ZONES) + (["lookGate"] if gate_available else [])
+        zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         for name in zone_names:
             state = self.zone_state.setdefault(name, {"inside": 0, "outside": 0, "pressed": False})
             if name == "lookGate":
                 points = ("left_wrist",)
             else:
-                points = BODY_ZONES[name]["points"]
+                points = RUNTIME_BODY_ZONES[name]["points"]
             if self.fixed_zones_enabled:
                 circle = self.fixed_zones.get(name)
                 inside = any(self._point_in_circle(pose_map.get(point), circle) for point in points)
@@ -1031,9 +1155,9 @@ class ControlKernel:
 
     def _pressed_keys_locked(self) -> list[str]:
         return sorted({
-            BODY_ZONES[name]["button"]
+            RUNTIME_BODY_ZONES[name]["button"]
             for name, state in self.zone_state.items()
-            if name in BODY_ZONES and BODY_ZONES[name].get("button") and state["pressed"]
+            if name in RUNTIME_BODY_ZONES and RUNTIME_BODY_ZONES[name].get("button") and state["pressed"]
         })
 
     # ---------- four existing motion rules ----------
@@ -1299,8 +1423,17 @@ class ControlKernel:
                 return None
             return binding
         prefix, _, ident = trigger.partition(".")
-        if prefix == "zone" and ident in BODY_ZONES and BODY_ZONES[ident].get("button"):
-            return {"action": {"type": "gamepad", "target": BODY_ZONES[ident]["button"], "behavior": "hold"}}
+        if prefix == "zone" and ident in RUNTIME_BODY_ZONES and RUNTIME_BODY_ZONES[ident].get("button"):
+            # Prefer the new combined profile id.  If an older profile has no
+            # such entry, use its former upper/lower binding deterministically
+            # so saved profiles remain usable after the spatial merge.
+            for alias, canonical in ZONE_ALIASES.items():
+                if canonical != ident:
+                    continue
+                legacy = self.control_bindings.get(f"zone.{alias}")
+                if legacy is not None:
+                    return None if legacy.get("disabled") else legacy
+            return {"action": {"type": "gamepad", "target": RUNTIME_BODY_ZONES[ident]["button"], "behavior": "hold"}}
         if prefix == "motion":
             for item in self.motion_config:
                 if item.get("id") == ident and item.get("enabled") and item.get("target"):
@@ -1308,7 +1441,7 @@ class ControlKernel:
         return None
 
     def _dispatch_controls_locked(self, now: float) -> None:
-        active = {f"zone.{name}" for name, state in self.zone_state.items() if name in BODY_ZONES and state.get("pressed")}
+        active = {f"zone.{name}" for name, state in self.zone_state.items() if name in RUNTIME_BODY_ZONES and state.get("pressed")}
         active.update(f"motion.{name}" for name in self.motion_active)
         active.update(f"pose.{name}" for name in self.pose_active)
 
@@ -1518,13 +1651,19 @@ class ControlKernel:
     def status_locked(self, now: float) -> dict:
         pose_age = round(max(0.0, (now - self.body_last_at) * 1000.0)) if self.body_last_at else None
         gate_available = (self.fixed_zones_enabled and "lookGate" in self.fixed_zones) or (not self.fixed_zones_enabled and "lookGate" in self.zone_rects)
-        zone_names = list(BODY_ZONES) + (["lookGate"] if gate_available else [])
+        zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         zones = {}
         for name in zone_names:
             if self.fixed_zones_enabled:
                 zones[name] = {"circle": copy.deepcopy(self.fixed_zones.get(name)), "pressed": bool(self.zone_state.get(name, {}).get("pressed", False))}
             else:
                 zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), "pressed": bool(self.zone_state[name]["pressed"])}
+        # Keep the old four identifiers in status for clients that have not yet
+        # learned the merged names. They are aliases only; no second trigger is
+        # evaluated or dispatched for them.
+        for alias, canonical in ZONE_ALIASES.items():
+            if canonical in zones:
+                zones[alias] = copy.deepcopy(zones[canonical])
         self.head = self.head_controller.status(now)
         source = "head" if str(self.vertical_look.get("source", "hand")).lower() == "head" else "hand"
         vertical_output = self.vertical_pitch_norm if source == "head" else self.vertical_wrist_norm
