@@ -44,8 +44,6 @@ const BASE_PROFILE_TRIGGERS=[
 ];
 const MOTION_CONFLICT_GROUPS=[
   {ids:['jumping_jack','hands_up'],label:'开合跳与双手过头'},
-  {ids:['jumping_jack','side_step_jack'],label:'开合跳与侧步开合'},
-  {ids:['march','calf_back','squat'],label:'原地踏步、小腿向后与下蹲'},
 ];
 const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后',squat:'下蹲',hands_up:'双手过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
 const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆'};
@@ -358,7 +356,7 @@ function renderProfileBindingRows(){
   const triggers=profileTriggers();
   const groups=[
     {id:'zones',title:'Zone 圈',help:'手或脚进入固定圈时触发',filter:t=>t.group==='zones',open:true},
-    {id:'body',title:'身体动作',help:'识别到动作时触发；冲突动作不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
+    {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手过头顶不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
     {id:'voice',title:'语音',help:'说出完整口令后触发一次；系统安全口令不可改',filter:t=>t.group==='voice',open:false},
   ];
   for(const group of groups){
@@ -395,7 +393,7 @@ function readProfileOverrides(){
     overrides[trigger.key]={action:{type,target,behavior}};
   }
   const conflicts=motionConflictsForSelection(selectedMotionIdsFromRows());
-  if(conflicts.length)throw new Error(`动作冲突：${motionConflictText(conflicts)}。设置中只能选择一个`);
+  if(conflicts.length)throw new Error(`动作冲突：${motionConflictText(conflicts)}。开合跳与双手过头顶只能选择一个`);
   return overrides;
 }
 async function saveProfileBindings(){

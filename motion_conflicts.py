@@ -10,12 +10,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
-# Keep only conflicts that are explicit in the detector semantics or that can
-# describe the same end pose.  A group means at most one member may be mapped.
+# Only keep the one configuration conflict requested by the product semantics:
+# a jumping jack contains the hands-overhead pose, so mapping both would make
+# one exercise emit two outputs. Other motions remain freely configurable.
 MOTION_CONFLICT_GROUPS: tuple[tuple[str, ...], ...] = (
     ("jumping_jack", "hands_up"),
-    ("jumping_jack", "side_step_jack"),
-    ("march", "calf_back", "squat"),
 )
 
 MOTION_DISPLAY_NAMES = {
@@ -129,4 +128,3 @@ def motion_conflict_payload() -> list[dict]:
         }
         for group in MOTION_CONFLICT_GROUPS
     ]
-

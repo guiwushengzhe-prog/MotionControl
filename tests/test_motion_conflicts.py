@@ -48,12 +48,23 @@ def test_legacy_config_conflicts_are_rejected_only_when_enabled():
         validate_motion_config(items)
 
 
-def test_leg_motion_conflict_group_and_flattened_bindings():
+def test_other_motion_combinations_remain_configurable():
     bindings = {
         "motion.march": {"action": {"type": "gamepad_axis", "target": "LS_UP"}},
+        "motion.calf_back": {"action": {"type": "gamepad", "target": "B"}},
         "motion.squat": {"action": {"type": "gamepad", "target": "X"}},
+        "motion.side_step_jack": {"action": {"type": "gamepad", "target": "A"}},
     }
-    assert selected_motion_ids_from_bindings(bindings) == {"march", "squat"}
-    with pytest.raises(ValueError, match="原地踏步.*下蹲"):
-        validate_motion_bindings(bindings)
+    assert selected_motion_ids_from_bindings(bindings) == {"march", "calf_back", "squat", "side_step_jack"}
+    validate_motion_bindings(bindings)
 
+
+def test_jumping_jack_and_side_step_jack_are_configurable_together():
+    validate_motion_bindings(
+        {
+            "motions": {
+                "jumping_jack": {"action": {"type": "gamepad", "target": "A"}},
+                "side_step_jack": {"action": {"type": "gamepad", "target": "B"}},
+            }
+        }
+    )
