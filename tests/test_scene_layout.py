@@ -196,7 +196,7 @@ def test_system_voice_actions_are_validated_without_needing_model(tmp_path):
     assert items[1]["target"] == "OUTPUT.START"
 
 
-def test_reference_capture_auto_places_exactly_seven_recommended_circles(tmp_path):
+def test_reference_capture_auto_places_merged_six_zone_layout(tmp_path):
     manager = SceneLayoutManager(tmp_path)
     p = pose()
     state = manager.capture_reference(textured_frame(), p, {
@@ -204,11 +204,8 @@ def test_reference_capture_auto_places_exactly_seven_recommended_circles(tmp_pat
         "leftHandUpper": {"x1": 0.90, "x2": 0.99, "y1": 0.90, "y2": 0.99},
     })
     zones = state["zones"]
-    assert set(zones) == {
-        "leftHandUpper", "leftHandLower", "rightHandUpper", "rightHandLower",
-        "leftFoot", "rightFoot", "lookGate",
-    }
-    assert len(zones) == 7
+    assert {"leftHand", "rightHand", "leftFoot", "rightFoot", "headJump", "lookGate"}.issubset(zones)
+    assert {"leftHandUpper", "leftHandLower", "rightHandUpper", "rightHandLower"}.issubset(zones)
     assert manager.reference["layout_profile"] == "seven-zone-body-recommended-v1"
 
     # Two hand zones are above the head, two extend outward from the ears.
@@ -245,7 +242,7 @@ def test_recommended_layout_uses_actual_image_side_when_pose_is_horizontally_mir
     assert zones["lookGate"]["cx"] > 0.50
 
 
-def test_recommended_seven_zones_do_not_trigger_at_rest_and_use_intended_limbs():
+def test_merged_zones_do_not_trigger_at_rest_and_use_intended_limbs():
     output = FakeOutput()
     kernel = ControlKernel(output)
     try:
@@ -259,12 +256,11 @@ def test_recommended_seven_zones_do_not_trigger_at_rest_and_use_intended_limbs()
         assert state["head"]["vertical_gate_active"] is False
 
         cases = [
-            ("leftHandUpper", "left_wrist", "Y"),
-            ("leftHandLower", "left_wrist", "X"),
-            ("rightHandUpper", "right_wrist", "B"),
-            ("rightHandLower", "right_wrist", "A"),
+            ("leftHand", "left_wrist", "X"),
+            ("rightHand", "right_wrist", "B"),
             ("leftFoot", "left_ankle", "LB"),
             ("rightFoot", "right_ankle", "RB"),
+            ("headJump", "nose", "A"),
         ]
         for zone_id, point_name, button in cases:
             p = pose()
@@ -280,7 +276,7 @@ def test_recommended_seven_zones_do_not_trigger_at_rest_and_use_intended_limbs()
         kernel.close()
 
 
-def test_first_run_without_saved_scene_exposes_and_arms_provisional_seventh_gate(monkeypatch):
+def test_first_run_without_saved_scene_exposes_and_arms_provisional_gate(monkeypatch):
     output = FakeOutput()
     kernel = ControlKernel(output)
     try:
@@ -297,10 +293,7 @@ def test_first_run_without_saved_scene_exposes_and_arms_provisional_seventh_gate
         base = pose()
         state = feed(base, 1)
         assert state["scene_mode"] == "body_relative_provisional"
-        assert set(state["zones"]) == {
-            "leftHandUpper", "leftHandLower", "rightHandUpper", "rightHandLower",
-            "leftFoot", "rightFoot", "lookGate",
-        }
+        assert {"leftHand", "rightHand", "leftFoot", "rightFoot", "headJump", "lookGate"}.issubset(state["zones"])
         gate = state["zones"]["lookGate"]["rect"]
         assert gate and gate["x1"] < gate["x2"] and gate["y1"] < gate["y2"]
 
@@ -317,3 +310,15 @@ def test_first_run_without_saved_scene_exposes_and_arms_provisional_seventh_gate
         assert state["head"]["output_y"] > 0.0
     finally:
         kernel.close()
+
+
+def test_first_scene_capture_does_not_require_full_body(tmp_path):
+    manager = SceneLayoutManager(tmp_path)
+    p = pose()
+    for name in ("left_hip", "right_hip", "left_ankle", "right_ankle", "left_heel", "right_heel", "left_foot_index", "right_foot_index"):
+        p.pop(name, None)
+    state = manager.capture_reference(textured_frame(), p, {})
+    assert state["configured"] is True
+    assert {"leftHand", "rightHand", "leftFoot", "rightFoot", "headJump", "lookGate"}.issubset(state["zones"])
+    assert "hips" in manager.reference["placement_fallback"]
+    assert "left_foot" in manager.reference["placement_fallback"] and "right_foot" in manager.reference["placement_fallback"]

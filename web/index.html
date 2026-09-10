@@ -11,6 +11,9 @@
 @media(max-width:980px){.layout{grid-template-columns:1fr}.common-voice-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.voice-command-grid.full{grid-template-columns:repeat(2,minmax(0,1fr))}.spacer{display:none}}
 @media(max-width:620px){.binding-row{grid-template-columns:1fr}.wrap{padding:10px}.brand{width:100%}.top{gap:6px}.pill{font-size:12px;padding:6px 8px}.common-voice-grid,.voice-command-grid.full,.controls,.advgrid,.scene-zone-tools{grid-template-columns:1fr}.motion-row{grid-template-columns:auto 1fr}.motion-row select,.motion-row input[type=text]{grid-column:2}.voice-row{grid-template-columns:1fr 1fr}.settings-mask,.voice-commands-mask{padding:7px}}
 </style>
+<style>
+.zone.head-jump{border-color:#ffd66b;background:rgba(205,148,24,.20)}
+</style>
 <link rel="stylesheet" href="/v100.css">
 </head>
 <body><div class="wrap">
@@ -38,9 +41,10 @@
       <img id="cameraPreview" alt="电脑摄像头预览" style="display:none">
       <canvas id="canvas"></canvas>
       <div class="zones">
-        <div class="zone hand-left" data-zone="leftHandUpper"><strong>Y</strong><small>左手</small></div><div class="zone hand-left" data-zone="leftHandLower"><strong>X</strong><small>左手</small></div>
-        <div class="zone hand-right" data-zone="rightHandUpper"><strong>B</strong><small>右手</small></div><div class="zone hand-right" data-zone="rightHandLower"><strong>A</strong><small>右手</small></div>
+        <div class="zone hand-left" data-zone="leftHand"><strong>X</strong><small>左手</small></div>
+        <div class="zone hand-right" data-zone="rightHand"><strong>B</strong><small>右手</small></div>
         <div class="zone foot" data-zone="leftFoot"><strong>LB</strong><small>左脚</small></div><div class="zone foot" data-zone="rightFoot"><strong>RB</strong><small>右脚</small></div>
+        <div class="zone head-jump" data-zone="headJump"><strong>A</strong><small>头顶跳跃</small></div>
         <div class="zone look-gate" data-zone="lookGate"><strong>上下视角</strong><small>左手放这里</small></div>
       </div>
       <div id="zoneEditBar" class="zone-edit-bar"><b>直接拖动体感区域</b><span>把每个区域拖到你最舒服的位置。绿色区放在下巴左侧附近。</span><button id="saveLiveZonesBtn" class="btn safe">保存</button><button id="cancelLiveZonesBtn" class="btn">取消</button></div>
@@ -125,8 +129,8 @@
   </div>
 
   <div class="settings-section">
-    <div class="title">7 个固定体感区域</div>
-    <div class="muted">首次点击“开始体感”会在识别到完整人体后自动建立 7 个区域。以后不会自动跟随人体，也不会自动重新匹配；摄像头位置或站位明显改变时，再点击主页面“重新识别我的位置”。</div>
+    <div class="title">6 个固定体感区域</div>
+    <div class="muted">首次点击“开始体感”会在识别到完整人体后自动建立 6 个区域：左右手、左右脚、头顶跳跃和上下视角。以后不会自动跟随人体，也不会自动重新匹配；摄像头位置或站位明显改变时，再点击主页面“重新识别我的位置”。</div>
     <div class="settings-actions"><button id="sceneCaptureBtn" class="btn">重新记录参考场景</button><button id="sceneSaveBtn" class="btn primary">保存区域布局</button></div>
     <div id="sceneStatus" class="statusline">尚未记录参考场景</div>
     <div id="sceneEditor" class="scene-editor" hidden><img id="sceneReference" alt="参考场景"><div id="sceneEditorZones" class="scene-editor-zones"></div><div id="sceneVerticalCenter" class="scene-vertical-center"></div></div>
