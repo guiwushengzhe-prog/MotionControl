@@ -498,7 +498,7 @@ class VX360Gamepad:
         self._identified_user = added.pop()
         return self._identified_user
 
-    def set_merged_report(self, state: dict, names) -> None:
+    def set_merged_report(self, state: dict, names, motion_left=(0.0, 0.0)) -> None:
         raw = state.get("raw_report")
         if raw is not None:
             self.report = XUSB_REPORT.from_buffer_copy(raw)
@@ -510,6 +510,13 @@ class VX360Gamepad:
                 setattr(self.report, field, round(value * (32768 if value < 0 else 32767)))
             self.report.bLeftTrigger = round(float(state.get("left_trigger", 0)) * 255)
             self.report.bRightTrigger = round(float(state.get("right_trigger", 0)) * 255)
+        # 仅改有体感贡献的左轴；无贡献时保留物理报告的每一位。
+        for field, motion in zip(("sThumbLX", "sThumbLY"), motion_left):
+            if motion:
+                raw_axis = getattr(self.report, field)
+                physical = raw_axis / (32768 if raw_axis < 0 else 32767)
+                value = max(-1.0, min(1.0, physical + motion))
+                setattr(self.report, field, round(value * (32768 if value < 0 else 32767)))
         # Preserve every physical bit, and publish the complete chord in one report.
         for name in names:
             self.report.wButtons |= XUSB_GAMEPAD_BUTTONS[name]
@@ -618,6 +625,7 @@ class OutputManager:
         # not change for existing users.
         self._xinput_reader = xinput_reader or XInputReader()
         self._xinput_merge_enabled = False
+        self._xinput_motion_left_enabled = False
         self._xinput_selected_user: int | None = None
         self._xinput_active_user: int | None = None
         self._xinput_state: dict | None = None
@@ -727,7 +735,8 @@ class OutputManager:
                     if self._xinput_merge_active_locked():
                         self._apply_xinput_state_locked(None, None)
 
-    def configure_xinput_merge(self, *, enabled: bool | None = None, user=_UNSET) -> dict:
+    def configure_xinput_merge(self, *, enabled: bool | None = None, user=_UNSET,
+                               motion_left_enabled: bool | None = None) -> dict:
         """Configure one physical XInput slot to merge into the virtual pad."""
         with self._lock:
             if user is not _UNSET:
@@ -749,11 +758,21 @@ class OutputManager:
                     self._ensure_pad()
                 if requested and not self._xinput_merge_enabled:
                     self._zero_locked(force_physical=True)
+                was_active = self._xinput_merge_active_locked()
                 self._xinput_merge_enabled = requested
                 if not requested:
+                    if was_active:
+                        self._left_stick_sources.clear()
                     self._clear_physical_xinput_locked()
             if self._xinput_merge_enabled:
                 self._ensure_pad()
+            if motion_left_enabled is not None:
+                was_motion_left = self._xinput_motion_left_enabled
+                self._xinput_motion_left_enabled = bool(motion_left_enabled)
+                if self._xinput_merge_active_locked() and was_motion_left and not self._xinput_motion_left_enabled:
+                    self._left_stick_sources.clear()
+                if self._xinput_merge_active_locked():
+                    self._refresh_buttons_locked()
             return self.status()
 
     def xinput_status(self) -> dict:
@@ -763,6 +782,7 @@ class OutputManager:
             return {
                 "enabled": bool(self._xinput_merge_enabled),
                 "active": self._xinput_merge_active_locked(),
+                "motion_left_enabled": self._xinput_motion_left_enabled,
                 "selected_user": self._xinput_selected_user,
                 "active_user": self._xinput_active_user,
                 "connected_users": list(self._xinput_connected_users),
@@ -780,7 +800,7 @@ class OutputManager:
     def set_config(self, *, mode: str | None = None, enabled: bool | None = None,
                    mouse_speed: float | None = None, mouse_speed_x: float | None = None, mouse_speed_y: float | None = None,
                    gamepad_gain: float | None = None, xinput_merge_enabled: bool | None = None,
-                   physical_xinput_user=_UNSET) -> dict:
+                   physical_xinput_user=_UNSET, xinput_motion_left_enabled: bool | None = None) -> dict:
         with self._lock:
             if mode is not None:
                 if mode not in {"mouse", "gamepad"}:
@@ -805,8 +825,9 @@ class OutputManager:
                 self.mouse_speed_y = max(60.0, min(2500.0, float(mouse_speed_y)))
             if gamepad_gain is not None:
                 self.gamepad_gain = max(0.1, min(3.0, float(gamepad_gain)))
-            if xinput_merge_enabled is not None or physical_xinput_user is not _UNSET:
-                self.configure_xinput_merge(enabled=xinput_merge_enabled, user=physical_xinput_user)
+            if xinput_merge_enabled is not None or physical_xinput_user is not _UNSET or xinput_motion_left_enabled is not None:
+                self.configure_xinput_merge(enabled=xinput_merge_enabled, user=physical_xinput_user,
+                                            motion_left_enabled=xinput_motion_left_enabled)
             if enabled is not None:
                 if enabled and self.mode == "gamepad":
                     self._ensure_pad()
@@ -877,7 +898,13 @@ class OutputManager:
             ]) if self._button_sources else set()
         names = tuple(sorted(physical | motion))
         if self._xinput_merge_active_locked() and self._pad is not None:
-            self._pad.set_merged_report(self._xinput_state or {}, names)
+            x = y = 0.0
+            if self.enabled and self._xinput_motion_left_enabled:
+                for sx, sy in self._left_stick_sources.values():
+                    x += sx
+                    y += sy
+            self._pad.set_merged_report(self._xinput_state or {}, names,
+                                        (max(-1.0, min(1.0, x)), max(-1.0, min(1.0, y))))
         elif names or self._pad is not None:
             self._ensure_pad().set_buttons(names)
         self.last_buttons = names
@@ -910,7 +937,7 @@ class OutputManager:
 
     def _refresh_left_stick_locked(self) -> None:
         if self._xinput_merge_active_locked():
-            return  # _refresh_buttons_locked publishes the complete merged report.
+            return  # 合流由按钮刷新一次性提交完整报告。
         if self._xinput_merge_active_locked() and self._xinput_state is not None:
             x = float(self._xinput_state.get("left_x", 0.0))
             y = float(self._xinput_state.get("left_y", 0.0))
@@ -1008,7 +1035,7 @@ class OutputManager:
                         continue
                     self._keyboard_sources[source] = self._combo_keys(target)
                 elif action_type == "gamepad_axis":
-                    if self._xinput_merge_active_locked():
+                    if self._xinput_merge_active_locked() and not self._xinput_motion_left_enabled:
                         continue
                     if target not in GAMEPAD_AXES:
                         raise ValueError(f"不支持的 Xbox 摇杆方向：{target}")
@@ -1067,7 +1094,7 @@ class OutputManager:
                         raise ValueError(f"不支持的鼠标按键：{target}")
                     self._mouse_button_sources[source] = {target}
                 elif action_type == "gamepad_axis":
-                    if self._xinput_merge_active_locked():
+                    if self._xinput_merge_active_locked() and not self._xinput_motion_left_enabled:
                         continue
                     if target not in GAMEPAD_AXES:
                         raise ValueError(f"不支持的 Xbox 摇杆方向：{target}")
@@ -1226,8 +1253,9 @@ class OutputManager:
         # path so the camera/control thread never sleeps.
         with self._lock:
             merge_active = self._xinput_merge_active_locked()
-        if merge_active and action_type not in {"gamepad", "gamepad_button", "xinput_button"}:
-            return {"executed": False, "reason": "冰原狼2合流只允许 Xbox 按键输出"}
+            merge_allowed = action_type == "gamepad" or (action_type == "gamepad_axis" and self._xinput_motion_left_enabled)
+        if merge_active and not merge_allowed:
+            return {"executed": False, "reason": "合流仅允许手柄按键和已开启的体感左摇杆"}
         if action_type in {"gamepad_button", "xinput_button"}:
             action_type = "gamepad"
         if not nonblocking and action_type == "gamepad":
@@ -1237,8 +1265,9 @@ class OutputManager:
             self.tap_keyboard(target, duration=duration, source=source)
             return {"executed": True, "action": f"{action_type}:{target}"}
         with self._lock:
-            if not self.enabled or (self._xinput_merge_active_locked() and action_type != "gamepad"):
-                return {"executed": False, "reason": "输出已关闭或合流仅允许手柄按钮"}
+            merge_allowed = action_type == "gamepad" or (action_type == "gamepad_axis" and self._xinput_motion_left_enabled)
+            if not self.enabled or (self._xinput_merge_active_locked() and not merge_allowed):
+                return {"executed": False, "reason": "输出已关闭或此体感输出未允许合流"}
             if action_type == "gamepad":
                 self._button_sources[source] = self._gamepad_targets(target)
                 self._refresh_buttons_locked()
@@ -1254,7 +1283,10 @@ class OutputManager:
                 if target not in GAMEPAD_AXES:
                     raise ValueError(f"不支持的 Xbox 摇杆方向：{target}")
                 self._left_stick_sources[source] = GAMEPAD_AXES[target]
-                self._refresh_left_stick_locked()
+                if self._xinput_merge_active_locked():
+                    self._refresh_buttons_locked()
+                else:
+                    self._refresh_left_stick_locked()
             elif action_type == "gamepad_trigger":
                 if target == "LT":
                     self._trigger_sources[source] = (1.0, 0.0)
@@ -1377,6 +1409,7 @@ class OutputManager:
             "gamepad_connected": self._pad is not None,
             "xinput_merge_enabled": bool(self._xinput_merge_enabled),
             "xinput_merge_active": self._xinput_merge_active_locked(),
+            "xinput_motion_left_enabled": self._xinput_motion_left_enabled,
             "xinput_selected_user": self._xinput_selected_user,
             "xinput_active_user": self._xinput_active_user,
             "xinput_connected": self._xinput_state is not None,

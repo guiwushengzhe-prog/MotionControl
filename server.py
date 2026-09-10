@@ -759,11 +759,13 @@ class Handler(SimpleHTTPRequestHandler):
                     mouse_speed_y=body.get("mouse_speed_y"),
                     gamepad_gain=body.get("gamepad_gain"),
                     xinput_merge_enabled=(body.get("xinput_merge_enabled") if "xinput_merge_enabled" in body else None),
+                    xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
                     physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
                 )
             elif route == "/api/output/xinput":
                 data = OUTPUT.configure_xinput_merge(
                     enabled=body.get("enabled") if "enabled" in body else None,
+                    motion_left_enabled=body.get("motion_left_enabled"),
                     user=(body.get("user") if "user" in body else body.get("physical_xinput_user")) if ("user" in body or "physical_xinput_user" in body) else _UNSET,
                 )
             elif route == "/api/output/frame":
