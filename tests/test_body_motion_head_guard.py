@@ -747,8 +747,8 @@ def test_status_exposes_body_motion_guard_version(tmp_path, monkeypatch):
     kernel = ControlKernel(Output())
     try:
         state = kernel.status()
-        assert state["body_motion_guard_version"] == "C2.9"
-        assert state["head"]["body_motion_guard_version"] == "C2.9"
+        assert state["body_motion_guard_version"] == "C2.10"
+        assert state["head"]["body_motion_guard_version"] == "C2.10"
     finally:
         kernel.close()
 

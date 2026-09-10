@@ -6,6 +6,8 @@ import re
 import threading
 from pathlib import Path
 
+from motion_conflicts import validate_motion_bindings
+
 SCHEMA = "motioncontrol.game_profile.v1"
 CATALOG_SCHEMA = "motioncontrol.game_catalog.v1"
 SELECTION_SCHEMA = "motioncontrol.profile_selection.v1"
@@ -278,7 +280,8 @@ class GameProfileStore:
 
     def select(self, profile_id: str) -> dict:
         with self._lock:
-            self.get_profile(profile_id)  # validate before persisting
+            profile = self.get_profile(profile_id)  # validate before persisting
+            validate_motion_bindings(profile.get("bindings", {}))
             self._selection = {"schema": SELECTION_SCHEMA, "selected_id": str(profile_id), "overrides": {}}
             self._save_selection()
             return self.effective_profile()
@@ -289,7 +292,8 @@ class GameProfileStore:
         # Validate by applying to the currently selected base profile before saving.
         with self._lock:
             base = self.get_profile(self._selection["selected_id"])
-            _merge_bindings(base.get("bindings", {}), overrides)
+            merged = _merge_bindings(base.get("bindings", {}), overrides)
+            validate_motion_bindings(merged)
             self._selection["overrides"] = copy.deepcopy(overrides)
             self._save_selection()
             return self.effective_profile()

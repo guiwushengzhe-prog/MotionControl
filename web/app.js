@@ -42,6 +42,12 @@ const BASE_PROFILE_TRIGGERS=[
   {key:'motion.cross_knee_elbow',group:'motions',id:'cross_knee_elbow',name:'提膝碰对侧肘'},
   {key:'pose.hands_cross',group:'poses',id:'hands_cross',name:'双手交叉',tapOnly:true},
 ];
+const MOTION_CONFLICT_GROUPS=[
+  {ids:['jumping_jack','hands_up'],label:'开合跳与双手过头'},
+  {ids:['jumping_jack','side_step_jack'],label:'开合跳与侧步开合'},
+  {ids:['march','calf_back','squat'],label:'原地踏步、小腿向后与下蹲'},
+];
+const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后',squat:'下蹲',hands_up:'双手过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
 const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆'};
 const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',X2:'侧键 2',SCROLL_UP:'向上滚',SCROLL_DOWN:'向下滚',LT:'LT',RT:'RT',L3:'L3',R3:'R3',DPAD_UP:'十字键上',DPAD_DOWN:'十字键下',DPAD_LEFT:'十字键左',DPAD_RIGHT:'十字键右',START:'Start',BACK:'Back',LS_UP:'左摇杆上',LS_DOWN:'左摇杆下',LS_LEFT:'左摇杆左',LS_RIGHT:'左摇杆右'};
 const voice={status:null};
@@ -205,6 +211,50 @@ function bindingFor(trigger){
   }
   return trigger.defaultBinding||null;
 }
+function selectedMotionIdsFromRows(){
+  const selected=new Set();
+  document.querySelectorAll('.binding-row[data-trigger^="motion."]').forEach(row=>{
+    if(row.querySelector('.binding-type')?.value)selected.add(String(row.dataset.trigger).slice('motion.'.length));
+  });
+  return selected;
+}
+function motionConflictsForSelection(selected){
+  return MOTION_CONFLICT_GROUPS
+    .map(group=>group.ids.filter(id=>selected.has(id)))
+    .filter(active=>active.length>1);
+}
+function motionConflictText(conflicts){
+  return conflicts.map(group=>group.map(id=>MOTION_CONFLICT_NAMES[id]||id).join('、')).join('；');
+}
+function syncMotionConflictChoices(){
+  const selected=selectedMotionIdsFromRows();
+  const states=new Map();
+  const stateFor=id=>{let state=states.get(id);if(!state){state={blockedBy:new Set(),conflictWith:new Set()};states.set(id,state)}return state};
+  for(const group of MOTION_CONFLICT_GROUPS){
+    const active=group.ids.filter(id=>selected.has(id));
+    if(active.length>1){
+      for(const id of active){for(const other of active){if(other!==id)stateFor(id).conflictWith.add(other)}}
+    }else if(active.length===1){
+      for(const id of group.ids){if(id!==active[0])stateFor(id).blockedBy.add(active[0])}
+    }
+  }
+  for(const trigger of BASE_PROFILE_TRIGGERS.filter(item=>item.group==='motions')){
+    const row=document.querySelector(`.binding-row[data-trigger="${trigger.key}"]`);if(!row)continue;
+    const state=states.get(trigger.id)||{blockedBy:new Set(),conflictWith:new Set()};
+    const select=row.querySelector('.binding-type');if(!select)continue;
+    const blocked=state.blockedBy.size>0&&!selected.has(trigger.id);
+    select.disabled=blocked;
+    select.title=blocked?`与 ${[...state.blockedBy].map(id=>MOTION_CONFLICT_NAMES[id]||id).join('、')} 冲突，先取消该动作`:'';
+    row.classList.toggle('motion-conflict-blocked',blocked);
+    row.classList.toggle('motion-conflict-error',state.conflictWith.size>0);
+    const note=row.querySelector('.motion-conflict-note');
+    if(note){
+      if(state.conflictWith.size){note.hidden=false;note.textContent=`冲突：与 ${[...state.conflictWith].map(id=>MOTION_CONFLICT_NAMES[id]||id).join('、')} 只能选一个`}
+      else if(blocked){note.hidden=false;note.textContent=`已禁用：与 ${[...state.blockedBy].map(id=>MOTION_CONFLICT_NAMES[id]||id).join('、')} 冲突`}
+      else{note.hidden=true;note.textContent=''}
+    }
+  }
+}
 function targetLabel(action){
   if(!action)return '未映射';
   const t=String(action.target||'').toUpperCase();
@@ -308,7 +358,7 @@ function renderProfileBindingRows(){
   const triggers=profileTriggers();
   const groups=[
     {id:'zones',title:'Zone 圈',help:'手或脚进入固定圈时触发',filter:t=>t.group==='zones',open:true},
-    {id:'body',title:'身体动作',help:'识别到动作时触发；左右腿交叉已移除',filter:t=>t.group==='motions'||t.group==='poses',open:true},
+    {id:'body',title:'身体动作',help:'识别到动作时触发；冲突动作不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
     {id:'voice',title:'语音',help:'说出完整口令后触发一次；系统安全口令不可改',filter:t=>t.group==='voice',open:false},
   ];
   for(const group of groups){
@@ -324,11 +374,14 @@ function renderProfileBindingRows(){
       const type=makeTypeSelect(binding);
       const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
       const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||'hold');
-      type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,'hold')});
-      row.append(name,type,target,behavior);rows.appendChild(row);
+      type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,'hold');syncMotionConflictChoices()});
+      row.append(name,type,target,behavior);
+      if(trigger.group==='motions'){const note=document.createElement('div');note.className='motion-conflict-note';note.hidden=true;row.appendChild(note)}
+      rows.appendChild(row);
     }
     details.append(summary,help,rows);box.appendChild(details);
   }
+  syncMotionConflictChoices();
 }
 function readProfileOverrides(){
   const overrides={};
@@ -341,6 +394,8 @@ function readProfileOverrides(){
     const behavior=trigger.tapOnly||type==='mouse_wheel'?'tap':(row.querySelector('select.binding-behavior')?.value||'hold');
     overrides[trigger.key]={action:{type,target,behavior}};
   }
+  const conflicts=motionConflictsForSelection(selectedMotionIdsFromRows());
+  if(conflicts.length)throw new Error(`动作冲突：${motionConflictText(conflicts)}。设置中只能选择一个`);
   return overrides;
 }
 async function saveProfileBindings(){
@@ -546,6 +601,7 @@ $('#saveProfileBindingsBtn')?.addEventListener('click',()=>saveProfileBindings()
 $('#resetProfileBindingsBtn')?.addEventListener('click',()=>resetProfileBindings().catch(e=>notice('恢复映射失败：'+(e?.message||e))));
 $('#profileBindingRows')?.addEventListener('change',e=>{
   const control=e.target?.closest?.('.binding-type,.binding-target,.binding-behavior');if(!control)return;
+  syncMotionConflictChoices();
   if(control.classList.contains('binding-type')&&gameProfile.actions?.[control.value]?.free_text)return;
   scheduleProfileAutoSave();
 });
