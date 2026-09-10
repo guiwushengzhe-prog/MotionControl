@@ -119,6 +119,8 @@
     <div class="title">游戏输出</div>
     <div class="controls"><label>视角输出<select id="outputMode"><option value="mouse">鼠标视角</option><option value="gamepad">Xbox 360 右摇杆</option></select></label><label>物理手柄合流<select id="xinputMerge"><option value="">关闭体感合流</option></select></label></div>
     <div id="xinputStatus" class="statusline">未启用物理手柄合流</div>
+    <label><input id="xinputMotionLeft" type="checkbox" disabled>允许体感左摇杆合成</label>
+    <div class="statusline">左摇杆双方相加：同向限幅、不同方向合成、反向抵消；右摇杆与扳机由物理手柄控制。</div>
     <div class="slider"><label>游戏速度倍率 <b id="strengthValue">160%</b></label><input id="strength" type="range" min="60" max="300" step="10" value="160"></div>
   </div>
 

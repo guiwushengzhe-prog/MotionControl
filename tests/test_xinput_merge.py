@@ -28,9 +28,10 @@ class Pad:
     def xinput_user_index(self):
         return 3
 
-    def set_merged_report(self, state, names):
+    def set_merged_report(self, state, names, motion_left=(0.0, 0.0)):
         self.set_buttons(names)
-        self.left_stick = (state.get('left_x', 0), state.get('left_y', 0))
+        self.left_stick = tuple(max(-1.0, min(1.0, state.get(key, 0) + motion))
+                                for key, motion in zip(('left_x', 'left_y'), motion_left))
         self.right_stick = (state.get('right_x', 0), state.get('right_y', 0))
         self.triggers = (state.get('left_trigger', 0), state.get('right_trigger', 0))
 
@@ -271,3 +272,163 @@ def test_virtual_identity_rejects_ambiguous_simultaneous_connections():
     pad._identified_user = None
     with pytest.raises(RuntimeError):
         pad.xinput_user_index()
+
+
+class ReportPad(Pad):
+    """使用生产整帧合成方法，模拟驱动提交而非单独写按钮/轴。"""
+    def __init__(self):
+        super().__init__()
+        self.frames = []
+
+    def set_merged_report(self, state, names, motion_left=(0.0, 0.0)):
+        from output_backend import VX360Gamepad
+        VX360Gamepad.set_merged_report(self, state, names, motion_left)
+
+    def update(self):
+        from output_backend import XUSB_GAMEPAD_BUTTONS
+        self.frames.append(bytes(self.report))
+        self.buttons = tuple(k for k, v in XUSB_GAMEPAD_BUTTONS.items() if self.report.wButtons & v)
+        def axis(v):
+            return v / (32768 if v < 0 else 32767)
+        self.left_stick = (axis(self.report.sThumbLX), axis(self.report.sThumbLY))
+        self.right_stick = (axis(self.report.sThumbRX), axis(self.report.sThumbRY))
+        self.triggers = (self.report.bLeftTrigger / 255, self.report.bRightTrigger / 255)
+
+
+def _report_manager(tmp_path, lx=0, ly=0):
+    from output_backend import XINPUT_GAMEPAD
+    raw = bytes(XINPUT_GAMEPAD(0x1000, 17, 254, lx, ly, -12345, 23456))
+    state = _state(raw_report=raw, buttons={'A'}, left_x=lx/(32768 if lx < 0 else 32767),
+                   left_y=ly/(32768 if ly < 0 else 32767))
+    out = OutputManager(tmp_path, xinput_reader=FakeReader(state))
+    out._pad = ReportPad()
+    out.configure_xinput_merge(enabled=True, user=0, motion_left_enabled=True)
+    assert _wait_until(lambda: out.xinput_status()['connected'])
+    out.set_config(enabled=True)
+    return out, raw
+
+
+def test_symmetric_axes_orthogonal_buttons_and_source_release(tmp_path):
+    out, raw = _report_manager(tmp_path, lx=16384)
+    try:
+        out.set_action_holds([
+            {'id':'move', 'action':{'type':'gamepad_axis','target':'LS_UP'}},
+            {'id':'spell', 'action':{'type':'gamepad','target':'LB+A'}},
+        ])
+        assert out._pad.report.sThumbLX == 16384
+        assert out._pad.report.sThumbLY == 32767
+        assert set(out._pad.buttons) == {'A','LB'}
+        assert out._pad.frames[-1][2:4] == raw[2:4]
+        assert out._pad.frames[-1][8:] == raw[8:]
+        assert out._xinput_state['raw_report'] == raw
+        out.set_holds([{'id':'second', 'type':'gamepad_axis','target':'LS_UP'}])
+        out.set_action_holds([])
+        assert out._pad.report.sThumbLY == 32767
+        assert set(out._pad.buttons) == {'A'}
+        out.set_holds([])
+        assert out._pad.frames[-1] == raw
+    finally:
+        out.close()
+
+
+def test_symmetric_opposite_partial_and_same_direction(tmp_path):
+    out, raw = _report_manager(tmp_path, lx=-16384, ly=-32768)
+    try:
+        out.set_holds([{'id':'x','type':'gamepad_axis','target':'LS_RIGHT'},
+                       {'id':'y','type':'gamepad_axis','target':'LS_UP'}])
+        assert out._pad.report.sThumbLX == 16384  # -0.5 + 1 = 0.5
+        assert out._pad.report.sThumbLY == 0
+        out.set_holds([{'id':'y','type':'gamepad_axis','target':'LS_DOWN'}])
+        assert out._pad.report.sThumbLX == -16384
+        assert out._pad.report.sThumbLY == -32768
+        out.set_holds([])
+        assert out._pad.frames[-1] == raw
+    finally:
+        out.close()
+
+
+def test_symmetric_positive_limit_and_motion_only(tmp_path):
+    out, raw = _report_manager(tmp_path, lx=24000)
+    try:
+        out.set_holds([{'id':'x','type':'gamepad_axis','target':'LS_RIGHT'}])
+        assert out._pad.report.sThumbLX == 32767
+        out._xinput_reader.state = None
+        assert _wait_until(lambda: not out.xinput_status()['connected'])
+        assert out._pad.report.sThumbLX == 32767
+        out.set_holds([])
+        assert out._pad.report.sThumbLX == 0
+    finally:
+        out.close()
+
+
+def test_symmetric_discrete_axis_refreshes_full_report_and_releases(tmp_path):
+    out, raw = _report_manager(tmp_path, lx=-32768)
+    try:
+        out.set_buttons({'LB'}, source='spell')
+        result = out.execute_action({'type':'gamepad_axis','target':'LS_UP', 'duration':0.2})
+        assert result['executed']
+        assert out._pad.report.sThumbLY == 32767
+        assert out._pad.report.sThumbLX == -32768
+        assert set(out._pad.buttons) == {'A','LB'}
+        assert _wait_until(lambda: out._pad.report.sThumbLY == 0)
+        assert set(out._pad.buttons) == {'A','LB'}
+        out.clear_source('spell')
+        assert out._pad.frames[-1] == raw
+        for kind, target in [('keyboard','W'), ('mouse_button','LEFT'),
+                             ('mouse_wheel','SCROLL_UP'), ('gamepad_trigger','RT')]:
+            assert not out.execute_action({'type':kind,'target':target})['executed']
+        out.apply(1, 1)
+        assert out._pad.frames[-1] == raw
+    finally:
+        out.close()
+
+
+def test_symmetric_stop_disable_watchdog_preserve_physical(tmp_path):
+    out, raw = _report_manager(tmp_path, lx=-32768, ly=1)
+    try:
+        for stop in [out.emergency_stop, lambda:out.set_config(enabled=False)]:
+            out.set_config(enabled=True)
+            out.set_action_holds([{'id':'x','action':{'type':'gamepad_axis','target':'LS_RIGHT'}}])
+            stop()
+            assert out._pad.frames[-1] == raw
+            assert not out._left_stick_sources
+        out.set_config(enabled=True)
+        out.set_action_holds([{'id':'x','action':{'type':'gamepad_axis','target':'LS_RIGHT'}}])
+        assert _wait_until(lambda: out._pad.frames[-1] == raw)
+        assert not out._left_stick_sources
+    finally:
+        out.close()
+
+
+def test_symmetric_option_off_clears_sources_and_preserves_report(tmp_path):
+    out, raw = _report_manager(tmp_path, lx=-32768, ly=1)
+    try:
+        out.set_holds([{'id':'x','type':'gamepad_axis','target':'LS_RIGHT'}])
+        out.set_config(xinput_motion_left_enabled=False)
+        assert out._pad.frames[-1] == raw
+        assert not out._left_stick_sources
+        assert not out.execute_action({'type':'gamepad_axis','target':'LS_UP'})['executed']
+        out.set_holds([{'id':'x','type':'gamepad_axis','target':'LS_RIGHT'}])
+        out.set_action_holds([{'id':'y','action':{'type':'gamepad_axis','target':'LS_UP'}}])
+        assert out._pad.frames[-1] == raw
+        assert not out._left_stick_sources
+        out.configure_xinput_merge(motion_left_enabled=True)
+        assert out._pad.frames[-1] == raw
+        assert out.status()['xinput_motion_left_enabled']
+        assert out.xinput_status()['motion_left_enabled']
+    finally:
+        out.close()
+
+
+def test_ordinary_configuration_does_not_clear_left_axis(tmp_path):
+    out = OutputManager(tmp_path, xinput_reader=FakeReader())
+    out._pad = Pad()
+    try:
+        out.set_config(mode='gamepad', enabled=True)
+        out.set_holds([{'id':'x','type':'gamepad_axis','target':'LS_RIGHT'}])
+        out.set_config(xinput_merge_enabled=False, xinput_motion_left_enabled=False)
+        assert out._pad.left_stick == (1.0, 0.0)
+        assert out._left_stick_sources
+        assert not out.xinput_status()['motion_left_enabled']
+    finally:
+        out.close()
