@@ -1,0 +1,184 @@
+{
+  "commit": "b52967f5de5dc39b3691213f6bbdc070c0feb326",
+  "scope": "Root Python modules and all web source; count newly introduced production modules too. Tests, tools, docs, models and third-party files excluded.",
+  "files": [
+    {
+      "path": "control_kernel.py",
+      "bytes": 134321,
+      "lines": 2641,
+      "nonblank": 2462,
+      "sha256": "51a048f2c4e7fc205e1b4ac39c1469da607d858467d599007b26db18fd9a31ed"
+    },
+    {
+      "path": "funasr_command_backend.py",
+      "bytes": 12948,
+      "lines": 335,
+      "nonblank": 310,
+      "sha256": "f2f57baf757b04e6f3b651d8575bae31c1de9e8af67ad7fb15636d97763cdb0b"
+    },
+    {
+      "path": "game_profiles.py",
+      "bytes": 14059,
+      "lines": 310,
+      "nonblank": 280,
+      "sha256": "194633abf38b2a6bcaa31dad629cf0ba3909243a1e5d0be5bd31e9f5b5587ce1"
+    },
+    {
+      "path": "hand_anchor.py",
+      "bytes": 23892,
+      "lines": 510,
+      "nonblank": 460,
+      "sha256": "e6e012af104f78c294b66746a202a93a8a845a546be1b80cd6c769b5f06373d0"
+    },
+    {
+      "path": "head_control.py",
+      "bytes": 193442,
+      "lines": 3867,
+      "nonblank": 3610,
+      "sha256": "fbee1f340d3bb4eb2f4a1cea9f341551166dbb915776185ab003fce473f8252b"
+    },
+    {
+      "path": "head_mouse_e2e_live.py",
+      "bytes": 4008,
+      "lines": 108,
+      "nonblank": 87,
+      "sha256": "f952a3a77043fa001d6803a54804b1db4f3a31e215ba1a6da20b93ef34c7aa9f"
+    },
+    {
+      "path": "hybrid_voice_backend.py",
+      "bytes": 12712,
+      "lines": 329,
+      "nonblank": 295,
+      "sha256": "d4bd293f6adb549c77931d1d7c46a2eeb3ac96f78426a95601dc888962651244"
+    },
+    {
+      "path": "input_bridge.py",
+      "bytes": 54803,
+      "lines": 1185,
+      "nonblank": 1104,
+      "sha256": "b68a37ee1b7d5bf3d9b2148dbda0a97475dee0fcfc29a0d0a67ae91a54d2c782"
+    },
+    {
+      "path": "motion_conflicts.py",
+      "bytes": 4252,
+      "lines": 130,
+      "nonblank": 100,
+      "sha256": "0d597805a7d52d9ccd07c5b94fd5748236b3afce6ebceeca01c3e6b22fd8c7bb"
+    },
+    {
+      "path": "output_backend.py",
+      "bytes": 68871,
+      "lines": 1512,
+      "nonblank": 1384,
+      "sha256": "30c4e78c47275c5d12f94ee9b9eba409acce462bc19cf3194c9617ab5331bb8f"
+    },
+    {
+      "path": "profile_audit.py",
+      "bytes": 7649,
+      "lines": 194,
+      "nonblank": 168,
+      "sha256": "9a9ac91f8a4e1354571223dbdd73cd9056e612e7da7ff5658140165697af0a56"
+    },
+    {
+      "path": "scene_layout.py",
+      "bytes": 34029,
+      "lines": 680,
+      "nonblank": 621,
+      "sha256": "cf95c7f4087b40e4760954de02a84884f8cdee148a7fd94cb6c312926413a560"
+    },
+    {
+      "path": "server.py",
+      "bytes": 39149,
+      "lines": 851,
+      "nonblank": 785,
+      "sha256": "5aa3ec5914499416debdd1c5cdf4b661c420f67009e7e11ae015e876a3bb85e4"
+    },
+    {
+      "path": "sherpa_kws_backend.py",
+      "bytes": 10182,
+      "lines": 245,
+      "nonblank": 213,
+      "sha256": "77802a2947a73744139d6ecb2bb07b89e6283118ace2cd16a3206593e6a030b4"
+    },
+    {
+      "path": "sherpa_phrase_kws.py",
+      "bytes": 3425,
+      "lines": 104,
+      "nonblank": 91,
+      "sha256": "06ca6d78eb9e278ecfabe4136cc370595e74587c41c59c89467b86fa93c2cd7a"
+    },
+    {
+      "path": "sherpa_wake_backend.py",
+      "bytes": 4092,
+      "lines": 106,
+      "nonblank": 93,
+      "sha256": "c011f66dfe17a7b88b3f4e7536382d1aeb63c489bbf82f8489d4fee73d2e0cee"
+    },
+    {
+      "path": "steam_seed_catalog.py",
+      "bytes": 6285,
+      "lines": 155,
+      "nonblank": 133,
+      "sha256": "f30049284fdbaf0d8676ee0a701bae780b22458d9d121a5f3497a961cbd8d8b3"
+    },
+    {
+      "path": "steam_vdf.py",
+      "bytes": 16649,
+      "lines": 471,
+      "nonblank": 408,
+      "sha256": "ffe136debed00b04bf4e4a920ea6d4e37c09b7fb66ec336bb2eb2458695c9567"
+    },
+    {
+      "path": "steaminput_builder.py",
+      "bytes": 20743,
+      "lines": 512,
+      "nonblank": 454,
+      "sha256": "616ade4abdc53e97fbe90841cd04e858045301718075ca2c0f2ea61dd83d7814"
+    },
+    {
+      "path": "vertical_hand_control.py",
+      "bytes": 474,
+      "lines": 11,
+      "nonblank": 8,
+      "sha256": "4861bf8fb8f037a9c7c69d1d499adc7b4701fd80a1a586c2d40c15369a756ff0"
+    },
+    {
+      "path": "vertical_hand_control_v160.py",
+      "bytes": 96538,
+      "lines": 1807,
+      "nonblank": 1707,
+      "sha256": "64b2eafa5c5617762e6d8768ddd40d1d6c07c1d50b98f3d011e3db55fceecba8"
+    },
+    {
+      "path": "voice_backend.py",
+      "bytes": 32554,
+      "lines": 740,
+      "nonblank": 691,
+      "sha256": "f2ecf8e4a7adf865ea8398560f1a1318138c325bc3c13cc32331522c693d7a7e"
+    },
+    {
+      "path": "web/app.js",
+      "bytes": 71077,
+      "lines": 686,
+      "nonblank": 667,
+      "sha256": "90bf8dfc45fadbaec3d7443389af1aaf55fbd53c8119e74c85a50bbbd00044ba"
+    },
+    {
+      "path": "web/index.html",
+      "bytes": 27523,
+      "lines": 173,
+      "nonblank": 157,
+      "sha256": "3357694b0d638264e00882c4c0345f80414aeaa74f59bd8922f8385943d14c32"
+    },
+    {
+      "path": "web/v100.css",
+      "bytes": 7715,
+      "lines": 21,
+      "nonblank": 21,
+      "sha256": "03acfe2ca2e61d8a01bdc4e1f594a9d9d9a862276d3dd7c5ec2f2e9461b4a8b5"
+    }
+  ],
+  "total_bytes": 901392,
+  "frontend_bytes": 106315,
+  "nonblank": 16309
+}
