@@ -3,15 +3,15 @@
   "runtime_scope": "根目录 Python、全部前端、START 启动入口、运行时语音子进程；新模块计入。",
   "runtime": {
     "before_bytes": 906460,
-    "after_bytes": 894082,
+    "after_bytes": 894841,
     "before_nonblank": 16440,
-    "after_nonblank": 16733
+    "after_nonblank": 16751
   },
   "frontend": {
     "before_bytes": 106315,
-    "after_bytes": 91383,
+    "after_bytes": 92142,
     "before_nonblank": 845,
-    "after_nonblank": 1095
+    "after_nonblank": 1113
   },
   "files": [
     {
@@ -225,10 +225,10 @@
     {
       "path": "web/app.js",
       "before_bytes": 71077,
-      "after_bytes": 70003,
+      "after_bytes": 70762,
       "before_nonblank": 667,
-      "after_nonblank": 890,
-      "after_sha256": "22f7b716b44dba4bc51c9c424a4fdb8b0ea7d1f152a6ed94d03d449efd99ce1c"
+      "after_nonblank": 908,
+      "after_sha256": "c3e5802b37fd2ecf6d4386fc51595afcea617866d2bdf321151bfb5fd0c0e706"
     },
     {
       "path": "web/index.html",
@@ -248,12 +248,12 @@
     }
   ],
   "runtime_diff_lines": {
-    "added": 740,
+    "added": 758,
     "deleted": 453
   },
   "runtime_lf_bytes": {
     "before": 892078,
-    "after": 879473
+    "after": 880243
   },
   "separate_categories": {
     "models": "未运行、未修改，不统计外部模型体积",
@@ -266,7 +266,7 @@
     "tests/test_profile_persistence_v2.py": 3411,
     "tests/test_profile_api_v2.py": 2914,
     "tests/test_minimal_controls.py": 22029,
-    "tools/check_ui_v2.cjs": 13328,
+    "tools/check_ui_v2.cjs": 14375,
     "docs/V2_BASELINE.json": 5409
   }
 }

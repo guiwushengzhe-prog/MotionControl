@@ -26,7 +26,7 @@ let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraRunning=
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
 const head={algorithm:'pnp',horizontalAlgorithm:'classic',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand',verticalExclusive:false,bodyMotionGuard:true};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
-let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false;
+let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
 let serviceReady=false,actionBusy=false,outputEpoch=0,kernelEpoch=0,inputStatus={},headDirty=false;
 let currentView='play',desiredSource=null,profileReady=false,profileLoading=false;
@@ -80,7 +80,10 @@ async function api(path,opt={}){
   catch{throw new Error('本地服务无响应，请检查连接后重试')}
   let data;
   try{data=await response.json()}catch{throw new Error('服务响应无法读取')}
-  if(!response.ok||data.ok===false)throw new Error(data.error||`服务请求失败（${response.status}）`);
+  if(!response.ok||data.ok===false){
+    const error=new Error(data.error||`服务请求失败（${response.status}）`);
+    error.status=response.status;throw error;
+  }
   return data;
 }
 async function post(path,data){return api(path,{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify(data)})}
@@ -482,13 +485,28 @@ async function saveProfileBindings(){
   })();
   try{await profileFlight}
   catch(error){
+    profileConflict=error.status===409;
     $('#profileSaveStatus').textContent='保存失败，草稿已保留：'+error.message;
+    $('#retryProfileSaveBtn').textContent=profileConflict?'重新选择本游戏并保存草稿':'重试保存映射';
     $('#retryProfileSaveBtn').hidden=false;throw error;
   }finally{profileFlight=null}
   if(profileDirty.size)return saveProfileBindings();
+  profileConflict=false;
   $('#profileSaveStatus').textContent='已自动保存';
 }
+async function retryProfileBindings(){
+  if(!profileConflict)return saveProfileBindings();
+  await profileOperation(async()=>{
+    const id=gameProfile.selected.selected_id||gameProfile.selected.id;
+    await post('/api/game-profiles/select',{id});
+    profileConflict=false;
+    await saveProfileBindings();
+  });
+}
 function scheduleProfileAutoSave(event){
+  // Text inputs already saved their input event; blur must not restart a failed save
+  // or move its retry button between pointer-down and pointer-up.
+  if(event?.type==='change'&&event.target.matches('input'))return;
   const row=event?.target.closest('.binding-row');if(!row||profileSwitching)return;
   profileDirty.add(row.dataset.trigger);profileRevision++;
   clearTimeout(profileAutoSaveTimer);
@@ -849,7 +867,7 @@ bind('overlayBtn',toggleOverlay);
 bind('profileSearchBtn',searchProfiles);
 $('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(searchProfiles)});
 bind('profileApplyBtn',applySelectedProfile);bind('resetProfileBindingsBtn',resetProfileBindings);
-bind('retryProfileSaveBtn',saveProfileBindings);
+bind('retryProfileSaveBtn',retryProfileBindings);
 for(const event of ['input','change'])$('#profileBindingRows').addEventListener(event,e=>{syncMotionConflictChoices();scheduleProfileAutoSave(e)});
 bind('adjustZonesBtn',openLiveZoneEditor);bind('saveLiveZonesBtn',saveLiveZones);bind('cancelLiveZonesBtn',cancelLiveZones);
 bind('sceneCaptureBtn',()=>updateScene('capture'));bind('sceneRematchBtn',()=>updateScene('rematch'));
@@ -902,7 +920,7 @@ for(const id of ['headAlgorithm','headHorizontalAlgorithm','verticalLookSource',
   $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels()});
 }
 $('#addVoiceBtn').addEventListener('click',()=>addVoiceRow());
-for(const event of ['input','change'])$('#voiceRows').addEventListener(event,()=>voiceSaver.dirty());
+$('#voiceRows').addEventListener('input',()=>voiceSaver.dirty());
 $('#voiceRows').addEventListener('click',e=>{if(e.target.closest('.voice-remove'))voiceSaver.dirty()});
 window.addEventListener('keydown',e=>{
   if(e.key==='F9'){e.preventDefault();void emergencyStop()}

@@ -76,7 +76,7 @@ function runtime(){
         await delay(state.saveDelay);state.saving--;
         state.saveCalls.push(body);
         if(state.failSave)return fail('模拟磁盘写入失败');
-        if(body.profile_id!==state.selected)return fail('目标游戏不匹配');
+        if(body.profile_id!==state.selected)return route.fulfill({status:409,json:{ok:false,error:'目标游戏不匹配'}});
         state.saved[body.profile_id]=body.overrides;return respond({profile:profile()});
       case '/api/scene/status':return respond(state.scene);
       case '/api/scene/layout':state.scene={configured:true,zones:body.zones,vertical_look:body.vertical_look};return respond(state.scene);
@@ -133,6 +133,15 @@ function runtime(){
     await jumping.selectOption('gamepad');
     assert.equal(await page.locator('[data-trigger="motion.hands_up"] .binding-type').isDisabled(),true);
     await page.locator('#profileSaveStatus').getByText('已自动保存').waitFor();
+    // A second client changed games: retain the draft, then explicitly restore its target.
+    state.selected='game-b';
+    await row.locator('.binding-target').fill('CTRL+P');
+    await page.getByRole('button',{name:'重新选择本游戏并保存草稿'}).waitFor();
+    assert.equal(state.selected,'game-b');
+    await page.locator('#retryProfileSaveBtn').click();
+    await page.waitForFunction(()=>document.querySelector('#profileSaveStatus').textContent==='已自动保存',null,{timeout:5000});
+    assert.equal(state.selected,'game-a');
+    assert.equal(state.saved['game-a']['zone.leftHand'].action.target,'CTRL+P');
 
     await page.locator('[data-view=play]').click();
     await page.locator('#adjustZonesBtn').click();
@@ -186,5 +195,11 @@ function runtime(){
     await page.waitForFunction(()=>document.querySelector('#serviceStatus').textContent==='本地服务已连接');
     assert.deepEqual(errors,[]);
     console.log(JSON.stringify({result:'passed',saveRequests:state.saveCalls.length,maxConcurrentSaves:state.maxSaving,screenshots:artifacts},null,2));
+  }catch(error){
+    console.error(await page.evaluate(()=>({notice:document.querySelector('#notice')?.textContent,
+      save:document.querySelector('#profileSaveStatus')?.textContent,
+      locked:document.querySelector('#mappingFields')?.disabled})));
+    console.error({selected:state.selected,selects:state.selectCalls,requests:state.saveCalls,errors});
+    throw error;
   }finally{await browser.close()}
 })().catch(error=>{console.error(error);process.exitCode=1});
