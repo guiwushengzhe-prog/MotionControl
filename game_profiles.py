@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
+import tempfile
 import threading
 from pathlib import Path
 
@@ -10,7 +12,11 @@ from motion_conflicts import validate_motion_bindings
 
 SCHEMA = "motioncontrol.game_profile.v1"
 CATALOG_SCHEMA = "motioncontrol.game_catalog.v1"
-SELECTION_SCHEMA = "motioncontrol.profile_selection.v1"
+SELECTION_SCHEMA = "motioncontrol.profile_selection.v2"
+
+
+class ProfileSelectionChanged(ValueError):
+    """The editor belongs to a different game than the active selection."""
 
 GAMEPAD_BUTTONS = {
     "A", "B", "X", "Y", "LB", "RB", "L3", "R3",
@@ -181,20 +187,48 @@ class GameProfileStore:
 
     def _load_selection(self) -> dict:
         try:
-            data = json.loads(self.selection_path.read_text(encoding="utf-8"))
-            if data.get("schema") != SELECTION_SCHEMA:
-                raise ValueError("selection schema mismatch")
-            return {
+            original = self.selection_path.read_bytes()
+        except FileNotFoundError:
+            return {"schema": SELECTION_SCHEMA, "selected_id": "generic-xbox", "overrides_by_profile": {}}
+        data = json.loads(original.decode("utf-8-sig"))
+        if not isinstance(data, dict):
+            raise ValueError("游戏配置格式无法读取，原文件已保留")
+        if data.get("schema") == "motioncontrol.profile_selection.v1":
+            if not isinstance(data.get("overrides", {}), dict):
+                raise ValueError("游戏映射数据无效，原文件已保留")
+            selected = str(data.get("selected_id", "generic-xbox"))
+            backup = self.selection_path.with_name(self.selection_path.name + ".v1.bak")
+            try:
+                with backup.open("xb") as stream:
+                    stream.write(original)
+            except FileExistsError:
+                pass
+            data = {
                 "schema": SELECTION_SCHEMA,
-                "selected_id": str(data.get("selected_id", "generic-xbox")),
-                "overrides": data.get("overrides", {}) if isinstance(data.get("overrides"), dict) else {},
+                "selected_id": selected,
+                "overrides_by_profile": {selected: data.get("overrides", {})},
             }
-        except Exception:
-            return {"schema": SELECTION_SCHEMA, "selected_id": "generic-xbox", "overrides": {}}
+            self._save_selection(data)
+        if data.get("schema") != SELECTION_SCHEMA or not isinstance(data.get("overrides_by_profile"), dict):
+            raise ValueError("游戏配置格式无法读取，原文件已保留")
+        if not isinstance(data.get("selected_id"), str) or any(
+            not isinstance(value, dict) for value in data["overrides_by_profile"].values()
+        ):
+            raise ValueError("游戏映射数据无效，原文件已保留")
+        return data
 
-    def _save_selection(self) -> None:
+    def _save_selection(self, selection: dict) -> None:
         self.selection_path.parent.mkdir(parents=True, exist_ok=True)
-        self.selection_path.write_text(json.dumps(self._selection, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.selection_path.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(selection, stream, ensure_ascii=False, indent=2)
+            os.replace(temporary, self.selection_path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        self._selection = selection
 
     def _load_catalog(self) -> dict:
         try:
@@ -270,32 +304,34 @@ class GameProfileStore:
                 # A missing generated library must not brick the existing controller.
                 profile = self.get_profile("generic-xbox")
                 selected_id = "generic-xbox"
-                self._selection["selected_id"] = selected_id
-                self._selection["overrides"] = {}
-                self._save_selection()
-            profile["bindings"] = _merge_bindings(profile.get("bindings", {}), self._selection.get("overrides", {}))
+                self._save_selection({**self._selection, "selected_id": selected_id})
+            overrides = self._selection["overrides_by_profile"].get(selected_id, {})
+            profile["bindings"] = _merge_bindings(profile.get("bindings", {}), overrides)
             profile["selected_id"] = selected_id
-            profile["overrides"] = copy.deepcopy(self._selection.get("overrides", {}))
+            profile["overrides"] = copy.deepcopy(overrides)
             return profile
 
     def select(self, profile_id: str) -> dict:
         with self._lock:
             profile = self.get_profile(profile_id)  # validate before persisting
-            validate_motion_bindings(profile.get("bindings", {}))
-            self._selection = {"schema": SELECTION_SCHEMA, "selected_id": str(profile_id), "overrides": {}}
-            self._save_selection()
+            overrides = self._selection["overrides_by_profile"].get(profile_id, {})
+            validate_motion_bindings(_merge_bindings(profile.get("bindings", {}), overrides))
+            self._save_selection({**self._selection, "selected_id": str(profile_id)})
             return self.effective_profile()
 
-    def set_overrides(self, overrides: dict) -> dict:
+    def set_overrides(self, overrides: dict, profile_id: str | None = None) -> dict:
         if not isinstance(overrides, dict):
             raise ValueError("overrides must be an object")
         # Validate by applying to the currently selected base profile before saving.
         with self._lock:
+            if profile_id is not None and profile_id != self._selection["selected_id"]:
+                raise ProfileSelectionChanged("当前游戏已改变，映射未保存。请重新选择游戏后重试")
             base = self.get_profile(self._selection["selected_id"])
             merged = _merge_bindings(base.get("bindings", {}), overrides)
             validate_motion_bindings(merged)
-            self._selection["overrides"] = copy.deepcopy(overrides)
-            self._save_selection()
+            selection = copy.deepcopy(self._selection)
+            selection["overrides_by_profile"][selection["selected_id"]] = copy.deepcopy(overrides)
+            self._save_selection(selection)
             return self.effective_profile()
 
 
