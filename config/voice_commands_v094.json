@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "product_version": "1.00",
+  "product_version": "2.0",
   "model": "vosk-model-small-cn-0.22",
   "interaction": "vosk_constrained_grammar",
   "prefix": "体感",

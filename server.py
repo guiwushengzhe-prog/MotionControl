@@ -13,14 +13,14 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
-from game_profiles import GameProfileStore, action_catalog
+from game_profiles import GameProfileStore, ProfileSelectionChanged, action_catalog
 from motion_conflicts import motion_conflict_payload, validate_motion_config
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
 from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService
 from scene_layout import SceneLayoutManager
 
-# Product version. 1.00 is the first productized stable UI/UX release.
-VERSION = "1.00"
+# Desktop workflow and per-game persistence release; phone protocol versions stay unchanged.
+VERSION = "2.0"
 
 
 def application_root() -> Path:
@@ -47,6 +47,7 @@ RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
 SCENE = SceneLayoutManager(ROOT)
 if SCENE.session:
     KERNEL.configure_scene_layout(SCENE.session)
+PROFILE_UPDATE_LOCK = threading.RLock()
 PROFILES = GameProfileStore(ROOT)
 KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
 
@@ -626,15 +627,18 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "game profile changes are loopback-only"}, 403)
                 return
             try:
-                if route.endswith("/select"):
-                    profile = PROFILES.select(str(body.get("id", "")))
-                else:
-                    profile = PROFILES.set_overrides(body.get("overrides", {}))
-                KERNEL.configure_bindings(profile.get("bindings", {}))
-                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
-                if broadcaster is not None:
-                    broadcaster(_phone_control_payload())
+                with PROFILE_UPDATE_LOCK:
+                    if route.endswith("/select"):
+                        profile = PROFILES.select(str(body.get("id", "")))
+                    else:
+                        profile = PROFILES.set_overrides(body.get("overrides", {}), profile_id=body.get("profile_id"))
+                    KERNEL.configure_bindings(profile.get("bindings", {}))
+                    broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                    if broadcaster is not None:
+                        broadcaster(_phone_control_payload())
                 self._send_json({"ok": True, "profile": profile})
+            except ProfileSelectionChanged as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 409)
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
@@ -651,15 +655,20 @@ class Handler(SimpleHTTPRequestHandler):
                 INPUT_BRIDGE.clear_mobile_sources()
                 VOICE.stop_local_microphone()
                 VOICE.disconnect()
+                # Audio remains usable if the body model or camera cannot start.
+                # Each input reports its own readiness; a body failure is still an error.
+                if enabled and source == "computer":
+                    try:
+                        voice_data = VOICE.start_local_microphone()
+                    except Exception as exc:
+                        voice_data = {**VOICE.status(), "last_error": str(exc)}
+                else:
+                    voice_data = VOICE.status()
                 if enabled:
                     data = RUNTIME.set_source(source, start_computer=True)
                 else:
                     data = RUNTIME.stop_body()
                 INPUT_BRIDGE.set_body_mode(source if enabled else "computer")
-                if enabled and source == "computer":
-                    voice_data = VOICE.start_local_microphone()
-                else:
-                    voice_data = VOICE.status()
                 self._send_json({"ok": True, **data, "voice": voice_data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status(), "voice": VOICE.status()}, 400)
@@ -806,7 +815,7 @@ def main():
     MODEL_PATH = resolve_full_model(MODEL_ROOT)
     RUNTIME.configure_model(MODEL_PATH)
     INPUT_BRIDGE.configure_endpoint(args.host, args.port)
-    print(f"MotionControl 1.00 · body zones + motions + voice · v{VERSION}")
+    print(f"MotionControl 2.0 · body zones + motions + voice · v{VERSION}")
     print("Model root:", MODEL_ROOT or "NOT FOUND")
     print("MediaPipe Full:", MODEL_PATH or "NOT FOUND")
 
