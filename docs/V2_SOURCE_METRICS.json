@@ -1,0 +1,272 @@
+{
+  "baseline_commit": "b52967f5de5dc39b3691213f6bbdc070c0feb326",
+  "runtime_scope": "根目录 Python、全部前端、START 启动入口、运行时语音子进程；新模块计入。",
+  "runtime": {
+    "before_bytes": 906460,
+    "after_bytes": 894082,
+    "before_nonblank": 16440,
+    "after_nonblank": 16733
+  },
+  "frontend": {
+    "before_bytes": 106315,
+    "after_bytes": 91383,
+    "before_nonblank": 845,
+    "after_nonblank": 1095
+  },
+  "files": [
+    {
+      "path": "START.bat",
+      "before_bytes": 134,
+      "after_bytes": 134,
+      "before_nonblank": 6,
+      "after_nonblank": 6,
+      "after_sha256": "26030525bc6c83b1be12312ae4ba6d01bc2599350bb5794bee79ca4c47add081"
+    },
+    {
+      "path": "START.ps1",
+      "before_bytes": 952,
+      "after_bytes": 952,
+      "before_nonblank": 22,
+      "after_nonblank": 22,
+      "after_sha256": "0cb04bc72c986aa81cd4bdf368b076faa8b55962def3cd452c5d7c01f666534e"
+    },
+    {
+      "path": "control_kernel.py",
+      "before_bytes": 134321,
+      "after_bytes": 134321,
+      "before_nonblank": 2462,
+      "after_nonblank": 2462,
+      "after_sha256": "51a048f2c4e7fc205e1b4ac39c1469da607d858467d599007b26db18fd9a31ed"
+    },
+    {
+      "path": "funasr_command_backend.py",
+      "before_bytes": 12948,
+      "after_bytes": 12948,
+      "before_nonblank": 310,
+      "after_nonblank": 310,
+      "after_sha256": "f2f57baf757b04e6f3b651d8575bae31c1de9e8af67ad7fb15636d97763cdb0b"
+    },
+    {
+      "path": "game_profiles.py",
+      "before_bytes": 14059,
+      "after_bytes": 15956,
+      "before_nonblank": 280,
+      "after_nonblank": 314,
+      "after_sha256": "181b1f466faae31e1965917c9e3193e4d92780ff8008cc82141118b257fdbb02"
+    },
+    {
+      "path": "hand_anchor.py",
+      "before_bytes": 23892,
+      "after_bytes": 23892,
+      "before_nonblank": 460,
+      "after_nonblank": 460,
+      "after_sha256": "e6e012af104f78c294b66746a202a93a8a845a546be1b80cd6c769b5f06373d0"
+    },
+    {
+      "path": "head_control.py",
+      "before_bytes": 193442,
+      "after_bytes": 193442,
+      "before_nonblank": 3610,
+      "after_nonblank": 3610,
+      "after_sha256": "fbee1f340d3bb4eb2f4a1cea9f341551166dbb915776185ab003fce473f8252b"
+    },
+    {
+      "path": "head_mouse_e2e_live.py",
+      "before_bytes": 4008,
+      "after_bytes": 4008,
+      "before_nonblank": 87,
+      "after_nonblank": 87,
+      "after_sha256": "f952a3a77043fa001d6803a54804b1db4f3a31e215ba1a6da20b93ef34c7aa9f"
+    },
+    {
+      "path": "hybrid_voice_backend.py",
+      "before_bytes": 12712,
+      "after_bytes": 12712,
+      "before_nonblank": 295,
+      "after_nonblank": 295,
+      "after_sha256": "d4bd293f6adb549c77931d1d7c46a2eeb3ac96f78426a95601dc888962651244"
+    },
+    {
+      "path": "input_bridge.py",
+      "before_bytes": 54803,
+      "after_bytes": 54803,
+      "before_nonblank": 1104,
+      "after_nonblank": 1104,
+      "after_sha256": "b68a37ee1b7d5bf3d9b2148dbda0a97475dee0fcfc29a0d0a67ae91a54d2c782"
+    },
+    {
+      "path": "motion_conflicts.py",
+      "before_bytes": 4252,
+      "after_bytes": 4252,
+      "before_nonblank": 100,
+      "after_nonblank": 100,
+      "after_sha256": "0d597805a7d52d9ccd07c5b94fd5748236b3afce6ebceeca01c3e6b22fd8c7bb"
+    },
+    {
+      "path": "output_backend.py",
+      "before_bytes": 68871,
+      "after_bytes": 68871,
+      "before_nonblank": 1384,
+      "after_nonblank": 1384,
+      "after_sha256": "30c4e78c47275c5d12f94ee9b9eba409acce462bc19cf3194c9617ab5331bb8f"
+    },
+    {
+      "path": "profile_audit.py",
+      "before_bytes": 7649,
+      "after_bytes": 7649,
+      "before_nonblank": 168,
+      "after_nonblank": 168,
+      "after_sha256": "9a9ac91f8a4e1354571223dbdd73cd9056e612e7da7ff5658140165697af0a56"
+    },
+    {
+      "path": "scene_layout.py",
+      "before_bytes": 34029,
+      "after_bytes": 34029,
+      "before_nonblank": 621,
+      "after_nonblank": 621,
+      "after_sha256": "cf95c7f4087b40e4760954de02a84884f8cdee148a7fd94cb6c312926413a560"
+    },
+    {
+      "path": "server.py",
+      "before_bytes": 39149,
+      "after_bytes": 39806,
+      "before_nonblank": 785,
+      "after_nonblank": 794,
+      "after_sha256": "1a1a345e9dd1fe61b64e51bc73600c735514b13a77f0f1769ff21f609de0f0ec"
+    },
+    {
+      "path": "sherpa_kws_backend.py",
+      "before_bytes": 10182,
+      "after_bytes": 10182,
+      "before_nonblank": 213,
+      "after_nonblank": 213,
+      "after_sha256": "77802a2947a73744139d6ecb2bb07b89e6283118ace2cd16a3206593e6a030b4"
+    },
+    {
+      "path": "sherpa_phrase_kws.py",
+      "before_bytes": 3425,
+      "after_bytes": 3425,
+      "before_nonblank": 91,
+      "after_nonblank": 91,
+      "after_sha256": "06ca6d78eb9e278ecfabe4136cc370595e74587c41c59c89467b86fa93c2cd7a"
+    },
+    {
+      "path": "sherpa_wake_backend.py",
+      "before_bytes": 4092,
+      "after_bytes": 4092,
+      "before_nonblank": 93,
+      "after_nonblank": 93,
+      "after_sha256": "c011f66dfe17a7b88b3f4e7536382d1aeb63c489bbf82f8489d4fee73d2e0cee"
+    },
+    {
+      "path": "steam_seed_catalog.py",
+      "before_bytes": 6285,
+      "after_bytes": 6285,
+      "before_nonblank": 133,
+      "after_nonblank": 133,
+      "after_sha256": "f30049284fdbaf0d8676ee0a701bae780b22458d9d121a5f3497a961cbd8d8b3"
+    },
+    {
+      "path": "steam_vdf.py",
+      "before_bytes": 16649,
+      "after_bytes": 16649,
+      "before_nonblank": 408,
+      "after_nonblank": 408,
+      "after_sha256": "ffe136debed00b04bf4e4a920ea6d4e37c09b7fb66ec336bb2eb2458695c9567"
+    },
+    {
+      "path": "steaminput_builder.py",
+      "before_bytes": 20743,
+      "after_bytes": 20743,
+      "before_nonblank": 454,
+      "after_nonblank": 454,
+      "after_sha256": "616ade4abdc53e97fbe90841cd04e858045301718075ca2c0f2ea61dd83d7814"
+    },
+    {
+      "path": "tools/funasr_command_worker.py",
+      "before_bytes": 3982,
+      "after_bytes": 3982,
+      "before_nonblank": 103,
+      "after_nonblank": 103,
+      "after_sha256": "bd42f2d4a648dc82fac97fa1015e50f95d35b1a59255a1d4f9a9fc3da70e532f"
+    },
+    {
+      "path": "vertical_hand_control.py",
+      "before_bytes": 474,
+      "after_bytes": 474,
+      "before_nonblank": 8,
+      "after_nonblank": 8,
+      "after_sha256": "4861bf8fb8f037a9c7c69d1d499adc7b4701fd80a1a586c2d40c15369a756ff0"
+    },
+    {
+      "path": "vertical_hand_control_v160.py",
+      "before_bytes": 96538,
+      "after_bytes": 96538,
+      "before_nonblank": 1707,
+      "after_nonblank": 1707,
+      "after_sha256": "64b2eafa5c5617762e6d8768ddd40d1d6c07c1d50b98f3d011e3db55fceecba8"
+    },
+    {
+      "path": "voice_backend.py",
+      "before_bytes": 32554,
+      "after_bytes": 32554,
+      "before_nonblank": 691,
+      "after_nonblank": 691,
+      "after_sha256": "f2ecf8e4a7adf865ea8398560f1a1318138c325bc3c13cc32331522c693d7a7e"
+    },
+    {
+      "path": "web/app.css",
+      "before_bytes": 0,
+      "after_bytes": 7862,
+      "before_nonblank": 0,
+      "after_nonblank": 124,
+      "after_sha256": "f420daea6bfd894b83f79930e28cb146915f7c1efb1f67f344c9f0bf59e25d1b"
+    },
+    {
+      "path": "web/app.js",
+      "before_bytes": 71077,
+      "after_bytes": 70003,
+      "before_nonblank": 667,
+      "after_nonblank": 890,
+      "after_sha256": "22f7b716b44dba4bc51c9c424a4fdb8b0ea7d1f152a6ed94d03d449efd99ce1c"
+    },
+    {
+      "path": "web/index.html",
+      "before_bytes": 27523,
+      "after_bytes": 13518,
+      "before_nonblank": 157,
+      "after_nonblank": 81,
+      "after_sha256": "20a4c9dce573347e0b21d2d3a82bddd583a1e4ebfa3800a456f5ae720da8ee6d"
+    },
+    {
+      "path": "web/v100.css",
+      "before_bytes": 7715,
+      "after_bytes": 0,
+      "before_nonblank": 21,
+      "after_nonblank": 0,
+      "after_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "runtime_diff_lines": {
+    "added": 740,
+    "deleted": 453
+  },
+  "runtime_lf_bytes": {
+    "before": 892078,
+    "after": 879473
+  },
+  "separate_categories": {
+    "models": "未运行、未修改，不统计外部模型体积",
+    "third_party": "未修改，不纳入源码增减",
+    "tests": "配置、接口、区域和输出检查；独立于运行源码",
+    "documentation": "基线、交付记录及工作记录独立计量",
+    "development_tools": "新增离线浏览器检查脚本；已有回放脚本修改不属于本轮"
+  },
+  "separate_file_bytes": {
+    "tests/test_profile_persistence_v2.py": 3411,
+    "tests/test_profile_api_v2.py": 2914,
+    "tests/test_minimal_controls.py": 22029,
+    "tools/check_ui_v2.cjs": 13328,
+    "docs/V2_BASELINE.json": 5409
+  }
+}

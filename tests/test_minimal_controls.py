@@ -18,30 +18,33 @@ def test_only_full_model_is_registered():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert 'pose_landmarker_full.task' in server
     assert 'pose_landmarker_lite.task' not in server
-    assert 'VERSION = "1.00"' in server
+    assert 'VERSION = "2.0"' in server
 
 
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    for required in ['1.00', '开始体感', '站好并校准', '重新识别我的位置', '视角回正', 'Xbox 360 右摇杆', '紧急停止 · F9', 'id="settingsBtn"', '当前游戏的输入映射', '旧版语音别名', '头控', '3D 头姿（推荐）', '查看全部语音指令', '区域不准？直接拖动调整', '当前游戏', 'profileBindingRows']:
+    for required in ['2.0', '开始游戏', '游戏配置', '设备与设置', '站好并校准', '重新识别位置', '视角回正', '紧急停止 · F9', '自定义口令 · 所有游戏通用', '三维头姿（推荐）', '调整区域位置', 'profileBindingRows']:
         assert required in page
-    assert '开始游戏控制' in app and '停止游戏控制' in app
+    assert '开始游戏控制' in app and '暂停游戏控制' in app
     for removed in ['开始 30 秒性能测试', '静止抖动测试', '实时性能数据', 'Lite / Full 对比结果', 'modelSelect']:
         assert removed not in page
-    assert 'settings-mask' in page
-    assert 'voice-commands-mask' in page
+    for removed in ['hidden-compat', 'id="cameraBtn"', 'id="outputBtn"', 'id="sceneEditor"', 'saveProfileBindingsBtn', '<style>']:
+        assert removed not in page
+    assert '<dialog' in page
     assert '上下视角待机' in page
-    assert 'font-size:17px' in page
+    css = (ROOT / 'web' / 'app.css').read_text(encoding='utf-8')
+    assert '[hidden] { display: none !important; }' in css
+    assert 'position: sticky' in css
 
 
-def test_v100_command_catalog_and_head_ui():
+def test_v2_command_catalog_and_head_ui():
     catalog = json.loads((ROOT / 'config' / 'voice_commands_v094.json').read_text(encoding='utf-8'))
-    assert catalog['product_version'] == '1.00'
+    assert catalog['product_version'] == '2.0'
     assert len(catalog['commands']) >= 39
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
-    assert "开始游戏控制" in app and "停止游戏控制" in app
+    assert "开始游戏控制" in app and "暂停游戏控制" in app
     assert "· Y ${Number(hs.output_y)" not in app
     assert 'for item in VOICE.command_registry.values()' in server
 
@@ -80,7 +83,8 @@ def test_first_start_keeps_scene_capture_but_output_is_not_scene_gated():
     assert "post('/api/scene/capture'" in app
     assert 'await setOutput(!output.enabled)' in app
     assert 'if(!output.enabled&&!(await ensureInitialSceneLayout()))' not in app
-    assert '头控、动作、语音和手机输入仍可用' in app
+    assert '固定区域不可用' in app
+    assert 'inputStatus.handheld_connected' in app
 
 
 def test_four_motion_rules_and_settings_exist():
@@ -106,7 +110,7 @@ def test_head_calibration_uses_default_until_atomic_success():
     assert 'CENTER_PREPARE_S = 1.00' in (ROOT / 'head_control.py').read_text(encoding='utf-8')
     assert 'CENTER_WALL_LIMIT_S = 6.00' in (ROOT / 'head_control.py').read_text(encoding='utf-8')
     assert 'cancel_calibration' in kernel
-    assert '开始校准' in (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
+    assert '站好并校准' in (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     assert 'HeadController' in kernel
 
 
