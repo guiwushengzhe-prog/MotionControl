@@ -598,7 +598,9 @@ class OutputManager:
         self.root = root
         self.mouse = mouse or MouseOutput()
         self.keyboard = keyboard or KeyboardOutput()
-        self.mode = "mouse"
+        # Gamepad is the default: the physical-pad merge needs it, and a
+        # mouse-mode session silently turns that merge back off.
+        self.mode = "gamepad"
         self.enabled = False
         self.mouse_speed_x = 600.0
         self.mouse_speed_y = 450.0
