@@ -193,6 +193,10 @@ def _phone_control_payload() -> dict:
         "bindings": profile.get("bindings", {}),
         "zones": scene.get("zones", {}),
         "vertical_look": scene.get("vertical_look", {}),
+        # The phone builds its own constrained grammar from this.  Sending it
+        # keeps one list authoritative: a phrase added on the desktop is heard
+        # by the phone microphone too, without shipping a new build.
+        "voice_phrases": VOICE.grammar_phrases(),
     }
 
 provider = getattr(INPUT_BRIDGE, "configure_control_config_provider", None)
