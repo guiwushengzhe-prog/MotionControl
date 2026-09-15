@@ -67,9 +67,14 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         parts = [part for part in parts if part]
         if not parts:
             raise ValueError("Xbox 按键不能为空")
-        invalid = [part for part in parts if part not in GAMEPAD_BUTTONS]
+        # Buttons and the left stick are separate channels on the pad, so a
+        # combo may mix them: "LB+LS_UP" holds the bumper and pushes the stick
+        # at the same time.  A lone direction still belongs to gamepad_axis.
+        invalid = [part for part in parts if part not in GAMEPAD_BUTTONS and part not in GAMEPAD_AXES]
         if invalid:
             raise ValueError("不支持的 Xbox 按键：" + ", ".join(sorted(set(invalid))))
+        if len(parts) == 1 and parts[0] in GAMEPAD_AXES:
+            raise ValueError("单独的摇杆方向请选择“Xbox 左摇杆”类型")
         target = parts[0] if len(parts) == 1 else parts
     else:
         target = str(raw_target).strip().upper()

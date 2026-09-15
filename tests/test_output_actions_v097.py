@@ -113,3 +113,54 @@ def test_nonblocking_pose_tap_releases_later(tmp_path):
         time.sleep(.08)
         assert "SPACE" not in keyboard.pressed
     finally: out.close()
+
+
+def test_gamepad_combo_may_mix_buttons_and_stick(tmp_path):
+    """Buttons and the stick are separate pad channels, so one combo drives both.
+
+    "LB+LS_UP" used to be rejected outright: the validator only accepted button
+    names, which made a bumper-plus-direction binding impossible to express even
+    though the output side has always held the two independently.
+    """
+    out, _mouse, _keyboard, pad = manager(tmp_path)
+    try:
+        out.set_holds([{'id': 'hands_cross', 'type': 'gamepad', 'target': ['LB', 'LS_UP']}])
+        assert pad.buttons == ('LB',)
+        assert pad.left_stick == (0.0, 1.0)
+
+        # Directions sum across a combo and across triggers, exactly as separate
+        # axis holds already did.
+        out.set_holds([
+            {'id': 'hands_cross', 'type': 'gamepad', 'target': ['LB', 'LS_UP']},
+            {'id': 'squat', 'type': 'gamepad', 'target': 'A+LS_LEFT'},
+        ])
+        assert sorted(pad.buttons) == ['A', 'LB']
+        assert pad.left_stick == (-1.0, 1.0)
+
+        out.set_holds([])
+        assert pad.buttons == ()
+        assert pad.left_stick == (0.0, 0.0)
+    finally:
+        out.close()
+
+
+def test_voice_hold_and_release_cover_both_halves_of_a_mixed_combo(tmp_path):
+    out, _mouse, _keyboard, pad = manager(tmp_path)
+    try:
+        out.execute_voice_action({'type': 'gamepad', 'target': 'LB+LS_UP', 'behavior': 'hold', 'source': 'voice'})
+        assert pad.buttons == ('LB',)
+        assert pad.left_stick == (0.0, 1.0)
+        out.execute_voice_action({'type': 'gamepad', 'target': 'LB+LS_UP', 'behavior': 'release', 'source': 'voice'})
+        assert pad.buttons == ()
+        assert pad.left_stick == (0.0, 0.0)
+    finally:
+        out.close()
+
+
+def test_a_lone_direction_still_belongs_to_the_axis_type():
+    import pytest
+    from game_profiles import normalize_action
+    with pytest.raises(ValueError):
+        normalize_action({'type': 'gamepad', 'target': 'LS_UP'})
+    with pytest.raises(ValueError):
+        normalize_action({'type': 'gamepad', 'target': 'LB+NOPE'})
