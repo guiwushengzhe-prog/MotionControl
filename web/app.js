@@ -416,7 +416,7 @@ function fillTargetControl(container,type,value=''){
     for(const key of meta.targets||['A','B','X','Y','LB','RB','L3','R3','START','BACK','DPAD_UP','DPAD_DOWN','DPAD_LEFT','DPAD_RIGHT']){const option=document.createElement('option');option.value=key;option.textContent=TARGET_LABELS[key]||key;select.appendChild(option)}
     const custom=document.createElement('option');custom.value='__combo__';custom.textContent='组合键…';select.appendChild(custom);
     const raw=Array.isArray(value)?value.join('+'):String(value||'A');
-    const combo=document.createElement('input');combo.type='text';combo.placeholder='例如 LB+A';combo.value=raw.includes('+')?raw:'';
+    const combo=document.createElement('input');combo.type='text';combo.placeholder='例如 LB+A 或 LB+LS_UP';combo.value=raw.includes('+')?raw:'';
     const update=()=>{const isCombo=select.value==='__combo__';select.className=isCombo?'binding-gamepad-select':'binding-target';combo.className=isCombo?'binding-target':'';combo.hidden=!isCombo};
     select.value=[...select.options].some(o=>o.value===raw)?raw:'__combo__';
     select.addEventListener('change',update);update();container.append(select,combo);return;

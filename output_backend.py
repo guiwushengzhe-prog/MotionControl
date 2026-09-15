@@ -994,6 +994,33 @@ class OutputManager:
             self.last_error = str(exc)
 
     @staticmethod
+    def _gamepad_parts(target) -> tuple[set[str], tuple[float, float] | None]:
+        """Split a gamepad target into held buttons and a left-stick vector.
+
+        Buttons and the stick are separate channels on the pad, so one combo can
+        drive both: "LB+LS_UP" holds the bumper and pushes the stick at once.
+        Several directions in one combo sum the same way separate sources do.
+        """
+        if isinstance(target, (list, tuple, set)):
+            parts = [str(item).strip().upper() for item in target]
+        else:
+            parts = [part.strip().upper() for part in str(target).replace(",", "+").split("+")]
+        parts = [part for part in parts if part]
+        if not parts:
+            raise ValueError("Xbox 按键不能为空")
+        invalid = [part for part in parts if part not in XUSB_GAMEPAD_BUTTONS and part not in GAMEPAD_AXES]
+        if invalid:
+            raise ValueError("不支持的 Xbox 按键：" + ", ".join(sorted(set(invalid))))
+        buttons = {part for part in parts if part in XUSB_GAMEPAD_BUTTONS}
+        stick = None
+        for part in parts:
+            if part in GAMEPAD_AXES:
+                ax, ay = GAMEPAD_AXES[part]
+                sx, sy = stick or (0.0, 0.0)
+                stick = (max(-1.0, min(1.0, sx + ax)), max(-1.0, min(1.0, sy + ay)))
+        return buttons, stick
+
+    @staticmethod
     def _gamepad_targets(target) -> set[str]:
         if isinstance(target, (list, tuple, set)):
             parts = [str(item).strip().upper() for item in target]
@@ -1029,7 +1056,16 @@ class OutputManager:
                     continue
                 source = prefix + ident
                 if action_type == "gamepad":
-                    self._button_sources[source] = self._gamepad_targets(target)
+                    buttons, stick = self._gamepad_parts(target)
+                    if buttons:
+                        self._button_sources[source] = buttons
+                    # The stick half obeys the same merge rule as a plain axis
+                    # hold: while a physical pad is merged it moves only when
+                    # the user asked body motion to drive the left stick.
+                    if stick is not None and not (
+                        self._xinput_merge_active_locked() and not self._xinput_motion_left_enabled
+                    ):
+                        self._left_stick_sources[source] = stick
                 elif action_type == "keyboard":
                     if self._xinput_merge_active_locked():
                         continue
@@ -1201,17 +1237,25 @@ class OutputManager:
             return self.status()
 
     def tap_gamepad(self, button: str, duration: float = 0.10, source: str | None = None) -> None:
-        buttons = self._gamepad_targets(button)
+        buttons, stick = self._gamepad_parts(button)
         source = str(source).strip() if source else f"voice-{time.monotonic_ns()}"
         with self._lock:
             if not self.enabled:
                 return
-            self._button_sources[source] = buttons
+            if buttons:
+                self._button_sources[source] = buttons
+            # A combo may also nudge the stick; pulse both halves together so a
+            # tap of "LB+LS_UP" is not silently reduced to the bumper alone.
+            if stick is not None and (not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled):
+                self._left_stick_sources[source] = stick
+                self._refresh_left_stick_locked()
             self._refresh_buttons_locked()
         time.sleep(max(0.04, min(0.25, float(duration))))
         with self._lock:
             self._button_sources.pop(source, None)
+            self._left_stick_sources.pop(source, None)
             self._refresh_buttons_locked()
+            self._refresh_left_stick_locked()
 
     def tap_keyboard(self, combo: str, duration: float = 0.06, source: str | None = None) -> None:
         source = str(source).strip() if source else f"voice-keyboard-{time.monotonic_ns()}"
@@ -1287,7 +1331,12 @@ class OutputManager:
             if not self.enabled or (self._xinput_merge_active_locked() and not merge_allowed):
                 return {"executed": False, "reason": "输出已关闭或此体感输出未允许合流"}
             if action_type == "gamepad":
-                self._button_sources[source] = self._gamepad_targets(target)
+                buttons, stick = self._gamepad_parts(target)
+                if buttons:
+                    self._button_sources[source] = buttons
+                if stick is not None and (not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled):
+                    self._left_stick_sources[source] = stick
+                    self._refresh_left_stick_locked()
                 self._refresh_buttons_locked()
             elif action_type == "keyboard":
                 self._keyboard_sources[source] = self._combo_keys(target)
