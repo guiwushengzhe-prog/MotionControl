@@ -467,7 +467,8 @@ class InputBridge:
         self._pose_last_inference_ms: float | None = None
         self._pose_last_resolution = {"width": 0, "height": 0}
         self._pose_last_count = 0
-        self._body_mode = "phone" if kernel is None else "computer"
+        # The phone is the usual body source whether or not a kernel is wired in.
+        self._body_mode = "phone"
         self._pose_frames_with_people = 0
         self._host = "0.0.0.0"
         self._port = 8765

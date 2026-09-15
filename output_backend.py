@@ -623,6 +623,12 @@ class OutputManager:
         # Physical XInput is sampled and merged into this same virtual report.
         # It is deliberately opt-in so the ordinary mouse/virtual-pad paths do
         # not change for existing users.
+        # A mixed combo lets the button lead the stick by this much.  Some games
+        # latch the modifier first and ignore a direction that arrives in the
+        # same pad report -- climbing in Uncharted 4 wants LB before up.
+        self._combo_stick_lead = 0.08
+        self._combo_timers: dict[str, threading.Timer] = {}
+        self._combo_started: dict[str, float] = {}
         self._xinput_reader = xinput_reader or XInputReader()
         self._xinput_merge_enabled = False
         self._xinput_motion_left_enabled = False
@@ -1057,15 +1063,12 @@ class OutputManager:
                 source = prefix + ident
                 if action_type == "gamepad":
                     buttons, stick = self._gamepad_parts(target)
-                    if buttons:
-                        self._button_sources[source] = buttons
                     # The stick half obeys the same merge rule as a plain axis
                     # hold: while a physical pad is merged it moves only when
                     # the user asked body motion to drive the left stick.
-                    if stick is not None and not (
+                    self._hold_combo_locked(source, buttons, stick, allow_stick=not (
                         self._xinput_merge_active_locked() and not self._xinput_motion_left_enabled
-                    ):
-                        self._left_stick_sources[source] = stick
+                    ))
                 elif action_type == "keyboard":
                     if self._xinput_merge_active_locked():
                         continue
@@ -1078,6 +1081,12 @@ class OutputManager:
                     self._left_stick_sources[source] = GAMEPAD_AXES[target]
                 else:
                     raise ValueError(f"不支持的持续输出类型：{action_type}")
+            # A trigger that ended while its stick was still pending must not
+            # have it land afterwards.  This runs every frame, so cancelling
+            # before the rebuild would keep postponing a timer that never fires.
+            self._cancel_combo_timers_locked(
+                lambda key: key.startswith(prefix) and key not in self._button_sources
+            )
             self.last_hold_update = time.monotonic()
             try:
                 self._refresh_buttons_locked()
@@ -1118,7 +1127,10 @@ class OutputManager:
                     continue
                 source = prefix + ident
                 if action_type in {"gamepad", "gamepad_button", "xinput_button"}:
-                    self._button_sources[source] = self._gamepad_targets(target)
+                    buttons, stick = self._gamepad_parts(target)
+                    self._hold_combo_locked(source, buttons, stick, allow_stick=not (
+                        self._xinput_merge_active_locked() and not self._xinput_motion_left_enabled
+                    ))
                 elif action_type == "keyboard":
                     if self._xinput_merge_active_locked():
                         continue
@@ -1150,6 +1162,12 @@ class OutputManager:
                     raise ValueError("鼠标滚轮只能使用 tap，不能作为持续 hold")
                 else:
                     raise ValueError(f"不支持的持续输出类型：{action_type}")
+            # A trigger that ended while its stick was still pending must not
+            # have it land afterwards.  This runs every frame, so cancelling
+            # before the rebuild would keep postponing a timer that never fires.
+            self._cancel_combo_timers_locked(
+                lambda key: key.startswith(prefix) and key not in self._button_sources
+            )
             self.last_hold_update = time.monotonic()
             try:
                 self._refresh_buttons_locked()
@@ -1196,10 +1214,59 @@ class OutputManager:
                 raise
             return self.status()
 
+    def _cancel_combo_timers_locked(self, predicate) -> None:
+        for key in [k for k in self._combo_started if predicate(k)]:
+            self._combo_started.pop(key, None)
+        for key in [k for k in self._combo_timers if predicate(k)]:
+            timer = self._combo_timers.pop(key, None)
+            if timer is not None:
+                timer.cancel()
+
+    def _hold_combo_locked(self, source: str, buttons: set[str], stick, *, allow_stick: bool) -> None:
+        """Hold a gamepad combo, letting the buttons lead the stick.
+
+        Body triggers re-enter here every frame and rebuild their group from
+        scratch, so how long the button has led cannot be inferred from what is
+        currently applied -- it is remembered per source instead.  A voice latch
+        enters once and nothing re-enters for it, hence the catch-up timer.
+        """
+        if buttons:
+            self._button_sources[source] = buttons
+        if stick is None or not allow_stick:
+            self._combo_started.pop(source, None)
+            return
+        if not buttons:
+            self._left_stick_sources[source] = stick
+            return
+        now = time.monotonic()
+        started = self._combo_started.setdefault(source, now)
+        if now - started >= self._combo_stick_lead:
+            self._left_stick_sources[source] = stick
+            return
+        if source not in self._combo_timers:
+            timer = threading.Timer(
+                max(0.0, self._combo_stick_lead - (now - started)),
+                self._apply_delayed_stick, args=(source, stick),
+            )
+            timer.daemon = True
+            self._combo_timers[source] = timer
+            timer.start()
+
+    def _apply_delayed_stick(self, source: str, stick) -> None:
+        with self._lock:
+            self._combo_timers.pop(source, None)
+            if source not in self._button_sources:
+                return  # Released while the button was still leading.
+            self._left_stick_sources[source] = stick
+            self._refresh_left_stick_locked()
+            if self._xinput_merge_active_locked():
+                self._refresh_buttons_locked()
+
     def clear_source(self, source: str) -> dict:
         """Release all output contributed by one remote source immediately."""
         source = str(source)
         with self._lock:
+            self._cancel_combo_timers_locked(lambda key: key == source or key.startswith(source + "|voice-"))
             for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
                 for key in list(store):
                     if key == source or key.startswith(source + "|voice-"):
@@ -1332,12 +1399,11 @@ class OutputManager:
                 return {"executed": False, "reason": "输出已关闭或此体感输出未允许合流"}
             if action_type == "gamepad":
                 buttons, stick = self._gamepad_parts(target)
-                if buttons:
-                    self._button_sources[source] = buttons
-                if stick is not None and (not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled):
-                    self._left_stick_sources[source] = stick
-                    self._refresh_left_stick_locked()
+                self._hold_combo_locked(source, buttons, stick, allow_stick=(
+                    not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled
+                ))
                 self._refresh_buttons_locked()
+                self._refresh_left_stick_locked()
             elif action_type == "keyboard":
                 self._keyboard_sources[source] = self._combo_keys(target)
                 self._refresh_keyboard_locked()

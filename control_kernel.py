@@ -2721,7 +2721,10 @@ class LocalControlRuntime:
     def __init__(self, kernel: ControlKernel, camera: NativeCameraService) -> None:
         self.kernel, self.camera = kernel, camera
         self._lock = threading.RLock()
-        self.body_mode = "computer"
+        # The phone is the usual body source, and selecting it costs nothing
+        # when absent: the desktop camera is still one click away and no local
+        # capture device is opened until a source is actually started.
+        self.body_mode = "phone"
 
     def configure_model(self, model_path) -> None:
         self.camera.configure_model(model_path)

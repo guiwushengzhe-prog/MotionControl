@@ -124,6 +124,7 @@ def test_gamepad_combo_may_mix_buttons_and_stick(tmp_path):
     """
     out, _mouse, _keyboard, pad = manager(tmp_path)
     try:
+        out._combo_stick_lead = 0.0  # the lead has its own test below
         out.set_holds([{'id': 'hands_cross', 'type': 'gamepad', 'target': ['LB', 'LS_UP']}])
         assert pad.buttons == ('LB',)
         assert pad.left_stick == (0.0, 1.0)
@@ -147,6 +148,7 @@ def test_gamepad_combo_may_mix_buttons_and_stick(tmp_path):
 def test_voice_hold_and_release_cover_both_halves_of_a_mixed_combo(tmp_path):
     out, _mouse, _keyboard, pad = manager(tmp_path)
     try:
+        out._combo_stick_lead = 0.0  # the lead has its own test below
         out.execute_voice_action({'type': 'gamepad', 'target': 'LB+LS_UP', 'behavior': 'hold', 'source': 'voice'})
         assert pad.buttons == ('LB',)
         assert pad.left_stick == (0.0, 1.0)
@@ -164,3 +166,48 @@ def test_a_lone_direction_still_belongs_to_the_axis_type():
         normalize_action({'type': 'gamepad', 'target': 'LS_UP'})
     with pytest.raises(ValueError):
         normalize_action({'type': 'gamepad', 'target': 'LB+NOPE'})
+
+
+def test_a_mixed_combo_lets_the_button_lead_the_stick(tmp_path):
+    """Some games latch the modifier first and ignore a same-report direction.
+
+    Climbing in Uncharted 4 wants LB before up, and both halves arriving in one
+    pad report did nothing in game even though the output itself was correct.
+    Body triggers rebuild their group every frame, so how long the button has
+    led cannot be read off what is applied -- it is remembered per source.
+    """
+    import time
+    out, _mouse, _keyboard, pad = manager(tmp_path)
+    hold = [{'id': 'pose.hands_cross', 'action': {'type': 'gamepad', 'target': ['LB', 'LS_UP']}}]
+    try:
+        out._combo_stick_lead = 0.08
+        out.set_action_holds(hold, source_group='controls')
+        assert pad.buttons == ('LB',)
+        assert pad.left_stick == (0.0, 0.0), 'the stick must not arrive with the button'
+
+        deadline = time.monotonic() + 1.0
+        while pad.left_stick == (0.0, 0.0) and time.monotonic() < deadline:
+            time.sleep(0.02)
+            out.set_action_holds(hold, source_group='controls')
+        assert pad.buttons == ('LB',)
+        assert pad.left_stick == (0.0, 1.0), 'the stick must follow, not be postponed forever'
+
+        out.set_action_holds([], source_group='controls')
+        assert pad.buttons == ()
+        assert pad.left_stick == (0.0, 0.0)
+    finally:
+        out.close()
+
+
+def test_releasing_inside_the_lead_never_pushes_the_stick_afterwards(tmp_path):
+    import time
+    out, _mouse, _keyboard, pad = manager(tmp_path)
+    try:
+        out._combo_stick_lead = 0.08
+        out.set_action_holds([{'id': 'p', 'action': {'type': 'gamepad', 'target': ['LB', 'LS_UP']}}], source_group='controls')
+        out.set_action_holds([], source_group='controls')
+        time.sleep(0.15)
+        assert pad.buttons == ()
+        assert pad.left_stick == (0.0, 0.0)
+    finally:
+        out.close()
