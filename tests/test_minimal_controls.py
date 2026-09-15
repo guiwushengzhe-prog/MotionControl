@@ -56,8 +56,10 @@ def test_body_relative_zones_use_both_wrists_and_both_feet():
         assert name in kernel
     for zone in ['leftHandUpper','leftHandLower','rightHandUpper','rightHandLower','leftFoot','rightFoot']:
         assert zone in kernel
-    assert '0.40 * torso_px' in kernel and '0.66 * torso_px' in kernel
-    assert '0.58 * torso_px' in kernel and '0.52 * torso_px' in kernel
+    # Hand regions span the upper corner: bottom edge measured down from the
+    # hips (false-trigger boundary), inner edge inset from the head.
+    assert '0.40 * torso_px / ih' in kernel and '0.45 * torso_px / iw' in kernel
+    assert '1.00 * torso_px' in kernel and '0.52 * torso_px' in kernel
     assert 'headJump' in kernel and 'headJump' in app
     assert 'state["inside"] >= 2' in kernel and 'exit_frames = 1 if name == "lookGate" else 2' in kernel
     assert 'set_action_holds' in kernel
@@ -523,3 +525,196 @@ def test_optional_vertical_gate_exclusivity_pauses_only_horizontal_output():
         assert output.applied[-1][0] == pytest.approx(.2)
     finally:
         kernel.close()
+
+
+# --- provisional body-relative zone geometry -------------------------------
+# The provisional (body_relative) zones had no geometry coverage at all: the
+# only prior assertion was that the "headJump" id existed.  These cases pin the
+# two properties the user actually depends on -- a small jump must be able to
+# enter the head zone, and resting arms must never enter the hand zones.
+
+def _standing_pose(dy=0.0, dx=0.0, left_wrist=None, right_wrist=None,
+                   left_ankle=None, right_ankle=None):
+    """One upright frame.  dy<0 lifts the whole body, as a real jump does."""
+    def pt(x, y):
+        return {'x': x + dx, 'y': y + dy, 'score': .95}
+    return {
+        'nose': pt(.50, .30),
+        'left_ear': pt(.47, .31), 'right_ear': pt(.53, .31),
+        'left_shoulder': pt(.42, .40), 'right_shoulder': pt(.58, .40),
+        'left_hip': pt(.45, .64), 'right_hip': pt(.55, .64),
+        'left_knee': pt(.46, .80), 'right_knee': pt(.54, .80),
+        # Feet stand on the floor line unless a case overrides them.
+        'left_ankle': pt(*(left_ankle or (.46, .95))),
+        'right_ankle': pt(*(right_ankle or (.54, .95))),
+        # Arms hang naturally at hip height unless a case overrides them.
+        'left_wrist': pt(*(left_wrist or (.40, .66))),
+        'right_wrist': pt(*(right_wrist or (.60, .66))),
+    }
+
+
+def _zone_feeder(kernel, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr('control_kernel.time.monotonic', lambda: clock[0])
+
+    def feed(pose, count=1, step=1 / 30.0):
+        for _ in range(count):
+            clock[0] += step
+            kernel.handle_pose_map('camera', pose, width=640, height=480)
+    return feed
+
+
+def test_small_jump_can_actually_enter_the_head_zone(monkeypatch):
+    """The head zone must not ride up with the body during a jump.
+
+    Anchoring it to the live nose made it follow at ~170ms while a jump lasts
+    400-600ms, so the target stayed above the nose for the whole flight and
+    could never be entered.
+    """
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        assert kernel.zone_state['headJump']['pressed'] is False
+
+        # A jump lifts nose, shoulders and hips together by ~0.35 torso.
+        rise = .35 * .24
+        for frame in range(6):
+            feed(_standing_pose(dy=-rise * (frame + 1) / 6.0))
+        feed(_standing_pose(dy=-rise), 4)
+        assert kernel.zone_state['headJump']['pressed'] is True
+    finally:
+        kernel.close()
+
+
+def test_natural_standing_never_enters_the_enlarged_hand_zones(monkeypatch):
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 60)
+        assert kernel.zone_state['leftHand']['pressed'] is False
+        assert kernel.zone_state['rightHand']['pressed'] is False
+
+        # Raising a hand out to the side must still trigger, and the enlarged
+        # region means it no longer has to reach head height.
+        feed(_standing_pose(left_wrist=(.18, .42)), 4)
+        assert kernel.zone_state['leftHand']['pressed'] is True
+    finally:
+        kernel.close()
+
+
+def test_head_zone_follows_a_lateral_stance_change_but_not_the_jump(monkeypatch):
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        before = dict(kernel.zone_rects['headJump'])
+
+        # Stepping sideways is a sustained change: the zone must track it.
+        feed(_standing_pose(dx=.10), 90)
+        after = dict(kernel.zone_rects['headJump'])
+        assert after['x1'] - before['x1'] > .07
+        assert abs(after['y1'] - before['y1']) < .02
+    finally:
+        kernel.close()
+
+
+def test_jump_freeze_releases_after_landing(monkeypatch):
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        resting = dict(kernel.zone_rects['headJump'])
+
+        rise = .35 * .24
+        for frame in range(6):
+            feed(_standing_pose(dy=-rise * (frame + 1) / 6.0))
+        feed(_standing_pose(dy=-rise), 4)
+        feed(_standing_pose(), 60)
+
+        assert kernel.zone_state['headJump']['pressed'] is False
+        landed = dict(kernel.zone_rects['headJump'])
+        assert abs(landed['y1'] - resting['y1']) < .02
+    finally:
+        kernel.close()
+
+
+def test_foot_zone_clears_any_stance_width_but_catches_an_ordinary_side_lift(monkeypatch):
+    """The floor gap, not the width, is what rejects a planted foot.
+
+    floor_y follows the planted ankle, so a foot resting on the floor is out of
+    reach at any stance width.  That lets the region be wide enough to catch a
+    normal side lift; a narrower one needed about half a torso of lateral
+    travel and missed.
+    """
+    torso = .24
+    for ankle_x in (.46, .40, .36, .32):
+        kernel = ControlKernel(KernelOutput())
+        try:
+            feed = _zone_feeder(kernel, monkeypatch)
+            feed(_standing_pose(left_ankle=(ankle_x, .95)), 40)
+            assert kernel.zone_state['leftFoot']['pressed'] is False, f'stance {ankle_x}'
+        finally:
+            kernel.close()
+
+    for name, ankle in {
+        'small lift': (.46 - .25 * torso, .95 - .15 * torso),
+        'side lift': (.46 - .35 * torso, .95 - .25 * torso),
+        'flat step out': (.46 - .50 * torso, .95 - .10 * torso),
+    }.items():
+        kernel = ControlKernel(KernelOutput())
+        try:
+            feed = _zone_feeder(kernel, monkeypatch)
+            feed(_standing_pose(), 40)
+            feed(_standing_pose(left_ankle=ankle), 4)
+            assert kernel.zone_state['leftFoot']['pressed'] is True, name
+            assert kernel.zone_state['rightFoot']['pressed'] is False, name
+        finally:
+            kernel.close()
+
+
+def test_foot_and_hand_zones_do_not_overlap_each_other(monkeypatch):
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        z = kernel.zone_rects
+        assert z['leftHand']['y2'] < z['leftFoot']['y1']
+        assert z['rightHand']['y2'] < z['rightFoot']['y1']
+        assert z['leftFoot']['x2'] < z['rightFoot']['x1']
+    finally:
+        kernel.close()
+
+
+def test_switching_to_fixed_zones_needs_an_explicit_confirmation():
+    """Recording a scene is one-way: it leaves the follow zones behind.
+
+    Both entry points (the adjust button and the first computer-camera start)
+    funnel through ensureInitialSceneLayout, so the gate lives there.
+    """
+    page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
+    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    assert 'id="fixedZonesMask"' in page
+    assert 'id="fixedZonesConfirm"' in page and 'id="fixedZonesCancel"' in page
+    assert '不再跟随身体' in page
+    assert 'function confirmFixedZones' in app
+    # The gate must sit before the capture call, and Esc must not confirm.
+    gate = app.index('if(!(await confirmFixedZones()))')
+    assert gate < app.index("post('/api/scene/capture'")
+    assert "layer.returnValue='cancel'" in app
+    assert "resolve(layer.returnValue==='confirm')" in app
+
+
+def test_start_script_detects_wireless_adb_devices_too():
+    """A wireless adb serial is an mDNS name and can contain a space.
+
+    Splitting the "adb devices" line on whitespace truncates such a serial and
+    the tunnel is silently skipped, so the phone loses its fixed 127.0.0.1
+    address after every restart.  The tab between serial and state is the only
+    reliable delimiter.
+    """
+    script = (ROOT / 'START.ps1').read_text(encoding='utf-8')
+    assert 'reverse tcp:8765 tcp:8765' in script
+    assert "-split \"`t\"" in script
+    assert r"'^[^\s]+\s+device" not in script
+    assert r"-split '\s+'" not in script

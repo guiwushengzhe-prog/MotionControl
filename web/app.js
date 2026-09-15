@@ -616,10 +616,19 @@ async function setSource(source,enabled=true){
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function waitForPose(timeoutMs=8000){const deadline=Date.now()+timeoutMs;while(Date.now()<deadline){try{const r=await api('/api/kernel/status'),k=r?.kernel||r;if(k?.pose)return true}catch{}await sleep(250)}return false}
+function confirmFixedZones(){
+  const layer=$('#fixedZonesMask');if(!layer)return Promise.resolve(true);
+  // Esc closes with the default value, so the switch needs an explicit confirm.
+  layer.returnValue='cancel';layer.showModal();
+  return new Promise(resolve=>layer.addEventListener('close',()=>resolve(layer.returnValue==='confirm'),{once:true}));
+}
 async function ensureInitialSceneLayout(){
   if(scenePreparing)return false;
   try{
     const current=await api('/api/scene/status');renderSceneEditor(current);if(current?.configured)return true;
+    // Recording a scene permanently leaves the body-relative zones behind, so
+    // it must be a deliberate choice rather than a side effect of starting.
+    if(!(await confirmFixedZones())){notice('已取消。区域继续跟随身体，随时可以再点“调整区域位置”。');return false}
     scenePreparing=true;renderMainStatus();notice('首次使用：请站到正常游戏位置，正在自动定位 6 个体感区域…');
     if(!(await waitForPose(8000))){notice('还没有识别到头和双肩。请站到镜头前后再点“开始游戏控制”。首次定位不要求全身入镜。');return false}
     const result=await post('/api/scene/capture',{});
@@ -896,6 +905,8 @@ bind('calBtn',async()=>{await setOutput(false);await startCalibration()});bind('
 bind('calibrationCancel',startCalibration);
 $('#calibrationOverlay').addEventListener('cancel',e=>{e.preventDefault();void runAction(startCalibration)});
 $('#voiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').showModal());
+$('#fixedZonesConfirm').addEventListener('click',()=>$('#fixedZonesMask').close('confirm'));
+$('#fixedZonesCancel').addEventListener('click',()=>$('#fixedZonesMask').close('cancel'));
 $('#closeVoiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').close());
 $('#poseSource').addEventListener('change',()=>{
   desiredSource=$('#poseSource').value;$('#phoneGuide').open=desiredSource==='phone';
