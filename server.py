@@ -818,6 +818,23 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({"ok": False, "error": str(exc), **OUTPUT.status()}, 400)
 
 
+def _enable_default_xinput_merge() -> None:
+    """Merge the physical pad on startup when exactly one is plugged in.
+
+    The merge needs an explicit slot and promotes the output to gamepad mode,
+    so it stays off when nothing is connected or when the choice is ambiguous;
+    the settings page remains the way to change it afterwards.
+    """
+    try:
+        users = OUTPUT.status().get("xinput_connected_users") or []
+        if len(users) != 1:
+            return
+        OUTPUT.configure_xinput_merge(enabled=True, user=int(users[0]))
+        print(f"物理手柄合流已默认开启：手柄 {int(users[0]) + 1}")
+    except Exception as exc:  # A missing pad must never stop the service.
+        print("物理手柄合流未开启：", exc)
+
+
 def main():
     global MODEL_ROOT, MODEL_PATH
     ap = argparse.ArgumentParser()
@@ -831,6 +848,7 @@ def main():
     MODEL_PATH = resolve_full_model(MODEL_ROOT)
     RUNTIME.configure_model(MODEL_PATH)
     INPUT_BRIDGE.configure_endpoint(args.host, args.port)
+    _enable_default_xinput_merge()
     print(f"MotionControl 2.0 · body zones + motions + voice · v{VERSION}")
     print("Model root:", MODEL_ROOT or "NOT FOUND")
     print("MediaPipe Full:", MODEL_PATH or "NOT FOUND")
