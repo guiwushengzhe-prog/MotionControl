@@ -23,10 +23,11 @@ def make_handler(namespace):
 
 def test_target_game_conflict_and_legacy_request_compatibility(tmp_path):
     store = make_store(tmp_path)
-    applied, replies = [], []
+    applied, replies, released = [], [], []
     namespace = {
         "PROFILES": store, "PROFILE_UPDATE_LOCK": RLock(), "ProfileSelectionChanged": ProfileSelectionChanged,
         "KERNEL": SimpleNamespace(configure_bindings=applied.append), "INPUT_BRIDGE": SimpleNamespace(),
+        "VOICE": SimpleNamespace(_lock=RLock(), source_id="phone", _release_locked=released.append),
     }
     request = make_handler(namespace)
     request.path = "/api/game-profiles/overrides"
@@ -41,6 +42,7 @@ def test_target_game_conflict_and_legacy_request_compatibility(tmp_path):
     request.do_POST()
     assert replies[-1][0] == 200
     assert len(applied) == 1
+    assert released == ["phone"]
 
 
 @pytest.mark.parametrize("failed_input", ["body", "voice"])

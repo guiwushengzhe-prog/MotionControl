@@ -244,7 +244,12 @@ class VoiceService:
                     raise ValueError(f"暂不支持的系统命令：{target}")
             else:
                 raise ValueError(f"未知输出类型：{action_type}")
-            item = {"phrase": phrase, "type": action_type, "target": target}
+            behavior = str(raw.get("behavior", "tap")).strip().lower()
+            if behavior not in {"tap", "hold", "release"}:
+                raise ValueError("语音动作方式必须为点按、持续按住或松开")
+            if action_type == "system" and behavior != "tap":
+                raise ValueError("系统命令只能点按")
+            item = {"phrase": phrase, "type": action_type, "target": target, "behavior": behavior}
             if aliases:
                 item["synonyms"] = aliases
             result.append(item)
@@ -263,7 +268,9 @@ class VoiceService:
 
     def configure(self, items, *, wake_word=None, emergency_stop_phrases=None) -> dict:
         with self._lock:
-            self.mappings = self._validate_mappings(items)
+            mappings = self._validate_mappings(items)
+            self._release_locked(self.source_id)
+            self.mappings = mappings
             if wake_word is not None:
                 self.wake_word = self._validate_wake_word(wake_word)
             if emergency_stop_phrases is not None:
@@ -498,7 +505,15 @@ class VoiceService:
                     self.last_executed = False
                     self.last_error = str(exc)
 
-        threading.Thread(target=run, name="voice-command", daemon=True).start()
+        if action["type"] == "system":
+            threading.Thread(target=run, name="voice-command", daemon=True).start()
+        else:
+            # Output uses timer-backed pulses, so submitting under the voice lock
+            # preserves command order and prevents a late hold after disconnect.
+            with self._lock:
+                if source_id is not None and not self.source_is_active(source_id):
+                    return {"matched": False, "reason": "voice_source_inactive"}
+                run()
         return {"matched": True, "command": self.last_command, "command_id": cid, "pending": True}
 
     def _match_and_execute(self, recognized: str, *, source_id: str | None = None, enforce_wake: bool = False) -> dict | None:
@@ -554,7 +569,7 @@ class VoiceService:
                 break
         if match is None:
             return {"matched": False, "reason": "command_not_in_mapping"}
-        action = {"type": match["type"], "target": match["target"]}
+        action = {"type": match["type"], "target": match["target"], "behavior": match.get("behavior", "tap")}
         action["source"] = f"voice:{source_id}" if source_id else "voice"
         if match["type"] == "system":
             action["voice_source_id"] = source_id
@@ -573,7 +588,15 @@ class VoiceService:
                     self.last_executed = False
                     self.last_error = str(exc)
 
-        threading.Thread(target=run, name="voice-command", daemon=True).start()
+        if action["type"] == "system":
+            threading.Thread(target=run, name="voice-command", daemon=True).start()
+        else:
+            # Output uses timer-backed pulses, so submitting under the voice lock
+            # preserves command order and prevents a late hold after disconnect.
+            with self._lock:
+                if source_id is not None and not self.source_is_active(source_id):
+                    return {"matched": False, "reason": "voice_source_inactive"}
+                run()
         return {"matched": True, "command": match["phrase"], "pending": True}
 
     def _mic_callback(self, indata, frames, time_info, status) -> None:
@@ -632,6 +655,9 @@ class VoiceService:
             try:
                 data = self._mic_queue.get(timeout=0.20) if self._mic_queue is not None else None
             except queue.Empty:
+                with self._lock:
+                    if self.source_id == source_id and self.last_audio_at and time.monotonic() - self.last_audio_at > VOICE_TIMEOUT_SECONDS:
+                        self._release_locked(source_id)
                 continue
             if not data:
                 continue
@@ -642,6 +668,7 @@ class VoiceService:
                     self._ingest_pcm_locked(source_id, data)
             except Exception as exc:
                 with self._lock:
+                    self._release_locked(source_id)
                     self.last_error = str(exc)
 
     def stop_local_microphone(self) -> dict:
