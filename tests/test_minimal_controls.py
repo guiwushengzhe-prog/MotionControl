@@ -719,3 +719,18 @@ def test_start_script_detects_wireless_adb_devices_too():
     assert "-split \"`t\"" in script
     assert r"'^[^\s]+\s+device" not in script
     assert r"-split '\s+'" not in script
+
+
+def test_spare_voice_slots_are_editable_not_only_displayable():
+    """The twelve spare phrases must be assignable from the editor.
+
+    They were filtered out of the trigger list, so nothing could give them an
+    action -- yet the voice help only lists them once they have one, and the
+    phone recognises them while it cannot recognise a custom alias.  They keep
+    group 'voice' because that name selects the tap/hold/release control and
+    addresses the saved bindings; only the display splits them out.
+    """
+    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    assert "filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_'))" not in app
+    assert "slot:String(item.id||'').startsWith('game.profile_slot_')" in app
+    assert "t.group==='voice'&&!t.slot" in app and "t.group==='voice'&&t.slot" in app

@@ -65,10 +65,14 @@ const SCENE_EDIT_ZONE_IDS=Object.keys(BODY_ZONES);
 let voiceCatalog=[];
 
 function profileTriggers(){
+  // The spare slots stay in the 'voice' group: that name selects the
+  // tap/hold/release control and addresses the saved bindings.  Only the
+  // display splits them out, through a flag the group filters read.
   const voiceTriggers=voiceCatalog
-    .filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_'))
+    .filter(item=>!item.system_fixed)
     .map(item=>({
       key:`voice.${item.id}`,group:'voice',id:item.id,
+      slot:String(item.id||'').startsWith('game.profile_slot_'),
       name:`语音 · ${item.phrase}`,tapOnly:false,
       defaultBinding:item.default_action?{label:item.label,action:item.default_action}:null,
     }));
@@ -437,7 +441,8 @@ function renderProfileBindingRows(){
   const groups=[
     {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
     {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手过头顶不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
-    {id:'voice',title:'语音',help:'说出完整口令后触发一次；系统安全口令不可改',filter:t=>t.group==='voice',open:false},
+    {id:'voice',title:'语音',help:'说出完整口令后触发一次；系统安全口令不可改',filter:t=>t.group==='voice'&&!t.slot,open:false},
+    {id:'voiceSlots',title:'语音 · 备用口令',help:'口令固定但动作随你指派，手机麦克风也认得；下方“自定义口令”可自己起名，但只有电脑麦克风能识别',filter:t=>t.group==='voice'&&t.slot,open:false},
   ];
   for(const group of groups){
     const items=triggers.filter(group.filter);if(!items.length)continue;
