@@ -829,8 +829,10 @@ def _enable_default_xinput_merge() -> None:
         users = OUTPUT.status().get("xinput_connected_users") or []
         if len(users) != 1:
             return
-        OUTPUT.configure_xinput_merge(enabled=True, user=int(users[0]))
-        print(f"物理手柄合流已默认开启：手柄 {int(users[0]) + 1}")
+        # Body motion must drive the left stick too, or the merge silently drops
+        # the stick half of a mixed combo and leaves only its buttons.
+        OUTPUT.configure_xinput_merge(enabled=True, user=int(users[0]), motion_left_enabled=True)
+        print(f"物理手柄合流已默认开启：手柄 {int(users[0]) + 1}（体感可驱动左摇杆）")
     except Exception as exc:  # A missing pad must never stop the service.
         print("物理手柄合流未开启：", exc)
 
