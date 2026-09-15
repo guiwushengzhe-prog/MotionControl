@@ -344,6 +344,7 @@ class ControlKernel:
             )
         }
         self.step = {"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0}
+        self.foot_neutral: dict[str, float] = {}
         self.last_motion_emit = 0.0
 
         # Head estimation keeps observing frames, but strong exercise motion
@@ -1140,20 +1141,13 @@ class ControlKernel:
         if la and ra and max(_score(la), _score(ra)) >= 0.4:
             visible = [item for item in (la, ra) if _score(item) >= 0.4]
             floor_y = max(item["y"] for item in visible)
-            # Foot targets sit outward and above the standing ankle.  The two
-            # axes have different jobs, and keeping them separate is what makes
-            # the region safe to widen: the gap above the floor is the only
-            # thing that rejects a standing foot, and it does so no matter how
-            # wide the stance is, because floor_y tracks the planted ankle.
-            # Width therefore only decides how far the foot must travel to be
-            # in reach, and can be generous without risking a false trigger.
-            # A narrower region needed roughly half a torso of lateral travel,
-            # which missed an ordinary side lift.
+            # 自动脚区保留可见边界，稍减离地间隙以容纳浅侧踢。
+            # 原地抬脚由下方身体相对的向外伸脚证据排除，不能仅靠离地。
             foot_w, foot_h = 1.00 * torso_px, 0.60 * torso_px
             for name, side_hip, direction in (("leftFoot", lh, left_dir), ("rightFoot", rh, right_dir)):
                 next_rect = _rect_at(
                     side_hip["x"] + direction * 0.64 * torso_px / iw,
-                    floor_y - 0.36 * torso_px / ih,
+                    floor_y - 0.335 * torso_px / ih,
                     foot_w, foot_h, iw, ih,
                 )
                 old = self.zone_rects.get(name)
@@ -1186,8 +1180,28 @@ class ControlKernel:
             return False
         return math.hypot(point["x"] - cx, point["y"] - cy) <= radius
 
+    def _foot_in_circle(self, pose_map: dict[str, dict], points: tuple[str, ...], circle: dict | None) -> bool:
+        if any(self._point_in_circle(pose_map.get(point), circle) for point in points):
+            return True
+        if not circle:
+            return False
+        # 圈位于脚踝与脚尖之间时，实际脚段已穿圈，不应漏掉。
+        for endpoint in points[1:]:
+            a, b = pose_map.get(points[0]), pose_map.get(endpoint)
+            if not a or not b or min(_score(a), _score(b)) < .42:
+                continue
+            dx, dy = b["x"] - a["x"], b["y"] - a["y"]
+            length2 = dx * dx + dy * dy
+            if length2 <= 1e-10:
+                continue
+            t = _clamp(((circle["cx"] - a["x"]) * dx + (circle["cy"] - a["y"]) * dy) / length2, 0.0, 1.0)
+            if self._point_in_circle({"x": a["x"] + t * dx, "y": a["y"] + t * dy, "score": min(_score(a), _score(b))}, circle):
+                return True
+        return False
+
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
         previous_gate = bool(self.vertical_gate_active)
+        self._update_foot_neutral(pose_map)
         if self.fixed_zones_enabled:
             # Fixed zones live in raw camera normalized coordinates and never
             # follow the body. Rects are generated only for legacy clients.
@@ -1206,8 +1220,13 @@ class ControlKernel:
             if self.fixed_zones_enabled:
                 circle = self.fixed_zones.get(name)
                 inside = any(self._point_in_circle(pose_map.get(point), circle) for point in points)
+                if name in ("leftFoot", "rightFoot"):
+                    inside = self._foot_in_circle(pose_map, points, circle)
             else:
                 inside = any(self._point_in_rect(pose_map.get(point), self.zone_rects.get(name)) for point in points)
+            if name in ("leftFoot", "rightFoot"):
+                # 固定圈与跟随区均须先实际接触，再确认是向外伸脚。
+                inside = inside and self._foot_outward(pose_map, "left" if name == "leftFoot" else "right")
             if inside:
                 state["inside"] += 1
                 state["outside"] = 0
@@ -1246,6 +1265,36 @@ class ControlKernel:
         })
 
     # ---------- four existing motion rules ----------
+
+    def _foot_relative(self, pose_map: dict[str, dict], side: str) -> tuple[float, float] | None:
+        names = ("left_shoulder", "right_shoulder", "left_hip", "right_hip", "left_ankle", "right_ankle")
+        if not self._points_good(pose_map, names):
+            return None
+        shoulder = _midpoint(pose_map["left_shoulder"], pose_map["right_shoulder"])
+        hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"])
+        scale = abs(hip["y"] - shoulder["y"])
+        if scale < .025:
+            return None
+        direction = 1.0 if pose_map[side + "_shoulder"]["x"] > shoulder["x"] else -1.0
+        other = "right" if side == "left" else "left"
+        ankle, side_hip = pose_map[side + "_ankle"], pose_map[side + "_hip"]
+        lateral = direction * (ankle["x"] - side_hip["x"]) * self.width / (scale * self.height)
+        rise = (pose_map[other + "_ankle"]["y"] - ankle["y"]) / scale
+        return lateral, rise
+
+    def _update_foot_neutral(self, pose_map: dict[str, dict]) -> None:
+        # 双脚等高时记录站姿；抬脚期间冻结，避免目标追随侧踢。
+        for side in ("left", "right"):
+            relative = self._foot_relative(pose_map, side)
+            if relative is not None and abs(relative[1]) < .035:
+                self.foot_neutral[side] = relative[0]
+
+    def _foot_outward(self, pose_map: dict[str, dict], side: str) -> bool:
+        relative = self._foot_relative(pose_map, side)
+        if relative is None:
+            return False
+        lateral, rise = relative
+        return rise > .05 and lateral - self.foot_neutral.get(side, 0.0) > .16
 
     def _points_good(self, pose_map: dict[str, dict], names: tuple[str, ...], minimum: float = 0.42) -> bool:
         return all(name in pose_map and _score(pose_map[name]) >= minimum for name in names)
@@ -1347,10 +1396,26 @@ class ControlKernel:
             left_calf = left_angle < 115 and (pose_map["left_knee"]["y"] - pose_map["left_hip"]["y"]) > 0.58 * torso and (pose_map["left_ankle"]["y"] - pose_map["left_knee"]["y"]) < 0.58 * torso
             right_calf = right_angle < 115 and (pose_map["right_knee"]["y"] - pose_map["right_hip"]["y"]) > 0.58 * torso and (pose_map["right_ankle"]["y"] - pose_map["right_knee"]["y"]) < 0.58 * torso
             calf_raw = not squat_raw and (left_calf or right_calf)
-            left_lift = (pose_map["right_knee"]["y"] - pose_map["left_knee"]["y"]) > 0.16 * torso and (pose_map["right_ankle"]["y"] - pose_map["left_ankle"]["y"]) > 0.10 * torso
-            right_lift = (pose_map["left_knee"]["y"] - pose_map["right_knee"]["y"]) > 0.16 * torso and (pose_map["left_ankle"]["y"] - pose_map["right_ankle"]["y"]) > 0.10 * torso
+            def march_lift(side: str, other: str) -> bool:
+                # 膝、踝相对各自髋部同时升高；放低门槛后仍需持续和交替。
+                knee_rise = ((pose_map[other + "_knee"]["y"] - pose_map[other + "_hip"]["y"])
+                             - (pose_map[side + "_knee"]["y"] - pose_map[side + "_hip"]["y"])) / torso
+                ankle_rise = ((pose_map[other + "_ankle"]["y"] - pose_map[other + "_hip"]["y"])
+                              - (pose_map[side + "_ankle"]["y"] - pose_map[side + "_hip"]["y"])) / torso
+                held = self.step[side + "_was"]
+                lifted = knee_rise > (.035 if held else .08) and ankle_rise > (.025 if held else .065)
+                lifted = lifted and not squat_raw and not calf_raw and not self._foot_outward(pose_map, side)
+                since_key = side + "_since"
+                if not lifted:
+                    self.step.pop(since_key, None)
+                    return False
+                since = self.step.setdefault(since_key, now)
+                return held or now - since >= .035
+
+            left_lift = march_lift("left", "right")
+            right_lift = march_lift("right", "left")
             def step_event(side: str) -> None:
-                if side != self.step["last_side"] and 0.10 <= now - self.step["last_at"] <= 1.15:
+                if self.step["last_side"] and side != self.step["last_side"] and 0.10 <= now - self.step["last_at"] <= 1.50:
                     self.step["active_until"] = now + 0.70
                 self.step["last_side"], self.step["last_at"] = side, now
             if left_lift and not self.step["left_was"]:
@@ -1358,7 +1423,7 @@ class ControlKernel:
             if right_lift and not self.step["right_was"]:
                 step_event("R")
             self.step["left_was"], self.step["right_was"] = left_lift, right_lift
-            if now - self.step["last_at"] > 1.20:
+            if now - self.step["last_at"] > 1.55:
                 self.step["last_side"], self.step["active_until"] = "", 0.0
             march_raw = not squat_raw and not calf_raw and now < self.step["active_until"]
 
@@ -1396,7 +1461,8 @@ class ControlKernel:
                 side_step_jack_raw = feet_wide and arms_sideways and not jumping_jack_raw
 
         else:
-            self.step.update({"left_was": False, "right_was": False, "active_until": 0.0})
+            self.step.clear()
+            self.step.update({"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0})
 
         # This action deliberately does not depend on either wrist or ankle.
         # During exercise both are commonly occluded, while the semantic event
@@ -1746,6 +1812,8 @@ class ControlKernel:
         for state in self.pose_debounce.values():
             state.update({"active": False, "on": 0, "off": 0})
         self.trigger_previous.clear()
+        self.foot_neutral.clear()
+        self.step.clear()
         self.step.update({"left_was": False, "right_was": False, "last_side": "", "last_at": 0.0, "active_until": 0.0})
         self.head_controller.reset_tracking()
         self.head = self.head_controller.status(time.monotonic())
