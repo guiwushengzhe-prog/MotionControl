@@ -438,6 +438,16 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception:
             return None
 
+    def end_headers(self):
+        # Assets under WEB_DIR are served by the base handler, which sends only
+        # Last-Modified.  Browsers then apply heuristic caching and can keep
+        # serving a stale app.js/app.css after an edit, so a change appears not
+        # to have taken effect until a forced reload.  Everything here comes off
+        # the local disk, so there is nothing to gain by caching it.
+        if not any(line.lower().startswith(b"cache-control") for line in (self._headers_buffer or [])):
+            self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def _serve_file(self, path: Path):
         if not path.is_file():
             self.send_error(404)
