@@ -752,3 +752,22 @@ def test_gamepad_combo_is_picked_not_typed_and_poses_can_hold():
     assert "tapOnly:true" not in app, 'no trigger should be locked out of holding'
     css = (ROOT / 'web' / 'app.css').read_text(encoding='utf-8')
     assert '.combo-picker' in css
+
+
+def test_gamepad_is_the_default_output_mode_everywhere(tmp_path):
+    """Mouse mode turns the physical-pad merge back off, by design.
+
+    With the merge enabled at startup, a page still defaulting to mouse pushed
+    that mode on its first exchange and silently undid it.  The default has to
+    agree in all three places or they keep fighting on every restart.
+    """
+    out = OutputManager(tmp_path, mouse=FakeMouse(), keyboard=FakeKeyboard())
+    try:
+        assert out.status()['mode'] == 'gamepad'
+    finally:
+        out.close()
+    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    assert "mode:'gamepad'" in app
+    page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
+    modes = page.split('id="outputMode"', 1)[1].split('</select>', 1)[0]
+    assert modes.index('value="gamepad"') < modes.index('value="mouse"'), 'the first option is the one selected'
