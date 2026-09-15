@@ -132,9 +132,8 @@ def normalize_bindings(bindings: dict | None) -> dict:
             normalized = normalize_binding(binding, default_behavior=default_behavior)
             if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
                 raise ValueError("松开方式仅适用于语音映射")
-            # Cross-pose actions are explicitly edge-triggered by product design.
-            if group == "poses" and "action" in normalized:
-                normalized["action"]["behavior"] = "tap"
+            # Poses default to edge-triggered above; holding is opt-in, the
+            # same as it already was for the continuous motions.
             out[group][ident] = normalized
     return out
 
@@ -169,8 +168,6 @@ def _merge_bindings(base: dict, overrides: dict) -> dict:
         normalized = normalize_binding(value, default_behavior=default_behavior)
         if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
             raise ValueError("松开方式仅适用于语音映射")
-        if group == "poses" and "action" in normalized:
-            normalized["action"]["behavior"] = "tap"
         merged[group][ident] = normalized
     return merged
 

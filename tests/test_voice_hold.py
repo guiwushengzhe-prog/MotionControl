@@ -74,7 +74,8 @@ def test_voice_profile_preserves_hold_release_but_defaults_to_tap():
     assert result["voice.hold"]["action"]["behavior"] == "hold"
     assert result["voice.release"]["action"]["behavior"] == "release"
     assert result["voice.old"]["action"]["behavior"] == "tap"
-    assert result["pose.hands_cross"]["action"]["behavior"] == "tap"
+    # A pose now only defaults to tap; see test_game_profiles_v097 for the rule.
+    assert result["pose.hands_cross"]["action"]["behavior"] == "hold"
     with pytest.raises(ValueError):
         VoiceService._validate_mappings([dict(phrase="停止", type="system", target="OUTPUT.STOP", behavior="hold")])
 

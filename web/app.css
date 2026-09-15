@@ -111,6 +111,9 @@ summary { cursor: pointer; padding: 8px 0; font-weight: 700; }
 /* The gamepad picker adds a second control for combos; it stays hidden until
    the combo option is chosen, so the cell normally holds one row. */
 .voice-target-cell { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.combo-picker { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
+.combo-picker label { display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+.combo-picker input { width: auto; min-height: 0; }
 .voice-command-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .voice-command-card { padding: 12px; background: #1c2938; border-radius: 9px; }
 .voice-command-card small { display: block; color: var(--muted); }

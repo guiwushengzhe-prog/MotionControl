@@ -44,7 +44,7 @@ const BASE_PROFILE_TRIGGERS=[
   {key:'motion.jumping_jack',group:'motions',id:'jumping_jack',name:'开合跳'},
   {key:'motion.side_step_jack',group:'motions',id:'side_step_jack',name:'侧步开合'},
   {key:'motion.cross_knee_elbow',group:'motions',id:'cross_knee_elbow',name:'提膝碰对侧肘'},
-  {key:'pose.hands_cross',group:'poses',id:'hands_cross',name:'双手交叉',tapOnly:true},
+  {key:'pose.hands_cross',group:'poses',id:'hands_cross',name:'双手交叉'},
 ];
 const MOTION_CONFLICT_GROUPS=[
   {ids:['jumping_jack','hands_up'],label:'开合跳与双手过头'},
@@ -54,6 +54,7 @@ const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wh
 const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',X2:'侧键 2',SCROLL_UP:'向上滚',SCROLL_DOWN:'向下滚',LT:'LT',RT:'RT',L3:'L3',R3:'R3',DPAD_UP:'十字键上',DPAD_DOWN:'十字键下',DPAD_LEFT:'十字键左',DPAD_RIGHT:'十字键右',START:'Start',BACK:'Back',LS_UP:'左摇杆上',LS_DOWN:'左摇杆下',LS_LEFT:'左摇杆左',LS_RIGHT:'左摇杆右'};
 // The dispatcher rejects anything outside this set, so offer the list instead
 // of a free text field whose typos can only surface as a silent no-op in game.
+const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
 const VOICE_SYSTEM_TARGETS=[['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景']];
 const voice={status:null};
 const overlay={win:null,canvas:null,ctx:null};
@@ -416,10 +417,22 @@ function fillTargetControl(container,type,value=''){
     for(const key of meta.targets||['A','B','X','Y','LB','RB','L3','R3','START','BACK','DPAD_UP','DPAD_DOWN','DPAD_LEFT','DPAD_RIGHT']){const option=document.createElement('option');option.value=key;option.textContent=TARGET_LABELS[key]||key;select.appendChild(option)}
     const custom=document.createElement('option');custom.value='__combo__';custom.textContent='组合键…';select.appendChild(custom);
     const raw=Array.isArray(value)?value.join('+'):String(value||'A');
-    const combo=document.createElement('input');combo.type='text';combo.placeholder='例如 LB+A 或 LB+LS_UP';combo.value=raw.includes('+')?raw:'';
-    const update=()=>{const isCombo=select.value==='__combo__';select.className=isCombo?'binding-gamepad-select':'binding-target';combo.className=isCombo?'binding-target':'';combo.hidden=!isCombo};
+    // Tick the parts instead of typing "LB+LS_UP": the valid names are a fixed
+    // set, and a typo here only surfaces as a rejected save. Stick directions
+    // are offered alongside the buttons because a combo may drive both.
+    const chosen=new Set(raw.split('+').map(part=>part.trim().toUpperCase()).filter(Boolean));
+    const picker=document.createElement('div');picker.className='combo-picker';
+    const combo=document.createElement('input');combo.type='hidden';
+    const sync=()=>{combo.value=[...picker.querySelectorAll('input:checked')].map(box=>box.value).join('+')};
+    for(const key of [...(meta.targets||[]),...GAMEPAD_STICK_TARGETS]){
+      const label=document.createElement('label');const box=document.createElement('input');
+      box.type='checkbox';box.value=key;box.checked=chosen.has(key);box.addEventListener('change',sync);
+      label.append(box,document.createTextNode(TARGET_LABELS[key]||key));picker.appendChild(label);
+    }
+    sync();
+    const update=()=>{const isCombo=select.value==='__combo__';select.className=isCombo?'binding-gamepad-select':'binding-target';combo.className=isCombo?'binding-target':'';picker.hidden=!isCombo};
     select.value=[...select.options].some(o=>o.value===raw)?raw:'__combo__';
-    select.addEventListener('change',update);update();container.append(select,combo);return;
+    select.addEventListener('change',update);update();container.append(select,picker,combo);return;
   }
   if(meta.free_text){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder=meta.placeholder||'例如 W / SPACE / CTRL+W';input.value=Array.isArray(value)?value.join('+'):(value||'');container.appendChild(input);return}
   const select=document.createElement('select');select.className='binding-target';
@@ -432,7 +445,10 @@ function fillBehaviorControl(container,trigger,type,value){
   if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='—';span.dataset.value='hold';container.appendChild(span);return}
   const sel=document.createElement('select');sel.className='binding-behavior';
   for(const[v,t]of (trigger.group==='voice'?[['tap','点按'],['hold','持续按住'],['release','松开同一语音按键']]:[['hold','保持动作时持续'],['tap','进入时触发一次']])){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
-  sel.value=trigger.group==='voice'?(['tap','hold','release'].includes(value)?value:'tap'):(value==='tap'?'tap':'hold');container.appendChild(sel);
+  // Poses default to a single edge trigger on the server, so show that rather
+  // than "hold" while a pose has no binding yet.
+  const edgeDefault=trigger.group==='voice'||trigger.group==='poses';
+  sel.value=trigger.group==='voice'?(['tap','hold','release'].includes(value)?value:'tap'):(value==='tap'||(!value&&edgeDefault)?'tap':'hold');container.appendChild(sel);
 }
 function renderProfileBindingRows(){
   const box=$('#profileBindingRows');if(!box)return;box.replaceChildren();
@@ -517,8 +533,9 @@ async function retryProfileBindings(){
 }
 function scheduleProfileAutoSave(event){
   // Text inputs already saved their input event; blur must not restart a failed save
-  // or move its retry button between pointer-down and pointer-up.
-  if(event?.type==='change'&&event.target.matches('input'))return;
+  // or move its retry button between pointer-down and pointer-up.  A checkbox has
+  // no input event to rely on, so its change is the only signal it ever sends.
+  if(event?.type==='change'&&event.target.matches('input:not([type=checkbox])'))return;
   const row=event?.target.closest('.binding-row');if(!row||profileSwitching)return;
   profileDirty.add(row.dataset.trigger);profileRevision++;
   clearTimeout(profileAutoSaveTimer);
