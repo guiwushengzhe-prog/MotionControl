@@ -93,7 +93,7 @@ summary { cursor: pointer; padding: 8px 0; font-weight: 700; }
 .motion-conflict-note { grid-column: 1/-1; color: #ebbc99; }
 .motion-conflict-blocked { opacity: .65; }
 .motion-conflict-error { border-color: #d48389; }
-.voice-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 10px; margin: 10px 0; }
+.voice-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr auto; gap: 10px; margin: 10px 0; }
 .voice-row input, .voice-row select { width: 100%; min-width: 0; }
 .voice-command-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .voice-command-card { padding: 12px; background: #1c2938; border-radius: 9px; }

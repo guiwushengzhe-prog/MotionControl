@@ -135,10 +135,10 @@ def execute_voice_action(action: dict) -> dict:
                 if isinstance(binding.get("action"), dict):
                     mapped = dict(binding["action"])
                     mapped["source"] = action.get("source", "voice")
-                    return OUTPUT.execute_action(mapped)
+                    return OUTPUT.execute_voice_action(mapped)
             if command_id.startswith("game.profile_slot_"):
                 return {"executed": False, "reason": "当前游戏未设置这条备用语音"}
-        return OUTPUT.execute_action(action)
+        return OUTPUT.execute_voice_action(action)
     target = str(action.get("target", "")).strip().upper()
     # Output start/stop
     if target == "OUTPUT.START":
@@ -632,7 +632,9 @@ class Handler(SimpleHTTPRequestHandler):
                         profile = PROFILES.select(str(body.get("id", "")))
                     else:
                         profile = PROFILES.set_overrides(body.get("overrides", {}), profile_id=body.get("profile_id"))
-                    KERNEL.configure_bindings(profile.get("bindings", {}))
+                    with VOICE._lock:
+                        VOICE._release_locked(VOICE.source_id)
+                        KERNEL.configure_bindings(profile.get("bindings", {}))
                     broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
                     if broadcaster is not None:
                         broadcaster(_phone_control_payload())

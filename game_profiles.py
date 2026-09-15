@@ -91,8 +91,8 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         if invalid:
             raise ValueError("unsupported keyboard target: " + ", ".join(invalid))
     behavior = str(action.get("behavior", default_behavior)).strip().lower()
-    if behavior not in {"hold", "tap"}:
-        raise ValueError("behavior must be hold or tap")
+    if behavior not in {"hold", "tap", "release"}:
+        raise ValueError("动作方式必须为点按、持续按住或松开")
     # A wheel is an impulse by definition; allowing hold would create runaway scrolling.
     if action_type == "mouse_wheel":
         behavior = "tap"
@@ -125,8 +125,10 @@ def normalize_bindings(bindings: dict | None) -> dict:
             if not ident or not isinstance(binding, dict):
                 continue
             normalized = normalize_binding(binding, default_behavior=default_behavior)
+            if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
+                raise ValueError("松开方式仅适用于语音映射")
             # Cross-pose actions are explicitly edge-triggered by product design.
-            if group in {"poses", "voice"} and "action" in normalized:
+            if group == "poses" and "action" in normalized:
                 normalized["action"]["behavior"] = "tap"
             out[group][ident] = normalized
     return out
@@ -160,7 +162,9 @@ def _merge_bindings(base: dict, overrides: dict) -> dict:
             continue
         default_behavior = "tap" if group in {"poses", "voice"} else "hold"
         normalized = normalize_binding(value, default_behavior=default_behavior)
-        if group in {"poses", "voice"} and "action" in normalized:
+        if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
+            raise ValueError("松开方式仅适用于语音映射")
+        if group == "poses" and "action" in normalized:
             normalized["action"]["behavior"] = "tap"
         merged[group][ident] = normalized
     return merged

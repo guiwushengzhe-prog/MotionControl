@@ -1164,11 +1164,10 @@ class OutputManager:
         """Release all output contributed by one remote source immediately."""
         source = str(source)
         with self._lock:
-            self._button_sources.pop(source, None)
-            self._keyboard_sources.pop(source, None)
-            self._mouse_button_sources.pop(source, None)
-            self._left_stick_sources.pop(source, None)
-            self._trigger_sources.pop(source, None)
+            for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
+                for key in list(store):
+                    if key == source or key.startswith(source + "|voice-"):
+                        store.pop(key, None)
             try:
                 self._refresh_buttons_locked()
                 self._refresh_keyboard_locked()
@@ -1232,7 +1231,26 @@ class OutputManager:
         timer.daemon = True
         timer.start()
 
-    def execute_action(self, action: dict) -> dict:
+    def execute_voice_action(self, action: dict) -> dict:
+        """Latch by connection and canonical target; pulses never own a latch."""
+        from game_profiles import normalize_action
+        normalized = normalize_action(action, default_behavior="tap")
+        behavior = normalized["behavior"]
+        target = normalized["target"]
+        if normalized["type"] in {"keyboard", "gamepad"}:
+            parts = target if isinstance(target, list) else target.split("+")
+            target = "+".join(sorted(set(parts)))
+        owner = str(action.get("source") or "voice")
+        source = f"{owner}|voice-hold:{normalized['type']}:{target}"
+        with self._lock:
+            if behavior == "release":
+                self.clear_source(source)
+                return {"executed": True, "action": f"release:{target}"}
+            if behavior == "tap":
+                source = f"{owner}|voice-tap:{time.monotonic_ns()}"
+            return self.execute_action({**action, **normalized, "source": source, "nonblocking": True}, persistent=behavior == "hold")
+
+    def execute_action(self, action: dict, *, persistent: bool = False) -> dict:
         """Execute one discrete action without blocking the pose/control thread."""
         if not isinstance(action, dict):
             raise ValueError("action must be an object")
@@ -1303,7 +1321,8 @@ class OutputManager:
             else:
                 raise ValueError(f"不支持的输出类型：{action_type}")
             self.last_error = None
-        self._release_later(source, duration)
+        if not persistent:
+            self._release_later(source, duration)
         return {"executed": True, "action": f"{action_type}:{target}"}
 
     def _clear_motion_locked(self) -> None:
