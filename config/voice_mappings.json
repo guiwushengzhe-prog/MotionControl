@@ -20,6 +20,8 @@
     {"phrase": "重新匹配", "synonyms": ["重新适配", "匹配场景"], "type": "system", "target": "SCENE.REMATCH"},
     {"phrase": "开始输出", "synonyms": ["开启输出"], "type": "system", "target": "OUTPUT.START"},
     {"phrase": "停止输出", "synonyms": ["关闭输出"], "type": "system", "target": "OUTPUT.STOP"},
-    {"phrase": "设置中心", "synonyms": ["立即设置中心"], "type": "system", "target": "HEAD.CENTER"}
+    {"phrase": "设置中心", "synonyms": ["立即设置中心"], "type": "system", "target": "HEAD.CENTER"},
+    {"phrase": "保持右肩键", "type": "gamepad", "target": "RB", "behavior": "hold"},
+    {"phrase": "松开右肩键", "type": "gamepad", "target": "RB", "behavior": "release"}
   ]
 }

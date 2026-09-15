@@ -326,7 +326,11 @@ function bindingLabel(binding){
 function syncProfileZoneLabels(){
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){
-    const binding=bindingFor(trigger),label=bindingLabel(binding);
+    // The region is read at a glance mid-game, so show the button by itself.
+    // A profile's descriptive label ("左脚区 · LB") belongs in the mapping list;
+    // here it only shrinks the part that matters. The body part stays in <small>.
+    const binding=bindingFor(trigger);
+    const label=binding&&!binding.disabled?targetLabel(binding.action):'—';
     if(BODY_ZONES[trigger.id])BODY_ZONES[trigger.id].label=label;
     const el=$(zonePad[trigger.id]);if(el)el.textContent=label;
   }
@@ -660,7 +664,7 @@ function drawOverlayZones(octx,w,h,zones={}){
     let x=0,y=0,ww=0,hh=0;const c=state.circle,r=state.rect;
     if(c){const radius=Number(c.r)||0;ww=2*radius*w;hh=2*radius*h;x=(1-Number(c.cx)-radius)*w;y=(Number(c.cy)-radius)*h}
     else if(r){x=(1-Number(r.x2))*w;y=Number(r.y1)*h;ww=(Number(r.x2)-Number(r.x1))*w;hh=(Number(r.y2)-Number(r.y1))*h}
-    if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else if(c)octx.ellipse(x+ww/2,y+hh/2,ww/2,hh/2,0,0,Math.PI*2);else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.max(10,Math.round(w/46))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):def.label,x+ww/2,y+hh/2);octx.restore();
+    if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else if(c)octx.ellipse(x+ww/2,y+hh/2,ww/2,hh/2,0,0,Math.PI*2);else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.34,w/9)))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):def.label,x+ww/2,y+hh/2);octx.restore();
   }
 }
 function renderOverlay(map=currentPoseMap){
