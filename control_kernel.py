@@ -1423,7 +1423,15 @@ class ControlKernel:
             if right_lift and not self.step["right_was"]:
                 step_event("R")
             self.step["left_was"], self.step["right_was"] = left_lift, right_lift
-            if now - self.step["last_at"] > 1.55:
+            # A jump breaks the stepping rhythm without meaning "stop walking":
+            # both feet leave the ground together, so no alternation can be
+            # observed and the walk would otherwise expire in mid-air.  Zones
+            # are evaluated before motions, so this reads the current frame.
+            # Only an already-running walk is held; a standing jump starts none.
+            jumping = bool(self.zone_state.get("headJump", {}).get("pressed"))
+            if jumping and now < self.step["active_until"]:
+                self.step["active_until"] = now + 0.70
+            if now - self.step["last_at"] > 1.55 and not jumping:
                 self.step["last_side"], self.step["active_until"] = "", 0.0
             march_raw = not squat_raw and not calf_raw and now < self.step["active_until"]
 

@@ -133,3 +133,34 @@ def test_crossed_foot_and_tracking_loss_do_not_create_a_march_pair(monkeypatch):
         assert 'march' in kernel.motion_active
     finally:
         kernel.close()
+
+
+def test_a_jump_does_not_cut_the_walk_in_mid_air(monkeypatch):
+    """Both feet leave the ground together, so a jump shows no alternation.
+
+    The walk used to expire 0.70s after the last step regardless, which cut the
+    stick in mid-air on any jump longer than that.  A jump is a break in the
+    rhythm, not a decision to stop, so a walk already running is held through
+    it -- while a standing jump must still start no walk of its own.
+    """
+    def run(air_seconds, *, walk_first):
+        kernel = ControlKernel(KernelOutput())
+        try:
+            feed = _zone_feeder(kernel, monkeypatch)
+            rest = _standing_pose()
+            feed(rest, 20)
+            if walk_first:
+                for side in ('left', 'right', 'left', 'right'):
+                    feed(lifted(side), 5)
+                    feed(rest, 4)
+                assert 'march' in kernel.motion_active
+            return [
+                'march' in kernel.motion_active
+                for _ in range(int(air_seconds * 30))
+                if not feed(_standing_pose(dy=-.08))
+            ]
+        finally:
+            kernel.close()
+
+    assert all(run(0.8, walk_first=True)), 'walking must survive a realistic jump'
+    assert not any(run(0.5, walk_first=False)), 'a standing jump must not start a walk'
