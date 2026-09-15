@@ -106,6 +106,18 @@ BODY_MOTION_ACTION_RISK_TIMING = {
     "cross_knee_elbow": (0.030, 0.060),
 }
 
+# Head-jump anchor tuning.  The anchor exists so the target above the head can
+# track a changed stance without also riding up with a jump.  Lateral drift is
+# followed promptly; vertical drift is followed slowly and stops entirely above
+# the freeze speed.  0.35 torso lengths per second matches the coherent-vertical
+# threshold the body-motion guard already uses, and a jump peaks near 1.2.
+HEAD_JUMP_FREEZE_VY = 0.35
+HEAD_JUMP_FOLLOW_X_S = 0.35
+HEAD_JUMP_FOLLOW_Y_S = 1.50
+# A jump spans roughly 0.3-0.5 torso, so this only fires when the player truly
+# relocated or the camera was re-aimed.
+HEAD_JUMP_SNAP_TORSO = 1.20
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, float(value)))
@@ -264,6 +276,11 @@ class ControlKernel:
         self.zone_rects: dict[str, dict] = {}
         self.fixed_zones: dict[str, dict] = {}
         self.fixed_zones_enabled = False
+        # Provisional head-jump target anchor.  It deliberately does not track
+        # the nose frame by frame: a jump lifts the whole body, so a fast
+        # follower carries the target upward and the nose can never enter it.
+        self.head_jump_anchor: dict[str, float] | None = None
+        self.head_jump_prev: tuple[float, float, float] | None = None
         self.vertical_look = {
             # Before the first fixed-scene capture we still expose a provisional
             # body-relative lookGate so the six-region layout is visible and usable.
@@ -1013,7 +1030,43 @@ class ControlKernel:
             return 0.0
         return x
 
-    def _compute_body_zones(self, pose_map: dict[str, dict]) -> dict[str, dict]:
+    def _update_head_jump_anchor(self, target: dict, shoulder: dict, hip: dict, now: float) -> dict[str, float]:
+        """Track a changed stance without letting a jump carry the target away.
+
+        This measures its own coherent vertical speed rather than reading the
+        body-motion guard's: the guard runs after zone evaluation, so its value
+        would be one frame stale, and it returns early when the user switches
+        the guard off, which would silently disable the jump zone.
+        """
+        torso_n = _distance(shoulder, hip)
+        coherent_vy, dt = 0.0, 0.0
+        if self.head_jump_prev is not None and torso_n > 1e-6:
+            prev_shoulder_y, prev_hip_y, prev_at = self.head_jump_prev
+            dt = now - prev_at
+            if 1.0 / 90.0 <= dt <= 0.12:
+                shoulder_vy = (shoulder["y"] - prev_shoulder_y) / torso_n / dt
+                hip_vy = (hip["y"] - prev_hip_y) / torso_n / dt
+                # Matching signs mean the torso translated as one piece.  An arm
+                # raised overhead moves neither; a shrug moves them apart.
+                if shoulder_vy * hip_vy > 0.0:
+                    coherent_vy = min(abs(shoulder_vy), abs(hip_vy))
+        self.head_jump_prev = (float(shoulder["y"]), float(hip["y"]), float(now))
+
+        if self.head_jump_anchor is None:
+            self.head_jump_anchor = {"x": float(target["x"]), "y": float(target["y"])}
+            return self.head_jump_anchor
+        anchor = self.head_jump_anchor
+        if dt <= 0.0:
+            return anchor
+        step = min(dt, 0.12)
+        anchor["x"] += (1.0 - math.exp(-step / HEAD_JUMP_FOLLOW_X_S)) * (float(target["x"]) - anchor["x"])
+        if coherent_vy < HEAD_JUMP_FREEZE_VY:
+            anchor["y"] += (1.0 - math.exp(-step / HEAD_JUMP_FOLLOW_Y_S)) * (float(target["y"]) - anchor["y"])
+        if torso_n > 1e-6 and abs(float(target["y"]) - anchor["y"]) > HEAD_JUMP_SNAP_TORSO * torso_n:
+            anchor["y"] = float(target["y"])
+        return anchor
+
+    def _compute_body_zones(self, pose_map: dict[str, dict], now: float) -> dict[str, dict]:
         iw, ih = self.width, self.height
         ls, rs = pose_map.get("left_shoulder"), pose_map.get("right_shoulder")
         lh, rh, nose = pose_map.get("left_hip"), pose_map.get("right_hip"), pose_map.get("nose")
@@ -1033,17 +1086,30 @@ class ControlKernel:
         elif nose and _score(nose) >= 0.35:
             head_center = nose
         if head_center:
-            # One broad region per hand contains the old ear-side and
-            # head-above targets.  Its center is halfway between those targets
-            # and its vertical span is deliberately continuous, so every hand
-            # position inside the safe side area has the same trigger meaning.
-            hand_w, hand_h = 0.40 * torso_px, 0.66 * torso_px
+            # One broad region per hand, spanning the whole upper corner on its
+            # side.  Edges are stated directly instead of as a center plus a
+            # size: the outer and top edges belong on the image border, which a
+            # centered box can only approximate.
+            #
+            # The bottom edge is the anti-false-trigger boundary and is the one
+            # number that matters here.  It is measured up from the hips because
+            # that is what predicts where a relaxed wrist hangs.  Note torso_px
+            # is normalized by the image diagonal, as everywhere else in this
+            # function, so the coefficient is not a torso fraction: measured on
+            # an upright frame it leaves about 0.75 torso between the region and
+            # a naturally hanging wrist.  The inner edge clears the head and
+            # still leaves a gap to the headJump target beside it.
+            hand_bottom = hip["y"] - 0.40 * torso_px / ih
+            hand_inset = 0.45 * torso_px / iw
             for name, direction in (("leftHand", left_dir), ("rightHand", right_dir)):
-                next_rect = _rect_at(
-                    head_center["x"] + direction * 0.82 * torso_px / iw,
-                    head_center["y"] + 0.04 * torso_px / ih,
-                    hand_w, hand_h, iw, ih,
-                )
+                inner = head_center["x"] + direction * hand_inset
+                outer = 1.0 if direction > 0 else 0.0
+                next_rect = {
+                    "x1": _clamp(min(inner, outer), 0.0, 1.0),
+                    "x2": _clamp(max(inner, outer), 0.0, 1.0),
+                    "y1": 0.0,
+                    "y2": _clamp(hand_bottom, 0.0, 1.0),
+                }
                 old = self.zone_rects.get(name)
                 rects[name] = self._smooth_rect(old, next_rect)
 
@@ -1051,9 +1117,10 @@ class ControlKernel:
             # separate jump trigger.  The nose is the only point used, so an
             # arm passing above the head cannot fire this region by accident.
             jump_anchor = nose if nose and _score(nose) >= 0.35 else head_center
+            anchor = self._update_head_jump_anchor(jump_anchor, shoulder, hip, now)
             jump_rect = _rect_at(
-                jump_anchor["x"],
-                jump_anchor["y"] - 0.30 * torso_px / ih,
+                anchor["x"],
+                anchor["y"] - 0.30 * torso_px / ih,
                 0.52 * torso_px, 0.28 * torso_px, iw, ih,
             )
             rects["headJump"] = self._smooth_rect(self.zone_rects.get("headJump"), jump_rect)
@@ -1073,14 +1140,20 @@ class ControlKernel:
         if la and ra and max(_score(la), _score(ra)) >= 0.4:
             visible = [item for item in (la, ra) if _score(item) >= 0.4]
             floor_y = max(item["y"] for item in visible)
-            # Foot targets are outward and slightly above the standing ankle:
-            # standing still stays outside, while a lateral lift/step enters
-            # the broad trigger space without requiring a high kick.
-            foot_w, foot_h = 0.58 * torso_px, 0.52 * torso_px
+            # Foot targets sit outward and above the standing ankle.  The two
+            # axes have different jobs, and keeping them separate is what makes
+            # the region safe to widen: the gap above the floor is the only
+            # thing that rejects a standing foot, and it does so no matter how
+            # wide the stance is, because floor_y tracks the planted ankle.
+            # Width therefore only decides how far the foot must travel to be
+            # in reach, and can be generous without risking a false trigger.
+            # A narrower region needed roughly half a torso of lateral travel,
+            # which missed an ordinary side lift.
+            foot_w, foot_h = 1.00 * torso_px, 0.60 * torso_px
             for name, side_hip, direction in (("leftFoot", lh, left_dir), ("rightFoot", rh, right_dir)):
                 next_rect = _rect_at(
                     side_hip["x"] + direction * 0.64 * torso_px / iw,
-                    floor_y - 0.40 * torso_px / ih,
+                    floor_y - 0.36 * torso_px / ih,
                     foot_w, foot_h, iw, ih,
                 )
                 old = self.zone_rects.get(name)
@@ -1120,7 +1193,7 @@ class ControlKernel:
             # follow the body. Rects are generated only for legacy clients.
             self.zone_rects = {}
         else:
-            self.zone_rects = self._compute_body_zones(pose_map)
+            self.zone_rects = self._compute_body_zones(pose_map, now)
         changed = False
         gate_available = (self.fixed_zones_enabled and "lookGate" in self.fixed_zones) or (not self.fixed_zones_enabled and "lookGate" in self.zone_rects)
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
@@ -1655,6 +1728,8 @@ class ControlKernel:
         for state in self.zone_state.values():
             state.update({"inside": 0, "outside": 0, "pressed": False})
         self.zone_rects = {}
+        self.head_jump_anchor = None
+        self.head_jump_prev = None
         self.vertical_gate_active = False
         self._reset_body_motion_guard_locked()
         self._reset_vertical_hand_locked()
