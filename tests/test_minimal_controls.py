@@ -734,3 +734,21 @@ def test_spare_voice_slots_are_editable_not_only_displayable():
     assert "filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_'))" not in app
     assert "slot:String(item.id||'').startsWith('game.profile_slot_')" in app
     assert "t.group==='voice'&&!t.slot" in app and "t.group==='voice'&&t.slot" in app
+
+
+def test_gamepad_combo_is_picked_not_typed_and_poses_can_hold():
+    """A combo used to be a free text field, and a pose could not hold at all.
+
+    Valid names are a fixed set, so typing "LB+LS_UP" only meant a typo would
+    surface as a rejected save; the parts are ticked instead, stick directions
+    included.  A checkbox sends no input event, so the guard that stops a text
+    blur from re-saving must not swallow its change.
+    """
+    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    assert "GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT']" in app
+    assert "picker.className='combo-picker'" in app or "picker.className=\"combo-picker\"" in app
+    assert "combo.type='hidden'" in app
+    assert "input:not([type=checkbox])" in app
+    assert "tapOnly:true" not in app, 'no trigger should be locked out of holding'
+    css = (ROOT / 'web' / 'app.css').read_text(encoding='utf-8')
+    assert '.combo-picker' in css
