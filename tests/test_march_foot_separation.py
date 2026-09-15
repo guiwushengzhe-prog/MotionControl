@@ -164,3 +164,43 @@ def test_a_jump_does_not_cut_the_walk_in_mid_air(monkeypatch):
 
     assert all(run(0.8, walk_first=True)), 'walking must survive a realistic jump'
     assert not any(run(0.5, walk_first=False)), 'a standing jump must not start a walk'
+
+
+def test_a_pose_bound_to_hold_is_actually_held(monkeypatch):
+    """The kernel used to rewrite every pose binding to a single tap.
+
+    Three separate places forced it -- two in the profile layer and this one in
+    the dispatcher -- so "hold while the pose lasts" was unreachable no matter
+    what was saved.  The recognizer releases a pose exactly like a motion, so a
+    held output ends with the pose.
+    """
+    class Recorder(KernelOutput):
+        def __init__(self):
+            super().__init__()
+            self.holds = []
+
+        def set_action_holds(self, holds, source_group='controls'):
+            self.holds = [item.get('id') for item in holds or []]
+
+    output = Recorder()
+    kernel = ControlKernel(output)
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        kernel.configure_scene_layout({'zones': {}, 'vertical_look': {'enabled': False}})
+        kernel.configure_bindings({'poses': {'hands_cross': {
+            'action': {'type': 'gamepad', 'target': ['LB', 'LS_UP'], 'behavior': 'hold'},
+        }}})
+        feed(_standing_pose(), 10)
+        assert 'pose.hands_cross' not in output.holds
+
+        with kernel._lock:
+            kernel.pose_active = {'hands_cross'}
+            kernel._dispatch_controls_locked(0.0)
+        assert 'pose.hands_cross' in output.holds, 'a pose asking to hold must reach the hold path'
+
+        with kernel._lock:
+            kernel.pose_active = set()
+            kernel._dispatch_controls_locked(0.0)
+        assert 'pose.hands_cross' not in output.holds
+    finally:
+        kernel.close()

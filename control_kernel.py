@@ -1648,10 +1648,11 @@ class ControlKernel:
             if not binding:
                 continue
             action = copy.deepcopy(binding.get("action", {}))
-            behavior = str(action.get("behavior", "hold")).lower()
-            if trigger.startswith("pose."):
-                behavior = "tap"
-                action["behavior"] = "tap"
+            # A pose defaults to a single edge trigger but may ask to be held,
+            # exactly like a motion: the recognizer drops it the same way, so a
+            # held output is released when the pose ends.  Rewriting it here
+            # made the configured behavior unreachable no matter what was saved.
+            behavior = str(action.get("behavior", "tap" if trigger.startswith("pose.") else "hold")).lower()
             if behavior == "tap":
                 if trigger not in self.trigger_previous:
                     action["source"] = f"trigger:{trigger}:{time.monotonic_ns()}"
