@@ -53,7 +53,14 @@ main { padding-top: 20px; }
 .viewer img, .viewer canvas, .zones { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
 .viewer img { object-fit: fill; }
 .zones { pointer-events: none; }
-.zone { display: none; position: absolute; border: 2px solid #67b8ee; background: #24608b33; border-radius: 50%; transform: scaleX(-1); place-content: center; text-align: center; line-height: 1.2; container-type: size; }
+/* Follow-mode regions are rectangles in the kernel's own hit test, so draw them
+   as rectangles.  An inscribed ellipse hides about a fifth of the real trigger
+   area and hides all of it in the corners, which is exactly where the hand
+   regions reach.  Fixed-scene regions are true circles and opt in through
+   .circle-shape, which renderKernelZones already sets; the overlay canvas has
+   always drawn the two shapes apart. */
+.zone { display: none; position: absolute; border: 2px solid #67b8ee; background: #24608b33; border-radius: 14px; transform: scaleX(-1); place-content: center; text-align: center; line-height: 1.2; container-type: size; }
+.zone.circle-shape { border-radius: 50%; }
 /* The button name is what the player glances at mid-game, so size it from the
    region rather than fixing it: regions differ several-fold in size. cqmin
    follows the shorter side, so the text stays inside narrow and short regions

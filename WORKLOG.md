@@ -373,3 +373,8 @@
 - 补提交 Codex 未提交的 `config/voice_mappings.json`：新增"保持右肩键"（RB hold）与"松开右肩键"（RB release）。
 - 实时取景诊断：手机为 480×864 竖屏，脚踝 y 持续在 1.47~1.50、置信度恒为 0，即双脚在画面外，内核按 0.4 阈值正确拒绝，脚区从未渲染。脚区几何调整在当前机位下不可能生效，需先让摄像头拍到脚。另记录一处退化情形：玩家贴近画面边缘时该侧手区会被压缩至零宽，未做最小宽度兜底，因为在无空间处强行造区域会带来误触。
 - 验证：`tests/` 共 `253 passed, 21 skipped`（唯一失败为既有的 `test_hand_anchor.py` 陈旧按键断言）；`node --check web/app.js` 与 `git diff --check` 通过；区域标签与字号在真实页面实测。真人手感与游戏输出未验收。
+
+### 补充：区域形状与静态资源缓存
+
+- 跟随模式的区域在内核中按矩形判定，页面却无条件以 `border-radius: 50%` 画成椭圆；`renderKernelZones` 切换的 `circle-shape` 类在样式表里没有任何对应规则。内嵌椭圆只占矩形面积的 π/4，约 21% 的真实触发区落在图形之外且集中于四角，而手区正是贴着画面角落的。改为默认矩形、`circle-shape` 才用椭圆，与悬浮窗画布一贯的区分方式一致。
+- `web/` 下的静态资源由 `SimpleHTTPRequestHandler` 默认处理，只发 `Last-Modified`，浏览器据启发式缓存会在文件改动后继续使用旧的 `app.js`／`app.css`，表现为改动"没生效"。`_serve_file` 的 `no-store` 只覆盖模型文件与场景参考图。改为在 `end_headers` 统一补 `Cache-Control: no-store`，已有该头的响应不重复发送（实测 API 路由仍只出现一次）。
