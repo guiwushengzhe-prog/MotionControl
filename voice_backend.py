@@ -295,6 +295,23 @@ class VoiceService:
         except Exception as exc:
             self.last_error = f"语音命令注册表读取失败：{exc}"
 
+    def grammar_phrases(self) -> list[str]:
+        """Every phrase the constrained grammar must accept.
+
+        The phone runs its own recognizer over the same small Chinese model, so
+        it needs this exact list to hear anything the desktop can act on.  It
+        used to hold a hard-coded copy, which silently drifted: a phrase added
+        here was recognised by the computer microphone and by nothing else.
+        """
+        phrases = [self.wake_word, *self.emergency_stop_phrases]
+        for mapping in self.mappings:
+            commands = [mapping["phrase"], *mapping.get("synonyms", [])]
+            phrases.extend(f"{self.wake_word}{command}" for command in commands)
+        # The user-facing command catalog is canonical. Legacy mappings
+        # remain aliases, but they are no longer a separate behavior path.
+        phrases.extend(command.get("phrase", "") for command in self.command_registry.values())
+        return [phrase for phrase in dict.fromkeys(phrases) if compact_text(phrase)]
+
     def _rebuild_recognizer(self) -> None:
         previous = self.recognizer
         self.recognizer = None
@@ -312,14 +329,7 @@ class VoiceService:
             self.last_error = "未找到 Vosk 中文模型；请放入 models/vosk-model-small-cn-0.22"
             return
         try:
-            phrases = [self.wake_word, *self.emergency_stop_phrases]
-            for mapping in self.mappings:
-                commands = [mapping["phrase"], *mapping.get("synonyms", [])]
-                phrases.extend(f"{self.wake_word}{command}" for command in commands)
-            # The user-facing command catalog is canonical. Legacy mappings
-            # remain aliases, but they are no longer a separate behavior path.
-            phrases.extend(command.get("phrase", "") for command in self.command_registry.values())
-            self.recognizer = VoskCommandRecognizer(self.model_path, phrases, self.sample_rate)
+            self.recognizer = VoskCommandRecognizer(self.model_path, self.grammar_phrases(), self.sample_rate)
             self.recognizer_mode = self.recognizer.mode
             self.supported_count = len(self.recognizer.supported)
             self.unsupported = list(self.recognizer.unsupported)

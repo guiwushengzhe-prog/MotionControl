@@ -6,6 +6,10 @@ from game_profiles import flatten_bindings
 from voice_backend import VoiceService
 from test_output_actions_v097 import manager
 
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_voice_latches_are_isolated_from_pulses_other_targets_and_sources(tmp_path):
     out, _, _, pad = manager(tmp_path)
@@ -73,3 +77,30 @@ def test_voice_profile_preserves_hold_release_but_defaults_to_tap():
     assert result["pose.hands_cross"]["action"]["behavior"] == "tap"
     with pytest.raises(ValueError):
         VoiceService._validate_mappings([dict(phrase="停止", type="system", target="OUTPUT.STOP", behavior="hold")])
+
+
+def test_grammar_phrases_cover_every_recognisable_phrase(tmp_path):
+    """The phone builds its recognizer from this list, so it must be complete.
+
+    It used to hold a hard-coded copy of the grammar, which silently drifted
+    from the desktop's: a phrase added here was heard by the computer
+    microphone and by nothing else.
+    """
+    service = VoiceService(tmp_path, lambda action: {'executed': True})
+    service.configure([
+        {'phrase': '保持左肩键', 'type': 'gamepad', 'target': 'LB', 'behavior': 'hold'},
+        {'phrase': '地图', 'type': 'keyboard', 'target': 'M', 'synonyms': ['打开地图']},
+    ])
+    phrases = service.grammar_phrases()
+    assert service.wake_word in phrases
+    assert service.wake_word + '保持左肩键' in phrases
+    assert service.wake_word + '打开地图' in phrases, 'synonyms must be recognisable too'
+    for command in service.command_registry.values():
+        assert command['phrase'] in phrases
+    assert len(phrases) == len(set(phrases)), 'a repeated phrase would bloat the grammar'
+    assert all(item and item.strip() for item in phrases)
+
+
+def test_phone_payload_carries_the_phrase_list():
+    server = (ROOT / 'server.py').read_text(encoding='utf-8')
+    assert '"voice_phrases": VOICE.grammar_phrases()' in server

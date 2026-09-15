@@ -1,27 +1,204 @@
 {
   "wake_word": "体感",
-  "emergency_stop_phrases": ["体感紧急停止"],
+  "emergency_stop_phrases": [
+    "体感紧急停止"
+  ],
   "mappings": [
-    {"phrase": "开始校准", "synonyms": ["校准头控", "自动校准"], "type": "system", "target": "HEAD_CALIBRATION_START"},
-    {"phrase": "开始", "synonyms": ["启动", "继续"], "type": "keyboard", "target": "ENTER"},
-    {"phrase": "停止", "synonyms": ["暂停"], "type": "keyboard", "target": "ESC"},
-    {"phrase": "上", "synonyms": ["上移", "向上", "往上"], "type": "keyboard", "target": "UP"},
-    {"phrase": "下", "synonyms": ["下移", "向下", "往下"], "type": "keyboard", "target": "DOWN"},
-    {"phrase": "左", "synonyms": ["左移", "向左", "往左"], "type": "keyboard", "target": "LEFT"},
-    {"phrase": "右", "synonyms": ["右移", "向右", "往右"], "type": "keyboard", "target": "RIGHT"},
-    {"phrase": "加速", "synonyms": ["快一点"], "type": "keyboard", "target": "W"},
-    {"phrase": "刹车", "synonyms": ["减速"], "type": "keyboard", "target": "S"},
-    {"phrase": "攻击", "synonyms": ["打击"], "type": "keyboard", "target": "J"},
-    {"phrase": "闪避", "synonyms": ["躲避"], "type": "keyboard", "target": "SPACE"},
-    {"phrase": "确认", "synonyms": ["确定"], "type": "keyboard", "target": "ENTER"},
-    {"phrase": "返回", "synonyms": ["退回"], "type": "keyboard", "target": "ESC"},
-    {"phrase": "地图", "synonyms": ["打开地图", "显示地图"], "type": "keyboard", "target": "M"},
-    {"phrase": "截图", "synonyms": ["记录场景", "场景截图"], "type": "system", "target": "SCENE.CAPTURE_REFERENCE"},
-    {"phrase": "重新匹配", "synonyms": ["重新适配", "匹配场景"], "type": "system", "target": "SCENE.REMATCH"},
-    {"phrase": "开始输出", "synonyms": ["开启输出"], "type": "system", "target": "OUTPUT.START"},
-    {"phrase": "停止输出", "synonyms": ["关闭输出"], "type": "system", "target": "OUTPUT.STOP"},
-    {"phrase": "设置中心", "synonyms": ["立即设置中心"], "type": "system", "target": "HEAD.CENTER"},
-    {"phrase": "保持右肩键", "type": "gamepad", "target": "RB", "behavior": "hold"},
-    {"phrase": "松开右肩键", "type": "gamepad", "target": "RB", "behavior": "release"}
+    {
+      "phrase": "开始校准",
+      "type": "system",
+      "target": "HEAD_CALIBRATION_START",
+      "behavior": "tap",
+      "synonyms": [
+        "校准头控",
+        "自动校准"
+      ]
+    },
+    {
+      "phrase": "开始",
+      "type": "keyboard",
+      "target": "ENTER",
+      "behavior": "tap",
+      "synonyms": [
+        "启动",
+        "继续"
+      ]
+    },
+    {
+      "phrase": "停止",
+      "type": "keyboard",
+      "target": "ESC",
+      "behavior": "tap",
+      "synonyms": [
+        "暂停"
+      ]
+    },
+    {
+      "phrase": "上",
+      "type": "keyboard",
+      "target": "UP",
+      "behavior": "tap",
+      "synonyms": [
+        "上移",
+        "向上",
+        "往上"
+      ]
+    },
+    {
+      "phrase": "下",
+      "type": "keyboard",
+      "target": "DOWN",
+      "behavior": "tap",
+      "synonyms": [
+        "下移",
+        "向下",
+        "往下"
+      ]
+    },
+    {
+      "phrase": "左",
+      "type": "keyboard",
+      "target": "LEFT",
+      "behavior": "tap",
+      "synonyms": [
+        "左移",
+        "向左",
+        "往左"
+      ]
+    },
+    {
+      "phrase": "右",
+      "type": "keyboard",
+      "target": "RIGHT",
+      "behavior": "tap",
+      "synonyms": [
+        "右移",
+        "向右",
+        "往右"
+      ]
+    },
+    {
+      "phrase": "加速",
+      "type": "keyboard",
+      "target": "W",
+      "behavior": "tap",
+      "synonyms": [
+        "快一点"
+      ]
+    },
+    {
+      "phrase": "刹车",
+      "type": "keyboard",
+      "target": "S",
+      "behavior": "tap",
+      "synonyms": [
+        "减速"
+      ]
+    },
+    {
+      "phrase": "攻击",
+      "type": "keyboard",
+      "target": "J",
+      "behavior": "tap",
+      "synonyms": [
+        "打击"
+      ]
+    },
+    {
+      "phrase": "闪避",
+      "type": "keyboard",
+      "target": "SPACE",
+      "behavior": "tap",
+      "synonyms": [
+        "躲避"
+      ]
+    },
+    {
+      "phrase": "确认",
+      "type": "keyboard",
+      "target": "ENTER",
+      "behavior": "tap",
+      "synonyms": [
+        "确定"
+      ]
+    },
+    {
+      "phrase": "返回",
+      "type": "keyboard",
+      "target": "ESC",
+      "behavior": "tap",
+      "synonyms": [
+        "退回"
+      ]
+    },
+    {
+      "phrase": "地图",
+      "type": "keyboard",
+      "target": "M",
+      "behavior": "tap",
+      "synonyms": [
+        "打开地图",
+        "显示地图"
+      ]
+    },
+    {
+      "phrase": "截图",
+      "type": "system",
+      "target": "SCENE.CAPTURE_REFERENCE",
+      "behavior": "tap",
+      "synonyms": [
+        "记录场景",
+        "场景截图"
+      ]
+    },
+    {
+      "phrase": "重新匹配",
+      "type": "system",
+      "target": "SCENE.REMATCH",
+      "behavior": "tap",
+      "synonyms": [
+        "重新适配",
+        "匹配场景"
+      ]
+    },
+    {
+      "phrase": "开始输出",
+      "type": "system",
+      "target": "OUTPUT.START",
+      "behavior": "tap",
+      "synonyms": [
+        "开启输出"
+      ]
+    },
+    {
+      "phrase": "停止输出",
+      "type": "system",
+      "target": "OUTPUT.STOP",
+      "behavior": "tap",
+      "synonyms": [
+        "关闭输出"
+      ]
+    },
+    {
+      "phrase": "设置中心",
+      "type": "system",
+      "target": "HEAD.CENTER",
+      "behavior": "tap",
+      "synonyms": [
+        "立即设置中心"
+      ]
+    },
+    {
+      "phrase": "保持左肩键",
+      "type": "gamepad",
+      "target": "LB",
+      "behavior": "hold"
+    },
+    {
+      "phrase": "松开左肩键",
+      "type": "gamepad",
+      "target": "LB",
+      "behavior": "release"
+    }
   ]
 }
