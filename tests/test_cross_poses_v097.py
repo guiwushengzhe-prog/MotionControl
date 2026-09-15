@@ -75,9 +75,14 @@ def test_new_body_actions_are_detected_as_configurable_motion_triggers():
 
 
 def test_cross_pose_dispatches_once_on_entry_not_every_frame():
+    """A pose defaults to one pulse per entry, re-armed only after it ends.
+
+    The binding omits a behavior on purpose: holding is now expressible and has
+    its own coverage, while this pins the default that most poses rely on.
+    """
     out=Output(); k=ControlKernel(out)
     try:
-        k.configure_bindings({"poses":{"hands_cross":{"action":{"type":"keyboard","target":"ESC","behavior":"hold"}}}})
+        k.configure_bindings({"poses":{"hands_cross":{"action":{"type":"keyboard","target":"ESC"}}}})
         k.pose_active={"hands_cross"}; k._dispatch_controls_locked(1.0); k._dispatch_controls_locked(1.03)
         assert len(out.pulses)==1
         assert out.pulses[0]["behavior"]=="tap" and out.pulses[0]["target"]=="ESC" and out.pulses[0]["nonblocking"] is True
