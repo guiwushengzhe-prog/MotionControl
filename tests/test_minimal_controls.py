@@ -257,7 +257,7 @@ def test_voice_exact_final_dispatches_custom_mapping(tmp_path):
     service._match_and_execute('打开 地图')
     deadline=time.time()+1
     while not calls and time.time()<deadline: time.sleep(.01)
-    assert calls == [{'type':'keyboard','target':'M','source':'voice'}]
+    assert calls == [{'type':'keyboard','target':'M','behavior':'tap','source':'voice'}]
 
 
 def test_voice_api_uses_local_mic_or_phone_command_not_browser_audio():
@@ -309,7 +309,8 @@ def test_voice_mappings_migrate_from_v071_sibling(tmp_path):
     root = tmp_path / 'MotionControl-v0.7.2-overlay'
     root.mkdir()
     service = VoiceService(root, lambda action: {'executed': True})
-    assert service.mappings == [{'phrase':'地图','type':'keyboard','target':'M'}]
+    # normalize_action now records the behavior explicitly; voice defaults to tap.
+    assert service.mappings == [{'phrase':'地图','type':'keyboard','target':'M','behavior':'tap'}]
     assert (root / 'config' / 'voice_mappings.json').is_file()
 
 
@@ -331,7 +332,7 @@ def test_voice_parser_requires_wake_word_for_phone_and_clears_source(tmp_path):
     while not calls and time.time() < deadline:
         time.sleep(.01)
     assert result['matched'] is True
-    assert calls == [{'type': 'keyboard', 'target': 'J', 'source': 'voice:mobile_voice:phone-a'}]
+    assert calls == [{'type': 'keyboard', 'target': 'J', 'behavior': 'tap', 'source': 'voice:mobile_voice:phone-a'}]
     service.disconnect('mobile_voice:phone-a')
     assert 'voice:mobile_voice:phone-a' in cleared
     assert service.status()['connected'] is False

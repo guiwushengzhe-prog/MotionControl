@@ -20,12 +20,17 @@ def test_returning_is_latched_across_center_until_motion_settles():
     assert states[6] == "RETURNING"
 
 
-def test_voice_profile_binding_is_edge_triggered():
+def test_voice_profile_binding_defaults_to_edge_triggered():
+    """Voice stays edge-triggered unless a mapping asks for otherwise.
+
+    Holding used to be impossible here: an explicit "hold" was rewritten to
+    "tap".  Latched voice output is now a supported, opt-in mapping, so the
+    guarantee this pins is the default, not the rewrite.  test_voice_hold.py
+    covers the explicit hold/release forms and their release paths.
+    """
     flat = flatten_bindings({
         "voice": {
-            "game.profile_slot_01": {
-                "action": {"type": "keyboard", "target": "M", "behavior": "hold"}
-            }
+            "game.profile_slot_01": {"action": {"type": "keyboard", "target": "M"}}
         }
     })
     assert flat["voice.game.profile_slot_01"]["action"]["behavior"] == "tap"
