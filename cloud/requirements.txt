@@ -1,0 +1,33 @@
+# Cloud service dependencies, pinned.
+#
+# The desktop app deliberately has no framework -- it has to run on a player's
+# machine with no pip. That constraint does not apply here: this runs on one
+# server we control, so the cost of FastAPI is a dependency file and the
+# benefit is dependency-injected auth, request validation and body-size caps
+# that would otherwise be hand-rolled.
+
+fastapi==0.135.1
+uvicorn[standard]==0.34.3
+pydantic==2.13.4
+pydantic-settings>=2.7
+# EmailStr is a pydantic extra, not part of the core install.
+email-validator>=2.2
+
+# SQLAlchemy 2.x async. Two rules keep the Postgres door open, and both are
+# enforced by review rather than by the library:
+#   * no SQLite-only or Postgres-only SQL in application code
+#   * every String column gets an explicit length, which Postgres requires
+sqlalchemy==2.0.43
+alembic==1.18.4
+
+# Production driver. Local development falls back to aiosqlite because this
+# machine has neither Docker nor a native Postgres; see cloud/README.md.
+psycopg[binary]>=3.2
+aiosqlite>=0.20
+
+# Argon2id, and not passlib: passlib's last release was 2020 and it breaks
+# against bcrypt 4.x. PasswordHasher has check_needs_rehash built in.
+argon2-cffi==25.1.0
+
+python-multipart>=0.0.20
+httpx>=0.28
