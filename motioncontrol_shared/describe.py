@@ -99,6 +99,18 @@ GROUP_NAMES = {
 
 BEHAVIOR_NAMES = {"hold": "持续按住", "tap": "点按", "release": "松开"}
 
+# 语音里的系统命令。原样显示 HEAD_CALIBRATION_START 这种常量，对着屏幕的人
+# 得先在脑子里翻译一遍——而这些名字本来就是给人看的。
+VOICE_SYSTEM_NAMES = {
+    "HEAD_CALIBRATION_START": "开始头控校准",
+    "HEAD.CALIBRATE": "头控校准",
+    "HEAD.CENTER": "设置头控中心",
+    "OUTPUT.START": "开始输出",
+    "OUTPUT.STOP": "停止输出",
+    "SCENE.CAPTURE_REFERENCE": "记录场景参考图",
+    "SCENE.REMATCH": "重新匹配场景",
+}
+
 _AXIS_NAMES = {"LS_UP": "向上", "LS_DOWN": "向下", "LS_LEFT": "向左", "LS_RIGHT": "向右"}
 _MOUSE_NAMES = {"LEFT": "左键", "RIGHT": "右键", "MIDDLE": "中键", "X1": "侧键1", "X2": "侧键2"}
 _WHEEL_NAMES = {"SCROLL_UP": "向上滚", "SCROLL_DOWN": "向下滚"}
@@ -136,7 +148,7 @@ def describe_action(action) -> str:
     elif kind == "mouse_wheel":
         what = f"滚轮 {_WHEEL_NAMES.get(target, target)}"
     elif kind == "system":
-        what = f"系统命令 {target}"
+        what = VOICE_SYSTEM_NAMES.get(target, f"系统命令 {target}")
     else:
         what = f"{kind} {target}"
     return f"{what} · {behavior}" if behavior else what
