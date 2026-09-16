@@ -15,7 +15,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import {
   api, DOC_TYPE_NAMES, formatSize, formatTime,
-  type Profile, type Version, type Visibility,
+  type Profile, type Summary, type Version, type Visibility,
 } from "../api";
 import { user } from "../session";
 
@@ -24,6 +24,7 @@ const id = route.params.id as string;
 
 const profile = ref<Profile | null>(null);
 const versions = ref<Version[]>([]);
+const summary = ref<Summary | null>(null);
 const loading = ref(true);
 const error = ref("");
 const busy = ref("");
@@ -37,6 +38,10 @@ async function load() {
   try {
     profile.value = await api.profile(id);
     versions.value = await api.versions(id);
+    const current = profile.value.current_version;
+    // 说明是服务端从文档本身生成的。它取不到不该让整页打不开——版本历史和
+    // 下载按钮仍然有用。
+    summary.value = current ? await api.summary(id, current.id).catch(() => null) : null;
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "读取失败";
   } finally {
@@ -129,6 +134,63 @@ onMounted(load);
       <p class="notice" v-if="notice">{{ notice }}</p>
       <p class="error" v-if="error">{{ error }}</p>
 
+      <!-- 这一段由服务端从存下来的文档生成，不是上传者写的简介：简介可能是空的、
+           过时的，或者和文件内容根本对不上。 -->
+      <section v-if="summary" class="summary">
+        <h2>这份配置做什么</h2>
+        <p class="headline">{{ summary.headline }}</p>
+        <p class="hint small">
+          以下内容由服务器从 v{{ summary.revision_no }} 的文件本身读出，逐条对应。
+        </p>
+
+        <template v-if="summary.games">
+          <div v-for="game in summary.games" :key="game.game_id" class="game">
+            <h3>
+              {{ game.game_id }}
+              <span v-if="game.game_id === summary.selected_id" class="badge">上传时选中</span>
+              <span class="muted">· {{ game.total }} 条</span>
+            </h3>
+            <div v-for="group in game.groups" :key="group.key" class="group">
+              <h4>{{ group.name }}<span class="muted"> · {{ group.items.length }}</span></h4>
+              <ul>
+                <li v-for="item in group.items" :key="item.trigger">
+                  <span class="what">{{ item.name }}</span>
+                  <span class="arrow">→</span>
+                  <span :class="{ off: item.disabled }">{{ item.action }}</span>
+                  <!-- 两个历史 id 落到同一块物理区域时会一起触发，不说用户会误解。 -->
+                  <em v-if="item.runtime_zone" class="muted">（实际是{{ item.runtime_zone }}）</em>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="summary.kind === 'voice_mappings'">
+          <p class="hint" v-if="summary.emergency_stop_phrases?.length">
+            紧急停止：{{ summary.emergency_stop_phrases.join("、") }}
+          </p>
+          <ul class="flat">
+            <li v-for="item in summary.items" :key="item.phrase">
+              <span class="what">{{ item.phrase }}</span>
+              <span v-if="item.synonyms?.length" class="muted">（{{ item.synonyms.join("、") }}）</span>
+              <span class="arrow">→</span>
+              <span>{{ item.action }}</span>
+            </li>
+          </ul>
+        </template>
+
+        <template v-else>
+          <ul class="flat">
+            <li v-for="item in summary.items" :key="item.name">
+              <span class="what" :class="{ off: !item.enabled }">{{ item.name }}</span>
+              <span class="arrow">→</span>
+              <span :class="{ off: !item.enabled }">{{ item.action }}</span>
+              <em v-if="!item.enabled" class="muted">（未启用）</em>
+            </li>
+          </ul>
+        </template>
+      </section>
+
       <h2>版本历史</h2>
       <p class="hint">
         版本不可修改。回滚会新建一个版本，内容取自旧版本，中间的记录一条都不会消失。
@@ -191,4 +253,19 @@ tr.current { background: var(--chip); }
 .note { color: var(--muted); }
 code { font-size: 0.82rem; }
 .small { font-size: 0.82rem; }
+
+.summary { margin-top: 2rem; }
+.headline { font-size: 1.05rem; margin: 0.2rem 0 0.3rem; }
+.summary h3 { font-size: 0.95rem; margin: 1.25rem 0 0.4rem;
+              padding-bottom: 0.3rem; border-bottom: 1px solid var(--line); }
+.summary h4 { font-size: 0.85rem; color: var(--muted);
+              margin: 0.8rem 0 0.25rem; font-weight: 600; }
+.summary ul { list-style: none; padding: 0; margin: 0; }
+.summary li { display: flex; flex-wrap: wrap; align-items: baseline;
+              gap: 0.4rem; padding: 0.22rem 0; font-size: 0.9rem; }
+.summary .what { min-width: 8rem; }
+.summary .arrow { color: var(--muted); }
+.summary .off { color: var(--muted); text-decoration: line-through; }
+.summary .flat li { padding: 0.28rem 0; border-bottom: 1px solid var(--line); }
+.group { margin-left: 0.25rem; }
 </style>

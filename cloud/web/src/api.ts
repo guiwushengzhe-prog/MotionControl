@@ -84,6 +84,35 @@ export interface Game {
   name: string;
 }
 
+/** 服务端从存下来的文档生成的说明，不是上传者写的简介。 */
+export interface SummaryItem {
+  trigger?: string;
+  name?: string;
+  phrase?: string;
+  synonyms?: string[];
+  action: string;
+  disabled?: boolean;
+  enabled?: boolean;
+  runtime_zone?: string;
+}
+
+export interface SummaryGroup {
+  key: string;
+  name: string;
+  items: SummaryItem[];
+}
+
+export interface Summary {
+  kind: DocType;
+  revision_no: number;
+  headline: string;
+  selected_id?: string;
+  games?: { game_id: string; total: number; groups: SummaryGroup[] }[];
+  items?: SummaryItem[];
+  wake_word?: string;
+  emergency_stop_phrases?: string[];
+}
+
 export const api = {
   me: () => request<User>("/auth/me"),
   login: (email: string, password: string) => post<User>("/auth/login", { email, password }),
@@ -100,6 +129,8 @@ export const api = {
     request<Profile[]>(`/public/profiles${docType ? `?doc_type=${docType}` : ""}`),
   profile: (id: string) => request<Profile>(`/profiles/${id}`),
   versions: (id: string) => request<Version[]>(`/profiles/${id}/versions`),
+  summary: (id: string, versionId: string) =>
+    request<Summary>(`/profiles/${id}/versions/${versionId}/summary`),
 
   createProfile: (body: {
     doc_type: DocType; title: string; document: unknown;
