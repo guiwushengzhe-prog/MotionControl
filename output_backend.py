@@ -1346,7 +1346,7 @@ class OutputManager:
 
     def execute_voice_action(self, action: dict) -> dict:
         """Latch by connection and canonical target; pulses never own a latch."""
-        from game_profiles import normalize_action
+        from motioncontrol_shared.profile_schema import normalize_action
         normalized = normalize_action(action, default_behavior="tap")
         behavior = normalized["behavior"]
         target = normalized["target"]

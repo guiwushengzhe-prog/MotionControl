@@ -1,20 +1,14 @@
-"""Clean head-control engine for MotionControl 0.9.3.
+"""Head-control v5: three comparable horizontal signal routes.
 
-This module deliberately keeps head control separate from body actions and
-output backends.  It provides two estimators for A/B testing:
+- gesture_v153: personal (or generic) PnP yaw with a pitch-aware evidence guard.
+- frozen22: fixed 22-D image-feature yaw with explicitly selected pitch units.
+- gesture_v188: PnP yaw corroborated by calibrated 2D/world cues.
 
-- ``pnp``: sparse 3D head-pose estimation with OpenCV ``solvePnP``.
-- ``ratio``: a scale-free 2D face-ratio estimator that needs no OpenCV.
-
-Both estimators feed the same stable *view velocity* mapper:
-
-    head deflection from the captured neutral center -> camera velocity
-
-Returning the head to neutral therefore stops camera motion without undoing the
-view that was already accumulated in the game.  The mapper uses a One Euro
-filter, a noise-aware hysteresis deadzone and a slew-rate limiter.  It does not
-use the previous pitch-face/z weighted fusion and it never silently swaps
-between different face geometries.
+All three use the same relative gesture: outward turn moves, a held pose stops,
+and returning to a quiet neutral center rearms without reverse mouse output.
+Legacy profile/API IDs are accepted; ``classic`` now selects gesture_v153.
+One valid capture can be reused across the three horizontal policies. A new
+estimator (pnp/ratio) or camera session still requires a new neutral capture.
 """
 
 from __future__ import annotations
@@ -30,9 +24,11 @@ from pathlib import Path
 from typing import Any
 
 
-HEAD_SIGNAL_VERSION = "head-control-v4.4-gated-pitch"
+HEAD_SIGNAL_VERSION = "head-control-v5.1-calibration-compat"
 HEAD_PROFILE_COMPATIBLE_VERSIONS = {
     HEAD_SIGNAL_VERSION,
+    "head-control-v5.0-three-routes",
+    "head-control-v4.4-gated-pitch",
     "head-control-v4.3-reference-video-tuned",
 }
 HEAD_ALGORITHMS = ("pnp", "ratio")
@@ -82,9 +78,8 @@ DEFAULT_CONFIG = {
     "invert_x": False,
     "invert_y": False,
     # Horizontal (yaw) output policy; see HORIZONTAL_ALGORITHMS below.
-    # ``classic`` remains the compatibility default until v153 has been
-    # explicitly selected by a profile/API caller.
-    "horizontal_algorithm": "classic",
+    # Default to the responsive PnP route; classic is a compatibility alias.
+    "horizontal_algorithm": "gesture_v153",
     # One user-facing stability zone shared by both axes.  Automatic center
     # noise can only enlarge it, never make it smaller than this value.
     "deadzone": 0.10,
@@ -97,6 +92,11 @@ CURVE_GAMMA = 1.55
 DEADZONE_RELEASE_RATIO = 0.62
 OUTPUT_SLEW_PERCENT_PER_S = 420.0
 MAX_PNP_STEP_DEG = 35.0
+# Reacquire after repeated rejection, but require consistent valid poses before
+# allowing a new tracking segment to drive control.
+PNP_REACQUIRE_FAILURE_FRAMES = 3
+PNP_REACQUIRE_CONFIRM_FRAMES = 3
+PNP_REACQUIRE_MAX_SPREAD_DEG = 5.0
 
 # v0.9.7 intent thresholds are expressed in normalized signal units per
 # second.  Pitch is deliberately more permissive than yaw (roughly 60%) so a
@@ -113,22 +113,30 @@ PITCH_INTENT_STOP_VELOCITY = 0.026
 # ---------------------------------------------------------------------------
 # Selectable horizontal (yaw) policies.
 #
-# "classic" (default) is the baseline relative-ratchet intent machine.  The
-# additional "gesture_v153" policy is the hardened personal-PnP ratchet
-# (v59c ratchet + calibration de-rotation + multi-2D cross-axis layer), which
-# needs calibration-time world landmarks.  The pitch path, the PnP estimator
-# geometry switch and the calibration flow are shared; only the yaw intent
-# machine and the yaw branch of update() differ.
+# Keep the three established API IDs so old clients remain compatible.
+# Their v5 versions below share the same movement/return semantics, but use
+# distinct signal evidence. The removed classic mode aliases to gesture_v153.
 
-HORIZONTAL_ALGORITHMS = ("classic", "gesture_v153", "frozen22", "gesture_v188")
+HORIZONTAL_ALGORITHMS = ("gesture_v153", "frozen22", "gesture_v188")
 V153_POLICIES = frozenset(("gesture_v153", "gesture_v188"))
 FROZEN22_POLICIES = frozenset(("frozen22",))
 HORIZONTAL_ALGORITHM_VERSIONS = {
-    "classic": "v4.4-gated-pitch-ratchet-baseline",
-    "gesture_v153": "relative-ratchet-v153-personal-pnp-g12-calib-derotate-hardened",
-    "frozen22": "real-ab-equalmean-20260830-v1",
-    "gesture_v188": "relative-ratchet-v207-gap040-same-side-rescue",
+    "gesture_v153": "v5.1-pnp-optional-personal",
+    "frozen22": "v5.1-fixed22-stable-units",
+    "gesture_v188": "v5.1-consensus-shared-calibration",
 }
+HORIZONTAL_ALGORITHM_LABELS = {
+    "gesture_v153": "个性化 PnP（灵敏）",
+    "frozen22": "固定特征 2D（独立）",
+    "gesture_v188": "多信号融合（稳健）",
+}
+
+
+def _horizontal_policy(value: Any) -> str:
+    policy = str(value).lower().strip()
+    # Legacy web clients can still send the removed classic selector.
+    return "gesture_v153" if policy in {"classic", "gesture"} else policy
+
 
 # frozen22 is the audited R3 11-point / 22-dimensional horizontal
 # measurement.  The signature is a fixed research coefficient vector: runtime
@@ -331,8 +339,12 @@ class IntentAxis:
     ) -> dict:
         signal = _finite(signal, 0.0)
         if not self.last_at or not math.isfinite(self.previous_signal):
+            # There is no previous sample yet, so position cannot be treated as
+            # velocity.  Seed the derivative state silently; motion may only be
+            # inferred from the next valid sample onward.  This also prevents a
+            # tracking dropout/reset from re-triggering a held off-centre pose.
             dt = 1.0 / 30.0
-            velocity = signal / dt
+            velocity = 0.0
             raw_delta = 0.0
         else:
             dt = _clamp(now - self.last_at, 1.0 / 240.0, 0.20)
@@ -1578,7 +1590,7 @@ class _RelativeYawAxisV153:
                keep_velocity:float,return_velocity:float,stop_grace_s:float,acceleration_stop:float,
                return_step:float=.025,curve_gamma:float=1.28)->float:
         del start_velocity,keep_velocity,return_velocity,stop_grace_s,acceleration_stop,curve_gamma
-        norm=_clamp(norm,-1,1); raw=norm if raw_norm is None else _clamp(raw_norm,-1,1)
+        norm=_clamp(norm,-4,4); raw=norm if raw_norm is None else _clamp(raw_norm,-4,4)
         dt=_clamp(now-self._last_t,1/240,.10) if self._last_t else 1/30
         fd=norm-self._last_norm; rd=raw-self._last_raw_norm
         inst=fd/dt; a=self._exp_alpha(dt,self.velocity_tau); prev=self.velocity; self.velocity+=a*(inst-self.velocity)
@@ -1631,27 +1643,59 @@ class _RelativeYawAxisV153:
             if not self._return_center_seen:
                 self._cross_evidence=0.0
                 return 0.0
-            crossed_far=(
-                opp
-                and signal_dir==opp
-                and amount>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER
-                and opp*self.velocity>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_VELOCITY
-            )
-            if crossed_far:
-                sm,_,dm,em=self._trend(now,opp,.32);rsm,_,rdm,_=self._trend(now,opp,.32,raw=True)
-                if dm>.045 and rdm>.032 and sm>.090 and rsm>.050 and em>.18:
+
+            # v5.3: after a real centre crossing, allow a *deliberate* new turn
+            # on the opposite side to re-arm without requiring the user to stop
+            # dead in the narrow centre corridor first.  This fixes the old
+            # RETURNING deadlock while keeping ordinary return overshoot silent:
+            # the opposite pose must be far enough from centre, keep moving
+            # outward, and remain coherent for a sustained interval.
+            if opp and signal_dir==opp:
+                s18,_,d18,e18=self._trend(now,opp,.18)
+                rs18,_,rd18,re18=self._trend(now,opp,.18,raw=True)
+                opposite_speed=opp*self.velocity
+                deliberate_pos=amount>=max(YAW_V2_OPPOSITE_REARM_AFTER_CENTER, center*2.4)
+                deliberate_motion=(
+                    opposite_speed>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_VELOCITY
+                    and d18>=.020 and rd18>=.012
+                    and s18>=.080 and rs18>=.045
+                    and (e18>=.18 or re18>=.14)
+                )
+                if deliberate_pos and deliberate_motion:
                     self._cross_evidence+=dt
-                    if self._cross_evidence>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S:
-                        self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False;self._cross_evidence=0
-                        self._active_direction=opp;self._active_age_s=.2;self._committed=True;self._turn_mode=self._classify_mode(opp,now);self._turn_baseline=max(.04,sm*.75)
-                        if amount<YAW_V2_OPPOSITE_REARM_GUARD_MAX_ANGLE:
-                            self._opposite_rearm_guard_until=now+YAW_V2_OPPOSITE_REARM_OUTPUT_GUARD_S
-                            self._drive(opp,norm);self.output=0.0;return 0.0
-                        self._opposite_rearm_guard_until=0.0
-                        return self._drive(opp,norm)
-                else:self._cross_evidence=max(0,self._cross_evidence-dt)
+                else:
+                    self._cross_evidence=max(0.0,self._cross_evidence-dt*1.5)
+
+                # v5.3 adaptive confirmation: do not shorten the safety dwell
+                # near the centre.  Only once the new-side turn is clearly past
+                # ordinary return overshoot (>= 0.25 normalized deflection) may
+                # strong outward speed/trend reduce the required dwell.
+                opposite_rearm_s=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S
+                if amount>=.25 and deliberate_motion:
+                    speed_score=_clamp((opposite_speed-.30)/.90,0.0,1.0)
+                    trend_score=_clamp((min(s18,rs18)-.15)/.70,0.0,1.0)
+                    confidence=.65*speed_score+.35*trend_score
+                    opposite_rearm_s=_clamp(
+                        YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S-.070*confidence,
+                        .090,YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S,
+                    )
+                if self._cross_evidence>=opposite_rearm_s:
+                    self._return_latched=False
+                    self._return_from_direction=0
+                    self._return_center_seen=False
+                    self._center_stable_s=0.0
+                    self._cross_evidence=0.0
+                    self._resume_s=0.0
+                    self._clear_active()
+                    self._clear_motion_evidence()
+                    # Keep only the recent opposite-side history so the new
+                    # action is classified from the new gesture, not from the
+                    # preceding return from the old side.
+                    cutoff=now-.30
+                    self._history=[h for h in self._history if h[0]>=cutoff]
+                    return self._begin(opp,now,norm)
             else:
-                self._cross_evidence=max(0,self._cross_evidence-dt)
+                self._cross_evidence=max(0.0,self._cross_evidence-dt*2.0)
             return 0.0
 
         if amount<=center:
@@ -1678,7 +1722,7 @@ class _RelativeYawAxisV153:
             # the opposite side, never continue driving the old direction.
             # Committed turns enter the existing RETURNING clutch; tentative
             # turns simply cancel.
-            if signal_dir==-d:
+            if signal_dir==-d or d*raw < -center:
                 if self._committed:
                     center_seen=self._return_center_seen
                     self._return_latched=True;self._return_from_direction=d;self._return_center_seen=center_seen;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0.0;return 0.0
@@ -1728,6 +1772,14 @@ class _RelativeYawAxisV153:
             else:self._return_confirm_s=max(0,self._return_confirm_s-dt*.6)
             if self._committed and (huge or self._return_confirm_s>=need):
                 self._return_latched=True;self._return_from_direction=d;self._return_center_seen=False;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0;return 0.0
+            # A stationary raw source must not inherit a long-window speed
+            # lease. Keep the hold anchor so later outward motion can resume.
+            if self._committed and abs(rd18) < .004 and abs(rs18) < .025 and abs(d18) < .008:
+                self._hold_anchor=norm; self._held_from_turn=True
+                self._clear_active(); self._clear_motion_evidence()
+                self.state='STABLE_OFFSET'; self.output=0.0
+                self._history=[(now,norm,raw)]
+                return 0.0
             # Continue/stop relative to this action's own learned speed. Freeze mode for the whole turn.
             base=max(.012,self._turn_baseline)
             if self._turn_mode=='FAST': cur_speed=max(s18,s45*.7); ratio=.24; floor=.035; stop_need=.16
@@ -1759,10 +1811,10 @@ class _RelativeYawAxisV153:
                 if sm>.045 and rsm>.025 and dm>.014:return self._begin(side,now,norm)
             self.output=0;return 0.0
 
-        # A gross one-frame jump is not a human head turn.  Quarantine its
-        # filtered tail and restart trend history from the jump frame; otherwise
-        # the post-spike OneEuro tail can look like a perfectly coherent turn.
-        gross_jump=abs(fd)>=.12 or abs(rd)>=.15
+        # Scale spike rejection with frame duration: an ordinary quick turn
+        # at 15 FPS must not be rejected by a threshold tuned for 60 FPS.
+        # Quarantine truly extreme jumps and their filter tail.
+        gross_jump=abs(fd)>=max(.32,12.0*dt) or abs(rd)>=max(.40,15.0*dt)
         if gross_jump:
             self._jump_quarantine_until=now+.22
             self._history=[(now,norm,raw)]
@@ -1782,9 +1834,9 @@ class _RelativeYawAxisV153:
             fast=d18>.028 and rd18>.020 and s18>.18 and rs18>.12
             normal=d45>.018 and rd45>.012 and s45>.040 and rs45>.020 and (e45>.16 or r245>.15)
             slow=d90>.012 and rd90>.006 and s90>.010 and rs90>-.004 and (e90>.12 or r290>.20)
-            position_ok=amount>=max(center*1.10,.040)
+            position_ok=amount>=max(center*1.10, start_angle)
             candidate=bool(position_ok and (fast or normal or slow))
-            huge_step=abs(fd)>=.12 or abs(rd)>=.15
+            huge_step=gross_jump
             if candidate and huge_step:
                 if self._jump_pending_dir==d:self._jump_pending_s+=dt
                 else:self._jump_pending_dir=d;self._jump_pending_s=dt
@@ -1846,10 +1898,13 @@ class HeadPoseEstimator:
     )
 
     def __init__(self) -> None:
-        self._rvec = None
-        self._tvec = None
-        self._last_pnp: tuple[float, float, float] | None = None
+        self.reset()
         self._pnp_model = tuple(tuple(float(v) for v in p) for p in self._MODEL)
+        # Raw, centred MediaPipe-world template in metres.  Keep it separate
+        # from _pnp_model, whose personal representation is converted to mm.
+        # Re-feeding _pnp_model through set_pnp_model() would otherwise multiply
+        # an already-converted model by 1000 on every restore/recalibration.
+        self._personal_source_model: tuple[tuple[float, float, float], ...] | None = None
         self.personal_model_active = False
         self.pnp_available = self._probe_pnp()
         self.pnp_error = "" if self.pnp_available else "OpenCV/numpy 不可用"
@@ -1863,6 +1918,7 @@ class HeadPoseEstimator:
         """
         if model is None:
             self._pnp_model = tuple(tuple(float(v) for v in p) for p in self._MODEL)
+            self._personal_source_model = None
             self.personal_model_active = False
             self.reset()
             return True
@@ -1882,6 +1938,7 @@ class HeadPoseEstimator:
         # MediaPipe world coordinates are in metres.  Uniform model scale does
         # not change recovered rotation; mm keeps numerical magnitudes similar
         # to the original generic sparse-face template.
+        self._personal_source_model = tuple(tuple(float(v) for v in point) for point in centered)
         self._pnp_model = tuple((x*1000.0, y*1000.0, z*1000.0) for x, y, z in centered)
         self.personal_model_active = True
         self.reset()
@@ -1890,6 +1947,11 @@ class HeadPoseEstimator:
     @property
     def pnp_model(self) -> tuple[tuple[float, float, float], ...]:
         return self._pnp_model
+
+    @property
+    def personal_source_model(self) -> tuple[tuple[float, float, float], ...] | None:
+        """Centred personal template in the metre-space expected by set_pnp_model()."""
+        return self._personal_source_model
 
     @property
     def pnp_depth(self) -> float:
@@ -1913,6 +1975,25 @@ class HeadPoseEstimator:
         self._rvec = None
         self._tvec = None
         self._last_pnp = None
+        self._pnp_failure_frames = 0
+        self._pnp_reacquiring = False
+        self._pnp_reacquire_pose: tuple[float, float, float] | None = None
+        self._pnp_reacquire_count = 0
+
+    def _pnp_failure(self, error: str, reprojection_error: float = math.nan) -> HeadEstimate:
+        self._pnp_failure_frames += 1
+        self._pnp_reacquire_pose = None
+        self._pnp_reacquire_count = 0
+        if self._pnp_failure_frames >= PNP_REACQUIRE_FAILURE_FRAMES:
+            # Discard both the solver guess and its stale jump reference.
+            # The following frames must pass geometry and stability checks.
+            self._rvec = self._tvec = None
+            self._last_pnp = None
+            self._pnp_reacquiring = True
+        return HeadEstimate(
+            False, algorithm="pnp", error=error,
+            reprojection_error=reprojection_error,
+        )
 
     @classmethod
     def required_points(cls, algorithm: str) -> tuple[str, ...]:
@@ -1929,7 +2010,10 @@ class HeadPoseEstimator:
         algorithm = algorithm if algorithm in HEAD_ALGORITHMS else "pnp"
         ok, missing = self.validity(pose, algorithm)
         if not ok:
-            return HeadEstimate(False, algorithm=algorithm, error="缺少关键点：" + ",".join(missing))
+            error = "缺少关键点：" + ",".join(missing)
+            if algorithm == "pnp":
+                return self._pnp_failure(error)
+            return HeadEstimate(False, algorithm=algorithm, error=error)
         if algorithm == "pnp":
             return self._estimate_pnp(pose or {}, width, height)
         return self._estimate_ratio(pose or {})
@@ -1977,7 +2061,7 @@ class HeadPoseEstimator:
             if use_guess:
                 ok, rvec, tvec = cv2.solvePnP(
                     model_points, image_points, camera, dist,
-                    self._rvec, self._tvec, useExtrinsicGuess=True,
+                    self._rvec.copy(), self._tvec.copy(), useExtrinsicGuess=True,
                     flags=cv2.SOLVEPNP_ITERATIVE,
                 )
             else:
@@ -1986,31 +2070,45 @@ class HeadPoseEstimator:
                     model_points, image_points, camera, dist, flags=first_flag
                 )
             if not ok:
-                return HeadEstimate(False, algorithm="pnp", error="solvePnP 未收敛")
+                return self._pnp_failure("solvePnP 未收敛")
             R, _ = cv2.Rodrigues(rvec)
             yaw, pitch, roll = self._rotation_to_euler_deg(R)
             if not all(math.isfinite(v) for v in (yaw, pitch, roll)):
-                return HeadEstimate(False, algorithm="pnp", error="PnP 输出非有限值")
+                return self._pnp_failure("PnP 输出非有限值")
             if abs(yaw) > 90.0 or abs(pitch) > 70.0 or abs(roll) > 75.0:
-                return HeadEstimate(False, algorithm="pnp", error="PnP 姿态超出可信范围")
+                return self._pnp_failure("PnP 姿态超出可信范围")
             if self._last_pnp is not None:
                 if max(abs(yaw - self._last_pnp[0]), abs(pitch - self._last_pnp[1])) > MAX_PNP_STEP_DEG:
                     # Do not accept a one-frame branch flip.  The next frame
                     # can still converge using the previous valid guess.
-                    return HeadEstimate(False, algorithm="pnp", error="PnP 单帧跳变被拒绝")
+                    return self._pnp_failure("PnP 单帧跳变被拒绝")
             projected, _ = cv2.projectPoints(model_points, rvec, tvec, camera, dist)
             projected = projected.reshape(-1, 2)
             rmse_px = float(np.sqrt(np.mean(np.sum((projected - image_points) ** 2, axis=1))))
             face_px = max(8.0, float(np.linalg.norm(image_points[5] - image_points[6])))
             reprojection = rmse_px / face_px
-            if reprojection > 0.22:
-                return HeadEstimate(
-                    False, algorithm="pnp",
-                    error=f"PnP 重投影误差过大：{reprojection:.3f}",
-                    reprojection_error=reprojection,
+            if not math.isfinite(reprojection) or reprojection > 0.22:
+                return self._pnp_failure(
+                    f"PnP 重投影误差过大：{reprojection:.3f}", reprojection,
                 )
 
             self._rvec, self._tvec = rvec.copy(), tvec.copy()
+            self._pnp_failure_frames = 0
+            if self._pnp_reacquiring:
+                candidate = (yaw, pitch, roll)
+                reference = self._pnp_reacquire_pose
+                if reference is None or max(
+                    abs(value - previous) for value, previous in zip(candidate, reference)
+                ) > PNP_REACQUIRE_MAX_SPREAD_DEG:
+                    self._pnp_reacquire_pose = candidate
+                    self._pnp_reacquire_count = 1
+                else:
+                    self._pnp_reacquire_count += 1
+                if self._pnp_reacquire_count < PNP_REACQUIRE_CONFIRM_FRAMES:
+                    return HeadEstimate(False, algorithm="pnp", error="PnP 重新跟踪：等待姿态稳定")
+                self._pnp_reacquiring = False
+                self._pnp_reacquire_pose = None
+                self._pnp_reacquire_count = 0
             self._last_pnp = (yaw, pitch, roll)
             landmark_conf = sum(_score(pose[name]) for name in self._PNP_NAMES) / len(self._PNP_NAMES)
             geometry_conf = _clamp(1.0 - reprojection / 0.22, 0.20, 1.0)
@@ -2026,7 +2124,7 @@ class HeadPoseEstimator:
             )
         except Exception as exc:
             self.pnp_error = str(exc)
-            return HeadEstimate(False, algorithm="pnp", error=f"PnP 失败：{exc}")
+            return self._pnp_failure(f"PnP 失败：{exc}")
 
     def _estimate_ratio(self, pose: dict[str, dict]) -> HeadEstimate:
         nose = pose["nose"]
@@ -2063,6 +2161,20 @@ class HeadPoseEstimator:
 
 class HeadController:
     """Clean center-only head controller."""
+
+    # Immutable calibration values that must stay paired with the restored
+    # PnP model and Frozen22 center when a replacement calibration fails.
+    _CALIBRATION_AUX_FIELDS = (
+        "_calibration_algorithm", "_personal_policy_store",
+        "center_multi2d_proxy", "noise_multi2d_proxy",
+        "center_world_face_template", "center_world_rigid_yaw", "noise_world_rigid_yaw",
+        "center_world_yaw", "noise_world_yaw", "center_norm_z_yaw", "noise_norm_z_yaw",
+        "personal_pnp_valid_samples", "personal_pnp_median_reprojection",
+        "personal_pnp_rejection_reason", "personal_pnp_calibration_derotate_yaw",
+        "personal_pnp_calibration_derotate_roll", "personal_pnp_world_pair_yaw_deviation",
+        "personal_pnp_world_pair_yaws", "personal_pnp_center_depth",
+        "personal_pnp_current_depth", "personal_pnp_far_depth_ratio",
+    )
 
     def __init__(self, profile_path: Path | None = None) -> None:
         self.estimator = HeadPoseEstimator()
@@ -2160,20 +2272,13 @@ class HeadController:
         self.frozen22_gate_pitch_delta_deg = math.nan
         self.frozen22_gate_fast_threshold_deg = math.nan
         self.frozen22_gate_slow_threshold_deg = math.nan
+        # v188 fail-safe dropout memory.  Only an already-confirmed, previously
+        # allowed turn may bridge a very short auxiliary-signal dropout.
+        self._frozen22_gate_last_valid_t = -math.inf
+        self._frozen22_gate_last_valid_direction = 0
+        self._frozen22_gate_last_valid_scale = 0.0
         self.v188_pitch_guard_active = False
-        self.v202_pitch_output_veto_active = False
-        self.v202_return_output_veto_active = False
-        self._v202_prev_return_latched = False
-        self._v202_return_from_direction = 0
-        self._v202_last_visible_output_direction = 0
-        self._v202_last_visible_output_t = -math.inf
-        self._v202_rearm_block_direction = 0
-        self._v202_rearm_quiet_hold_direction = 0
-        self._v202_pitch_clean_s = 0.0
-        self._v202_pitch_clean_reset_ready = False
-        self._v205_same_side_rescue_s = 0.0
-        self._v205_same_side_rescue_last_t = 0.0
-        self.v205_same_side_rescue_active = False
+        self._reset_output_guards()
         self.center_personal22_feature_samples: list[tuple[float, ...]] = []
         self.center_world_head11_samples: list[tuple[tuple[float, float, float], ...]] = []
         self._calibration_restore_frozen22: tuple[
@@ -2190,6 +2295,8 @@ class HeadController:
         self.personal_pnp_rejection_reason = "未尝试"
         self._calibration_restore_model: tuple[tuple[float, float, float], ...] | None = None
         self._calibration_restore_personal_active = False
+        self._calibration_restore_center_state: dict[str, Any] | None = None
+        self._calibration_restore_aux_state: dict[str, Any] | None = None
         self.current_world_rigid_yaw = math.nan
         self.current_world_rigid_fit = math.nan
         self.center_world_rigid_yaw = math.nan
@@ -2212,19 +2319,51 @@ class HeadController:
         self.personal_pnp_far_depth_ratio = 1.0
         self._calibration_restore_depth = math.nan
         self._generic_center = (math.nan, 0.0, math.nan, 0.0)
+        self._calibration_algorithm: str | None = None
         self._personal_policy_store: dict[str, dict] = {}
         self.last_error = ""
         self.notice = ""
         self.notice_until = 0.0
+        self._last_intent_drive = 0.0
+        self._last_evidence_scale = 0.0
+        self._last_target_x = 0.0
         self._load_profile()
+
+    def _effective_estimator_algorithm(self) -> str:
+        # raw_yaw/raw_pitch/signal_pitch keep the units advertised to the
+        # existing kernel. Fixed22 has a separate, explicitly labelled yaw
+        # source; selecting it must not secretly change PnP degrees to ratios.
+        return self.config["algorithm"]
 
     def _span(self) -> tuple[float, float]:
         if self.config.get("horizontal_algorithm") in FROZEN22_POLICIES:
-            pitch_span = PNP_PITCH_SPAN_DEG if self.config["algorithm"] == "pnp" else RATIO_PITCH_SPAN
+            pitch_span = PNP_PITCH_SPAN_DEG if self._effective_estimator_algorithm() == "pnp" else RATIO_PITCH_SPAN
             return FROZEN22_YAW_SPAN_DEG, pitch_span
         if self.config["algorithm"] == "pnp":
             return PNP_YAW_SPAN_DEG, PNP_PITCH_SPAN_DEG
         return RATIO_YAW_SPAN, RATIO_PITCH_SPAN
+
+    def _reset_output_guards(self) -> None:
+        """Forget output provenance and leases when a tracking segment ends."""
+        self.v202_pitch_output_veto_active = False
+        self.v202_return_output_veto_active = False
+        self._v202_prev_return_latched = False
+        self._v202_return_from_direction = 0
+        self._v202_last_visible_output_direction = 0
+        self._v202_last_visible_output_t = -math.inf
+        self._v202_rearm_block_direction = 0
+        self._v202_rearm_quiet_hold_direction = 0
+        self._v202_pitch_clean_s = 0.0
+        self._v202_pitch_clean_reset_ready = False
+        self._v205_same_side_rescue_s = 0.0
+        self._v205_same_side_rescue_last_t = 0.0
+        self.v205_same_side_rescue_active = False
+        self._cue_direction = 0
+        self._cue_since = 0.0
+        self._cue_frames = 0
+        self._cue_lease_until = 0.0
+        self._cue_last_pitch = math.nan
+        self._cue_last_at = 0.0
 
     def _reset_filters(self) -> None:
         self._yaw_filter.reset()
@@ -2232,6 +2371,7 @@ class HeadController:
         self._head_point_filter.reset()
         self._x_intent_v153.reset()
         self._reset_frozen22_gate()
+        self._reset_output_guards()
         self.v188_pitch_guard_active = False
         self._cross_axis_lock.reset()
         self.filtered_yaw = math.nan
@@ -2264,6 +2404,9 @@ class HeadController:
         self._frozen22_history.clear()
         self.output_x = self.output_y = 0.0
         self.norm_x = self.norm_y = 0.0
+        self._last_intent_drive = 0.0
+        self._last_evidence_scale = 0.0
+        self._last_target_x = 0.0
         self._last_update = 0.0
 
     def reset_tracking(self) -> None:
@@ -2396,15 +2539,35 @@ class HeadController:
 
     def _restore_precalibration_pnp_model(self) -> None:
         set_model = getattr(self.estimator, "set_pnp_model", None)
+        restored = False
         if self._calibration_restore_personal_active and self._calibration_restore_model is not None:
             if set_model is not None:
-                set_model(self._calibration_restore_model)
-            self.personal_pnp_active = True
-            self.personal_pnp_center_depth = self._calibration_restore_depth
-            self.personal_pnp_rejection_reason = ""
+                restored = bool(set_model(self._calibration_restore_model))
+            if restored:
+                self.personal_pnp_active = True
+                self.personal_pnp_center_depth = self._calibration_restore_depth
+                self.personal_pnp_rejection_reason = ""
+        if self._calibration_restore_aux_state is not None:
+            for name, value in self._calibration_restore_aux_state.items():
+                setattr(self, name, value)
+        if self._calibration_restore_center_state is not None:
+            state = self._calibration_restore_center_state
+            self.center_yaw = float(state["center_yaw"])
+            self.noise_yaw = float(state["noise_yaw"])
+            self.center_pitch = float(state["center_pitch"])
+            self.noise_pitch = float(state["noise_pitch"])
+            self.center_yaw_proxy = float(state["center_yaw_proxy"])
+            self.noise_yaw_proxy = float(state["noise_yaw_proxy"])
+            self._generic_center = tuple(state["generic_center"])
+            self.center_quality = str(state["center_quality"])
+            self.calibrated = bool(state["calibrated"])
+            self.center_pending = bool(state["center_pending"])
+            self._recompute_deadzone()
         self._calibration_restore_model = None
         self._calibration_restore_personal_active = False
         self._calibration_restore_depth = math.nan
+        self._calibration_restore_center_state = None
+        self._calibration_restore_aux_state = None
 
     def _restore_precalibration_frozen22(self) -> None:
         saved = self._calibration_restore_frozen22
@@ -2416,6 +2579,7 @@ class HeadController:
                 self.frozen22_world_resid_rel,
                 self.frozen22_calibration_valid,
             ) = saved
+            self._recompute_deadzone()
         self._calibration_restore_frozen22 = None
 
     def _apply_policy_model(self) -> None:
@@ -2426,10 +2590,17 @@ class HeadController:
         that built it; every other policy gets the generic model and the
         generic center.
         """
-        policy = str(self.config.get("horizontal_algorithm", "classic"))
+        policy = str(self.config.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"]))
         set_model = getattr(self.estimator, "set_pnp_model", None)
         personal_active = bool(getattr(self.estimator, "personal_model_active", False))
         entry = self._personal_policy_store.get(policy)
+        if entry is None and policy in V153_POLICIES:
+            # Both PnP policies consume the same source model and center from
+            # this calibration. The cache is replaced on each new calibration.
+            entry = next((
+                self._personal_policy_store[name] for name in V153_POLICIES
+                if name in self._personal_policy_store
+            ), None)
         if (
             set_model is not None
             and entry is not None
@@ -2471,36 +2642,51 @@ class HeadController:
         horizontal_algorithm: str | None = None,
     ) -> None:
         if horizontal_algorithm is not None:
-            value = str(horizontal_algorithm).lower().strip()
+            value = _horizontal_policy(horizontal_algorithm)
             if value not in HORIZONTAL_ALGORITHMS:
                 raise ValueError(
                     "horizontal_algorithm must be one of: " + ", ".join(HORIZONTAL_ALGORITHMS)
                 )
             if value != self.config["horizontal_algorithm"]:
-                self.config["horizontal_algorithm"] = value
-                # A horizontal source change changes the measurement geometry.
-                # Require a fresh neutral center instead of silently reusing a
-                # center captured for another source.
                 if self.calibrating:
                     self.cancel_center("横向算法已切换，请重新设置中心")
-                self.calibrated = False
-                self.center_pending = True
-                self.center_quality = "未校准"
-                self.frozen22_calibration_valid = False
+                reusable = bool(
+                    self.calibrated
+                    and self._calibration_algorithm == self.config["algorithm"]
+                    and all(math.isfinite(v) for v in self._generic_center)
+                )
+                self.config["horizontal_algorithm"] = value
                 self._reset_filters()
-                # Policies share the estimator, but the personal PnP model is
-                # Personal-PnP policies share the same model lifecycle.
                 self._apply_policy_model()
+                self.calibrated = reusable
+                fixed_needs_center = value in FROZEN22_POLICIES and not self.frozen22_calibration_valid
+                self.center_pending = not reusable or fixed_needs_center
+                if not reusable:
+                    self.center_quality = "未校准"
+                    self.notice = "当前没有兼容的中心，请先校准"
+                elif fixed_needs_center:
+                    self.notice = "固定特征校准样本不足，请重新校准；其他模式的中心仍保留"
+                else:
+                    self.notice = "模式已切换，沿用本次校准；转头即可测试"
+                self.notice_until = time.monotonic() + 4.0
         if algorithm is not None:
             algorithm = str(algorithm).lower().strip()
             if algorithm not in HEAD_ALGORITHMS:
                 raise ValueError("head algorithm must be pnp or ratio")
             if algorithm != self.config["algorithm"]:
+                # Roll back the old calibration before invalidating it. A
+                # rollback must never re-enable a center in different units.
+                self.cancel_center("算法已切换，请重新设置中心")
                 self.config["algorithm"] = algorithm
                 self.calibrated = False
                 self.center_pending = True
-                self.cancel_center("算法已切换，请重新设置中心")
-                self.estimator.reset()
+                self.center_quality = "未校准"
+                self.frozen22_calibration_valid = False
+                self._personal_policy_store.clear()
+                self._calibration_algorithm = None
+                self._generic_center = (math.nan, 0.0, math.nan, 0.0)
+                self.estimator.set_pnp_model(None)
+                self.personal_pnp_active = False
                 self._reset_filters()
         if deadzone is not None:
             self.config["deadzone"] = _clamp(deadzone, 0.03, 0.25)
@@ -2521,6 +2707,10 @@ class HeadController:
 
     def start_center(self, now: float | None = None, kind: str = "manual") -> None:
         now = time.monotonic() if now is None else now
+        if self.calibrating:
+            # A repeated start must not replace the original rollback state
+            # with the temporary generic-model state of the ongoing attempt.
+            self.cancel_center()
         self._calibration_restore_frozen22 = (
             self.frozen22_center,
             self.frozen22_sigma,
@@ -2528,12 +2718,34 @@ class HeadController:
             self.frozen22_world_resid_rel,
             self.frozen22_calibration_valid,
         )
+        self._calibration_restore_center_state = {
+            "center_yaw": self.center_yaw,
+            "noise_yaw": self.noise_yaw,
+            "center_pitch": self.center_pitch,
+            "noise_pitch": self.noise_pitch,
+            "center_yaw_proxy": self.center_yaw_proxy,
+            "noise_yaw_proxy": self.noise_yaw_proxy,
+            "generic_center": tuple(self._generic_center),
+            "center_quality": self.center_quality,
+            "calibrated": self.calibrated,
+            "center_pending": self.center_pending,
+        }
+        self._calibration_restore_aux_state = {
+            name: getattr(self, name) for name in self._CALIBRATION_AUX_FIELDS
+        }
         # Always collect a new center with the generic PnP geometry first.  If
         # the attempt is cancelled or fails, restore the previously valid
         # personal model together with the already-preserved old center.
         if self.config.get("algorithm") == "pnp":
-            self._calibration_restore_model = getattr(self.estimator, "pnp_model", None) if self.personal_pnp_active else None
-            self._calibration_restore_personal_active = bool(self.personal_pnp_active)
+            # Save the metre-space source template, never the estimator's
+            # already-mm-scaled internal model.
+            self._calibration_restore_model = (
+                getattr(self.estimator, "personal_source_model", None)
+                if self.personal_pnp_active else None
+            )
+            self._calibration_restore_personal_active = bool(
+                self.personal_pnp_active and self._calibration_restore_model is not None
+            )
             self._calibration_restore_depth = self.personal_pnp_center_depth if self.personal_pnp_active else math.nan
             set_model = getattr(self.estimator, "set_pnp_model", None)
             if set_model is not None:
@@ -2609,7 +2821,7 @@ class HeadController:
         self._reset_filters()
 
     def _calibration_quality_limits(self) -> tuple[float, float]:
-        if self.config["algorithm"] == "pnp":
+        if self._effective_estimator_algorithm() == "pnp":
             return (
                 PNP_CALIBRATION_REFERENCE_SIGMA_YAW_DEG,
                 PNP_CALIBRATION_REFERENCE_SIGMA_PITCH_DEG,
@@ -2620,7 +2832,7 @@ class HeadController:
         )
 
     def _calibration_outlier_limits(self) -> tuple[float, float]:
-        if self.config["algorithm"] == "pnp":
+        if self._effective_estimator_algorithm() == "pnp":
             return PNP_CALIBRATION_OUTLIER_YAW_DEG, PNP_CALIBRATION_OUTLIER_PITCH_DEG
         return RATIO_CALIBRATION_OUTLIER_YAW, RATIO_CALIBRATION_OUTLIER_PITCH
 
@@ -2780,22 +2992,53 @@ class HeadController:
 
                 # Generic center snapshot: the center every non-v153 policy uses.
                 self._generic_center = (self.center_yaw, self.noise_yaw, self.center_pitch, self.noise_pitch)
-                active_policy = str(self.config.get("horizontal_algorithm", "classic"))
-                if active_policy in V153_POLICIES and self._activate_personal_pnp_from_center():
+                self._calibration_algorithm = self._effective_estimator_algorithm()
+                # Never pair a new 2D/world center with a personal model from
+                # an older capture. Rollback restores the whole previous cache.
+                self._personal_policy_store = {}
+                active_policy = str(self.config.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"]))
+                personal_required = active_policy in V153_POLICIES
+                had_previous_personal = bool(
+                    self._calibration_restore_personal_active
+                    and self._calibration_restore_model is not None
+                )
+                personal_ok = False
+                if personal_required:
+                    personal_ok = self._activate_personal_pnp_from_center()
+                if personal_required and personal_ok:
                     self._personal_policy_store[active_policy] = {
-                        "model": self.center_world_face_template,
+                        "model": self.estimator.personal_source_model,
                         "center": (self.center_yaw, self.noise_yaw, self.center_pitch, self.noise_pitch),
                         "depth": self.personal_pnp_center_depth,
                     }
+                elif personal_required and had_previous_personal:
+                    # Transactional recalibration: never silently downgrade an
+                    # already-valid personal policy because the new world-pose
+                    # portion failed.  Restore the previous model, matching
+                    # centre and Frozen22 calibration as one coherent state.
+                    rejection = self.personal_pnp_rejection_reason or "新个人模型校准失败"
+                    self._restore_precalibration_pnp_model()
+                    self._restore_precalibration_frozen22()
+                    self.notice = f"{rejection}；继续使用上一次有效个人校准"
                 else:
                     set_model = getattr(self.estimator, "set_pnp_model", None)
                     if set_model is not None:
                         set_model(None)
                     self.personal_pnp_active = False
-                self._calibration_restore_model = None
-                self._calibration_restore_personal_active = False
-                self._calibration_restore_depth = math.nan
-                self._calibration_restore_frozen22 = None
+                    self._calibration_restore_model = None
+                    self._calibration_restore_personal_active = False
+                    self._calibration_restore_depth = math.nan
+                    self._calibration_restore_center_state = None
+                    self._calibration_restore_aux_state = None
+                    self._calibration_restore_frozen22 = None
+                # Successful replacement consumes the rollback snapshot.
+                if personal_ok or not personal_required:
+                    self._calibration_restore_model = None
+                    self._calibration_restore_personal_active = False
+                    self._calibration_restore_depth = math.nan
+                    self._calibration_restore_center_state = None
+                    self._calibration_restore_aux_state = None
+                    self._calibration_restore_frozen22 = None
                 self.calibrated = True
                 self.center_pending = False
                 ratio_y = self.noise_yaw / max(ref_yaw_sigma, 1e-9)
@@ -2810,10 +3053,13 @@ class HeadController:
                 else:
                     self.center_quality = "噪声较大"
                 self._recompute_deadzone()
-                if self.center_quality == "噪声较大":
-                    self.notice = "校准完成 · 噪声较大，已自动扩大稳定区；需要更灵敏可重新校准"
-                else:
-                    self.notice = f"校准完成 · 质量{self.center_quality}"
+                if "继续使用上一次有效个人校准" not in self.notice:
+                    if self.center_quality == "噪声较大":
+                        self.notice = "校准完成 · 噪声较大，已自动扩大稳定区；需要更灵敏可重新校准"
+                    else:
+                        self.notice = f"校准完成 · 质量{self.center_quality}"
+                    if personal_required and not self.personal_pnp_active and self.config["algorithm"] == "pnp":
+                        self.notice += "；个人模型未采用，已使用通用 PnP"
                 self._save_profile()
         if not success:
             self._restore_precalibration_pnp_model()
@@ -2862,6 +3108,11 @@ class HeadController:
         self.frozen22_gate_pitch_delta_deg = math.nan
         self.frozen22_gate_fast_threshold_deg = math.nan
         self.frozen22_gate_slow_threshold_deg = math.nan
+        # v188 fail-safe dropout memory.  Only an already-confirmed, previously
+        # allowed turn may bridge a very short auxiliary-signal dropout.
+        self._frozen22_gate_last_valid_t = -math.inf
+        self._frozen22_gate_last_valid_direction = 0
+        self._frozen22_gate_last_valid_scale = 0.0
         self.v188_pitch_guard_active = False
 
     def _frozen22_gate_sample(self, now: float, window_s: float) -> tuple[float, float, float] | None:
@@ -2873,137 +3124,137 @@ class HeadController:
                 return yaw, pitch, world
         return None
 
-    def _frozen22_uncertainty_scale(self, vx: float, now: float) -> float:
-        """Gate the completed v153 output without feeding back into its ratchet."""
-        sign = -1.0 if self.config.get("invert_x") else 1.0
-        fy = float(self.frozen22_yaw_median) * sign if math.isfinite(self.frozen22_yaw_median) else math.nan
-        fp = float(self.filtered_pitch) if math.isfinite(self.filtered_pitch) else math.nan
-        wy = float(self.current_world_rigid_yaw) * sign if math.isfinite(self.current_world_rigid_yaw) else math.nan
+    def _horizontal_evidence_scale(self, drive: float, now: float, policy: str) -> float:
+        """Check calibrated direction evidence once, before output shaping.
 
-        if math.isfinite(fy) and math.isfinite(fp):
-            self._frozen22_gate_history.append((now, fy, fp, wy))
-            cutoff = now - FROZEN22_GATE_HISTORY_S
-            while self._frozen22_gate_history and self._frozen22_gate_history[0][0] < cutoff:
-                del self._frozen22_gate_history[0]
+        Large genuine yaw can qualify from displacement, including slow turns;
+        it does not need a 1.4-degree change inside a particular short window.
+        Pitch uses a stricter cross-axis check even with a personal PnP model.
+        No auxiliary signal invents a movement: the shared ratchet owns drive.
+        """
+        self.v188_pitch_guard_active = False
+        self.v202_pitch_output_veto_active = False
+        self.v202_return_output_veto_active = False
+        self.v205_same_side_rescue_active = False
+        if policy in FROZEN22_POLICIES:
+            self.frozen22_gate_scale = 1.0
+            self.frozen22_gate_source = "FIXED22_2D"
+            return 1.0
 
-        self.frozen22_gate_fast_delta_deg = math.nan
-        self.frozen22_gate_slow_delta_deg = math.nan
-        self.frozen22_gate_slow_world_delta_deg = math.nan
-        self.frozen22_gate_pitch_delta_deg = math.nan
-        valid = bool(
-            self.frozen22_calibration_valid
+        sign = -1.0 if self.config["invert_x"] else 1.0
+        is_pnp = self._effective_estimator_algorithm() == "pnp"
+        degree_scale = 1.0 if is_pnp else PNP_YAW_SPAN_DEG / RATIO_YAW_SPAN
+        pitch_scale = 1.0 if is_pnp else PNP_PITCH_SPAN_DEG / RATIO_PITCH_SPAN
+        main = sign * (self.control_yaw - self.center_yaw) * degree_scale
+        pitch = (self.raw.pitch - self.center_pitch) * pitch_scale
+        dt = now - self._cue_last_at if self._cue_last_at else 0.0
+        pitch_velocity = (
+            (pitch - self._cue_last_pitch) / dt
+            if 0.0 < dt <= 0.25 and math.isfinite(self._cue_last_pitch) else 0.0
+        )
+        self._cue_last_pitch, self._cue_last_at = pitch, now
+        pitch_active = abs(pitch) >= 2.5 or (abs(pitch) >= 1.0 and abs(pitch_velocity) >= 8.0)
+        direction = 1 if drive > 1e-12 else -1 if drive < -1e-12 else (1 if main > 0 else -1 if main < 0 else 0)
+
+        def stop(reason: str) -> float:
+            self._cue_direction = 0
+            self._cue_frames = 0
+            self._cue_lease_until = 0.0
+            self.frozen22_gate_scale = 0.0
+            self.frozen22_gate_source = reason
+            return 0.0
+
+        if self._x_intent_v153.return_latched:
+            return stop("RETURNING")
+        if not direction or not math.isfinite(main):
+            return stop("ZERO")
+        if policy == "gesture_v153" and not pitch_active:
+            self.frozen22_gate_scale = 1.0
+            self.frozen22_gate_source = "PNP"
+            return 1.0
+
+        main_threshold = max(0.65, 2.0 * self.noise_yaw * degree_scale)
+        main_ok = direction * main >= main_threshold
+        f22_valid = bool(
+            self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
             and math.isfinite(self.frozen22_cal_sigma_deg)
-            and math.isfinite(fy)
-            and math.isfinite(fp)
         )
-        if not valid:
-            self._frozen22_gate_direction = 0
-            self._frozen22_gate_fast_count = 0
-            self._frozen22_gate_lease_direction = 0
-            self._frozen22_gate_lease_until = 0.0
-            self.frozen22_gate_scale = 1.0
-            self.frozen22_gate_source = "DISABLED"
-            return 1.0
-
-        sigma = max(0.0, float(self.frozen22_cal_sigma_deg))
-        fast_thr = max(FROZEN22_GATE_FAST_BASE_DELTA_DEG, FROZEN22_GATE_FAST_SIGMA_MULT * sigma)
-        slow_thr = max(FROZEN22_GATE_SLOW_BASE_DELTA_DEG, FROZEN22_GATE_SLOW_SIGMA_MULT * sigma)
-        self.frozen22_gate_fast_threshold_deg = fast_thr
-        self.frozen22_gate_slow_threshold_deg = slow_thr
-
-        direction = 1 if vx > 1e-12 else (-1 if vx < -1e-12 else 0)
-        if direction == 0:
-            self.frozen22_gate_scale = 0.0
-            self.frozen22_gate_source = "ZERO"
-            return 0.0
-        if direction != self._frozen22_gate_direction:
-            self._frozen22_gate_direction = direction
-            self._frozen22_gate_fast_count = 0
-            self._frozen22_gate_lease_direction = 0
-            self._frozen22_gate_lease_until = 0.0
-
-        fast_ok = False
-        slow_ok = False
-        old = self._frozen22_gate_sample(now, FROZEN22_GATE_FAST_WINDOW_S)
-        if old is not None:
-            oy, op, _ = old
-            dy = fy - oy
-            dp = fp - op
-            self.frozen22_gate_fast_delta_deg = dy
-            self.frozen22_gate_pitch_delta_deg = dp
-            fast_ok = bool(
-                direction * dy >= fast_thr
-                and abs(dy) >= FROZEN22_GATE_FAST_PITCH_RATIO * abs(dp)
-            )
-        if fast_ok:
-            self._frozen22_gate_fast_count += 1
-        else:
-            self._frozen22_gate_fast_count = max(0, self._frozen22_gate_fast_count - 1)
-
-        committed = bool(getattr(self._x_intent_v153, "committed", False))
-        old = self._frozen22_gate_sample(now, FROZEN22_GATE_SLOW_WINDOW_S)
-        world_reliable = bool(
-            math.isfinite(wy)
+        f22 = sign * self.frozen22_yaw_median if f22_valid else math.nan
+        f22_threshold = max(0.60, 2.0 * self.frozen22_cal_sigma_deg) if f22_valid else math.inf
+        f22_ok = f22_valid and direction * f22 >= f22_threshold
+        world_valid = bool(
+            math.isfinite(self.current_world_rigid_yaw)
             and math.isfinite(self.noise_world_rigid_yaw)
-            and self.noise_world_rigid_yaw <= PERSONAL_PNP_MAX_WORLD_RIGID_SIGMA_DEG
+            and self.noise_world_rigid_yaw <= 2.5
         )
-        if committed and old is not None and world_reliable:
-            oy, op, ow = old
-            if math.isfinite(ow):
-                dy = fy - oy
-                dp = fp - op
-                dw = wy - ow
-                self.frozen22_gate_slow_delta_deg = dy
-                self.frozen22_gate_slow_world_delta_deg = dw
-                if not math.isfinite(self.frozen22_gate_pitch_delta_deg):
-                    self.frozen22_gate_pitch_delta_deg = dp
-                slow_ok = bool(
-                    direction * dy >= slow_thr
-                    and direction * dw >= FROZEN22_GATE_SLOW_WORLD_DELTA_DEG
-                    and abs(dy) >= FROZEN22_GATE_SLOW_PITCH_RATIO * abs(dp)
-                )
+        world = sign * self.current_world_rigid_yaw if world_valid else math.nan
+        world_threshold = max(0.75, 2.0 * self.noise_world_rigid_yaw) if world_valid else math.inf
+        world_ok = world_valid and direction * world >= world_threshold
+        world_opposite = world_valid and direction * world <= -world_threshold
 
-        pitch_offset = abs(fp - float(self.center_pitch))
-        yaw_offset = abs(fy)
-        self.v188_pitch_guard_active = bool(
-            pitch_offset >= V188_PITCH_GUARD_MIN_DEG
-            and yaw_offset < V188_PITCH_GUARD_YAW_TO_PITCH * pitch_offset
-            and not slow_ok
+        votes = 0
+        proxy_valid = bool(
+            self.current_multi2d_proxy is not None and self.center_multi2d_proxy is not None
+            and self.noise_multi2d_proxy is not None
+            and min(len(self.current_multi2d_proxy), len(self.center_multi2d_proxy), len(self.noise_multi2d_proxy)) >= 7
         )
-        if self.v188_pitch_guard_active:
-            self.frozen22_gate_scale = 0.0
-            self.frozen22_gate_source = "PITCH_GUARD"
-            return 0.0
-        if self._frozen22_gate_fast_count >= FROZEN22_GATE_FAST_CONFIRM_FRAMES:
-            self._frozen22_gate_lease_direction = direction
-            self._frozen22_gate_lease_until = now + FROZEN22_GATE_FAST_LEASE_S
+        if proxy_valid:
+            for index, scale in zip(MULTI2D_USE, MULTI2D_SCALE):
+                delta = sign * (self.current_multi2d_proxy[index] - self.center_multi2d_proxy[index]) / scale
+                sigma = self.noise_multi2d_proxy[index] / scale
+                if math.isfinite(delta) and math.isfinite(sigma) and direction * delta >= max(0.65, 2.0 * sigma):
+                    votes += 1
+        proxy_ok = votes >= 3
+        self._cross_axis_lock.global_votes = votes
+
+        if pitch_active:
+            # A reliable 3D cue near neutral is evidence of pitch-only motion,
+            # not a missing signal to bypass. With no 3D cue, require two 2D
+            # checks; correlated image errors remain an empirical limitation.
+            confirmed = main_ok and (world_ok if world_valid else (f22_ok and proxy_ok))
+            if not confirmed:
+                self.v188_pitch_guard_active = True
+                self.v202_pitch_output_veto_active = True
+                self._cross_axis_lock.last_mode = "PITCH_UNCONFIRMED"
+                return stop("PITCH_UNCONFIRMED")
+            source = "PITCH_WORLD" if world_ok else "PITCH_2D"
+        else:
+            if world_opposite:
+                return stop("DIRECTION_CONFLICT")
+            confirmed = main_ok and (f22_ok or world_ok or proxy_ok)
+            source = "CONSENSUS_WORLD" if world_ok else "CONSENSUS_FIXED22" if f22_ok else "CONSENSUS_2D"
+
+        if direction != self._cue_direction:
+            self._cue_direction = direction
+            self._cue_since = now
+            self._cue_frames = 0
+            self._cue_lease_until = 0.0
+        if confirmed:
+            self._cue_frames += 1
+            if self._cue_frames >= 2 and now - self._cue_since >= 0.045:
+                self._cue_lease_until = now + 0.10
+                self.frozen22_gate_scale = 1.0
+                self.frozen22_gate_source = source
+                self._cross_axis_lock.last_mode = source
+                return 1.0
+        elif now <= self._cue_lease_until and main_ok and not pitch_active and not world_opposite:
+            # Bridge only a brief loss of corroboration in the same direction.
             self.frozen22_gate_scale = 1.0
-            self.frozen22_gate_source = "FAST"
+            self.frozen22_gate_source = "CONSENSUS_GRACE"
             return 1.0
-        if slow_ok:
-            self._frozen22_gate_lease_direction = direction
-            self._frozen22_gate_lease_until = now + FROZEN22_GATE_SLOW_LEASE_S
-            self.frozen22_gate_scale = 1.0
-            self.frozen22_gate_source = "SLOW"
-            return 1.0
-        if self._frozen22_gate_lease_direction == direction and now <= self._frozen22_gate_lease_until:
-            self.frozen22_gate_scale = 1.0
-            self.frozen22_gate_source = "LEASE"
-            return 1.0
-        self._frozen22_gate_lease_direction = 0
-        self._frozen22_gate_lease_until = 0.0
-        if committed:
-            self.frozen22_gate_scale = FROZEN22_GATE_COMMITTED_FALLBACK_SCALE
-            self.frozen22_gate_source = "FALLBACK"
-            return FROZEN22_GATE_COMMITTED_FALLBACK_SCALE
+        else:
+            return stop("AUX_UNCONFIRMED")
         self.frozen22_gate_scale = 0.0
-        self.frozen22_gate_source = "BLOCK"
+        self.frozen22_gate_source = "CONFIRMING"
         return 0.0
 
     def _recompute_deadzone(self) -> None:
         span_x, span_y = self._span()
         base = float(self.config["deadzone"])
-        auto_x = (3.2 * self.noise_yaw / span_x + 0.015) if span_x > 0 else base
+        yaw_noise = self.noise_yaw
+        if self.config.get("horizontal_algorithm") in FROZEN22_POLICIES:
+            yaw_noise = self.frozen22_cal_sigma_deg if math.isfinite(self.frozen22_cal_sigma_deg) else 0.0
+        auto_x = (3.2 * yaw_noise / span_x + 0.015) if span_x > 0 else base
         auto_y = (3.2 * self.noise_pitch / span_y + 0.015) if span_y > 0 else base
         self.effective_deadzone_x = _clamp(max(base, auto_x), 0.03, 0.28)
         self.effective_deadzone_y = _clamp(max(base, auto_y), 0.03, 0.30)
@@ -3089,6 +3340,9 @@ class HeadController:
         world_pose: dict[str, dict] | list[dict] | None = None,
     ) -> tuple[float, float]:
         now = time.monotonic() if now is None else now
+        self._last_intent_drive = 0.0
+        self._last_evidence_scale = 0.0
+        self._last_target_x = 0.0
         # ``world_pose`` is optional for strict backward compatibility.  It may
         # be either the named map used by this module or the phone's raw
         # 33-point MediaPipe world list.  A caller may also embed a named map
@@ -3138,13 +3392,17 @@ class HeadController:
             if math.isfinite(ry) and math.isfinite(rfit) and rfit <= WORLD_RIGID_FIT_GROSS_MAX:
                 self.current_world_rigid_yaw = ry - (self.center_world_rigid_yaw if math.isfinite(self.center_world_rigid_yaw) else 0.0)
                 self.current_world_rigid_fit = rfit
-        policy = str(self.config.get("horizontal_algorithm", "classic"))
+        policy = str(self.config.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"]))
         estimate_pose = pose
         if policy in V153_POLICIES:
             estimate_pose = self._head_point_filter.apply(pose, HeadPoseEstimator._PNP_NAMES, now)
-        estimate = self.estimator.estimate(estimate_pose, width, height, self.config["algorithm"])
+        estimate = self.estimator.estimate(estimate_pose, width, height, self._effective_estimator_algorithm())
         self.raw = estimate
-        if not estimate.valid:
+        fixed_yaw_available = bool(
+            policy in FROZEN22_POLICIES and self.calibrated and not self.calibrating
+            and self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
+        )
+        if not estimate.valid and not fixed_yaw_available:
             self.last_error = estimate.error
             self._reset_filters()
             if self.calibrating:
@@ -3157,7 +3415,7 @@ class HeadController:
                     self.center_invalid_count += 1
                     self.notice = "正在采集：这一帧姿态无效，继续自然看向屏幕即可"
             return 0.0, 0.0
-        self.last_error = ""
+        self.last_error = "" if estimate.valid else estimate.error
 
         span_x, span_y = self._span()
 
@@ -3174,27 +3432,22 @@ class HeadController:
         # control and the kernel's gated head-pitch mode.  Before calibration
         # we still filter the absolute estimate, but never emit output.
         if self.calibrated:
-            if policy != "classic":
-                # gesture_v153 owns its near-centre silence downstream (ratchet
-                # centre zone / cross-axis floors), so the shared yaw filter
-                # must track the raw estimate continuously; resetting it to
-                # centre inside the deadband would erase slow real turns.
-                filtered_yaw = self._yaw_filter.apply(control_yaw, now)
-            else:
-                raw_x_for_release = _clamp((control_yaw - self.center_yaw) / span_x, -1.0, 1.0)
-                release_x = self.effective_deadzone_x * DEADZONE_RELEASE_RATIO
-                if abs(raw_x_for_release) <= release_x:
-                    self._yaw_filter.reset()
-                    filtered_yaw = self._yaw_filter.apply(self.center_yaw, now)
-                else:
-                    filtered_yaw = self._yaw_filter.apply(control_yaw, now)
-            raw_y_for_release = _clamp((estimate.pitch - self.center_pitch) / span_y, -1.0, 1.0)
-            release_y = self.effective_deadzone_y * DEADZONE_RELEASE_RATIO
-            if abs(raw_y_for_release) <= release_y:
+            filtered_yaw = self._yaw_filter.apply(control_yaw, now)
+            if not estimate.valid:
+                # Fixed22 may continue horizontally, but unavailable PnP pitch
+                # is not a zero-degree sample and must never drive vertical aim.
                 self._pitch_filter.reset()
-                filtered_pitch = self._pitch_filter.apply(self.center_pitch, now)
+                self._pitch_intent.reset()
+                self._axis_active_y = False
+                filtered_pitch = math.nan
             else:
-                filtered_pitch = self._pitch_filter.apply(estimate.pitch, now)
+                raw_y_for_release = _clamp((estimate.pitch - self.center_pitch) / span_y, -1.0, 1.0)
+                release_y = self.effective_deadzone_y * DEADZONE_RELEASE_RATIO
+                if abs(raw_y_for_release) <= release_y:
+                    self._pitch_filter.reset()
+                    filtered_pitch = self._pitch_filter.apply(self.center_pitch, now)
+                else:
+                    filtered_pitch = self._pitch_filter.apply(estimate.pitch, now)
         else:
             filtered_yaw = self._yaw_filter.apply(estimate.yaw, now)
             filtered_pitch = self._pitch_filter.apply(estimate.pitch, now)
@@ -3271,178 +3524,71 @@ class HeadController:
             self.norm_x = self.norm_y = 0.0
             return 0.0, 0.0
 
-        # Personal-model yaw gain (v153): only while gesture_v153 drives with
-        # its personal PnP model; the classic policy keeps the raw scale.
         yaw_gain = (
             PERSONAL_PNP_YAW_GAIN
             if (policy in V153_POLICIES and self.config["algorithm"] == "pnp" and self.personal_pnp_active)
             else 1.0
         )
         frozen22_ready = bool(
-            policy in FROZEN22_POLICIES
-            and self.frozen22_calibration_valid
-            and math.isfinite(self.frozen22_yaw_median)
+            self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
         )
+        sign = -1.0 if self.config["invert_x"] else 1.0
         if policy in FROZEN22_POLICIES:
-            raw_x = _clamp(
-                self.frozen22_yaw_median / max(FROZEN22_YAW_SPAN_DEG, 1e-6),
-                -1.0,
-                1.0,
-            ) if frozen22_ready else 0.0
+            raw_x = sign * self.frozen22_yaw_median / span_x if frozen22_ready else 0.0
+            intent_raw_x = raw_x
         else:
-            raw_x = _clamp(yaw_gain * (self.signal_yaw - self.center_yaw) / span_x, -1.0, 1.0)
-        raw_y = _clamp((self.signal_pitch - self.center_pitch) / span_y, -1.0, 1.0)
-        if self.config["invert_x"]:
-            raw_x = -raw_x
+            raw_x = sign * yaw_gain * (self.signal_yaw - self.center_yaw) / span_x
+            intent_raw_x = sign * yaw_gain * (control_yaw - self.center_yaw) / span_x
+        raw_x = _clamp(raw_x, -4.0, 4.0)
+        intent_raw_x = _clamp(intent_raw_x, -4.0, 4.0)
+        raw_y = (
+            _clamp((self.signal_pitch - self.center_pitch) / span_y, -1.0, 1.0)
+            if estimate.valid and math.isfinite(self.signal_pitch) else 0.0
+        )
         if self.config["invert_y"]:
             raw_y = -raw_y
 
-        if policy in FROZEN22_POLICIES:
-            intent_raw_x = _clamp(
-                control_yaw / max(FROZEN22_YAW_SPAN_DEG, 1e-6), -1.0, 1.0
-            ) if frozen22_ready and math.isfinite(control_yaw) else 0.0
-        else:
-            intent_raw_x = _clamp(yaw_gain * (control_yaw - self.center_yaw) / span_x, -1.0, 1.0)
-        intent_raw_x = -intent_raw_x if self.config["invert_x"] else intent_raw_x
-        vx = 0.0
-        if policy == "classic":
-            yaw_intent = self._yaw_intent.step(
-                raw_x, now,
-                angle_threshold=YAW_INTENT_ANGLE,
-                start_velocity=YAW_INTENT_START_VELOCITY,
-                stop_velocity=YAW_INTENT_STOP_VELOCITY,
-                release_threshold=self.effective_deadzone_x * DEADZONE_RELEASE_RATIO,
+        self.personal_pnp_current_depth = getattr(self.estimator, "pnp_depth", math.nan)
+        self.personal_pnp_far_depth_ratio = 1.0
+        start_x = _clamp(max(self.effective_deadzone_x * 0.58, 0.055), 0.045, 0.18)
+        if (
+            self.personal_pnp_active and math.isfinite(self.personal_pnp_center_depth)
+            and math.isfinite(self.personal_pnp_current_depth) and self.personal_pnp_center_depth > 1e-6
+        ):
+            self.personal_pnp_far_depth_ratio = _clamp(
+                self.personal_pnp_current_depth / self.personal_pnp_center_depth,
+                1.0, PERSONAL_PNP_FAR_MAX_DEPTH_RATIO,
             )
-            self.yaw_velocity = yaw_intent["velocity"]
-            self.yaw_acceleration = yaw_intent["acceleration"]
-            self.yaw_intent_state = yaw_intent["state"]
-            if yaw_intent["active"]:
-                vx = self._axis_curve(raw_x, "x")
-            else:
-                self._axis_active_x = False
-        elif policy in V153_POLICIES:
-            start_x = _clamp(max(self.effective_deadzone_x * 0.58, 0.055), 0.045, 0.18)
-            self.personal_pnp_current_depth = getattr(self.estimator, "pnp_depth", math.nan)
-            self.personal_pnp_far_depth_ratio = 1.0
-            if (
-                self.personal_pnp_active
-                and math.isfinite(self.personal_pnp_center_depth)
-                and math.isfinite(self.personal_pnp_current_depth)
-                and self.personal_pnp_center_depth > 1e-6
-            ):
-                self.personal_pnp_far_depth_ratio = _clamp(
-                    self.personal_pnp_current_depth / self.personal_pnp_center_depth,
-                    1.0, PERSONAL_PNP_FAR_MAX_DEPTH_RATIO,
-                )
-                if self.personal_pnp_far_depth_ratio > 1.0:
-                    # A farther face makes fixed pixel landmark noise correspond
-                    # to a larger angular PnP error: tighten TURN activation
-                    # only; gain and committed TURN remain.
-                    start_x = _clamp(
-                        start_x * (self.personal_pnp_far_depth_ratio ** PERSONAL_PNP_FAR_START_POWER),
-                        0.045, 0.18,
-                    )
-            vx = self._x_intent_v153.update(
-                raw_x, now,
-                raw_norm=intent_raw_x,
-                start_angle=start_x,
-                start_velocity=0.12,
-                keep_velocity=0.045,
-                return_velocity=0.060,
-                stop_grace_s=0.075,
-                acceleration_stop=1.15,
-                curve_gamma=1.30,
-            )
-            # v205: output-only same-side rescue.  Keep the RETURNING state
-            # untouched; only provide a conservative minimum drive when the
-            # original side is demonstrably moving outward again and both
-            # independent yaw witnesses agree.
-            xi_v205 = self._x_intent_v153
-            orig_v205 = int(getattr(xi_v205, "_return_from_direction", 0))
-            f22_v205 = float(self.frozen22_yaw_median) if math.isfinite(self.frozen22_yaw_median) else math.nan
-            world_v205 = float(self.current_world_rigid_yaw) if math.isfinite(self.current_world_rigid_yaw) else math.nan
-            pitch_v205 = abs(float(self.filtered_pitch) - float(self.center_pitch))
-            rescue_evidence_v205 = bool(
-                getattr(xi_v205, "return_latched", False)
-                and orig_v205 in (-1, 1)
-                and raw_x * orig_v205 >= V205_SAME_SIDE_RESCUE_MIN_NORM
-                and float(getattr(xi_v205, "velocity", 0.0)) * orig_v205 >= V205_SAME_SIDE_RESCUE_MIN_VELOCITY
-                and math.isfinite(f22_v205)
-                and f22_v205 * orig_v205 >= V205_SAME_SIDE_RESCUE_MIN_FROZEN22_DEG
-                and math.isfinite(world_v205)
-                and world_v205 * orig_v205 >= V205_SAME_SIDE_RESCUE_MIN_WORLD_DEG
-                and pitch_v205 <= V205_SAME_SIDE_RESCUE_MAX_PITCH_DEG
-            )
-            last_rescue_t_v205 = float(getattr(self, "_v205_same_side_rescue_last_t", 0.0))
-            rescue_dt_v205 = _clamp(now - last_rescue_t_v205, 0.0, 0.10) if last_rescue_t_v205 else 1.0 / 30.0
-            self._v205_same_side_rescue_last_t = now
-            if rescue_evidence_v205:
-                self._v205_same_side_rescue_s += rescue_dt_v205
-            else:
-                self._v205_same_side_rescue_s = 0.0
-            self.v205_same_side_rescue_active = bool(
-                rescue_evidence_v205 and self._v205_same_side_rescue_s >= V205_SAME_SIDE_RESCUE_HOLD_S
-            )
-            if self.v205_same_side_rescue_active and abs(vx) <= 1e-12:
-                vx = orig_v205 * YAW_V2_MIN_DRIVE
+            start_x *= self.personal_pnp_far_depth_ratio ** PERSONAL_PNP_FAR_START_POWER
 
-            self.yaw_intent_state = self._x_intent_v153.state
-            self.yaw_velocity = float(self._x_intent_v153.velocity)
-            self.yaw_acceleration = float(self._x_intent_v153.acceleration)
-            if self.personal_pnp_active and self.config["algorithm"] == "pnp":
-                # Personal geometry removes the dominant pitch->yaw artifact at
-                # the estimator source; do not re-apply the post-hoc lock.
-                self._cross_axis_lock.reset()
-            else:
-                vx = self._cross_axis_lock.apply(
-                    vx,
-                    pnp_yaw=filtered_yaw,
-                    pitch_delta_deg=estimate.pitch - self.center_pitch,
-                    proxy_values=self.current_multi2d_proxy,
-                    proxy_center=self.center_multi2d_proxy,
-                    proxy_sigma=self.noise_multi2d_proxy,
-                    signal_sign=(-1.0 if self.config["invert_x"] else 1.0),
-                    world_rigid_yaw=self.current_world_rigid_yaw,
-                    world_rigid_sigma=self.noise_world_rigid_yaw,
-                    now=now,
-                )
-        else:  # frozen22 fixed-signature source
-            if not frozen22_ready:
-                self._x_intent_v153.reset()
-                self._cross_axis_lock.reset()
-                self.yaw_intent_state = "IDLE"
-                self.yaw_velocity = 0.0
-                self.yaw_acceleration = 0.0
-                self._axis_active_x = False
-                vx = 0.0
-            else:
-                start_x = _clamp(max(self.effective_deadzone_x * 0.58, 0.055), 0.045, 0.18)
-                vx = self._x_intent_v153.update(
-                    raw_x,
-                    now,
-                    raw_norm=intent_raw_x,
-                    start_angle=start_x,
-                    start_velocity=0.12,
-                    keep_velocity=0.045,
-                    return_velocity=0.060,
-                    stop_grace_s=0.075,
-                    acceleration_stop=1.15,
-                    curve_gamma=1.30,
-                )
-                self.yaw_intent_state = self._x_intent_v153.state
-                self.yaw_velocity = float(self._x_intent_v153.velocity)
-                self.yaw_acceleration = float(self._x_intent_v153.acceleration)
-                # The fixed 22-D source is already a separate, direction-fixed
-                # measurement.  Do not apply the PnP/multi-2D cross-axis gate.
-                self._cross_axis_lock.reset()
-                self.v188_pitch_guard_active = False
-        pitch_intent = self._pitch_intent.step(
-            raw_y, now,
-            angle_threshold=PITCH_INTENT_ANGLE,
-            start_velocity=PITCH_INTENT_START_VELOCITY,
-            stop_velocity=PITCH_INTENT_STOP_VELOCITY,
-            release_threshold=self.effective_deadzone_y * DEADZONE_RELEASE_RATIO,
-        )
+        if policy in FROZEN22_POLICIES and not frozen22_ready:
+            self._x_intent_v153.reset()
+            vx = 0.0
+            self.frozen22_gate_source = "FIXED22_NOT_READY"
+            self.frozen22_gate_scale = 0.0
+        else:
+            vx = self._x_intent_v153.update(
+                raw_x, now, raw_norm=intent_raw_x, start_angle=start_x,
+                start_velocity=0.12, keep_velocity=0.045, return_velocity=0.060,
+                stop_grace_s=0.075, acceleration_stop=1.15, curve_gamma=1.30,
+            )
+            self._last_intent_drive = vx
+            self._last_evidence_scale = self._horizontal_evidence_scale(vx, now, policy)
+            vx *= self._last_evidence_scale
+        self.yaw_intent_state = self._x_intent_v153.state
+        self.yaw_velocity = float(self._x_intent_v153.velocity)
+        self.yaw_acceleration = float(self._x_intent_v153.acceleration)
+        if estimate.valid:
+            pitch_intent = self._pitch_intent.step(
+                raw_y, now,
+                angle_threshold=PITCH_INTENT_ANGLE,
+                start_velocity=PITCH_INTENT_START_VELOCITY,
+                stop_velocity=PITCH_INTENT_STOP_VELOCITY,
+                release_threshold=self.effective_deadzone_y * DEADZONE_RELEASE_RATIO,
+            )
+        else:
+            self._pitch_intent.reset()
+            pitch_intent = {"state": "IDLE", "active": False, "velocity": 0.0, "acceleration": 0.0}
         self.pitch_velocity = pitch_intent["velocity"]
         self.pitch_acceleration = pitch_intent["acceleration"]
         self.pitch_intent_state = pitch_intent["state"]
@@ -3458,102 +3604,71 @@ class HeadController:
             self._axis_active_y = False
             vy = 0.0
         target_x = vx * float(self.config["sensitivity_x"])
+        self._last_target_x = target_x
         target_y = vy * float(self.config["sensitivity_y"])
         dt = _clamp(now - self._last_update, 0.0, 0.08) if self._last_update else 1.0 / 30.0
         self._last_update = now
-        if policy == "gesture_v188":
-            self._base_output_x = self._slew(self._base_output_x, target_x, dt)
-            self.output_x = self._base_output_x * self._frozen22_uncertainty_scale(
-                self._base_output_x, now
-            )
-
-            # First identify strong pitch-only cross-axis evidence.
-            self.v202_pitch_output_veto_active = False
-            pitch_delta_v202 = abs(float(self.filtered_pitch) - float(self.center_pitch))
-            f22_v202 = abs(float(self.frozen22_yaw_median)) if math.isfinite(self.frozen22_yaw_median) else math.inf
-            world_v202 = abs(float(self.current_world_rigid_yaw)) if math.isfinite(self.current_world_rigid_yaw) else math.inf
-            pitch_cross_axis_v202 = bool(
-                pitch_delta_v202 >= V202_PITCH_VETO_MIN_PITCH_DEG
-                and f22_v202 < V202_PITCH_VETO_MAX_FROZEN22_YAW_DEG
-                and world_v202 < V202_PITCH_VETO_MAX_WORLD_RIGID_YAW_DEG
-            )
-            if pitch_cross_axis_v202:
-                self._v202_pitch_clean_s += dt
-                self.output_x = 0.0
-                self.v202_pitch_output_veto_active = True
-                if self._v202_pitch_clean_s >= V202_PITCH_CLEAN_RESET_S:
-                    self._v202_pitch_clean_reset_ready = True
-                    self._v202_rearm_block_direction = 0
-                    self._v202_rearm_quiet_hold_direction = 0
-            else:
-                self._v202_pitch_clean_s = 0.0
-
-            # Return/re-arm provenance guard.  A RETURNING -> opposite TURN
-            # transition is suspicious when the direction being returned from
-            # never produced a visible output.  A sustained pitch-only veto is
-            # an explicit clean-reset exception because it proves the stale yaw
-            # state came from cross-axis motion, not a delivered camera turn.
-            self.v202_return_output_veto_active = False
-            xi = self._x_intent_v153
-            current_return = bool(getattr(xi, "return_latched", False))
-            current_return_from = int(getattr(xi, "_return_from_direction", 0))
-            active_dir_v202 = int(getattr(xi, "_active_direction", 0))
-            if current_return and current_return_from in (-1, 1):
-                self._v202_return_from_direction = current_return_from
-            prev_return = bool(getattr(self, "_v202_prev_return_latched", False))
-            prior_from = int(getattr(self, "_v202_return_from_direction", 0))
-            direct_opposite_rearm = bool(
-                prev_return
-                and not current_return
-                and prior_from in (-1, 1)
-                and active_dir_v202 == -prior_from
-            )
-            if direct_opposite_rearm:
-                last_dir = int(getattr(self, "_v202_last_visible_output_direction", 0))
-                last_t = float(getattr(self, "_v202_last_visible_output_t", -math.inf))
-                if bool(getattr(self, "_v202_pitch_clean_reset_ready", False)):
-                    self._v202_pitch_clean_reset_ready = False
-                    self._v202_rearm_block_direction = 0
-                    self._v202_rearm_quiet_hold_direction = 0
-                elif last_dir != prior_from:
-                    self._v202_rearm_block_direction = active_dir_v202
-                elif now - last_t < V202_REARM_MIN_VISIBLE_QUIET_S:
-                    self._v202_rearm_quiet_hold_direction = active_dir_v202
-
-            block_dir = int(getattr(self, "_v202_rearm_block_direction", 0))
-            quiet_dir = int(getattr(self, "_v202_rearm_quiet_hold_direction", 0))
-            last_t = float(getattr(self, "_v202_last_visible_output_t", -math.inf))
-            # A hard orphan block lasts only for that internal turn episode; if
-            # it falls back to RETURNING/CENTER, the next re-arm is re-evaluated.
-            if block_dir in (-1, 1) and (current_return or active_dir_v202 != block_dir):
-                self._v202_rearm_block_direction = 0
-                block_dir = 0
-            if quiet_dir in (-1, 1) and now - last_t >= V202_REARM_MIN_VISIBLE_QUIET_S:
-                self._v202_rearm_quiet_hold_direction = 0
-                quiet_dir = 0
-            if (
-                (block_dir in (-1, 1) and self.output_x * block_dir > 1e-12)
-                or (quiet_dir in (-1, 1) and self.output_x * quiet_dir > 1e-12)
-            ):
-                self.output_x = 0.0
-                self.v202_return_output_veto_active = True
-
-            # Update visible-output provenance only after every veto has run.
-            if abs(self.output_x) > 1e-12:
-                self._v202_last_visible_output_direction = 1 if self.output_x > 0 else -1
-                self._v202_last_visible_output_t = now
-            self._v202_prev_return_latched = current_return
-
-            # A rescue may stop abruptly when the user physically starts
-            # returning.  Do not leak the output slew tail through RETURNING.
-            # This is output-only and cannot alter later intent state.
-            if bool(getattr(self._x_intent_v153, "return_latched", False)) and not bool(getattr(self, "v205_same_side_rescue_active", False)):
-                self.output_x = 0.0
-        else:
-            self._base_output_x = 0.0
-            self.output_x = self._slew(self.output_x, target_x, dt)
+        self._base_output_x = 0.0
+        self.output_x = self._slew(self.output_x, target_x, dt)
         self.output_y = self._slew(self.output_y, target_y, dt)
         return self.output_x / 100.0, self.output_y / 100.0
+
+    def _horizontal_diagnostics(self) -> dict:
+        """Describe the controller stage, not whether the OS received a mouse event."""
+        policy = self.config["horizontal_algorithm"]
+        fixed = policy in FROZEN22_POLICIES
+        frame_valid = bool(
+            self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
+        ) if fixed else bool(self.raw.valid)
+        ready = bool(self.calibrated and (not fixed or self.frozen22_calibration_valid))
+        if not self.config["enabled"]:
+            code, message = "DISABLED", "头控已关闭"
+        elif self.calibrating:
+            code, message = "CALIBRATING", "正在校准，暂不输出"
+        elif not self.calibrated:
+            code, message = "NEEDS_CALIBRATION", "尚未校准中心；原始角度有值也不会输出，请先校准"
+        elif fixed and not self.frozen22_calibration_valid:
+            code, message = "FIXED22_NEEDS_CALIBRATION", "固定特征校准未通过或样本不足，请重新校准"
+        elif not frame_valid:
+            code = "FIXED22_MISSING_POINTS" if fixed else "ESTIMATE_INVALID"
+            message = "固定特征所需关键点不完整" if fixed else (self.raw.error or "当前姿态无效")
+        elif abs(self.output_x) > 1e-12:
+            code, message = "OUTPUT_ACTIVE", "头控模块已有横向输出；若鼠标不动，请检查上层输出链路"
+        elif self._x_intent_v153.return_latched:
+            code, message = "RETURNING", "正在回正；回到中心短暂停稳后重新触发"
+        elif abs(self._last_intent_drive) <= 1e-12:
+            if self.yaw_intent_state in {"CENTER", "IDLE"}:
+                code, message = "NEUTRAL", "处于中心区，等待转头"
+            else:
+                code, message = "WAITING_FOR_MOTION", "姿态已停止或转头证据不足；单个偏头角度不会持续输出"
+        elif self._last_evidence_scale <= 0.0:
+            code = self.frozen22_gate_source
+            message = {
+                "PITCH_UNCONFIRMED": "俯仰动作中的横向证据不足，已拦截",
+                "AUX_UNCONFIRMED": "融合模式尚无足够辅助依据；可切换个性化 PnP 对比",
+                "DIRECTION_CONFLICT": "不同来源的方向冲突，已拦截",
+                "CONFIRMING": "正在确认连续同向证据",
+            }.get(code, "横向输出被证据检查拦截")
+        else:
+            code, message = "OUTPUT_TRANSITION", "正在等待有效帧间隔或完成方向切换"
+        yaw_unit = "degrees" if self.config["algorithm"] == "pnp" else "ratio"
+        active_value = self.frozen22_yaw_median if fixed else self.control_yaw
+        return {
+            "horizontal_frame_valid": frame_valid,
+            "horizontal_control_ready": bool(ready and self.config["enabled"] and not self.calibrating),
+            "horizontal_block_reason": code,
+            "horizontal_block_message": message,
+            "raw_yaw_units": yaw_unit,
+            "raw_pitch_units": yaw_unit,
+            "horizontal_signal_source": "frozen22" if fixed else self.config["algorithm"],
+            "horizontal_signal_value": active_value if math.isfinite(active_value) else None,
+            "horizontal_signal_units": "degree_like" if fixed else yaw_unit,
+            "intent_drive_x": round(float(self._last_intent_drive), 6),
+            "evidence_scale_x": round(float(self._last_evidence_scale), 6),
+            "target_output_x": round(float(self._last_target_x), 6),
+            "using_generic_pnp": bool(self.config["algorithm"] == "pnp" and not self.personal_pnp_active),
+            "calibration_algorithm": self._calibration_algorithm,
+        }
 
     def status(self, now: float | None = None) -> dict:
         now = time.monotonic() if now is None else now
@@ -3568,12 +3683,12 @@ class HeadController:
         elif self.calibrated:
             elapsed = None
             remaining = None
-            quality = f"个人中心 · 质量{self.center_quality}"
+            quality = f"已校准 · 质量{self.center_quality}"
         else:
             elapsed = None
             remaining = None
             quality = "等待校准（可说“开始校准”）"
-        policy_name = str(self.config.get("horizontal_algorithm", "classic"))
+        policy_name = str(self.config.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"]))
         if policy_name in FROZEN22_POLICIES and not self.calibrating:
             if self.frozen22_missing_points:
                 point_labels = {
@@ -3588,17 +3703,18 @@ class HeadController:
             self.calibrated
             and (policy_name not in FROZEN22_POLICIES or self.frozen22_calibration_valid)
         )
-        if policy_name == "classic":
-            yaw_latched = bool(self._yaw_intent.return_latched)
-            horizontal_version = HORIZONTAL_ALGORITHM_VERSIONS["classic"]
-        else:
-            yaw_latched = bool(getattr(self._x_intent_v153, "return_latched", False))
-            horizontal_version = HORIZONTAL_ALGORITHM_VERSIONS[policy_name]
+        yaw_latched = bool(getattr(self._x_intent_v153, "return_latched", False))
+        horizontal_version = HORIZONTAL_ALGORITHM_VERSIONS[policy_name]
         return {
+            **self._horizontal_diagnostics(),
             "signal_version": HEAD_SIGNAL_VERSION,
             "horizontal_algorithm": policy_name,
             "horizontal_algorithm_version": horizontal_version,
             "available_horizontal_algorithms": list(HORIZONTAL_ALGORITHMS),
+            "horizontal_algorithm_labels": dict(HORIZONTAL_ALGORITHM_LABELS),
+            "horizontal_algorithm_label": HORIZONTAL_ALGORITHM_LABELS[policy_name],
+            "horizontal_behavior": "转动时移动，偏头停住时停止，回到中心短暂停稳后重新触发",
+            "active_pitch_estimator": self._effective_estimator_algorithm(),
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
             "frozen22_controls_mouse": bool(policy_name in FROZEN22_POLICIES),
             "v188_pitch_guard_active": bool(getattr(self, "v188_pitch_guard_active", False)),
@@ -3681,7 +3797,7 @@ class HeadController:
                 if math.isfinite(self.personal_pnp_center_depth) else None
             ),
             "personal_pnp_far_depth_ratio": round(float(self.personal_pnp_far_depth_ratio), 4),
-            "cross_axis_mode": ("PERSONAL_PNP_SOURCE_FIX" if self.personal_pnp_active else "V129_FALLBACK"),
+            "cross_axis_mode": "FIXED22_2D" if policy_name in FROZEN22_POLICIES else "V5_PITCH_AWARE_CONSENSUS",
             "cross_axis_lock_mode": str(getattr(self._cross_axis_lock, "last_mode", "")),
             "multi2d_calibrated": bool(self.center_multi2d_proxy is not None and self.noise_multi2d_proxy is not None),
             "world_rigid_yaw": (
@@ -3782,9 +3898,8 @@ class HeadController:
             return
         try:
             payload = json.loads(Path(self.profile_path).read_text(encoding="utf-8"))
-            # v4.4 changes the runtime yaw signal and therefore always takes a
-            # fresh center, but the user's explicit sensitivity/deadzone/invert
-            # choices from the immediately preceding v4.3 profile remain valid.
+            # Accept earlier tuning parameters, but always capture a fresh
+            # center for the current camera and active v5 signal route.
             if payload.get("signal_version") not in HEAD_PROFILE_COMPATIBLE_VERSIONS:
                 return
             params = payload.get("params") or {}
@@ -3798,7 +3913,7 @@ class HeadController:
             # names (for example ``gesture``).  Do not let those silently
             # select a different signal path; use the production v153 policy
             # unless the persisted value is one of the explicit choices.
-            if horizontal_algorithm == "gesture":
+            if horizontal_algorithm in {"gesture", "classic"}:
                 horizontal_algorithm = "gesture_v153"
             if horizontal_algorithm not in HORIZONTAL_ALGORITHMS:
                 horizontal_algorithm = DEFAULT_CONFIG["horizontal_algorithm"]

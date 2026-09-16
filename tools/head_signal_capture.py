@@ -120,7 +120,7 @@ def _capture_center(base: str, timeout: float = 6.0) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="head-control-v4.3-reference-video-tuned 真人 A/B 信号采集")
-    parser.add_argument("--base", default="http://127.0.0.1:8765")
+    parser.add_argument("--base", default="http://127.0.0.1:8766")
     parser.add_argument("--algorithm", choices=("pnp", "ratio"), default="pnp")
     parser.add_argument("--duration", type=float, default=3.0)
     parser.add_argument("--output", default=None)

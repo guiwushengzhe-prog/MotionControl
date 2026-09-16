@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 import queue
-import re
 import threading
 import time
 from array import array
@@ -11,6 +10,7 @@ from pathlib import Path
 
 from funasr_command_backend import FunAsrWorkerClient, build_hotwords
 from sherpa_wake_backend import SherpaWakeWordRecognizer
+from motioncontrol_shared.text_norm import compact_text
 
 
 DEFAULT_WAKE_WINDOW_SECONDS = 3.5
@@ -19,10 +19,6 @@ PROBE_DELAY_SECONDS = 0.60
 END_SILENCE_SECONDS = 0.48
 MAX_COMMAND_AFTER_SPEECH_SECONDS = 3.0
 
-
-def compact_text(value: str) -> str:
-    text = str(value or "").strip().lower()
-    return re.sub(r"[\s\u3000，。！？、,.!?;；:：]+", "", text)
 
 
 def resolve_command_candidate(

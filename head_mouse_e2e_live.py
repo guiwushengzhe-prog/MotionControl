@@ -59,7 +59,8 @@ def _wait_for_operator(prompt: str) -> tuple[int, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="真人 + 真实摄像头的头控鼠标四向诊断")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=8766,
+                        help="本机管理面端口；/api/* 自 2.0 起只在 127.0.0.1:8766")
     args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("This diagnostic requires real Windows SendInput")

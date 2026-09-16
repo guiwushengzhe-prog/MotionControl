@@ -19,6 +19,7 @@ h1 small { color: var(--accent); font-size: 13px; }
 h2 { font-size: 19px; }
 h3, .title { font-size: 16px; font-weight: 700; }
 .tagline, .muted, .profile-meta, .section-sub, .viewer-note { color: var(--muted); font-size: 13px; }
+.profile-unverified { margin: 6px 0 0; padding: 8px 10px; border-left: 3px solid #d08a2a; background: rgba(208,138,42,.10); color: #e0b878; font-size: 12px; line-height: 1.6; border-radius: 0 6px 6px 0; }
 .command-dock { position: sticky; top: 0; z-index: 20; padding-bottom: 12px; background: #0b1118f5; border-bottom: 1px solid var(--line); }
 .top { display: flex; align-items: center; gap: 20px; min-height: 80px; }
 .brand { margin-right: auto; }
@@ -141,3 +142,10 @@ dialog::backdrop { background: #030812dc; }
   .binding-row, .voice-command-grid { grid-template-columns: 1fr 1fr; }
   .voice-row { grid-template-columns: 1fr 1fr; }
 }
+
+/* 云端配置列表：一行一份，名字在左、安装按钮在右。 */
+.cloud-row{align-items:center;gap:.75rem;justify-content:space-between}
+.cloud-row-label{display:flex;flex-direction:column;gap:.15rem;min-width:0}
+.cloud-row-label span{font-size:.85em}
+#cloudList:empty{display:none}
+#cloudList{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem}

@@ -1,0 +1,59 @@
+name: shared-linux
+
+# The desktop app is Windows-only, but motioncontrol_shared has to import and
+# run on Linux because the cloud service will import it there.  Static analysis
+# (tests/test_shared_boundary.py) catches risky imports early; only a real
+# import on a real Linux box catches transitive and runtime ones.
+#
+# output_backend.py does `import ctypes.wintypes`, which raises on Linux, and it
+# is reachable from server.py, control_kernel.py and voice_backend.py.  If any
+# of that leaks into the shared package, this job is what notices.
+
+on:
+  push:
+    paths:
+      - 'motioncontrol_shared/**'
+      - 'game_profiles/**'
+      - 'tests/test_shared_boundary.py'
+      - 'tests/test_shared_library_sweep.py'
+      - 'tests/fixtures/**'
+      - '.github/workflows/shared-linux.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  import-and-sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # No pip install on purpose: the shared package must run on a bare
+      # standard library.  If this step ever needs a dependency, the boundary
+      # has been broken.
+      - name: Import the shared package on a bare stdlib
+        run: python -c "import motioncontrol_shared; print('import ok')"
+
+      - name: Install pytest only
+        run: pip install --disable-pip-version-check pytest
+
+      - name: Boundary scan
+        run: python -m pytest tests/test_shared_boundary.py -q
+
+      - name: Full profile library sweep + pinned canonical digest
+        run: python -m pytest tests/test_shared_library_sweep.py -q
+
+      # The digest is a cross-platform contract, so surface it in the log: when
+      # it does break, the log says what Linux produced without a rerun.
+      - name: Report canonical digest
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          from motioncontrol_shared.canonical import canonicalize
+          raw = json.loads(pathlib.Path("tests/fixtures/canonical_selection.json").read_text(encoding="utf-8"))
+          print("linux canonical sha256:", canonicalize("profile_selection", raw).sha256)
+          PY

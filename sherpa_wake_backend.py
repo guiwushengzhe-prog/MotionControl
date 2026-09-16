@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
+from motioncontrol_shared.text_norm import compact_text
 
-
-def compact_text(value: str) -> str:
-    text = str(value or "").strip().lower()
-    return re.sub(r"[\s\u3000，。！？、,.!?;；:：]+", "", text)
 
 
 class SherpaWakeWordRecognizer:

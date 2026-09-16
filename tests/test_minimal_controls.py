@@ -101,7 +101,7 @@ def test_four_motion_rules_and_settings_exist():
     assert 'active_until' in kernel
     assert '/api/motion/config' in server
     assert '/api/motion/state' in server
-    assert 'motion_mappings.json' in server
+    assert 'user_path("motion_mappings")' in server
 
 
 def test_head_calibration_uses_default_until_atomic_success():
@@ -245,7 +245,7 @@ def test_voice_mapping_is_the_vocab_and_persists_without_model(tmp_path):
     ])
     assert [m['phrase'] for m in status['mappings']] == ['地图','闪避','保存']
     assert status['mappings'][2]['target'] == 'CTRL+S'
-    saved = json.loads((tmp_path/'config'/'voice_mappings.json').read_text(encoding='utf-8'))
+    saved = json.loads(service.config_path.read_text(encoding='utf-8'))
     assert len(saved['mappings']) == 3
     assert compact_text('打 开 地 图') == '打开地图'
 
@@ -311,7 +311,8 @@ def test_voice_mappings_migrate_from_v071_sibling(tmp_path):
     service = VoiceService(root, lambda action: {'executed': True})
     # normalize_action now records the behavior explicitly; voice defaults to tap.
     assert service.mappings == [{'phrase':'地图','type':'keyboard','target':'M','behavior':'tap'}]
-    assert (root / 'config' / 'voice_mappings.json').is_file()
+    assert service.config_path.is_file()
+    assert not (root / 'config' / 'voice_mappings.json').exists()
 
 
 def test_voice_parser_requires_wake_word_for_phone_and_clears_source(tmp_path):
@@ -368,6 +369,11 @@ def test_voice_text_bridge_accepts_only_active_phone_body_source_and_releases_on
             self.desktop = False
             self.accepted_inputs = 0
             self.errors = []
+            # Mirrors WebSocketPeer: unauthenticated, which is the state a
+            # protocol-1 phone stays in while pairing is optional.
+            self.auth_nonce = None
+            self.authenticated_device_id = None
+            self.authenticated_role = None
 
         def send_json(self, message):
             self.errors.append(message)

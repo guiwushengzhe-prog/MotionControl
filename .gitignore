@@ -13,3 +13,18 @@ output/**/*.zip
 output/**/*.log
 config/game_profile_selection.json
 config/game_profile_selection.json.v1.bak
+# Portable release staging: ~200 MB of bundled Python, models and native DLLs.
+build/
+
+# Cloud service local state. The database is developer data, and cloud.db in
+# particular holds password hashes and session rows -- never commit it.
+cloud/*.db
+cloud/*.db-journal
+cloud/*.db-wal
+cloud/*.db-shm
+
+# output/ is scratch: capture data, replay dumps, review screenshots. The two
+# narrower rules above predate the directory filling up; this covers the rest.
+# Anything here that turns out to be worth keeping belongs in docs/ or tests/
+# with an explanation, not in a folder tools write to.
+output/

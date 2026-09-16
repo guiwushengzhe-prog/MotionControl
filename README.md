@@ -161,7 +161,18 @@ config\motion_mappings.json
 START.bat
 ```
 
-服务默认监听 `0.0.0.0:8765`，因此手机和电脑应在同一局域网。打开网页后，在“摄像头来源”选择“手机摄像头”，把页面显示的 `ws://.../ws/input` 地址填入手机端；手机紧凑姿态 `pose_features_v1`、`voice_command(command_id)` 和手持传感器共用 `/ws/input`。PC 将 25 个必要姿态点在进程内补成统一结构后继续走同一份 ControlKernel；手机不发送 `world_pose`。
+服务监听两个面，各自信任级别不同：
+
+| 面 | 地址 | 内容 |
+|---|---|---|
+| 设备接入面 | `0.0.0.0:8765` | 只有 `/ws/input`，外加只读的 `/api/models`、`/api/model/mp-full` |
+| 本机管理面 | `127.0.0.1:8766` | 网页界面与全部 `/api/*` |
+
+管理面只绑回环地址，局域网**从网络层就连不上**，而不是靠每个接口自己检查。改动之前 `do_GET` 里只有 `/api/shutdown` 有回环判断，同一 Wi-Fi 下任何设备都能读到摄像头预览、场景参考照片、内核状态和当前游戏配置。浏览器从 8766 加载、也只调 8766，因此始终同源。
+
+手机只需要 8765，`adb reverse tcp:8765 tcp:8765` 与页面显示的 `ws://.../ws/input` 地址都不受影响。**注意分面并不能阻止伪造输入**：`/ws/input` 目前仍接受任何连接，而 `sensor_frame` 会直接产生手柄输出，这要靠设备配对认证解决。
+
+因此手机和电脑应在同一局域网。打开网页后，在“摄像头来源”选择“手机摄像头”，把页面显示的 `ws://.../ws/input` 地址填入手机端；手机紧凑姿态 `pose_features_v1`、`voice_command(command_id)` 和手持传感器共用 `/ws/input`。PC 将 25 个必要姿态点在进程内补成统一结构后继续走同一份 ControlKernel；手机不发送 `world_pose`。
 
 选择“电脑摄像头”后，点击“启动本地摄像头”即可让 Python 服务打开摄像头并运行 MediaPipe Full，同时启动电脑本地麦克风语音。当前启动 Python 必须同时具备 `opencv-python`、`numpy`、`mediapipe` 和 `sounddevice`；若缺少依赖，服务会明确报告错误，不会退回浏览器推理或浏览器录音。
 
@@ -183,4 +194,4 @@ I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full_compatible_07
 
 原始 `pose_landmarker_full.task` 保留不覆盖；服务找不到兼容副本时才回退到原始文件。
 
-如果 8765 已被旧的 MotionControl 实例占用，启动窗口会明确提示并退出当前实例；不会自动结束旧进程，可先关闭旧实例或用 `--port` 指定其他端口。
+如果 8765 或 8766 已被旧的 MotionControl 实例占用，启动窗口会指明是哪一个面并退出当前实例；不会自动结束旧进程，可先关闭旧实例，或用 `--port` / `--admin-port` 分别指定其他端口。

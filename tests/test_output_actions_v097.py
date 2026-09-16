@@ -161,7 +161,7 @@ def test_voice_hold_and_release_cover_both_halves_of_a_mixed_combo(tmp_path):
 
 def test_a_lone_direction_still_belongs_to_the_axis_type():
     import pytest
-    from game_profiles import normalize_action
+    from motioncontrol_shared.profile_schema import normalize_action
     with pytest.raises(ValueError):
         normalize_action({'type': 'gamepad', 'target': 'LS_UP'})
     with pytest.raises(ValueError):

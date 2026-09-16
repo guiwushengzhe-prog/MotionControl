@@ -24,7 +24,7 @@ const BODY_ZONES = {leftHand:{label:'X',body:'左手',button:'X'},rightHand:{lab
 
 let currentPoseMap=null, kernelState=null, sourceMode='phone', cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'gamepad',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
-const head={algorithm:'pnp',horizontalAlgorithm:'classic',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand',verticalExclusive:false,bodyMotionGuard:true};
+const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand',verticalExclusive:false,bodyMotionGuard:true};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
@@ -84,7 +84,11 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function notice(text){$('#notice').textContent=text;$('#notice').hidden=!text}
 async function api(path,opt={}){
   let response;
-  try{response=await fetch(path,{...opt,signal:AbortSignal.timeout(8000)})}
+  // 8s suits local calls. A cloud call is a download plus an apply on the far
+  // side of the internet, so callers may ask for longer rather than being told
+  // the local service is unresponsive when it is the network that is slow.
+  const {timeoutMs=8000,...init}=opt;
+  try{response=await fetch(path,{...init,signal:AbortSignal.timeout(timeoutMs)})}
   catch{throw new Error('本地服务无响应，请检查连接后重试')}
   let data;
   try{data=await response.json()}catch{throw new Error('服务响应无法读取')}
@@ -94,7 +98,7 @@ async function api(path,opt={}){
   }
   return data;
 }
-async function post(path,data){return api(path,{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify(data)})}
+async function post(path,data,timeoutMs){return api(path,{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify(data),timeoutMs})}
 
 function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
   target.save();target.setTransform(1,0,0,1,0,0);target.clearRect(0,0,w,h);
@@ -209,8 +213,8 @@ function renderKernelState(runtime){
   }
   if(hs.algorithm&&!headDirty&&!document.activeElement?.closest('#headSettings,#advancedSettings')){
     $('#headAlgorithm').value=hs.algorithm;
-    const horizontalAlgorithm=String(hs.horizontal_algorithm||'classic');
-    head.horizontalAlgorithm=['classic','gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'classic';
+    const horizontalAlgorithm=String(hs.horizontal_algorithm||'gesture_v188');
+    head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
     if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
     head.verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'head':'hand';
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
@@ -348,7 +352,7 @@ function profileMetaText(profile){
   if(!profile)return '未选择游戏';
   const appid=profile.appid||profile.steam_appid||'';
   const source=profile.source||{};
-  const verified=source.verified?' · 已核验':'';
+  const verified=source.verified?' · 已验证':' · 实验配置';
   const sourceName=source.kind==='manual'?'人工':(source.kind==='steaminputdb'?'社区配置库':(source.kind==='builtin'?'内置':'离线库'));
   const bindings=profile.bindings||{};
   const zones=Object.keys(bindings.zones||{}).length;
@@ -362,6 +366,7 @@ function renderProfileHeader(){
   $('#profileGameName').textContent=p?.name||'未选择游戏';
   $('#currentGameName').textContent=p?.name||'未选择游戏';
   $('#profileMeta').textContent=profileMetaText(p);
+  $('#profileUnverified').hidden=!p||Boolean(p.source?.verified);
   syncProfileZoneLabels();
 }
 function renderProfileCatalog(games){
@@ -369,7 +374,11 @@ function renderProfileCatalog(games){
   const select=$('#profileSelect'),selectedId=gameProfile.selected?.selected_id||gameProfile.selected?.id||'';
   select.replaceChildren();
   if(!gameProfile.catalog.length){const o=document.createElement('option');o.value='';o.textContent='没有匹配的游戏';select.appendChild(o);return}
-  for(const g of gameProfile.catalog){const o=document.createElement('option');o.value=g.id;o.textContent=`${g.name}${g.appid?` · ${g.appid}`:''}`;select.appendChild(o)}
+  // Hand-verified profiles come first: of ~200 shipped profiles only a
+  // handful have actually been played, and a flat alphabetical list makes
+  // an auto-generated one look as official as a tested one.
+  const ordered=[...gameProfile.catalog].sort((a,b)=>(b.verified?1:0)-(a.verified?1:0)||String(a.name).localeCompare(String(b.name),'zh'));
+  for(const g of ordered){const o=document.createElement('option');o.value=g.id;o.textContent=`${g.verified?'✓ ':''}${g.name}${g.appid?` · ${g.appid}`:''}${g.verified?'':' · 实验'}`;select.appendChild(o)}
   if(gameProfile.catalog.some(g=>g.id===selectedId))select.value=selectedId;
 }
 async function searchProfiles(){
@@ -565,6 +574,84 @@ function renderPerformance(data){
 
 async function refreshPerformance(){try{renderPerformance(await api('/api/performance'))}catch{}}
 async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference}catch{}}
+// --- hand mouse -----------------------------------------------------------
+// The fist thresholds shipped as estimates rather than measurements, so the
+// live spread reading sits next to them: open the hand, read the number, close
+// it, read again, then put the thresholds between the two.
+function renderHandMouse(state){
+  if(!state)return;
+  const c=state.config||{};
+  $('#handMouseEnabled').checked=Boolean(c.enabled);
+  $('#handMouseHand').value=c.hand||'right';
+  $('#handMouseInvertX').checked=Boolean(c.invert_x);
+  for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open]]){
+    if(value!==undefined)$('#'+id).value=value;
+  }
+  $('#handMouseSensitivityValue').textContent=Number(c.sensitivity||0).toFixed(0);
+  $('#handMouseDeadzoneValue').textContent=Number(c.deadzone||0).toFixed(2);
+  $('#handMouseCloseValue').textContent=Number(c.fist_close||0).toFixed(2);
+  $('#handMouseOpenValue').textContent=Number(c.fist_open||0).toFixed(2);
+  const spread=state.spread==null?'看不到手':Number(state.spread).toFixed(3);
+  const label={disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'}[state.state]||state.state;
+  $('#handMouseStatus').textContent=c.enabled
+    ?`${label} · 张开度 ${spread} · 输出 ${Number(state.output_x||0).toFixed(2)} / ${Number(state.output_y||0).toFixed(2)}`
+    :'未启用';
+}
+// --- skeleton recording ---------------------------------------------------
+// Polls only while something is actually happening, so an idle settings page
+// is not making a request every second for nothing.
+let poseRecordTimer=null;
+function renderPoseRecord(state){
+  if(!state)return;
+  const label={
+    idle:'未录制',waiting:`倒计时 ${state.remaining_s.toFixed(1)} 秒`,
+    recording:`录制中 ${state.remaining_s.toFixed(1)} 秒 · 已 ${state.frames} 帧`,
+    saving:'正在保存…',cancelled:'已取消',
+    done:`已保存 ${state.frames} 帧 → ${state.file}`,
+    error:state.error||'录制失败',
+  }[state.state]||state.state;
+  $('#poseRecordStatus').textContent=label;
+  const busy=state.state==='waiting'||state.state==='recording'||state.state==='saving';
+  $('#poseRecordBtn').disabled=busy;
+  if(busy&&poseRecordTimer==null){
+    poseRecordTimer=window.setInterval(()=>void refreshPoseRecord(),400);
+  }else if(!busy&&poseRecordTimer!=null){
+    window.clearInterval(poseRecordTimer);poseRecordTimer=null;
+  }
+}
+async function refreshPoseRecord(){try{const data=await api('/api/pose/record');renderPoseRecord(data.recording)}catch{}}
+async function startPoseRecord(){
+  try{
+    const data=await post('/api/pose/record',{delay_s:3,duration_s:15});
+    renderPoseRecord(data.recording);
+  }catch(error){$('#poseRecordStatus').textContent=error.message||'无法开始录制'}
+}
+async function cancelPoseRecord(){
+  try{
+    const data=await post('/api/pose/record',{cancel:true});
+    renderPoseRecord(data.recording);
+  }catch(error){$('#poseRecordStatus').textContent=error.message||'取消失败'}
+}
+async function refreshHandMouse(){try{const data=await api('/api/hand-mouse/config');renderHandMouse(data.hand_mouse)}catch{}}
+async function saveHandMouse(){
+  const payload={
+    enabled:$('#handMouseEnabled').checked,
+    hand:$('#handMouseHand').value,
+    invert_x:$('#handMouseInvertX').checked,
+    sensitivity:Number($('#handMouseSensitivity').value),
+    deadzone:Number($('#handMouseDeadzone').value),
+    fist_close:Number($('#handMouseClose').value),
+    fist_open:Number($('#handMouseOpen').value),
+  };
+  $('#handMouseSaveStatus').textContent='正在保存…';
+  try{
+    const data=await post('/api/hand-mouse/config',payload);
+    renderHandMouse(data.hand_mouse);
+    $('#handMouseSaveStatus').textContent='已保存';
+  }catch(error){
+    $('#handMouseSaveStatus').textContent=error.message||'保存失败';
+  }
+}
 async function refreshPreview(){
   if(!cameraPreview||perfUi.previewBusy||sourceMode!=='computer'||!cameraRunning||currentView!=='play'||document.visibilityState!=='visible')return;
   perfUi.previewBusy=true;
@@ -742,7 +829,7 @@ function renderVoiceCommandCatalog(commands){
 }
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['classic','gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'classic';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){
   syncControlLabels();
   renderKernelState(await post('/api/head/config',{
@@ -868,7 +955,7 @@ function showView(view){
   document.querySelectorAll('[data-view]').forEach(el=>{
     if(el.dataset.view===view)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');
   });
-  if(view==='devices')void refreshXinput();
+  if(view==='devices'){void refreshXinput();void refreshHandMouse();void refreshPoseRecord()}
   window.scrollTo(0,0);
 }
 function poll(task,delay,enabled=()=>true){
@@ -909,6 +996,12 @@ bind('mainActionBtn',handleMainAction);
 bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
 bind('sourceStopBtn',()=>setSource(sourceMode,false));
 bind('overlayBtn',toggleOverlay);
+for(const id of ['handMouseEnabled','handMouseHand','handMouseInvertX','handMouseSensitivity','handMouseDeadzone','handMouseClose','handMouseOpen']){
+  const el=$('#'+id);
+  if(el)el.addEventListener('change',()=>void saveHandMouse());
+}
+bind('poseRecordBtn',startPoseRecord);
+bind('poseRecordCancelBtn',cancelPoseRecord);
 bind('profileSearchBtn',searchProfiles);
 $('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(searchProfiles)});
 bind('profileApplyBtn',applySelectedProfile);bind('resetProfileBindingsBtn',resetProfileBindings);
@@ -979,3 +1072,122 @@ window.addEventListener('beforeunload',e=>{
   try{overlay.win?.close()}catch{}
 });
 init();
+
+/* --- 云端配置 -----------------------------------------------------------
+ * Browsing and installing configs other people have published.
+ *
+ * Nothing else on this page depends on any of it. The cloud is optional, and
+ * when it is unreachable this section says so and everything else -- camera,
+ * zones, voice, the whole controller -- carries on exactly as before. That is
+ * why every call here is in its own try/catch and none of them run at startup.
+ */
+const cloudStatusEl = document.getElementById('cloudStatus');
+const cloudListEl = document.getElementById('cloudList');
+const cloudRefreshBtn = document.getElementById('cloudRefreshBtn');
+
+function cloudSay(text, kind = '') {
+  if (!cloudStatusEl) return;
+  cloudStatusEl.textContent = text;
+  cloudStatusEl.className = kind === 'error' ? 'statusline error' : 'statusline';
+}
+
+async function cloudRefresh() {
+  if (!cloudListEl) return;
+  cloudSay('正在连接云端…');
+  cloudListEl.innerHTML = '';
+  try {
+    const status = await api('/api/cloud/status', { timeoutMs: 12000 });
+    if (!status.reachable) {
+      cloudSay(`连不上 ${status.endpoint}：${status.error || '未知原因'}`, 'error');
+      return;
+    }
+    const { profiles } = await post('/api/cloud/browse', {}, 15000);
+    if (!profiles.length) {
+      cloudSay('云端还没有公开的配置。');
+      return;
+    }
+    cloudSay(`${status.endpoint} · ${profiles.length} 份公开配置`);
+    for (const item of profiles) cloudListEl.appendChild(cloudRow(item));
+  } catch (error) {
+    cloudSay(error.message, 'error');
+  }
+}
+
+const CLOUD_DOC_NAMES = {
+  profile_selection: '游戏映射',
+  motion_mappings: '动作映射',
+  voice_mappings: '语音映射',
+};
+
+function cloudRow(item) {
+  const row = document.createElement('div');
+  row.className = 'profile-bar cloud-row';
+
+  const label = document.createElement('div');
+  label.className = 'cloud-row-label';
+  const name = document.createElement('strong');
+  name.textContent = item.title;
+  const meta = document.createElement('span');
+  meta.className = 'muted';
+  const parts = [CLOUD_DOC_NAMES[item.doc_type] || item.doc_type, item.owner_name];
+  if (item.game_name) parts.push(item.game_name);
+  if (item.current_version) parts.push(`v${item.current_version.revision_no}`);
+  meta.textContent = parts.join(' · ');
+  label.append(name, meta);
+
+  const button = document.createElement('button');
+  button.className = 'btn primary';
+  button.textContent = '安装';
+  button.addEventListener('click', () => cloudInstall(item, button));
+
+  row.append(label, button);
+  return row;
+}
+
+async function cloudInstall(item, button) {
+  // The config in hand may carry bindings for many games; installing someone's
+  // shared setup should not replace the user's whole library, so when the
+  // publisher named a game only that game's mappings are taken.
+  const scope = item.game_id ? `《${item.game_name || item.game_id}》的映射` : '整份配置';
+  if (!confirm(
+      `安装「${item.title}」？\n\n` +
+      `会应用${scope}，并切换到该游戏。\n` +
+      `你现在的配置会先备份到用户目录的 cloud_backup 下，随时可以拿回来。`)) return;
+
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = '安装中…';
+  cloudSay('正在下载并校验…');
+  try {
+    const result = await post('/api/cloud/install', {
+      profile_id: item.id,
+      game_id: item.game_id || '',
+    }, 30000);
+    const installed = result.installed;
+    cloudSay(
+      `已安装「${installed.title}」v${installed.revision_no}` +
+      `（校验值 ${installed.sha256.slice(0, 12)}）` +
+      (result.backup ? `，原配置已备份到 ${result.backup}` : ''));
+    // Re-read the panels the install changed, so the page shows what is now
+    // actually loaded rather than what was there before.
+    // Re-read whichever panel the install changed, so the page shows what is
+    // now actually loaded rather than what was there a moment ago.
+    try {
+      if (installed.doc_type === 'voice_mappings') {
+        await refreshVoice();
+        renderVoiceRows(voice.status?.mappings || []);
+      } else {
+        // Motions are not a panel of their own: they are the motion.* rows of
+        // the game profile, so refreshing the profile covers them too.
+        await refreshProfile();
+      }
+    } catch { /* the install succeeded; a stale panel is not worth an error */ }
+  } catch (error) {
+    cloudSay(`安装失败：${error.message}`, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+cloudRefreshBtn?.addEventListener('click', cloudRefresh);

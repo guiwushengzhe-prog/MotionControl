@@ -8,6 +8,7 @@ import time
 import pytest
 
 from control_kernel import ControlKernel, MP_NAMES
+from head_test_support import hold_head, turn_head
 from head_control import (
     CENTER_MIN_COLLECTION_S,
     CENTER_MIN_SAMPLES,
@@ -26,6 +27,11 @@ class NumericEstimator:
 
     pnp_available = True
     pnp_error = ""
+
+    def set_pnp_model(self, *args, **kwargs):
+        # v5.1 hands the estimator a calibrated model; these stubs
+        # exercise controller semantics, not geometry, so it is a no-op.
+        return None
 
     def reset(self):
         pass
@@ -97,7 +103,7 @@ def ratio_pose(nose_x=0.50, nose_y=0.45):
 def test_signal_version_and_algorithms_are_reduced():
     controller = HeadController()
     state = controller.status()
-    assert HEAD_SIGNAL_VERSION == "head-control-v4.4-gated-pitch"
+    assert HEAD_SIGNAL_VERSION == "head-control-v5.1-calibration-compat"
     assert state["available_algorithms"] == ["pnp", "ratio"]
     for obsolete in (
         "raw_pitch_face", "raw_pitch_z", "raw_pitch_fused",
@@ -410,16 +416,21 @@ def _ready_controller(tmp_path, *, yaw=0.0, pitch=0.0):
     return c
 
 
-def test_deflection_is_view_velocity_hold_continues_return_to_center_stops(tmp_path):
+def test_turning_produces_output_and_returning_to_centre_stops(tmp_path):
+    """v5.1 reacts to a turn, not to a standing offset.
+
+    v4.4 mapped deflection straight to velocity, so a yaw that appeared from
+    one frame to the next produced movement.  v5.1 looks for the turn itself:
+    that same instant jump reads as a teleport and yields nothing, while a turn
+    spread over a few frames ramps up as expected.
+    """
     c = _ready_controller(tmp_path)
-    x1, _ = c.update({"yaw": 9.0, "pitch": 0.0}, 640, 480, now=1.0)
-    x2, _ = c.update({"yaw": 9.0, "pitch": 0.0}, 640, 480, now=1.04)
-    x3, _ = c.update({"yaw": 9.0, "pitch": 0.0}, 640, 480, now=1.10)
-    assert x1 > 0 and x2 > 0
-    # Ungated relative head control stops once the turn is held.
-    assert x3 == 0.0
-    # Returning physically to neutral must snap out filter tail and stop exactly.
-    x0, y0 = c.update({"yaw": 0.0, "pitch": 0.0}, 640, 480, now=1.14)
+    x, _y, now = turn_head(c, 9.0, start_at=1.0)
+    assert x > 0
+
+    # Returning physically to neutral must snap out the filter tail and stop.
+    turn_head(c, 0.0, start_yaw=9.0, start_at=now)
+    x0, y0, _ = hold_head(c, 0.0, start_at=now + 0.3)
     assert x0 == 0.0 and y0 == 0.0
     assert c.output_x == 0.0 and c.output_y == 0.0
 
@@ -428,6 +439,11 @@ def test_pnp_yaw_proxy_is_diagnostic_and_never_rewrites_or_suppresses(tmp_path):
     class ProxyEstimator:
         pnp_available = True
         pnp_error = ""
+
+        def set_pnp_model(self, *args, **kwargs):
+            # v5.1 hands the estimator a calibrated model; these stubs
+            # exercise controller semantics, not geometry, so it is a no-op.
+            return None
 
         def reset(self):
             pass
@@ -449,7 +465,12 @@ def test_pnp_yaw_proxy_is_diagnostic_and_never_rewrites_or_suppresses(tmp_path):
     c.noise_yaw_proxy = 0.0
     # Disagreement is diagnostic only: the proxy must not become another
     # hidden/global invert switch. PnP remains the direction authority.
-    x, _ = c.update({"yaw": -30.0, "proxy": 0.20}, 640, 480, now=1.0)
+    # Turned rather than teleported: v5.1 reads the turn, not the offset.
+    now = 1.0
+    for index in range(1, 7):
+        share = index / 6
+        x, _ = c.update({"yaw": -30.0 * share, "proxy": 0.20 * share}, 640, 480, now=now)
+        now += 1 / 30
     assert x < 0.0
     assert c.status(1.0)["raw_yaw"] < 0.0
     assert c.status(1.0)["control_yaw"] < 0.0
@@ -457,7 +478,11 @@ def test_pnp_yaw_proxy_is_diagnostic_and_never_rewrites_or_suppresses(tmp_path):
     # A proxy-neutral disagreement is diagnostic only; it must not silently
     # erase an otherwise valid PnP signal.
     c._reset_filters()
-    x, _ = c.update({"yaw": 28.0, "proxy": 0.002}, 640, 480, now=2.0)
+    now = 2.0
+    for index in range(1, 7):
+        share = index / 6
+        x, _ = c.update({"yaw": 28.0 * share, "proxy": 0.002 * share}, 640, 480, now=now)
+        now += 1 / 30
     assert x > 0.0
     assert c.status(2.0)["yaw_guard_state"] == "proxy_neutral"
 
@@ -476,8 +501,11 @@ def test_noise_aware_deadzone_prevents_small_jitter(tmp_path):
 
 def test_invalid_estimate_immediately_zeroes_output(tmp_path):
     c = _ready_controller(tmp_path)
-    assert c.update({"yaw": 9.0, "pitch": 5.0}, 640, 480, now=1.0) != (0.0, 0.0)
-    assert c.update({"valid": False}, 640, 480, now=1.03) == (0.0, 0.0)
+    # Establish real output first: a standing offset alone produces none under
+    # the v5.1 intent model, so there would be nothing to zero.
+    x, y, now = turn_head(c, 9.0, start_at=1.0, pitch=5.0)
+    assert (x, y) != (0.0, 0.0)
+    assert c.update({"valid": False}, 640, 480, now=now) == (0.0, 0.0)
     assert c.output_x == 0.0 and c.output_y == 0.0
 
 
@@ -492,13 +520,13 @@ def test_algorithm_switch_invalidates_old_center(tmp_path):
 
 def test_only_explicit_user_invert_changes_axis_sign(tmp_path):
     c = _ready_controller(tmp_path)
-    normal, _ = c.update({"yaw": 9.0}, 640, 480, now=1.0)
+    normal, _y, _now = turn_head(c, 9.0, start_at=1.0)
     assert normal > 0
     c._reset_filters()
     c.configure(invert_x=True)
     c.calibrated = True
     c.center_pending = False
-    inverted, _ = c.update({"yaw": 9.0}, 640, 480, now=2.0)
+    inverted, _y, _now = turn_head(c, 9.0, start_at=2.0)
     assert inverted < 0
     assert "invert_yaw" not in c.status()
 

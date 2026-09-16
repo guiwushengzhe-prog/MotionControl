@@ -13,7 +13,8 @@ import json
 from pathlib import Path
 from typing import Iterable
 
-from game_profiles import CATALOG_SCHEMA, SCHEMA, normalize_bindings
+from motioncontrol_shared.profile_schema import normalize_bindings
+from motioncontrol_shared.profile_versions import CATALOG_SCHEMA, SCHEMA
 from steam_seed_catalog import PRIORITY_GAMES
 
 

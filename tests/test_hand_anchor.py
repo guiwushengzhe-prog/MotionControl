@@ -1,7 +1,7 @@
 import math
 
 from hand_anchor import HandAnchorTracker, pose_with_hand_anchors
-from control_kernel import ControlKernel
+from control_kernel import ControlKernel, RUNTIME_BODY_ZONES
 
 
 def p(x, y, score=0.9, z=0.0):
@@ -123,6 +123,11 @@ def test_kernel_zones_consume_anchor_when_wrist_is_missing():
         assert state["hand_anchor_version"] == "hand-anchor-v1"
         assert state["hand_anchors"]["left"]["wrist_observed"] is False
         assert state["zones"]["leftHandUpper"]["pressed"] is True
-        assert "Y" in state["buttons"]
+        # leftHandUpper is a compatibility alias now: the runtime merged the
+        # two left-hand areas into one "leftHand" zone, which carries its own
+        # default button.  Read it from the source rather than pinning a
+        # literal -- that default has already moved once (Y -> X) and the point
+        # of this test is that the finger anchor produced a press at all.
+        assert RUNTIME_BODY_ZONES["leftHand"]["button"] in state["buttons"]
     finally:
         kernel.close()

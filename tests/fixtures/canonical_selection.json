@@ -1,0 +1,56 @@
+{
+  "schema": "motioncontrol.profile_selection.v2",
+  "selected_id": "generic-xbox",
+  "overrides_by_profile": {
+    "generic-xbox": {
+      "zone.leftHandUpper": {
+        "action": {
+          "type": "gamepad",
+          "target": "X",
+          "behavior": "hold"
+        },
+        "label": "左手上区 · 攻击"
+      },
+      "zone.rightHandUpper": {
+        "action": {
+          "type": "gamepad",
+          "target": [
+            "LB",
+            "LS_UP"
+          ],
+          "behavior": "hold"
+        }
+      },
+      "motion.march": {
+        "action": {
+          "type": "gamepad_axis",
+          "target": "LS_UP",
+          "behavior": "hold"
+        }
+      },
+      "motion.jumping_jack": null,
+      "pose.hands_cross": {
+        "action": {
+          "type": "gamepad",
+          "target": "START",
+          "behavior": "tap"
+        },
+        "label": "双手交叉"
+      },
+      "voice.fire": {
+        "action": {
+          "type": "mouse_button",
+          "target": "LEFT",
+          "behavior": "release"
+        }
+      },
+      "中文.键": {
+        "action": {
+          "type": "keyboard",
+          "target": "F1",
+          "behavior": "tap"
+        }
+      }
+    }
+  }
+}

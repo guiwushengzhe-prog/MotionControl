@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from motion_conflicts import (
+from motioncontrol_shared.motion_conflicts import (
     find_motion_conflicts,
     selected_motion_ids_from_bindings,
     selected_motion_ids_from_config,

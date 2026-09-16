@@ -11,13 +11,16 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from cloud_client import CloudClient, CloudError, backup_user_data
 from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
-from game_profiles import GameProfileStore, ProfileSelectionChanged, action_catalog
-from motion_conflicts import motion_conflict_payload, validate_motion_config
+from game_profiles import GameProfileStore, ProfileSelectionChanged
+from motioncontrol_shared.profile_schema import action_catalog
+from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
 from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService
 from scene_layout import SceneLayoutManager
+from user_paths import migrate_legacy_user_data, user_data_root, user_path
 
 # Desktop workflow and per-game persistence release; phone protocol versions stay unchanged.
 VERSION = "2.0"
@@ -40,6 +43,15 @@ MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
 # MODEL_RELATIVE file remains untouched and is only the fallback when the
 # compatibility copy is absent.
 MODEL_COMPAT_RELATIVE = Path("mediapipe") / "pose_landmarker_full_compatible_075.task"
+
+# User data moved out of the program folder in 2.0.x.  Run the one-time copy
+# before anything below constructs, because SceneLayoutManager, GameProfileStore
+# and VoiceService all read their files at import time -- migrating afterwards
+# would silently hand the user defaults on their first upgraded launch.
+_MIGRATED = migrate_legacy_user_data(ROOT)
+if _MIGRATED:
+    print("已从旧版程序目录迁移用户数据：" + "、".join(_MIGRATED))
+print("用户数据目录：", user_data_root())
 
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
@@ -180,7 +192,28 @@ VOICE = VoiceService(
     emergency_stop=emergency_stop_all,
     clear_source=OUTPUT.clear_source,
 )
-INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
+def _build_pairing_service():
+    """Device pairing for /ws/input, or None if it cannot run here.
+
+    Enforcement is off by default for now.  The Android app lives in another
+    repository, so until a build that speaks protocol 2 ships, requiring it
+    would lock out every existing phone.  The exchange, the storage and the
+    per-frame identity checks are all live regardless; turning
+    require_paired_devices on is then a one-line change rather than a protocol
+    redesign.
+    """
+    try:
+        from device_pairing import PairingService
+
+        required = user_path("require_paired_devices").exists()
+        return PairingService(require_paired_devices=required)
+    except Exception as exc:  # pairing must never stop the controller starting
+        print("设备配对不可用：", exc)
+        return None
+
+
+PAIRING = _build_pairing_service()
+INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE, pairing=PAIRING)
 INPUT_BRIDGE.configure_scene_snapshot_handler(_scene_snapshot_from_phone)
 
 def _phone_control_payload() -> dict:
@@ -204,7 +237,7 @@ if provider is not None:
     provider(_phone_control_payload)
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
-MOTION_CONFIG_FILE = CONFIG_DIR / "motion_mappings.json"
+MOTION_CONFIG_FILE = user_path("motion_mappings")
 DEFAULT_MOTIONS = [
     {"id": "march", "name": "原地踏步", "enabled": False, "type": "gamepad_axis", "target": "LS_UP"},
     {"id": "calf_back", "name": "小腿向后（左/右）", "enabled": False, "type": "gamepad", "target": "B"},
@@ -215,6 +248,118 @@ DEFAULT_MOTIONS = [
     {"id": "cross_knee_elbow", "name": "提膝碰对侧肘", "enabled": False, "type": "gamepad", "target": "X"},
 ]
 
+
+
+# --- cloud ------------------------------------------------------------------
+#
+# Everything here is optional and nothing local depends on it. If the cloud is
+# unreachable, or was never configured, the controller works exactly as it does
+# now -- these routes fail and no other code path notices.
+
+CLOUD_ENDPOINT_FILE = user_path("cloud_endpoint")
+DEFAULT_CLOUD_ENDPOINT = "https://config.guiwu-aware.icu"
+
+
+def cloud_endpoint() -> str:
+    """The cloud this installation talks to, from a one-line text file."""
+    try:
+        configured = CLOUD_ENDPOINT_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        configured = ""
+    return configured or DEFAULT_CLOUD_ENDPOINT
+
+
+def set_cloud_endpoint(url: str) -> str:
+    # Construct the client first: it rejects anything that is not an http(s)
+    # URL, so an unusable address is never written to disk.
+    client = CloudClient(url)
+    CLOUD_ENDPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CLOUD_ENDPOINT_FILE.write_text(client.base, encoding="utf-8")
+    return client.base
+
+
+def _install_profile_selection(document: dict, game_id: str | None) -> dict:
+    """Apply a downloaded game-mapping document through the normal code path.
+
+    Nothing here writes a config file. It calls the same ``select`` and
+    ``set_overrides`` the local UI calls, so the base profile is resolved, the
+    merge is validated, and the motion-conflict rule runs -- all of which a
+    direct write would skip.
+
+    With *game_id*, only that one game's overrides are taken and the rest of the
+    user's games are left alone. That is what installing a shared config
+    actually means: someone published their Uncharted bindings, not their whole
+    library. Without it the entire document is adopted.
+    """
+    by_profile = document.get("overrides_by_profile", {})
+    if game_id:
+        if game_id not in by_profile:
+            raise ValueError(f"这份配置里没有 {game_id} 的映射")
+        wanted = {game_id: by_profile[game_id]}
+        final_selection = game_id
+    else:
+        wanted = by_profile
+        final_selection = str(document.get("selected_id", "")) or None
+
+    applied = []
+    for profile_id, overrides in wanted.items():
+        # set_overrides only accepts the currently selected profile, so each
+        # game is selected before its overrides are written. Both steps
+        # validate; neither touches the file directly.
+        PROFILES.select(profile_id)
+        PROFILES.set_overrides(overrides, profile_id=profile_id)
+        applied.append(profile_id)
+
+    if final_selection:
+        PROFILES.select(final_selection)
+    profile = PROFILES.effective_profile()
+    with VOICE._lock:
+        VOICE._release_locked(VOICE.source_id)
+        KERNEL.configure_bindings(profile.get("bindings", {}))
+    return {"applied_games": applied, "profile": profile}
+
+
+def _install_cloud_config(remote, game_id: str | None) -> dict:
+    """Back up, stop output, apply. In that order, and under the profile lock."""
+    with PROFILE_UPDATE_LOCK:
+        backup = backup_user_data(user_data_root())
+        # Applying a config rebinds every control at once. Releasing whatever is
+        # currently held first means a key that was down under the old mapping
+        # cannot stay down forever under the new one.
+        OUTPUT.emergency_stop()
+
+        if remote.doc_type == "profile_selection":
+            result = _install_profile_selection(remote.document, game_id)
+        elif remote.doc_type == "motion_mappings":
+            global MOTION_CONFIG
+            MOTION_CONFIG = save_motion_config(remote.document.get("motions", []))
+            KERNEL.configure_motions(MOTION_CONFIG)
+            OUTPUT.set_holds([], source_group="motions")
+            result = {"motions": MOTION_CONFIG}
+        elif remote.doc_type == "voice_mappings":
+            result = {"voice": VOICE.configure(
+                remote.document.get("mappings", []),
+                wake_word=remote.document.get("wake_word"),
+                emergency_stop_phrases=remote.document.get("emergency_stop_phrases"))}
+        else:
+            raise ValueError(f"不支持的配置类型：{remote.doc_type}")
+
+        broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+        if broadcaster is not None:
+            broadcaster(_phone_control_payload())
+
+    return {
+        "ok": True,
+        "installed": {
+            "title": remote.title,
+            "owner": remote.owner_name,
+            "doc_type": remote.doc_type,
+            "revision_no": remote.revision_no,
+            "sha256": remote.sha256,
+        },
+        "backup": str(backup) if backup else None,
+        **result,
+    }
 
 def _effective_voice_catalog_action(item: dict, voice_bindings: dict) -> dict | None:
     if str(item.get("kind", "")) == "system":
@@ -413,7 +558,7 @@ def performance_logger(stop_event: threading.Event) -> None:
         print(performance_line(), flush=True)
 
 
-class Handler(SimpleHTTPRequestHandler):
+class _BaseHandler(SimpleHTTPRequestHandler):
     # The UI polls several small status resources.  Persistent HTTP/1.1
     # connections avoid a new TCP handshake/TIME_WAIT entry for every poll.
     # All JSON/image responses below provide Content-Length; WebSocket upgrade
@@ -471,6 +616,49 @@ class Handler(SimpleHTTPRequestHandler):
         host = str(self.client_address[0]).split("%", 1)[0]
         return host in {"127.0.0.1", "::1"} or host.startswith("127.")
 
+
+    def _try_model_route(self, route: str) -> bool:
+        """Serve the two routes both planes expose.  Returns True if handled.
+
+        These are read-only and carry no user data, so exposing them on the LAN
+        plane costs nothing.  README says the phone runs MediaPipe locally and
+        very likely ships its own model, but the Android app lives in another
+        repo -- keeping these reachable means device onboarding cannot break if
+        it turns out to fetch one over HTTP.
+        """
+        if route == "/api/models":
+            available = bool(MODEL_PATH and MODEL_PATH.is_file())
+            self._send_json({
+                "version": VERSION,
+                "model_root": str(MODEL_ROOT) if MODEL_ROOT else None,
+                "models": [{
+                    "id": "mp-full",
+                    "name": "MediaPipe Pose Full",
+                    "points": 33,
+                    "input_size": "256×256",
+                    "available": available,
+                    "size_bytes": MODEL_PATH.stat().st_size if available else 0,
+                }],
+            })
+            return True
+        if route == "/api/model/mp-full":
+            if MODEL_PATH is None:
+                self.send_error(404, "MediaPipe Full model unavailable")
+            else:
+                self._serve_file(MODEL_PATH)
+            return True
+        return False
+
+
+class AdminHandler(_BaseHandler):
+    """The loopback plane: the local web UI and every /api/* route.
+
+    Bound to 127.0.0.1, so the LAN cannot reach any of this regardless of what
+    the individual route handlers check.  The _is_loopback() guards below stay
+    as defence in depth -- the listening address is the first boundary, this
+    class is the second, and those checks are the third.
+    """
+
     def do_GET(self):
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
@@ -482,9 +670,6 @@ class Handler(SimpleHTTPRequestHandler):
             # HTTPServer.shutdown must be called from another thread so this
             # request can finish sending its acknowledgement first.
             threading.Thread(target=self.server.shutdown, name="motion-shutdown", daemon=True).start()
-            return
-        if route == "/ws/input":
-            INPUT_BRIDGE.serve_websocket(self, parsed.query)
             return
         if route == "/api/game-profiles/catalog":
             query = parse_qs(parsed.query).get("q", [""])[0]
@@ -503,20 +688,7 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/output/actions":
             self._send_json({"version": VERSION, "actions": action_catalog()})
             return
-        if route == "/api/models":
-            available = bool(MODEL_PATH and MODEL_PATH.is_file())
-            self._send_json({
-                "version": VERSION,
-                "model_root": str(MODEL_ROOT) if MODEL_ROOT else None,
-                "models": [{
-                    "id": "mp-full",
-                    "name": "MediaPipe Pose Full",
-                    "points": 33,
-                    "input_size": "256×256",
-                    "available": available,
-                    "size_bytes": MODEL_PATH.stat().st_size if available else 0,
-                }],
-            })
+        if self._try_model_route(route):
             return
         if route == "/api/camera/preview.jpg":
             preview = RUNTIME.latest_preview()
@@ -530,12 +702,6 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Pragma", "no-cache")
             self.end_headers()
             self.wfile.write(preview)
-            return
-        if route == "/api/model/mp-full":
-            if MODEL_PATH is None:
-                self.send_error(404, "MediaPipe Full model unavailable")
-            else:
-                self._serve_file(MODEL_PATH)
             return
         if route == "/api/motion/config":
             self._send_json({"version": VERSION, "motions": MOTION_CONFIG})
@@ -583,6 +749,37 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/scene/status":
             self._send_json({"version": VERSION, **SCENE.status()})
             return
+        if route == "/api/pose/record":
+            self._send_json({"version": VERSION, "recording": KERNEL.pose_recorder.status()})
+            return
+        if route == "/api/hand-mouse/config":
+            self._send_json({"version": VERSION,
+                             "hand_mouse": KERNEL.hand_mouse_controller.status()})
+            return
+        if route == "/api/pairing/status":
+            if PAIRING is None:
+                self._send_json({"version": VERSION, "available": False,
+                                 "error": "设备配对不可用（缺少 cryptography）"})
+                return
+            self._send_json({"version": VERSION, "available": True,
+                             **PAIRING.pairing_status(),
+                             "devices": PAIRING.store.devices()})
+            return
+        if route == "/api/cloud/status":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "cloud is loopback-only"}, 403)
+                return
+            endpoint = cloud_endpoint()
+            payload = {"version": VERSION, "endpoint": endpoint, "reachable": False}
+            try:
+                payload["health"] = CloudClient(endpoint).health()
+                payload["reachable"] = True
+            except CloudError as exc:
+                # Not reachable is a normal state, not a failure of this
+                # request: the cloud is optional and the UI says so.
+                payload["error"] = str(exc)
+            self._send_json(payload)
+            return
         if route == "/api/scene/reference.jpg":
             if not SCENE.reference_path.is_file():
                 self.send_error(404, "scene reference unavailable")
@@ -622,6 +819,67 @@ class Handler(SimpleHTTPRequestHandler):
                 })
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **VOICE.status()}, 400)
+            return
+        if route.startswith("/api/cloud/"):
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "cloud is loopback-only"}, 403)
+                return
+            try:
+                if route == "/api/cloud/endpoint":
+                    self._send_json({"ok": True,
+                                     "endpoint": set_cloud_endpoint(str(body.get("url", "")))})
+                elif route == "/api/cloud/browse":
+                    client = CloudClient(cloud_endpoint())
+                    self._send_json({"ok": True, "profiles": client.browse(
+                        doc_type=str(body.get("doc_type", "")),
+                        game_id=str(body.get("game_id", "")))})
+                elif route == "/api/cloud/preview":
+                    remote = CloudClient(cloud_endpoint()).fetch(
+                        str(body.get("profile_id", "")), str(body.get("version_id", "")))
+                    # Deliberately does not apply anything: the UI shows what
+                    # would change and the user confirms before it happens.
+                    self._send_json({"ok": True, "preview": {
+                        "title": remote.title, "owner": remote.owner_name,
+                        "doc_type": remote.doc_type, "revision_no": remote.revision_no,
+                        "sha256": remote.sha256, "game_id": remote.game_id,
+                        "games": sorted(remote.document.get("overrides_by_profile", {}))
+                                 if remote.doc_type == "profile_selection" else [],
+                    }})
+                elif route == "/api/cloud/install":
+                    remote = CloudClient(cloud_endpoint()).fetch(
+                        str(body.get("profile_id", "")), str(body.get("version_id", "")))
+                    self._send_json(_install_cloud_config(
+                        remote, str(body.get("game_id", "")) or None))
+                else:
+                    self._send_json({"ok": False, "error": "not found"}, 404)
+            except CloudError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 502)
+            except ProfileSelectionChanged as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 409)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route.startswith("/api/pairing/"):
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "pairing is loopback-only"}, 403)
+                return
+            if PAIRING is None:
+                self._send_json({"ok": False, "error": "设备配对不可用（缺少 cryptography）"}, 503)
+                return
+            try:
+                if route == "/api/pairing/begin":
+                    self._send_json({"ok": True, **PAIRING.begin_pairing()})
+                elif route == "/api/pairing/cancel":
+                    PAIRING.cancel_pairing()
+                    self._send_json({"ok": True, **PAIRING.pairing_status()})
+                elif route == "/api/pairing/forget":
+                    removed = PAIRING.store.forget(str(body.get("device_id", "")))
+                    self._send_json({"ok": True, "removed": removed,
+                                     "devices": PAIRING.store.devices()})
+                else:
+                    self._send_json({"ok": False, "error": "not found"}, 404)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
             return
         if route == "/api/motion/config":
             if not self._is_loopback():
@@ -724,6 +982,30 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
             return
+        if route == "/api/pose/record":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "pose recording is loopback-only"}, 403)
+                return
+            try:
+                if body.get("cancel"):
+                    status = KERNEL.pose_recorder.cancel()
+                else:
+                    status = KERNEL.pose_recorder.start(
+                        delay_s=body.get("delay_s"), duration_s=body.get("duration_s"))
+                self._send_json({"ok": True, "recording": status})
+            except (ValueError, TypeError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/hand-mouse/config":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "hand mouse config is loopback-only"}, 403)
+                return
+            try:
+                status = KERNEL.configure_hand_mouse(body)
+                self._send_json({"ok": True, "hand_mouse": status})
+            except (ValueError, TypeError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if route == "/api/head/config":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "head config is loopback-only"}, 403)
@@ -818,6 +1100,40 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({"ok": False, "error": str(exc), **OUTPUT.status()}, 400)
 
 
+class DeviceHandler(_BaseHandler):
+    """The LAN plane: the phone's WebSocket, and deliberately almost nothing else.
+
+    Routing here is a whitelist, not a chain of guards.  Adding a route to the
+    admin plane later cannot accidentally expose it to the LAN, because this
+    class does not inherit that chain -- both planes share only _BaseHandler's
+    plumbing.  That is the point of the split: reachability becomes a property
+    of the listening socket instead of something every new handler has to
+    remember to check.
+
+    Note what this does *not* fix.  Binding the account and config APIs to
+    loopback stops a LAN device from reading them, but /ws/input itself still
+    accepts anyone until device pairing is enforced: handle_sensor() feeds
+    output.set_sensor_state() directly, so a forged sensor_frame is real
+    gamepad input.  Pairing is the other half of this change.
+    """
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        route = unquote(parsed.path)
+        if route == "/ws/input":
+            INPUT_BRIDGE.serve_websocket(self, parsed.query)
+            return
+        if self._try_model_route(route):
+            return
+        self.send_error(404)
+
+    def do_HEAD(self):
+        self.send_error(404)
+
+    def do_POST(self):
+        self.send_error(404)
+
+
 def _enable_default_xinput_merge() -> None:
     """Merge the physical pad on startup when exactly one is plugged in.
 
@@ -842,6 +1158,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="0.0.0.0", help="监听地址；默认允许局域网手机连接")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--admin-port", type=int, default=8766,
+                    help="本机管理面端口；只监听 127.0.0.1，局域网无法访问")
     ap.add_argument("--model-root", default=None)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
@@ -855,29 +1173,41 @@ def main():
     print("Model root:", MODEL_ROOT or "NOT FOUND")
     print("MediaPipe Full:", MODEL_PATH or "NOT FOUND")
 
-    try:
-        server = ThreadingHTTPServer((args.host, args.port), Handler)
-    except OSError as exc:
-        if getattr(exc, "winerror", None) == 10048 or getattr(exc, "errno", None) in {98, 10048}:
-            print(
-                f"启动失败：端口 {args.port} 已被占用，可能已有 MotionControl 实例在运行。"
-                f" 请关闭旧实例或改用 --port；当前进程不会结束其他进程。",
-                file=sys.stderr,
-                flush=True,
-            )
-            raise SystemExit(2) from exc
-        raise
+    def _listen(host: str, port: int, handler, label: str) -> ThreadingHTTPServer:
+        try:
+            return ThreadingHTTPServer((host, port), handler)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 10048 or getattr(exc, "errno", None) in {98, 10048}:
+                print(
+                    f"启动失败：{label}端口 {port} 已被占用，可能已有 MotionControl 实例在运行。"
+                    f" 请关闭旧实例或改用 --port/--admin-port；当前进程不会结束其他进程。",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                raise SystemExit(2) from exc
+            raise
+
+    # Two planes, two trust levels.  8765 faces the LAN because the phone has to
+    # reach it; 8766 never leaves this machine, so the browser UI and every
+    # /api/* route are unreachable from the network by construction.  The
+    # browser loads from 8766 and calls 8766, so both stay same-origin and no
+    # CORS is involved anywhere.
+    device_server = _listen(args.host, args.port, DeviceHandler, "设备接入面")
+    admin_server = _listen("127.0.0.1", args.admin_port, AdminHandler, "本机管理面")
     HOTKEYS.start()
-    display_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
-    url = f"http://{display_host}:{args.port}/"
+    url = f"http://127.0.0.1:{args.admin_port}/"
     print("Open:", url)
+    print(f"手机接入（仅 /ws/input）：{args.host}:{args.port}")
     perf_stop = threading.Event()
     perf_thread = threading.Thread(target=performance_logger, args=(perf_stop,), name="motion-performance-log", daemon=True)
     perf_thread.start()
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    device_thread = threading.Thread(
+        target=device_server.serve_forever, name="motion-device-plane", daemon=True)
+    device_thread.start()
     try:
-        server.serve_forever()
+        admin_server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
@@ -889,7 +1219,10 @@ def main():
         RUNTIME.close()
         HOTKEYS.close()
         OUTPUT.close()
-        server.server_close()
+        device_server.shutdown()
+        device_thread.join(timeout=2.0)
+        device_server.server_close()
+        admin_server.server_close()
 
 
 if __name__ == "__main__":
