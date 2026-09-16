@@ -30,7 +30,13 @@ FIXTURE = REPO / "tests" / "fixtures" / "canonical_selection.json"
 # Byte-for-byte identical on Windows and Linux.  Do not "fix" this by pasting
 # in whatever the current run prints; a mismatch means the canonical form
 # changed, and that is a wire-contract change.
-EXPECTED_SHA256 = "d8cf183cf462b89383b69e424268f8e3a3fd4858fa17e241d02ed75022778433"
+#
+# Changed once, deliberately, on 2026-09-16: normalize_overrides now merges the
+# four historical hand-zone ids into the two the app actually uses.  The fixture
+# carries zone.leftHandUpper and zone.rightHandUpper, so its canonical form --
+# and therefore its digest -- moved.  Previous value, for the record:
+#   d8cf183cf462b89383b69e424268f8e3a3fd4858fa17e241d02ed75022778433
+EXPECTED_SHA256 = "f750c38c3ac3c68898f74f8b70bfbe4d04f1abdc2635b54cc04d41815e7cbb6c"
 
 
 @pytest.fixture(scope="module")
@@ -111,4 +117,7 @@ def test_canonicalize_migrates_v1_selection():
           "overrides": {"zone.leftHandUpper": {"action": {"type": "gamepad", "target": "A"}}}}
     result = canonicalize("profile_selection", v1)
     assert result.data["schema"] == "motioncontrol.profile_selection.v2"
-    assert "zone.leftHandUpper" in result.data["overrides_by_profile"]["generic-xbox"]
+    # leftHandUpper is merged into leftHand on the way through: the hands are
+    # two zones now, and the historical id was already only reachable through
+    # the kernel's fallback.
+    assert "zone.leftHand" in result.data["overrides_by_profile"]["generic-xbox"]

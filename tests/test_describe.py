@@ -135,10 +135,11 @@ def test_profile_selection_is_described_per_game():
     assert names == {"体感区域", "身体动作"}
 
     zone = next(g for g in game["groups"] if g["key"] == "zone")["items"][0]
-    assert zone["name"] == "左手上区"
+    # 上传的是 zone.leftHandUpper，规范化时并成了 leftHand——手部现在是两块区域，
+    # 历史 id 本来也只能通过内核的回退才生效。
+    assert zone["trigger"] == "zone.leftHand"
+    assert zone["name"] == "左手区"
     assert zone["action"] == "Xbox X 键 · 持续按住"
-    # 历史 id 在运行时并到左手区，不说出来用户会以为手部有四块独立区域。
-    assert zone["runtime_zone"] == "左手区"
 
 
 def test_a_disabled_binding_says_so():
@@ -204,3 +205,57 @@ def test_the_real_configuration_describes_without_error():
             for item in group["items"]:
                 assert item["name"], f"{item['trigger']} 没有名字"
                 assert item["action"], f"{item['trigger']} 没有动作说明"
+
+
+# --- 合并之前存下来的文档 ------------------------------------------------------
+
+def _legacy_zone_doc(upper_target: str, lower_target: str) -> dict:
+    """手工构造一份"合并之前"的文档。
+
+    不能用 canonicalize()：它现在就会把历史 id 并掉，而这里要测的恰恰是那些在
+    合并之前就存进去、并且因为版本不可变而永远保持旧形态的文档。
+    """
+    def binding(target):
+        return {"action": {"type": "gamepad", "target": target, "behavior": "hold"}}
+    return {
+        "schema": "motioncontrol.profile_selection.v2",
+        "selected_id": "generic-xbox",
+        "overrides_by_profile": {"generic-xbox": {
+            "zone.rightHandUpper": binding(upper_target),
+            "zone.rightHandLower": binding(lower_target),
+        }},
+    }
+
+
+def test_a_shadowed_legacy_binding_is_called_out():
+    """上区和下区配了不同的键时，下区那条从来不触发——必须说出来。
+
+    不说的话，用户会盯着一条永远不响应的绑定找原因。这不是假设：本机真实配置里
+    右手上区是 B、下区是 A，那个 A 从来没生效过。
+    """
+    result = describe("profile_selection", _legacy_zone_doc("B", "A"))
+    items = {i["name"]: i for i in result["games"][0]["groups"][0]["items"]}
+
+    assert items["右手下区"]["shadowed_by"] == "右手上区"
+    assert items["右手下区"]["shadowed_matters"] is True
+    assert items["右手上区"]["shadows"] == ["右手下区"]
+    # 两条都标出运行时落到哪块区域。
+    assert items["右手上区"]["runtime_zone"] == "右手区"
+
+
+def test_two_identical_legacy_bindings_are_not_alarming():
+    """配的是同一个键时，覆盖不改变任何行为，不该报成问题。"""
+    result = describe("profile_selection", _legacy_zone_doc("B", "B"))
+    items = {i["name"]: i for i in result["games"][0]["groups"][0]["items"]}
+    assert items["右手下区"]["shadowed_by"] == "右手上区"
+    assert items["右手下区"]["shadowed_matters"] is False
+
+
+def test_a_merged_document_has_nothing_to_annotate():
+    """走过新版规范化的文档只剩两块手部区域，没有覆盖可言。"""
+    doc = canonicalize("profile_selection", _legacy_zone_doc("B", "A")).data
+    item = describe("profile_selection", doc)["games"][0]["groups"][0]["items"][0]
+    assert item["name"] == "右手区"
+    assert "shadowed_by" not in item and "runtime_zone" not in item
+    # 留下来的是内核本来就在用的那条。
+    assert item["action"] == "Xbox B 键 · 持续按住"

@@ -94,6 +94,11 @@ export interface SummaryItem {
   disabled?: boolean;
   enabled?: boolean;
   runtime_zone?: string;
+  /** 合并之前存的文档里，两条历史绑定落到同一块区域时，只有一条生效。 */
+  shadowed_by?: string;
+  shadowed_matters?: boolean;
+  shadows?: string[];
+  shadows_matter?: boolean;
 }
 
 export interface SummaryGroup {

@@ -16,6 +16,7 @@ control_kernel.py 的 BODY_ZONES、config/voice_commands_v094.json），云端�
 from __future__ import annotations
 
 from .mapping_schema import normalize_key_combo  # noqa: F401  (re-export 方便调用方)
+from .profile_schema import ZONE_ID_MERGES
 
 # 体感区域。四个"上/下"是历史 id：运行时它们已经合并成左手区/右手区两块，
 # 见 ZONE_RUNTIME_ALIASES。旧配置仍然写着它们，所以两套都要认。
@@ -31,8 +32,12 @@ ZONE_NAMES = {
     "headJump": "头顶跳跃区",
 }
 
-# 四个历史手部 id 在运行时落到哪块物理区域。两个 id 指向同一块区域时，它们会
-# 同时触发，这是描述里必须说出来的事——否则用户会以为自己分到了四块。
+# 四个历史手部 id 在运行时落到哪块物理区域。
+#
+# normalize_overrides 现在会在规范化时就把它们并成两个，所以新存的文档里不会再
+# 出现。但**版本是不可变的**：合并之前存下来的那些永远带着旧 id，而且以后还会被
+# 人打开、下载、安装。所以描述仍然要认它们，并且要指出两条落到同一块区域时哪条
+# 才真正生效——不指出来，用户会盯着一条从不触发的绑定找原因。
 ZONE_RUNTIME_ALIASES = {
     "leftHandUpper": "leftHand",
     "leftHandLower": "leftHand",
@@ -137,12 +142,41 @@ def describe_action(action) -> str:
     return f"{what} · {behavior}" if behavior else what
 
 
+def _annotate_merged_zones(entries: list[dict]) -> None:
+    """标出历史手部 id 里哪一条真正生效。
+
+    合并之前存下来的配置可能同时有"上区"和"下区"，而运行时只有一块手部区域。
+    内核按 ZONE_ID_MERGES 的顺序取第一条命中的（control_kernel.py:1688），另一条
+    从来不触发。两条配的是同一个键时无所谓；配成不同键时，用户会盯着一条永远不
+    响应的绑定找半天原因。
+    """
+    rank = {alias: index for index, (alias, _) in enumerate(ZONE_ID_MERGES)}
+    by_runtime: dict[str, list[dict]] = {}
+    for entry in entries:
+        ident = str(entry["trigger"]).partition(".")[2]
+        runtime = ZONE_RUNTIME_ALIASES.get(ident)
+        if runtime:
+            entry["runtime_zone"] = ZONE_NAMES.get(runtime, runtime)
+            by_runtime.setdefault(runtime, []).append(entry)
+
+    for runtime, group in by_runtime.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda e: rank[str(e["trigger"]).partition(".")[2]])
+        winner, *losers = group
+        same = all(other["action"] == winner["action"] for other in losers)
+        for other in losers:
+            other["shadowed_by"] = winner["name"]
+            other["shadowed_matters"] = not same
+        winner["shadows"] = [other["name"] for other in losers]
+        winner["shadows_matter"] = not same
+
+
 def _describe_overrides(overrides: dict) -> dict:
     """一个游戏的自定义绑定，按类别分好。"""
     groups: dict[str, list[dict]] = {}
     for trigger, binding in sorted(overrides.items()):
         prefix = str(trigger).partition(".")[0]
-        ident = str(trigger).partition(".")[2]
         entry = {
             "trigger": trigger,
             "name": trigger_name(trigger),
@@ -150,12 +184,8 @@ def _describe_overrides(overrides: dict) -> dict:
                 binding.get("action") if isinstance(binding, dict) else None),
             "disabled": binding is None,
         }
-        # 两个历史 id 落到同一块物理区域时会同时触发。不说的话，用户会以为
-        # 自己分到了四块独立的手部区域。
-        runtime = ZONE_RUNTIME_ALIASES.get(ident)
-        if prefix == "zone" and runtime:
-            entry["runtime_zone"] = ZONE_NAMES.get(runtime, runtime)
         groups.setdefault(prefix, []).append(entry)
+    _annotate_merged_zones(groups.get("zone", []))
 
     return {
         "total": sum(len(items) for items in groups.values()),
