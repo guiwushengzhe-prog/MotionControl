@@ -32,6 +32,7 @@ USER_DATA_FILES = {
     # Which cloud instance this installation talks to. A plain text file
     # holding one URL; it is per-installation, so it never travels.
     "cloud_endpoint": "cloud_endpoint.txt",
+    "custom_poses": "custom_poses.json",
 }
 
 # Where 2.0 and earlier wrote them, relative to the program directory.  Only

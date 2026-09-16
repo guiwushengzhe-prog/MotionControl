@@ -59,6 +59,13 @@ CLASSIFICATION = {
     # Someone self-hosting points their own install at their own server;
     # carrying that address to another machine would silently redirect it.
     "cloud_endpoint": DEVICE_CONFIGURATION,
+    # 用户自己录的姿势。模板已经做成位置、距离、体型无关的了（见
+    # motioncontrol_shared.pose_template），所以它确实能跨机器跨人使用——
+    # 和 scene_layout 那种绑死一个机位的东西不是一回事。
+    #
+    # 暂时不进同步白名单：进白名单就要有对应的规范化入口，而云端还没有校验姿势
+    # 模板的逻辑。以后补是纯加法。
+    "custom_poses": USER_CONFIGURATION,
     "scene_layout": SPATIAL_CALIBRATION,
     "scene_reference": SPATIAL_CALIBRATION,
 }
