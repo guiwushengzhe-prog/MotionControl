@@ -1,0 +1,27 @@
+# 加到 /etc/caddy/Caddyfile 的末尾，和 guiwu-aware.icu 那一段平级。
+#
+# 不要装 nginx。Caddy 已经占着 80/443 在服务 guiwu-aware.icu，再装一个会抢端口，
+# 而且 Caddy 自带自动 HTTPS，不需要 certbot。
+#
+# 前提：DNS 里先加一条 A 记录
+#     motioncontrol.guiwu-aware.icu  ->  8.220.206.237
+# Caddy 是在第一次有人访问这个域名时去签证书的，DNS 没生效就会签失败。
+
+motioncontrol.guiwu-aware.icu {
+	encode zstd gzip
+
+	# 服务只监听 127.0.0.1:8000，所以这里是它唯一的对外入口。
+	reverse_proxy 127.0.0.1:8000 {
+		# Caddy 默认会带上 X-Forwarded-For，服务端配的是
+		# --forwarded-allow-ips=127.0.0.1，只信任来自本机的这个头。
+		health_uri /api/v1/health
+		health_interval 30s
+		health_timeout 5s
+	}
+
+	# 上传的配置实测约 6 KB，服务端自己的上限是 256 KB。这里再设一道，
+	# 让超大的请求在 Caddy 就被挡掉，根本不进 Python 进程。
+	request_body {
+		max_size 2MB
+	}
+}
