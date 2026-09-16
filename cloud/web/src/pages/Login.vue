@@ -44,9 +44,6 @@ async function submit() {
 <template>
   <div class="card narrow">
     <h1>{{ mode === "login" ? "登录" : "注册" }}</h1>
-    <p class="hint" v-if="mode === 'register'">
-      注册需要邀请码。还没开放公开注册，因为邮箱验证和举报处理都还没做。
-    </p>
 
     <form @submit.prevent="submit">
       <label v-if="mode === 'register'">
@@ -60,6 +57,11 @@ async function submit() {
       <label>
         邮箱
         <input v-model="email" type="email" required autocomplete="username" />
+        <!-- 改邮箱和找回密码都还没做。填错的代价是整个账号拿不回来，
+             所以这一句必须在注册时就说，不能等出事再说。 -->
+        <small v-if="mode === 'register'" class="warn">
+          填你自己真实在用的邮箱。目前不能改邮箱、也不能找回密码，填错只能重新注册。
+        </small>
       </label>
       <label>
         密码
@@ -70,7 +72,7 @@ async function submit() {
           :minlength="mode === 'register' ? 10 : undefined"
           :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
         />
-        <small v-if="mode === 'register'">至少 10 个字符。长度比花样管用，所以没有别的要求。</small>
+        <small v-if="mode === 'register'">至少 10 个字符</small>
       </label>
 
       <p class="error" v-if="error">{{ error }}</p>
@@ -92,5 +94,7 @@ async function submit() {
 form { display: flex; flex-direction: column; gap: 1rem; }
 label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.9rem; }
 small { color: var(--muted); font-size: 0.8rem; }
+/* 这一条不是补充说明，是填错就拿不回账号的警告，所以不跟其他灰字同色。 */
+small.warn { color: var(--text); }
 .switch { margin-top: 1.2rem; text-align: center; font-size: 0.9rem; }
 </style>
