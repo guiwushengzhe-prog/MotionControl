@@ -407,6 +407,11 @@ class ControlKernel:
             key: {"active": False, "on": 0, "off": 0}
             for key in ("hands_cross",)
         }
+        # 用户自己录的姿势。id 是运行时才知道的，所以去抖条目按需建。
+        # 存取在 custom_poses.CustomPoseStore 里，由 server.py 装进来——内核不碰
+        # 文件，这样测试里可以直接塞一个假的。
+        self.custom_pose_store = None
+        self.custom_pose_scores: dict[str, float] = {}
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -1596,7 +1601,10 @@ class ControlKernel:
     # ---------- cross poses + unified mapping ----------
 
     def _set_pose_debounced(self, ident: str, raw: bool, on_frames: int = 2, off_frames: int = 2) -> bool:
-        state = self.pose_debounce[ident]
+        state = self.pose_debounce.get(ident)
+        if state is None:
+            # 自定义姿势是运行时才出现的，第一次见到就建一条。
+            state = self.pose_debounce[ident] = {"active": False, "on": 0, "off": 0}
         if raw:
             state["on"] += 1
             state["off"] = 0
@@ -1671,8 +1679,55 @@ class ControlKernel:
             for ident in self.pose_debounce:
                 self._set_pose_debounced(ident, False)
 
+        self._update_custom_poses_locked(pose_map, active, confidence)
         self.pose_active = active
         self.pose_confidence = confidence
+
+    def _update_custom_poses_locked(self, pose_map: dict[str, dict],
+                                    active: set[str], confidence: dict) -> None:
+        """把用户录的姿势并进同一套 pose_active。
+
+        并进来而不是另开一条通路：这样它们自动获得按游戏映射、冲突检查、绑定界面、
+        紧急停止时一起松开——全部已有的行为。
+
+        触发与否交给 _set_pose_debounced，它本来就是"连续多少帧成立才算"，也就是
+        用户设的停留时间。比对器只回答"这一帧够不够像"，判定只有一处。
+        """
+        store = self.custom_pose_store
+        if store is None:
+            return
+        try:
+            results = store.evaluate(pose_map)
+        except Exception:  # noqa: BLE001 - 一个坏模板不该让整个识别停摆
+            return
+        scores: dict[str, float] = {}
+        for entry in store.poses:
+            ident = entry["id"]
+            result = results.get(ident)
+            if result is None:
+                # 被禁用的：去抖归位，免得禁用瞬间那个键卡在按下状态。
+                self._set_pose_debounced(ident, False)
+                continue
+            scores[ident] = round(float(result["score"]), 3)
+            confidence[ident] = scores[ident]
+            dwell = int(entry.get("dwell_frames", 5))
+            if self._set_pose_debounced(ident, bool(result["hit"]),
+                                        on_frames=dwell, off_frames=2):
+                active.add(ident)
+        self.custom_pose_scores = scores
+
+    def configure_custom_poses(self, store) -> None:
+        """装上（或换掉）自定义姿势的存储。"""
+        with self._lock:
+            self.custom_pose_store = store
+            # 所有自定义姿势的去抖状态清零，不只是被删掉的那些。阈值和停留时间
+            # 定义的就是"什么算触发"，改了它们之后还沿用旧状态，等于新设置要等
+            # 到下次松开才生效——用户会以为没保存。代价是改完设置要重新摆一下，
+            # 那是符合预期的。
+            for ident in list(self.pose_debounce):
+                if ident != "hands_cross":
+                    self.pose_debounce.pop(ident, None)
+            self._dispatch_controls_locked(time.monotonic())
 
     def _effective_binding_locked(self, trigger: str) -> dict | None:
         binding = self.control_bindings.get(trigger)
@@ -2013,6 +2068,9 @@ class ControlKernel:
             "buttons": self._pressed_keys_locked(),
             "motions": sorted(self.motion_active),
             "poses_active": sorted(self.pose_active),
+            # 自定义姿势的实时相似度。放进这份状态里，界面就复用已有的轮询，
+            # 不用为它再开一路——多一路轮询就多一份和主状态不同步的机会。
+            "custom_pose_scores": dict(self.custom_pose_scores),
             "pose_confidence": copy.deepcopy(self.pose_confidence),
             "control_bindings": copy.deepcopy(self.control_bindings),
             "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_provisional",

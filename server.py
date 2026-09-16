@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from cloud_client import CloudClient, CloudError, backup_user_data
+from custom_poses import CustomPoseError, CustomPoseStore
 from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from input_bridge import InputBridge
 from game_profiles import GameProfileStore, ProfileSelectionChanged
@@ -235,6 +236,12 @@ def _phone_control_payload() -> dict:
 provider = getattr(INPUT_BRIDGE, "configure_control_config_provider", None)
 if provider is not None:
     provider(_phone_control_payload)
+# 用户自己录的姿势。内核不碰文件，所以 store 在这里建、装进去。
+CUSTOM_POSES = CustomPoseStore(user_path("custom_poses"))
+KERNEL.configure_custom_poses(CUSTOM_POSES)
+if CUSTOM_POSES.last_error:
+    print(CUSTOM_POSES.last_error)
+
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
 MOTION_CONFIG_FILE = user_path("motion_mappings")
@@ -360,6 +367,11 @@ def _install_cloud_config(remote, game_id: str | None) -> dict:
         "backup": str(backup) if backup else None,
         **result,
     }
+
+def _custom_pose_out(entry: dict) -> dict:
+    """给界面的单个姿势。模板本身不发——那是十几个浮点数，界面用不上。"""
+    return next(item for item in CUSTOM_POSES.status() if item["id"] == entry["id"])
+
 
 def _effective_voice_catalog_action(item: dict, voice_bindings: dict) -> dict | None:
     if str(item.get("kind", "")) == "system":
@@ -749,6 +761,17 @@ class AdminHandler(_BaseHandler):
         if route == "/api/scene/status":
             self._send_json({"version": VERSION, **SCENE.status()})
             return
+        if route == "/api/pose/custom":
+            self._send_json({
+                "version": VERSION,
+                "poses": CUSTOM_POSES.status(),
+                # 实时相似度：界面靠它给出"现在像不像"的即时反馈，没有这个，
+                # 用户调阈值只能靠猜。
+                "scores": dict(KERNEL.custom_pose_scores),
+                "active": sorted(KERNEL.pose_active),
+                "limits": {"max": 24, "name_chars": 20},
+            })
+            return
         if route == "/api/pose/record":
             self._send_json({"version": VERSION, "recording": KERNEL.pose_recorder.status()})
             return
@@ -819,6 +842,47 @@ class AdminHandler(_BaseHandler):
                 })
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **VOICE.status()}, 400)
+            return
+        if route.startswith("/api/pose/custom/"):
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "custom poses are loopback-only"}, 403)
+                return
+            try:
+                with PROFILE_UPDATE_LOCK:
+                    if route == "/api/pose/custom/capture":
+                        # 取一小段时间的中位数而不是单帧：单帧的关键点会抖，
+                        # 抖出来的模板会让之后每一次比对都偏一点。
+                        snapshot = KERNEL.stable_pose_snapshot(window_s=0.40, min_samples=3)
+                        if not snapshot:
+                            self._send_json({"ok": False,
+                                             "error": "还没有看到人。先让摄像头拍到你，再录姿势。"}, 400)
+                            return
+                        entry = CUSTOM_POSES.capture(snapshot, str(body.get("name", "")))
+                        KERNEL.configure_custom_poses(CUSTOM_POSES)
+                        self._send_json({"ok": True, "pose": _custom_pose_out(entry),
+                                         "poses": CUSTOM_POSES.status()})
+                    elif route == "/api/pose/custom/update":
+                        changes = {k: body[k] for k in
+                                   ("name", "threshold", "dwell_frames", "enabled") if k in body}
+                        entry = CUSTOM_POSES.update(str(body.get("id", "")), **changes)
+                        KERNEL.configure_custom_poses(CUSTOM_POSES)
+                        self._send_json({"ok": True, "pose": _custom_pose_out(entry),
+                                         "poses": CUSTOM_POSES.status()})
+                    elif route == "/api/pose/custom/remove":
+                        removed = CUSTOM_POSES.remove(str(body.get("id", "")))
+                        KERNEL.configure_custom_poses(CUSTOM_POSES)
+                        self._send_json({"ok": True, "removed": removed,
+                                         "poses": CUSTOM_POSES.status()})
+                    else:
+                        self._send_json({"ok": False, "error": "not found"}, 404)
+                        return
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
+            except CustomPoseError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
             return
         if route.startswith("/api/cloud/"):
             if not self._is_loopback():

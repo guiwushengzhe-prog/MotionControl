@@ -57,6 +57,8 @@ const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',
 const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
 const VOICE_SYSTEM_TARGETS=[['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景']];
 const voice={status:null};
+let customPoses=[];
+let customPoseScores={};
 const overlay={win:null,canvas:null,ctx:null};
 const perfUi={previewBusy:false};
 const scene={status:{},zones:{},vertical:{},selected:''};
@@ -77,7 +79,14 @@ function profileTriggers(){
       name:`语音 · ${item.phrase}`,tapOnly:false,
       defaultBinding:item.default_action?{label:item.label,action:item.default_action}:null,
     }));
-  return [...BASE_PROFILE_TRIGGERS,...voiceTriggers];
+  // 用户自己录的姿势并进同一份触发器列表，于是它们自动出现在映射界面里，
+  // 和内置姿势用同一套编辑、保存、按游戏区分的逻辑。不并进来的话，录完的姿势
+  // 在界面上根本没地方绑键。
+  const customPoseTriggers=customPoses.map(item=>({
+    key:`pose.${item.id}`,group:'poses',id:item.id,
+    name:`自定义 · ${item.name}`,tapOnly:false,
+  }));
+  return [...BASE_PROFILE_TRIGGERS,...customPoseTriggers,...voiceTriggers];
 }
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -184,6 +193,8 @@ function renderKernelState(runtime){
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
   const active=new Set(k.motions||[]),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头'],jumping_jack:['#motionJumpingJack','开合跳'],side_step_jack:['#motionSideStepJack','侧步开合'],cross_knee_elbow:['#motionCrossKneeElbow','提膝碰对侧肘']};
   for(const[id,[sel]]of Object.entries(chips))$(sel)?.classList.toggle('active',active.has(id));
+  // 自定义姿势的相似度跟着主状态一起来，不另开一路轮询。
+  customPoseScores=k.custom_pose_scores||{};paintCustomPoseScores();
   const poses=new Set(k.poses_active||[]),poseChips={hands_cross:'#poseHandsCross'};
   for(const[id,sel]of Object.entries(poseChips))$(sel)?.classList.toggle('active',poses.has(id));
   const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(id=>chips[id]?.[1]||id).join(' + '));if(poses.size)statusParts.push('动作：'+[...poses].map(id=>BASE_PROFILE_TRIGGERS.find(t=>t.id===id)?.name||id).join(' + '));
@@ -976,6 +987,9 @@ async function init(){
     }),
   ]);
   if(results.some(result=>result.status==='rejected'))notice('部分设备信息尚未读取，可继续使用已连接的输入');
+  // 先拿姿势列表再建映射行：触发器列表要包含自定义姿势，否则录过的姿势
+  // 在映射界面里没有对应的一行。
+  await refreshCustomPoses({rebuild:false});
   await loadProfiles();renderVoiceRows(voice.status?.mappings||[]);
   poll(refreshKernel,250);poll(async()=>{await refreshInput();await refreshOutput();await refreshVoice()},900);
   poll(refreshXinput,1500,()=>currentView==='devices');
@@ -1191,3 +1205,175 @@ async function cloudInstall(item, button) {
 }
 
 cloudRefreshBtn?.addEventListener('click', cloudRefresh);
+
+/* --- 自定义姿势 ---------------------------------------------------------
+ * 摆一个姿势录下来，之后做出同样的动作就触发。
+ *
+ * 识别出来的姿势走的是和内置 hands_cross 同一条通路（pose.<id>），所以它们自动
+ * 出现在上面的映射列表里，按游戏分别绑键、冲突检查、紧急停止一起松开——全是现成
+ * 的。这里只管录制和调参。
+ */
+const customPoseListEl = document.getElementById('customPoseList');
+const customPoseStatusEl = document.getElementById('customPoseStatus');
+
+function customPoseSay(text, kind = '') {
+  if (!customPoseStatusEl) return;
+  customPoseStatusEl.textContent = text;
+  customPoseStatusEl.className = kind === 'error' ? 'statusline error' : 'statusline';
+}
+
+async function refreshCustomPoses({ rebuild = true } = {}) {
+  try {
+    const data = await api('/api/pose/custom');
+    customPoses = data.poses || [];
+    customPoseScores = data.scores || {};
+    renderCustomPoses();
+    // 触发器列表变了，映射界面要重建才能看到新姿势。轮询刷新分数时不重建，
+    // 否则用户正在编辑的那一行会被冲掉。
+    if (rebuild) renderProfileBindingRows();
+  } catch (error) {
+    customPoseSay(error.message, 'error');
+  }
+}
+
+async function captureCustomPose() {
+  const button = document.getElementById('customPoseCaptureBtn');
+  const nameInput = document.getElementById('customPoseName');
+  button.disabled = true;
+  customPoseSay('正在读取当前姿势…');
+  try {
+    const data = await post('/api/pose/custom/capture', { name: nameInput.value || '' });
+    nameInput.value = '';
+    customPoses = data.poses || [];
+    customPoseSay('已录「' + data.pose.name + '」。到上面的映射列表里给它绑一个按键。');
+    renderCustomPoses();
+    renderProfileBindingRows();
+  } catch (error) {
+    customPoseSay(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function updateCustomPose(id, changes) {
+  try {
+    const data = await post('/api/pose/custom/update', Object.assign({ id }, changes));
+    customPoses = data.poses || [];
+    renderCustomPoses();
+    renderProfileBindingRows();
+  } catch (error) {
+    customPoseSay(error.message, 'error');
+  }
+}
+
+async function removeCustomPose(item) {
+  if (!confirm('删除「' + item.name + '」？绑在它上面的按键映射也会失效。')) return;
+  try {
+    const data = await post('/api/pose/custom/remove', { id: item.id });
+    customPoses = data.poses || [];
+    customPoseSay('已删除「' + item.name + '」');
+    renderCustomPoses();
+    renderProfileBindingRows();
+  } catch (error) {
+    customPoseSay(error.message, 'error');
+  }
+}
+
+function customPoseSlider(labelText, input, format) {
+  const label = document.createElement('label');
+  const value = document.createElement('span');
+  value.className = 'custom-pose-value';
+  value.textContent = format(Number(input.value));
+  input.addEventListener('input', () => { value.textContent = format(Number(input.value)); });
+  label.append(labelText, input, value);
+  return label;
+}
+
+function renderCustomPoses() {
+  if (!customPoseListEl) return;
+  const hint = document.getElementById('customPoseHint');
+  if (hint) hint.hidden = !customPoses.length;
+  customPoseListEl.replaceChildren();
+
+  for (const item of customPoses) {
+    const row = document.createElement('div');
+    row.className = 'custom-pose';
+    row.dataset.id = item.id;
+
+    const name = document.createElement('input');
+    name.className = 'custom-pose-name';
+    name.value = item.name;
+    name.maxLength = 20;
+    name.addEventListener('change', () => updateCustomPose(item.id, { name: name.value }));
+
+    // 实时相似度。没有它，用户调阈值只能靠猜。
+    const meter = document.createElement('div');
+    meter.className = 'custom-pose-meter';
+    const fill = document.createElement('div');
+    fill.className = 'custom-pose-fill';
+    const readout = document.createElement('span');
+    readout.className = 'custom-pose-score';
+    meter.append(fill, readout);
+
+    const threshold = document.createElement('input');
+    threshold.type = 'range';
+    threshold.min = '50'; threshold.max = '99'; threshold.step = '1';
+    threshold.value = String(Math.round(item.threshold * 100));
+    threshold.addEventListener('change', () =>
+      updateCustomPose(item.id, { threshold: Number(threshold.value) / 100 }));
+
+    const dwell = document.createElement('input');
+    dwell.type = 'range';
+    dwell.min = '1'; dwell.max = '60'; dwell.step = '1';
+    dwell.value = String(item.dwell_frames);
+    dwell.addEventListener('change', () =>
+      updateCustomPose(item.id, { dwell_frames: Number(dwell.value) }));
+
+    const enabled = document.createElement('label');
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.checked = item.enabled;
+    toggle.addEventListener('change', () => updateCustomPose(item.id, { enabled: toggle.checked }));
+    enabled.append(toggle, '启用');
+
+    const remove = document.createElement('button');
+    remove.className = 'btn';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => removeCustomPose(item));
+
+    const head = document.createElement('div');
+    head.className = 'custom-pose-head';
+    head.append(name, meter);
+
+    const tools = document.createElement('div');
+    tools.className = 'custom-pose-tools';
+    tools.append(
+      customPoseSlider('阈值 ', threshold, v => v + '%'),
+      // 帧数对用户没有意义，换算成秒。30fps 是相机的常见帧率。
+      customPoseSlider('停留 ', dwell, v => (v / 30).toFixed(2) + ' 秒'),
+      enabled, remove);
+
+    row.append(head, tools);
+    customPoseListEl.appendChild(row);
+  }
+  paintCustomPoseScores();
+}
+
+/** 只改数字和进度条，不重建 DOM——每秒重建会把用户正在拖的滑块打断。 */
+function paintCustomPoseScores() {
+  if (!customPoseListEl) return;
+  const active = new Set(kernelState?.poses_active || []);
+  for (const row of customPoseListEl.querySelectorAll('.custom-pose')) {
+    const id = row.dataset.id;
+    const item = customPoses.find(p => p.id === id);
+    const score = Number(customPoseScores[id] ?? 0);
+    const fill = row.querySelector('.custom-pose-fill');
+    const readout = row.querySelector('.custom-pose-score');
+    if (fill) fill.style.width = Math.round(score * 100) + '%';
+    if (readout) readout.textContent = Math.round(score * 100) + '%';
+    row.classList.toggle('hit', !!(item && score >= item.threshold));
+    row.classList.toggle('firing', active.has(id));
+  }
+}
+
+document.getElementById('customPoseCaptureBtn')?.addEventListener('click', captureCustomPose);
