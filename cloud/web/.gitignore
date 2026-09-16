@@ -1,0 +1,12 @@
+# npm's tree: 65 MB of other people's code, reproducible from package.json
+# plus package-lock.json. Those two go in; this does not.
+node_modules/
+
+# Build output. It is what FastAPI serves, but it is derived from src/ and
+# would otherwise put a rebuilt bundle in every diff that touches the site.
+# Deployment builds it; see cloud/README.md.
+dist/
+
+# Vite's caches
+.vite/
+*.local

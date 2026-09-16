@@ -1,0 +1,89 @@
+/* One stylesheet, no framework.
+   The desktop UI is plain CSS too, and a component library would be more bytes
+   than this entire site. */
+
+:root {
+  --bg: #ffffff;
+  --text: #1a1a1a;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --chip: #f3f4f6;
+  --accent: #2563eb;
+  --error: #b91c1c;
+  --radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --text: #e8eaed;
+    --muted: #9aa3af;
+    --line: #2a2e35;
+    --chip: #1e2228;
+    --accent: #5b9bff;
+    --error: #f87171;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+h2 { font-size: 1.1rem; margin: 2rem 0 0.5rem; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+input, select, button {
+  font: inherit;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+input[type="file"] { padding: 0.4rem; }
+
+button {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.55; cursor: default; }
+
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  cursor: pointer;
+}
+button.link:hover { text-decoration: underline; }
+
+.card { padding: 0.5rem 0; }
+.hint { color: var(--muted); font-size: 0.9rem; }
+.time { color: var(--muted); }
+.error { color: var(--error); font-size: 0.9rem; }
+
+.notice {
+  background: var(--chip);
+  border-left: 3px solid var(--accent);
+  padding: 0.6rem 0.9rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.9rem;
+}
+
+code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  background: var(--chip);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+}
