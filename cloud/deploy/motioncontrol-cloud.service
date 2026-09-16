@@ -1,0 +1,92 @@
+[Unit]
+Description=MotionControl cloud config service
+Documentation=file:///opt/motioncontrol/cloud/README.md
+After=network-online.target
+Wants=network-online.target
+
+# Five failures in a minute means it is broken, not unlucky. Giving up lets the
+# logs sit still long enough to read instead of scrolling past a restart loop.
+# These two belong in [Unit]; systemd ignores them with a warning in [Service].
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=exec
+
+# Its own unprivileged user. The service reads uploaded JSON from the public
+# internet; if something in that path is ever exploitable, the blast radius
+# should be one directory, not the machine that also runs Caddy and the
+# FamilyGuard backend.
+User=mccloud
+Group=mccloud
+WorkingDirectory=/opt/motioncontrol
+
+# Secrets live here, not in this file: unit files are world-readable and this
+# one is quoted in documentation. /etc/motioncontrol-cloud.env is chmod 600 and
+# owned by root, so only root and systemd ever read MC_SECRET_KEY.
+EnvironmentFile=/etc/motioncontrol-cloud.env
+
+# 127.0.0.1 only. The single public entrance is Caddy on 443; binding
+# 0.0.0.0 here would quietly open a second one that answers plain http.
+#
+# --forwarded-allow-ips=127.0.0.1 and never "*": uvicorn only rewrites the
+# client address from X-Forwarded-For when the connection really came from the
+# local proxy. With "*" any caller could set the header, every request would
+# look like it came from a different address, and rate limiting would stop
+# limiting anything.
+#
+# One worker on purpose. Two would double the memory on a 1.6 GB box for a
+# service whose load is a handful of config downloads, and SQLite wants a
+# single writer.
+ExecStart=/opt/motioncontrol/venv/bin/uvicorn cloud.app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1 \
+    --forwarded-allow-ips=127.0.0.1 \
+    --proxy-headers \
+    --no-access-log
+
+Restart=on-failure
+RestartSec=5s
+
+# The box has ~1.1 GB free and also runs Caddy, the game panel and the
+# FamilyGuard sync service. A cap means a runaway here is killed on its own
+# rather than the kernel picking a victim -- and the kernel's pick would
+# probably be the biggest process, which is not this one.
+MemoryMax=400M
+MemoryHigh=320M
+
+# --- sandboxing -------------------------------------------------------------
+# Everything below is off by default in systemd and each line closes one door.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Outbound is never needed: nothing here calls out. Local sockets only.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# ProtectSystem=strict makes everything read-only, so the one directory that
+# has to be writable is named explicitly. That is the database and nothing
+# else -- the code itself is read-only to the service that runs it.
+ReadWritePaths=/var/lib/motioncontrol
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mccloud
+
+[Install]
+WantedBy=multi-user.target
