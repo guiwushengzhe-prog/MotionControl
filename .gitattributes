@@ -1,2 +1,13 @@
 frozen/MotionControl_head_control_v187_frozen22_uncertainty_gate.py -text
 frozen/test_v187_gate.py -text
+
+# 这些文件是给 Linux 消费的，必须是 LF。
+#
+# core.autocrlf=true 会在检出时把它们转成 CRLF，而 CRLF 的 shell 脚本在 Linux 上
+# 直接报 "bad interpreter: /usr/bin/env bash^M"。push.sh 打包的正是工作区里的
+# bootstrap.sh，所以这不是理论问题——不写这几行，别人 clone 之后第一次部署必炸。
+*.sh            text eol=lf
+*.service       text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+cloud/deploy/caddy-snippet.txt text eol=lf
