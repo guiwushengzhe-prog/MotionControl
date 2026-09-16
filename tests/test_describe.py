@@ -92,7 +92,11 @@ def test_every_motion_has_a_name():
     ({"type": "gamepad_axis", "target": "LS_UP", "behavior": "hold"}, "左摇杆 向上 · 持续按住"),
     ({"type": "mouse_button", "target": "LEFT", "behavior": "tap"}, "鼠标 左键 · 点按"),
     ({"type": "mouse_wheel", "target": "SCROLL_UP", "behavior": "tap"}, "滚轮 向上滚 · 点按"),
-    ({"type": "system", "target": "OUTPUT.START", "behavior": "tap"}, "系统命令 OUTPUT.START · 点按"),
+    # 系统命令翻成中文：屏幕前的人不该自己在脑子里翻译 OUTPUT.START。
+    ({"type": "system", "target": "OUTPUT.START", "behavior": "tap"}, "开始输出 · 点按"),
+    # 不认识的照旧原样显示，总比吞掉好。
+    ({"type": "system", "target": "FUTURE.THING", "behavior": "tap"},
+     "系统命令 FUTURE.THING · 点按"),
     ({"type": "gamepad", "target": ["LB", "LS_UP"], "behavior": "hold"},
      "Xbox LB+LS_UP 键 · 持续按住"),
 ])

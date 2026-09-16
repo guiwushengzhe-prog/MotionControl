@@ -181,11 +181,13 @@ onMounted(load);
           </p>
           <div class="items" :class="{ split: (summary.items?.length ?? 0) > 8 }">
             <div v-for="item in summary.items" :key="item.phrase" class="item">
-              <span class="what">
-                {{ item.phrase }}
-                <em v-if="item.synonyms?.length" class="alt">{{ item.synonyms.join("、") }}</em>
-              </span>
+              <span class="what">{{ item.phrase }}</span>
               <span class="does">{{ item.action }}</span>
+              <!-- 同义词单独一行。跟在名字后面会把名字列撑爆，每行高度都不一样，
+                   两栏就对不齐了。 -->
+              <span v-if="item.synonyms?.length" class="alt">
+                也可以说：{{ item.synonyms.join("、") }}
+              </span>
             </div>
           </div>
         </template>
@@ -287,22 +289,31 @@ code { font-size: 0.82rem; }
   margin: 0 0 0.15rem; font-weight: 600;
 }
 
-/* 两列网格：名字一栏、动作一栏，所有行左边界对齐。之前用 flex+gap，
-   每行的箭头位置跟着名字长度飘，扫一眼看不出对应关系。 */
-.items { display: grid; grid-template-columns: 1fr; column-gap: 2rem; }
-@media (min-width: 760px) {
+/* 每一项是一个两行网格：第一行「名字 …… 动作」，动作右对齐；第二行放同义词
+   这类补充。之前把补充塞在名字后面，名字列被撑爆后折行，每行高度都不一样，
+   分两栏时左右完全对不齐。 */
+.items { display: grid; grid-template-columns: 1fr; column-gap: 2.5rem; }
+@media (min-width: 820px) {
   .items.split { grid-template-columns: 1fr 1fr; }
 }
 .item {
-  display: grid; grid-template-columns: 7rem 1fr; gap: 0.75rem;
-  align-items: baseline; padding: 0.3rem 0;
-  border-bottom: 1px solid var(--line); font-size: 0.88rem;
+  display: grid;
+  grid-template-columns: minmax(4rem, auto) 1fr;
+  align-items: baseline;
+  column-gap: 1rem;
+  padding: 0.38rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.88rem;
 }
-.what { color: var(--muted); }
-.does { font-variant-numeric: tabular-nums; }
+.what { color: var(--muted); white-space: nowrap; }
+/* 右对齐：动作长短不一时，右边界齐平比左边界齐平更好扫。 */
+.does { text-align: right; }
+.alt {
+  grid-column: 1 / -1;
+  font-style: normal; font-size: 0.76rem; color: var(--muted);
+  margin-top: 0.1rem;
+}
+.warn { font-style: normal; font-size: 0.76rem; color: var(--error); margin-left: 0.4rem; }
 .off { opacity: 0.5; }
-.alt { font-style: normal; font-size: 0.78rem; color: var(--muted); margin-left: 0.4rem; }
-/* 这条不是补充说明，是"你配了但它不会响应"，所以不跟灰字同色。 */
-.warn { font-style: normal; font-size: 0.78rem; color: var(--error); margin-left: 0.4rem; }
 .item.shadowed .what { text-decoration: line-through; }
 </style>
