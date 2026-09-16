@@ -184,6 +184,26 @@ def action_catalog() -> dict:
 # the same per-trigger rules are factored out here and used by both.
 OVERRIDE_GROUPS = {"zone": "zones", "motion": "motions", "pose": "poses", "voice": "voice"}
 
+# The hands used to be four zones and are now two.  The desktop UI already
+# shows only the merged pair (web/app.js lists zone.leftHand / zone.rightHand),
+# and the kernel only ever dispatches the merged ids -- when a saved config has
+# no entry for one it falls back to the historical ids *in this order* and
+# takes the first hit (control_kernel.py:1688).  So a config carrying both
+# "upper" and "lower" already has only one of them doing anything; the other is
+# dead weight that looks live on screen.
+#
+# Normalising them away here is what makes the stored config say what actually
+# happens.  The order below is the kernel's, so the surviving binding is the
+# same one that was already in effect: this changes what a config *says*, never
+# what it *does*.
+ZONE_ID_MERGES = (
+    ("leftHandUpper", "leftHand"),
+    ("leftHandLower", "leftHand"),
+    ("rightHandUpper", "rightHand"),
+    ("rightHandLower", "rightHand"),
+)
+_ZONE_MERGE_TARGET = dict(ZONE_ID_MERGES)
+
 
 def normalize_override_entry(trigger: str, value):
     """Normalise one ``"<prefix>.<id>": binding|None`` override entry.
@@ -208,15 +228,43 @@ def normalize_override_entry(trigger: str, value):
 
 
 def normalize_overrides(overrides) -> dict:
-    """Validate a standalone overrides map and return it in canonical form."""
+    """Validate a standalone overrides map and return it in canonical form.
+
+    Historical hand-zone ids are merged into the pair the app actually uses.
+    Which one survives is decided by ZONE_ID_MERGES order, which is the kernel's
+    own fallback order -- so the binding left standing is the one that was
+    already taking effect, and a config's behaviour does not change when it goes
+    through here.
+    """
     if not isinstance(overrides, dict):
         raise ValueError("overrides must be an object")
-    out: dict = {}
-    for trigger, value in overrides.items():
+
+    # Sorted so the outcome does not depend on the order keys happen to sit in
+    # the uploaded file: two files with the same bindings must normalise the
+    # same way, or they would hash differently and look like different configs.
+    entries = []
+    for trigger, value in sorted(overrides.items()):
         entry = normalize_override_entry(trigger, value)
-        if entry is None:
-            continue
-        group, ident, normalized = entry
+        if entry is not None:
+            entries.append((str(trigger).partition(".")[2], entry))
+
+    merge_rank = {alias: index for index, (alias, _) in enumerate(ZONE_ID_MERGES)}
+    out: dict = {}
+    claimed: dict[str, int] = {}
+    for raw_ident, (group, ident, normalized) in entries:
         prefix = next(key for key, name in OVERRIDE_GROUPS.items() if name == group)
-        out[f"{prefix}.{ident}"] = None if normalized.get("disabled") else normalized
+        target = _ZONE_MERGE_TARGET.get(raw_ident) if prefix == "zone" else None
+        key = f"{prefix}.{target or ident}"
+
+        if target is not None:
+            rank = merge_rank[raw_ident]
+            # A real entry for the merged id outranks any historical one, and
+            # among the historical ones the kernel's order decides.
+            if key in claimed and claimed[key] <= rank:
+                continue
+            claimed[key] = rank
+        elif prefix == "zone" and ident in {t for _, t in ZONE_ID_MERGES}:
+            claimed[key] = -1
+
+        out[key] = None if normalized.get("disabled") else normalized
     return out

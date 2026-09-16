@@ -138,56 +138,68 @@ onMounted(load);
            过时的，或者和文件内容根本对不上。 -->
       <section v-if="summary" class="summary">
         <h2>这份配置做什么</h2>
-        <p class="headline">{{ summary.headline }}</p>
         <p class="hint small">
-          以下内容由服务器从 v{{ summary.revision_no }} 的文件本身读出，逐条对应。
+          由服务器从 v{{ summary.revision_no }} 的文件本身读出，逐条对应，不是上传者写的简介。
         </p>
+        <p class="headline">{{ summary.headline }}</p>
 
         <template v-if="summary.games">
-          <div v-for="game in summary.games" :key="game.game_id" class="game">
+          <section v-for="game in summary.games" :key="game.game_id" class="game">
             <h3>
-              {{ game.game_id }}
+              <span class="game-id">{{ game.game_id }}</span>
               <span v-if="game.game_id === summary.selected_id" class="badge">上传时选中</span>
-              <span class="muted">· {{ game.total }} 条</span>
+              <span class="count">{{ game.total }} 条</span>
             </h3>
             <div v-for="group in game.groups" :key="group.key" class="group">
-              <h4>{{ group.name }}<span class="muted"> · {{ group.items.length }}</span></h4>
-              <ul>
-                <li v-for="item in group.items" :key="item.trigger">
+              <h4>{{ group.name }}<span class="count">{{ group.items.length }}</span></h4>
+              <!-- 超过 8 条时分两栏：20 条语音口令排成一列就是一面墙。 -->
+              <div class="items" :class="{ split: group.items.length > 8 }">
+                <div v-for="item in group.items" :key="item.trigger" class="item"
+                     :class="{ shadowed: item.shadowed_matters }">
                   <span class="what">{{ item.name }}</span>
-                  <span class="arrow">→</span>
-                  <span :class="{ off: item.disabled }">{{ item.action }}</span>
-                  <!-- 两个历史 id 落到同一块物理区域时会一起触发，不说用户会误解。 -->
-                  <em v-if="item.runtime_zone" class="muted">（实际是{{ item.runtime_zone }}）</em>
-                </li>
-              </ul>
+                  <span class="does" :class="{ off: item.disabled || item.shadowed_matters }">
+                    {{ item.action }}
+                    <!-- 合并之前存的配置里，同一块手部区域可能有两条绑定，运行时
+                         只有一条生效。不标出来，用户会盯着一条从不触发的绑定找原因。 -->
+                    <em v-if="item.shadowed_matters" class="warn">
+                      不生效 · 被「{{ item.shadowed_by }}」覆盖
+                    </em>
+                    <em v-else-if="item.shadowed_by" class="alt">
+                      与「{{ item.shadowed_by }}」是同一块区域
+                    </em>
+                    <em v-else-if="item.runtime_zone" class="alt">{{ item.runtime_zone }}</em>
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
+          </section>
         </template>
 
         <template v-else-if="summary.kind === 'voice_mappings'">
           <p class="hint" v-if="summary.emergency_stop_phrases?.length">
-            紧急停止：{{ summary.emergency_stop_phrases.join("、") }}
+            紧急停止口令：{{ summary.emergency_stop_phrases.join("、") }}
           </p>
-          <ul class="flat">
-            <li v-for="item in summary.items" :key="item.phrase">
-              <span class="what">{{ item.phrase }}</span>
-              <span v-if="item.synonyms?.length" class="muted">（{{ item.synonyms.join("、") }}）</span>
-              <span class="arrow">→</span>
-              <span>{{ item.action }}</span>
-            </li>
-          </ul>
+          <div class="items" :class="{ split: (summary.items?.length ?? 0) > 8 }">
+            <div v-for="item in summary.items" :key="item.phrase" class="item">
+              <span class="what">
+                {{ item.phrase }}
+                <em v-if="item.synonyms?.length" class="alt">{{ item.synonyms.join("、") }}</em>
+              </span>
+              <span class="does">{{ item.action }}</span>
+            </div>
+          </div>
         </template>
 
         <template v-else>
-          <ul class="flat">
-            <li v-for="item in summary.items" :key="item.name">
+          <div class="items" :class="{ split: (summary.items?.length ?? 0) > 8 }">
+            <div v-for="item in summary.items" :key="item.name" class="item">
               <span class="what" :class="{ off: !item.enabled }">{{ item.name }}</span>
-              <span class="arrow">→</span>
-              <span :class="{ off: !item.enabled }">{{ item.action }}</span>
-              <em v-if="!item.enabled" class="muted">（未启用）</em>
-            </li>
-          </ul>
+              <span class="does" :class="{ off: !item.enabled }">
+                {{ item.action }}
+                <em v-if="!item.enabled" class="alt">未启用</em>
+              </span>
+            </div>
+          </div>
         </template>
       </section>
 
@@ -254,18 +266,43 @@ tr.current { background: var(--chip); }
 code { font-size: 0.82rem; }
 .small { font-size: 0.82rem; }
 
-.summary { margin-top: 2rem; }
-.headline { font-size: 1.05rem; margin: 0.2rem 0 0.3rem; }
-.summary h3 { font-size: 0.95rem; margin: 1.25rem 0 0.4rem;
-              padding-bottom: 0.3rem; border-bottom: 1px solid var(--line); }
-.summary h4 { font-size: 0.85rem; color: var(--muted);
-              margin: 0.8rem 0 0.25rem; font-weight: 600; }
-.summary ul { list-style: none; padding: 0; margin: 0; }
-.summary li { display: flex; flex-wrap: wrap; align-items: baseline;
-              gap: 0.4rem; padding: 0.22rem 0; font-size: 0.9rem; }
-.summary .what { min-width: 8rem; }
-.summary .arrow { color: var(--muted); }
-.summary .off { color: var(--muted); text-decoration: line-through; }
-.summary .flat li { padding: 0.28rem 0; border-bottom: 1px solid var(--line); }
-.group { margin-left: 0.25rem; }
+.summary { margin-top: 2.25rem; }
+.summary .headline {
+  font-size: 1.15rem; font-weight: 600; margin: 0.5rem 0 0.25rem;
+}
+.game { margin-top: 1.5rem; }
+.game h3 {
+  display: flex; align-items: baseline; gap: 0.55rem;
+  font-size: 0.95rem; margin: 0 0 0.5rem;
+  padding-bottom: 0.4rem; border-bottom: 2px solid var(--line);
+}
+.game-id { font-family: ui-monospace, Consolas, monospace; }
+.game h3 .count, .group h4 .count {
+  margin-left: auto; font-weight: 400; font-size: 0.8rem; color: var(--muted);
+}
+.group { margin: 0.9rem 0 0; }
+.group h4 {
+  display: flex; align-items: baseline;
+  font-size: 0.78rem; letter-spacing: 0.04em; color: var(--muted);
+  margin: 0 0 0.15rem; font-weight: 600;
+}
+
+/* 两列网格：名字一栏、动作一栏，所有行左边界对齐。之前用 flex+gap，
+   每行的箭头位置跟着名字长度飘，扫一眼看不出对应关系。 */
+.items { display: grid; grid-template-columns: 1fr; column-gap: 2rem; }
+@media (min-width: 760px) {
+  .items.split { grid-template-columns: 1fr 1fr; }
+}
+.item {
+  display: grid; grid-template-columns: 7rem 1fr; gap: 0.75rem;
+  align-items: baseline; padding: 0.3rem 0;
+  border-bottom: 1px solid var(--line); font-size: 0.88rem;
+}
+.what { color: var(--muted); }
+.does { font-variant-numeric: tabular-nums; }
+.off { opacity: 0.5; }
+.alt { font-style: normal; font-size: 0.78rem; color: var(--muted); margin-left: 0.4rem; }
+/* 这条不是补充说明，是"你配了但它不会响应"，所以不跟灰字同色。 */
+.warn { font-style: normal; font-size: 0.78rem; color: var(--error); margin-left: 0.4rem; }
+.item.shadowed .what { text-decoration: line-through; }
 </style>
