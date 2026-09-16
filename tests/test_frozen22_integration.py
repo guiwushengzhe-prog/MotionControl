@@ -40,7 +40,7 @@ def test_frozen22_is_explicit_and_switch_requires_new_center(tmp_path):
     controller.configure(algorithm="ratio", horizontal_algorithm="frozen22")
     state = controller.status()
     assert state["horizontal_algorithm"] == "frozen22"
-    assert state["horizontal_algorithm_version"] == "real-ab-equalmean-20260830-v1"
+    assert state["horizontal_algorithm_version"] == "v5.1-fixed22-stable-units"
     assert state["frozen22_controls_mouse"] is True
     assert state["calibrated"] is False
     assert state["frozen22_calibration_valid"] is False

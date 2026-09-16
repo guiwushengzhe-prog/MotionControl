@@ -4,7 +4,6 @@ import json
 import math
 import os
 import queue
-import re
 import sys
 import threading
 import time
@@ -12,18 +11,11 @@ from array import array
 from pathlib import Path
 from typing import Callable
 
-from output_backend import KEY_CODES, XUSB_GAMEPAD_BUTTONS, KeyboardOutput
-DEFAULT_WAKE_WORD = "体感"
-DEFAULT_EMERGENCY_STOP = "体感紧急停止"
 SYSTEM_HEAD_CALIBRATION_START = "HEAD_CALIBRATION_START"
 VOICE_TIMEOUT_SECONDS = 1.5
 WAKE_COMMAND_WINDOW_SECONDS = 3.5
 MAX_AUDIO_FRAME_BYTES = 256 * 1024
 
-
-def compact_text(value: str) -> str:
-    text = str(value or "").strip().lower()
-    return re.sub(r"[\s\u3000，。！？、,.!?;；:：]+", "", text)
 
 
 def find_vosk_model(root: Path) -> Path | None:
@@ -63,7 +55,18 @@ class VoskCommandRecognizer:
             raise RuntimeError(f"Vosk 中文模型不存在：{model_path}")
         SetLogLevel(-1)
         self._KaldiRecognizer = KaldiRecognizer
-        self._model = Model(str(model_path))
+        # Vosk's loader opens files through the narrow-character Windows API, so
+        # a model under D:\游戏 or C:\Users\张三 fails with "does not contain
+        # model files" even though it is complete.  Hand it a path it can open.
+        loadable, tier = resolve_loadable_model_path(model_path)
+        self.model_path_tier = tier
+        if tier == "mirror":
+            print(f"语音模型路径含非 ASCII 字符，已镜像到：{loadable}")
+        elif tier == "unavailable":
+            raise RuntimeError(
+                f"语音模型路径含中文且无法镜像到纯英文路径：{model_path}。"
+                "请把 MotionControl 或模型放在不含中文的路径下，例如 C:/MotionControl。")
+        self._model = Model(str(loadable))
         self.sample_rate = int(sample_rate)
         # The small Chinese model grammar is character-token based.  The
         # robustness run proved that unspaced whole phrases are discarded as
@@ -102,6 +105,18 @@ class VoskCommandRecognizer:
         self._recognizer = None
 
 
+from ascii_model_path import resolve_loadable_model_path
+from user_paths import user_path
+from motioncontrol_shared.text_norm import compact_text
+from motioncontrol_shared.mapping_schema import (
+    DEFAULT_EMERGENCY_STOP,
+    DEFAULT_WAKE_WORD,
+    normalize_emergency_phrases,
+    normalize_voice_mappings,
+    normalize_wake_word,
+)
+
+
 class VoiceService:
     """Shared voice parser for the computer microphone and phone voice_text."""
 
@@ -113,7 +128,9 @@ class VoiceService:
         clear_source: Callable[[str], dict] | None = None,
     ) -> None:
         self.root = root
-        self.config_path = root / "config" / "voice_mappings.json"
+        # User data: kept out of the program folder so an upgrade does not
+        # discard custom phrases.
+        self.config_path = user_path("voice_mappings")
         self.execute_action = execute_action
         self.emergency_stop = emergency_stop or (lambda: {"executed": True})
         self.clear_source = clear_source or (lambda _source: {})
@@ -177,83 +194,11 @@ class VoiceService:
         except Exception as exc:
             self.last_error = f"语音配置读取失败：{exc}"
 
-    @staticmethod
-    def _validate_wake_word(value) -> str:
-        word = str(value or DEFAULT_WAKE_WORD).strip()
-        if not word or len(word) > 12:
-            raise ValueError("唤醒词必须是 1 到 12 个字符")
-        return word
-
-    @staticmethod
-    def _validate_emergency_phrases(items) -> list[str]:
-        values = [str(x).strip() for x in (items if isinstance(items, list) else []) if str(x).strip()]
-        values = list(dict.fromkeys(values[:8]))
-        if DEFAULT_EMERGENCY_STOP not in values:
-            values.insert(0, DEFAULT_EMERGENCY_STOP)
-        if any(len(x) > 24 for x in values):
-            raise ValueError("紧急停止命令过长")
-        return values
-
-    @staticmethod
-    def _validate_mappings(items) -> list[dict]:
-        if not isinstance(items, list):
-            raise ValueError("mappings 必须是数组")
-        result: list[dict] = []
-        seen: set[str] = set()
-        for raw in items[:32]:
-            if not isinstance(raw, dict):
-                continue
-            phrase = str(raw.get("phrase", "")).strip()
-            if not phrase:
-                continue
-            if len(phrase) > 24:
-                raise ValueError(f"命令词过长：{phrase}")
-            key = compact_text(phrase)
-            if key in seen:
-                raise ValueError(f"命令词重复：{phrase}")
-            seen.add(key)
-            synonyms = raw.get("synonyms", [])
-            if not isinstance(synonyms, list):
-                synonyms = []
-            aliases: list[str] = []
-            for item in synonyms[:8]:
-                alias = str(item).strip()
-                if alias and compact_text(alias) not in {key, *(compact_text(x) for x in aliases)}:
-                    aliases.append(alias)
-            action_type = str(raw.get("type", "keyboard")).lower()
-            target = str(raw.get("target", "")).strip().upper()
-            if action_type == "gamepad":
-                if target not in XUSB_GAMEPAD_BUTTONS:
-                    raise ValueError(f"暂不支持的 Xbox 键：{target}")
-            elif action_type == "keyboard":
-                parts = [KeyboardOutput.normalize(x) for x in target.split("+") if x.strip()]
-                if not parts or len(parts) > 4:
-                    raise ValueError(f"键盘映射格式错误：{target}")
-                invalid = [x for x in parts if x not in KEY_CODES]
-                if invalid:
-                    raise ValueError("不支持的键盘键：" + ", ".join(invalid))
-                target = "+".join(parts)
-            elif action_type == "system":
-                allowed_system = {
-                    SYSTEM_HEAD_CALIBRATION_START,
-                    "HEAD.CALIBRATE", "HEAD.CENTER",
-                    "OUTPUT.START", "OUTPUT.STOP",
-                    "SCENE.CAPTURE_REFERENCE", "SCENE.REMATCH",
-                }
-                if target not in allowed_system:
-                    raise ValueError(f"暂不支持的系统命令：{target}")
-            else:
-                raise ValueError(f"未知输出类型：{action_type}")
-            behavior = str(raw.get("behavior", "tap")).strip().lower()
-            if behavior not in {"tap", "hold", "release"}:
-                raise ValueError("语音动作方式必须为点按、持续按住或松开")
-            if action_type == "system" and behavior != "tap":
-                raise ValueError("系统命令只能点按")
-            item = {"phrase": phrase, "type": action_type, "target": target, "behavior": behavior}
-            if aliases:
-                item["synonyms"] = aliases
-            result.append(item)
-        return result
+    # The rules live in motioncontrol_shared.mapping_schema so the cloud applies
+    # exactly the same ones; these stay as the desktop's entry points.
+    _validate_wake_word = staticmethod(normalize_wake_word)
+    _validate_emergency_phrases = staticmethod(normalize_emergency_phrases)
+    _validate_mappings = staticmethod(normalize_voice_mappings)
 
     def _write_config(self) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)

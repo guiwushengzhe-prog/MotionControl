@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from user_paths import user_path
+
 
 SCENE_VERSION = 2
 # Persisted identifier kept for v2 files already on disk. Runtime now exposes
@@ -280,8 +282,12 @@ class SceneLayoutManager:
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
         self.config_dir = self.root / "config"
-        self.layout_path = self.config_dir / "scene_layout.json"
-        self.reference_path = self.config_dir / "scene_reference.jpg"
+        # Never in the program folder, and never synced anywhere: this is a
+        # homography onto one captured frame from one camera in one
+        # position, plus the reference photo it maps onto.  Carried to
+        # another machine it puts the six zones silently in the wrong place.
+        self.layout_path = user_path("scene_layout")
+        self.reference_path = user_path("scene_reference")
         self.reference: dict | None = None
         self.session: dict | None = None
         self.last_result: dict = {"ok": False, "state": "not_configured", "message": "尚未记录参考场景"}

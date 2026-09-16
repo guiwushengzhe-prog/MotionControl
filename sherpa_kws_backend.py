@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from pathlib import Path
+from motioncontrol_shared.text_norm import compact_text
 
 
 MODEL_DIRNAME = "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
 WAKE_WINDOW_SECONDS = 3.5
 MIN_COMMAND_CHARS = 2
 
-
-def compact_text(value: str) -> str:
-    text = str(value or "").strip().lower()
-    return re.sub(r"[\s\u3000，。！？、,.!?;；:：]+", "", text)
 
 
 def find_sherpa_kws_model(root: Path) -> Path | None:

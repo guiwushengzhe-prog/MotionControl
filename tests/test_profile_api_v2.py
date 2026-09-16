@@ -4,7 +4,7 @@ from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 from threading import RLock
 from types import SimpleNamespace
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 import pytest
 
 from game_profiles import ProfileSelectionChanged
@@ -12,11 +12,21 @@ from test_game_profiles_v097 import make_store
 
 
 def make_handler(namespace):
+    """Exec the request handler out of server.py without importing the module.
+
+    server.py pulls in the Windows output backend at import time, so the class
+    is lifted out by AST instead.  Since the dual-plane split it comes in two
+    parts: _BaseHandler holds the shared plumbing and AdminHandler the /api/*
+    routes, so both have to be compiled, in order, for the base class to exist.
+    """
     tree = ast.parse((Path(__file__).parents[1] / "server.py").read_text(encoding="utf-8"))
-    handler = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Handler")
-    namespace.update(SimpleHTTPRequestHandler=SimpleHTTPRequestHandler, urlparse=urlparse, Path=Path)
-    exec(compile(ast.Module(body=[handler], type_ignores=[]), "server.py", "exec"), namespace)
-    request = object.__new__(namespace["Handler"])
+    wanted = ("_BaseHandler", "AdminHandler")
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name in wanted]
+    assert [node.name for node in classes] == list(wanted), [node.name for node in classes]
+    namespace.update(SimpleHTTPRequestHandler=SimpleHTTPRequestHandler, urlparse=urlparse,
+                     unquote=unquote, parse_qs=parse_qs, Path=Path)
+    exec(compile(ast.Module(body=classes, type_ignores=[]), "server.py", "exec"), namespace)
+    request = object.__new__(namespace["AdminHandler"])
     request._is_loopback = lambda: True
     return request
 

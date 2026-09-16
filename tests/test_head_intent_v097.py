@@ -74,10 +74,15 @@ def _ready_controller(tmp_path):
 
 def test_intent_axis_stops_held_off_center_signal():
     axis = IntentAxis("yaw")
-    first = axis.step(.55, 1.0, angle_threshold=.05, start_velocity=.12, stop_velocity=.045, release_threshold=.06)
+    kwargs = dict(angle_threshold=.05, start_velocity=.12, stop_velocity=.045, release_threshold=.06)
+    # The axis measures a turn, so it needs a baseline sample before the first
+    # real one: a single step straight to .55 has no velocity and stays IDLE.
+    axis.step(0.0, 1.00, **kwargs)
+    for index, signal in enumerate((.18, .36, .55)):
+        first = axis.step(signal, 1.00 + (index + 1) * .04, **kwargs)
     assert first["active"]
-    axis.step(.55, 1.04, angle_threshold=.05, start_velocity=.12, stop_velocity=.045, release_threshold=.06)
-    stopped = axis.step(.55, 1.10, angle_threshold=.05, start_velocity=.12, stop_velocity=.045, release_threshold=.06)
+    axis.step(.55, 1.16, **kwargs)
+    stopped = axis.step(.55, 1.20, **kwargs)
     assert stopped["state"] == "HOLD"
     assert not stopped["active"]
 
@@ -103,7 +108,8 @@ def test_head_controller_reports_velocity_acceleration_and_intent_state(tmp_path
     controller.update({"yaw": 5.0, "pitch": 0.0}, 640, 480, now=1.04)
     state = controller.status(1.04)
     assert "yaw_velocity" in state and "yaw_acceleration" in state
-    assert state["yaw_intent_state"] in {"TURN_RIGHT", "HOLD", "RETURNING", "IDLE"}
+    # STABLE_OFFSET is v5.1's name for "off centre but no longer turning".
+    assert state["yaw_intent_state"] in {"TURN_RIGHT", "HOLD", "RETURNING", "IDLE", "STABLE_OFFSET"}
 
 
 def test_head_vertical_mode_uses_gate_temporary_pitch_center(tmp_path):
@@ -173,7 +179,22 @@ def test_head_vertical_reentry_establishes_new_center(tmp_path):
         kernel.close()
 
 
-def test_head_gate_keeps_horizontal_yaw_independent(tmp_path):
+def test_pitch_gates_horizontal_and_returning_to_centre_restores_it(tmp_path):
+    """v5.1 deliberately couples the axes; v4.4 kept them independent.
+
+    Nodding shifts the 2D face features in ways that look like a yaw turn, so
+    while the head is pitching v5.1 refuses horizontal output unless a second
+    source corroborates it:
+
+        pitch_active = abs(pitch) >= 2.5 or (abs(pitch) >= 1.0 and
+                                             abs(pitch_velocity) >= 8.0)
+        confirmed    = main_ok and (world_ok if world_valid
+                                    else (f22_ok and proxy_ok))
+
+    This harness feeds no 3D world data, so world_valid is False and the strict
+    two-of-two 2D branch applies -- the worst case.  The gate is not a latch:
+    it releases as soon as pitch is back at the calibrated centre.
+    """
     output = Output()
     kernel = ControlKernel(output)
     try:
@@ -182,12 +203,40 @@ def test_head_gate_keeps_horizontal_yaw_independent(tmp_path):
             "zones": {"lookGate": {"cx": .2, "cy": .2, "r": .12}},
             "vertical_look": {"enabled": True, "source": "head", "deadzone": .05},
         })
-        for i in range(4):
+        for _ in range(4):
             kernel.handle_pose_map("camera", _gate_pose(yaw=0.0), width=640, height=480)
-        for i in range(1, 5):
+
+        # Pure yaw: horizontal flows.
+        for index in range(1, 7):
             time.sleep(.04)
-            kernel.handle_pose_map("camera", _gate_pose(yaw=6.0 * i, pitch=-3.0 * i), width=640, height=480)
+            kernel.handle_pose_map("camera", _gate_pose(yaw=6.0 * index),
+                                   width=640, height=480)
         assert output.axes[-1][0] > 0.0
+        assert kernel.head["horizontal_block_reason"] == "OUTPUT_ACTIVE"
+
+        # Same turn while also pitching: horizontal is withheld, vertical is not.
+        output.axes.clear()
+        kernel.head_controller = _ready_controller(tmp_path)
+        for _ in range(4):
+            kernel.handle_pose_map("camera", _gate_pose(yaw=0.0), width=640, height=480)
+        for index in range(1, 7):
+            time.sleep(.04)
+            kernel.handle_pose_map("camera",
+                                   _gate_pose(yaw=6.0 * index, pitch=-3.0 * index),
+                                   width=640, height=480)
+        assert output.axes[-1][0] == 0.0
         assert output.axes[-1][1] < 0.0
+        assert kernel.head["horizontal_block_reason"] == "PITCH_UNCONFIRMED"
+
+        # Bring pitch back to centre and horizontal resumes; nothing is latched.
+        yaw = 36.0
+        for pitch in (-12.0, -9.0, -6.0, -3.0, 0.0, 0.0, 0.0):
+            yaw += 6.0
+            time.sleep(.04)
+            kernel.handle_pose_map("camera", _gate_pose(yaw=yaw, pitch=pitch),
+                                   width=640, height=480)
+        assert output.axes[-1][0] > 0.0
+        assert kernel.head["horizontal_block_reason"] == "OUTPUT_ACTIVE"
     finally:
         kernel.close()
+

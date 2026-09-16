@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from game_profiles import GameProfileStore, normalize_action, flatten_bindings
+from game_profiles import GameProfileStore
+from motioncontrol_shared.profile_schema import normalize_action, flatten_bindings
 
 
 def make_store(tmp_path: Path):
@@ -80,7 +81,7 @@ def test_invalid_profile_action_is_rejected(tmp_path):
 
 
 def test_unmapped_pose_and_voice_survive_binding_normalization():
-    from game_profiles import flatten_bindings
+    from motioncontrol_shared.profile_schema import flatten_bindings
     result = flatten_bindings({'poses':{'hands_cross':{'disabled':True}}, 'voice':{'jump':{'disabled':True}}, 'motions':{'march':{'action':{'type':'gamepad','target':'B'}}}})
     assert result['pose.hands_cross'] == {'disabled':True}
     assert result['voice.jump'] == {'disabled':True}

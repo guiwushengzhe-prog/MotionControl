@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from game_profiles import flatten_bindings
+from motioncontrol_shared.profile_schema import flatten_bindings
 from voice_backend import VoiceService
 from test_output_actions_v097 import manager
 

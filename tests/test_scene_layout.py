@@ -98,8 +98,12 @@ def test_reference_capture_creates_fixed_gate_and_wrist_center(tmp_path):
     assert state["configured"] is True
     assert "lookGate" in state["zones"]
     assert state["vertical_look"]["point"] == "right_wrist"
-    assert (tmp_path / "config" / "scene_reference.jpg").is_file()
-    assert (tmp_path / "config" / "scene_layout.json").is_file()
+    # Scene data is user data now: it must not sit in the program folder,
+    # because copying that folder to another machine would carry a homography
+    # built for a different camera in a different position.
+    assert manager.reference_path.is_file()
+    assert manager.layout_path.is_file()
+    assert "config" not in manager.layout_path.parts
 
 
 def test_manual_rematch_transforms_session_without_overwriting_reference(tmp_path):

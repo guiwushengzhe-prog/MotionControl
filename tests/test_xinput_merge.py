@@ -230,7 +230,7 @@ def test_merge_blocks_keyboard_mouse_and_motion_axes(tmp_path):
 
 def test_chord_normalization_survives_json_roundtrip():
     import json
-    from game_profiles import normalize_action
+    from motioncontrol_shared.profile_schema import normalize_action
     action = normalize_action({"type":"gamepad", "target":"LB+A"})
     restored = json.loads(json.dumps(action))
     assert OutputManager._gamepad_targets(restored["target"]) == {"LB", "A"}

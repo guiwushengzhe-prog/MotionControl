@@ -27,8 +27,21 @@ from head_control import (
     PITCH_INTENT_STOP_VELOCITY,
     HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION,
 )
-from game_profiles import flatten_bindings
-from motion_conflicts import validate_motion_config
+from motioncontrol_shared.profile_schema import flatten_bindings
+from motioncontrol_shared.motion_conflicts import validate_motion_config
+from hand_mouse_control import HandMouseController
+from pose_recorder import PoseRecorder
+
+
+def _user_recordings_dir():
+    """Where skeleton recordings land: beside the user's other data.
+
+    Not in the program folder -- recordings are the user's, and since 2.0.x the
+    program folder is treated as read-only so an upgrade can replace it.
+    """
+    from user_paths import user_data_root
+
+    return user_data_root() / "recordings"
 from vertical_hand_control import VerticalHandController
 
 
@@ -297,6 +310,8 @@ class ControlKernel:
         self.vertical_gate_active = False
         self.vertical_wrist_norm = 0.0
         self.vertical_hand_controller = VerticalHandController()
+        self.hand_mouse_controller = HandMouseController()
+        self.pose_recorder = PoseRecorder(_user_recordings_dir())
         # The left-wrist lookGate is a deliberate arm/hand gate.  When it
         # becomes active we capture the right wrist's current Y as the
         # neutral anchor; head pitch is never allowed to reach final output.
@@ -733,6 +748,22 @@ class ControlKernel:
         if not pose_map:
             self._clear_body_outputs_locked()
             return
+        # Evaluated before anything else in the frame: the zone pass and the
+        # final apply() both consult the engaged state, and they run at
+        # opposite ends of this function.  Updating it in between would let a
+        # zone button fire on the very frame the fist closes.
+        self.hand_mouse_controller.update(pose_map, now)
+        # Recorded after the hand pass so the saved frames carry the fist
+        # reading alongside the skeleton -- that pairing is the point of
+        # recording at all when tuning the thresholds.
+        if self.pose_recorder.state in {"waiting", "recording"}:
+            hand = self.hand_mouse_controller.status()
+            self.pose_recorder.capture(
+                pose_map, now, width=self.width, height=self.height,
+                source=str(self.active_body_source or ""),
+                extra={"hand_spread": hand["spread"], "fist": hand["engaged"],
+                       "hand": hand["hand"]},
+            )
         self._update_zones_locked(pose_map, now)
         self._update_motion_locked(pose_map, now)
         self._update_cross_poses_locked(pose_map, now)
@@ -1199,6 +1230,31 @@ class ControlKernel:
                 return True
         return False
 
+    def configure_hand_mouse(self, updates: dict | None) -> dict:
+        """Apply a settings change under the kernel lock and report the result."""
+        with self._lock:
+            status = self.hand_mouse_controller.configure(updates)
+            if not status["enabled"]:
+                # Leaving the pointer mid-drift after a disable would keep the
+                # last velocity applied until head control next writes.
+                self._safe_output(self.output.apply, 0.0, 0.0)
+            return status
+
+    def _hand_mouse_owns_zone(self, name: str) -> bool:
+        """True while hand steering has taken that hand away from its zones.
+
+        lookGate is tied to the left wrist, so it belongs to the left hand here
+        even though its name does not say so.
+        """
+        if not self.hand_mouse_controller.engaged:
+            return False
+        hand = str(self.hand_mouse_controller.config.get("hand", "right"))
+        if name == "lookGate":
+            return hand == "left"
+        # Only that hand's own zones.  A bare startswith(hand) would also catch
+        # leftFoot/rightFoot, and the feet are still free to act.
+        return name.startswith(f"{hand}Hand")
+
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
         previous_gate = bool(self.vertical_gate_active)
         self._update_foot_neutral(pose_map)
@@ -1227,6 +1283,11 @@ class ControlKernel:
             if name in ("leftFoot", "rightFoot"):
                 # 固定圈与跟随区均须先实际接触，再确认是向外伸脚。
                 inside = inside and self._foot_outward(pose_map, "left" if name == "leftFoot" else "right")
+            if inside and self._hand_mouse_owns_zone(name):
+                # That hand is steering the pointer.  Without this it would also
+                # be pressing whatever zone it flies through, so aiming would
+                # mash buttons.
+                inside = False
             if inside:
                 state["inside"] += 1
                 state["outside"] = 0
@@ -1794,6 +1855,17 @@ class ControlKernel:
             if self.vertical_wrist_anchor_rel_y is not None else None
         )
         self.head["vertical_anchor_samples"] = len(self.vertical_anchor_samples)
+        # Hand steering takes both axes while the fist is closed, and hands them
+        # straight back when it opens.  Blending the two would mean the pointer
+        # drifts with the head while the player is trying to aim, so this is a
+        # takeover rather than a sum.
+        hand_mouse = self.hand_mouse_controller.status()
+        if hand_mouse["engaged"]:
+            x = float(hand_mouse["output_x"])
+            y = float(hand_mouse["output_y"])
+        # Reporting belongs in status_locked, not here: that function rebuilds
+        # self.head from head_controller.status(), so anything written to the
+        # dict at this point is discarded before a client ever sees it.
         if getattr(self.output, "enabled", True):
             self._safe_output(self.output.apply, x, y)
 
@@ -1867,6 +1939,7 @@ class ControlKernel:
             if canonical in zones:
                 zones[alias] = copy.deepcopy(zones[canonical])
         self.head = self.head_controller.status(now)
+        self.head["hand_mouse"] = self.hand_mouse_controller.status()
         source = "head" if str(self.vertical_look.get("source", "hand")).lower() == "head" else "hand"
         vertical_output = self.vertical_pitch_norm if source == "head" else self.vertical_wrist_norm
         self.head["vertical_source"] = "head_pitch" if self.vertical_look.get("enabled") and source == "head" else "right_wrist" if self.vertical_look.get("enabled") else "off"
@@ -1912,6 +1985,14 @@ class ControlKernel:
         self.head["output_y"] = round(
             float(vertical_output) if self.vertical_gate_active else 0.0, 3
         )
+        # Last word on both axes, because that is what actually reached the
+        # mouse: everything above derives from head control, which the hand
+        # takes over from while the fist is closed.  Placed after the vertical
+        # block rather than beside hand_mouse above, where output_y would be
+        # overwritten a few lines later.
+        if self.head["hand_mouse"]["engaged"]:
+            self.head["output_x"] = self.head["hand_mouse"]["output_x"]
+            self.head["output_y"] = self.head["hand_mouse"]["output_y"]
         sensors = {
             source: {key: copy.deepcopy(value) for key, value in state.items() if key != "received_at"}
             | {"age_ms": round(max(0.0, (now - state["received_at"]) * 1000.0))}

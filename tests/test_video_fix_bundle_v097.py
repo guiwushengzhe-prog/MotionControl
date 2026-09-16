@@ -1,5 +1,5 @@
 from head_control import IntentAxis
-from game_profiles import flatten_bindings
+from motioncontrol_shared.profile_schema import flatten_bindings
 from steaminput_builder import SeedGame, profile_from_vdf
 
 
