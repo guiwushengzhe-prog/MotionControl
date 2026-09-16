@@ -89,6 +89,11 @@ if [ ! -x "$APP_DIR/venv/bin/python" ]; then
 fi
 
 echo "    依赖"
+# 这台机器的 /etc/pip.conf 指向 mirrors.cloud.aliyuncs.com——那是阿里云中国内地
+# 的内网镜像，而这台是海外节点（8.220.x），路由不到，pip 会卡满重试然后失败。
+# 这里显式指定源，绕开系统配置而不是去改它：改系统配置影响这台机器上所有人的
+# pip，超出部署脚本该管的范围。要换源就 PIP_INDEX_URL=... 传进来。
+export PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.org/simple/}
 venv/bin/pip install --quiet --upgrade -r cloud/requirements.txt
 
 echo "    数据库迁移"
