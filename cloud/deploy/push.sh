@@ -43,28 +43,33 @@ fi
     exit 1
 }
 
-echo "==> 打包"
-STAMP=$(date +%Y%m%d-%H%M%S)
-TARBALL="/tmp/motioncontrol-cloud-$STAMP.tar.gz"
+echo "==> 打包并上传"
+# 直接管道给 ssh，不落本地临时文件。在 Git Bash 里 /tmp 是一个 Windows 路径，
+# 而 scp 是 Windows 的 OpenSSH——它不认识 /tmp/xxx 这种写法，会报
+# "error encountered when reading a file"。管道没有这个问题，还少一次落盘。
+#
 # 打进去的东西：服务本身、共享校验器、200 个游戏配置（种子要用）。
 # 挡在外面的：node_modules(65 MB)、字节码、任何数据库文件。
-tar czf "$TARBALL" \
+tar czf - \
     --exclude='__pycache__' \
     --exclude='node_modules' \
     --exclude='*.pyc' \
     --exclude='*.db' \
     --exclude='*.db-journal' \
     --exclude='.vite' \
-    cloud motioncontrol_shared game_profiles
-echo "    $(du -h "$TARBALL" | cut -f1)"
-
-echo "==> 上传"
-scp -q "$TARBALL" "$HOST:/tmp/motioncontrol-cloud.tar.gz"
-rm -f "$TARBALL"
+    cloud motioncontrol_shared game_profiles \
+  | ssh "$HOST" 'cat > /tmp/motioncontrol-cloud.tar.gz'
+ssh "$HOST" 'echo "    $(du -h /tmp/motioncontrol-cloud.tar.gz | cut -f1)"'
 
 echo "==> 在服务器上安装"
+# 远端用退出码 90 表示"还没初始化"，那不是失败。set -e 会在非 0 时立刻结束整个
+# 脚本，所以这里要显式关掉它来拿到退出码，否则下面的判断永远执行不到。
+set +e
 ssh "$HOST" "APP_DIR='$APP_DIR' bash -s" <<'REMOTE'
 set -euo pipefail
+
+# 第一次跑的时候这个目录还不存在，bootstrap.sh 也还没上来——它就在这个包里。
+mkdir -p "$APP_DIR"
 cd "$APP_DIR"
 
 echo "    解包"
@@ -72,6 +77,16 @@ echo "    解包"
 tar xzf /tmp/motioncontrol-cloud.tar.gz -C "$APP_DIR" --overwrite
 rm -f /tmp/motioncontrol-cloud.tar.gz
 chown -R root:root "$APP_DIR/cloud" "$APP_DIR/motioncontrol_shared" "$APP_DIR/game_profiles"
+
+# 还没初始化过：代码已经上来了，bootstrap.sh 现在就在 cloud/deploy/ 下。
+# 这不是失败，所以干净退出，别让调用方以为出了错。
+if [ ! -x "$APP_DIR/venv/bin/python" ]; then
+    echo
+    echo "    代码已上传，但这台机器还没初始化过。接下来跑一次："
+    echo "      ssh <这台机器> 'cd $APP_DIR && sudo bash cloud/deploy/bootstrap.sh'"
+    echo "    然后再跑一遍 push.sh。"
+    exit 90
+fi
 
 echo "    依赖"
 venv/bin/pip install --quiet --upgrade -r cloud/requirements.txt
@@ -95,6 +110,14 @@ systemctl daemon-reload
 echo "    重启服务"
 systemctl restart motioncontrol-cloud.service
 REMOTE
+REMOTE_STATUS=$?
+set -e
+
+case "$REMOTE_STATUS" in
+    0)  ;;
+    90) exit 0 ;;   # 代码传上去了，等着跑 bootstrap.sh
+    *)  echo "远端安装失败（退出码 $REMOTE_STATUS）" >&2; exit 1 ;;
+esac
 
 echo "==> 检查"
 # 起来要几秒。失败的话下面的 health 会说话，不用盲等。
