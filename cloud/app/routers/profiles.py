@@ -19,6 +19,7 @@ without anyone finding out, which is worse than an error.
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Body, HTTPException, Path, Query, Response, status
@@ -27,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from motioncontrol_shared.canonical import canonicalize
+from motioncontrol_shared.describe import describe
 
 from ..db import utcnow
 from ..deps import CurrentUser, DbSession, MaybeUser
@@ -328,6 +330,28 @@ async def browse_public(db: DbSession,
         query.order_by(Profile.updated_at.desc()).limit(limit)
     )).scalars().all()
     return [await _profile_out(db, row) for row in rows]
+
+
+@router.get("/profiles/{profile_id}/versions/{version_id}/summary")
+async def version_summary(profile_id: ProfileId, version_id: ProfileId,
+                          user: MaybeUser, db: DbSession) -> dict:
+    """What this version actually does, derived from the stored document.
+
+    Not the uploader's description. A person deciding whether to install
+    someone else's config needs to know which keys it rebinds, and a free-text
+    summary can be empty, stale, or simply wrong about its own contents. This
+    is generated from the validated bytes, so it cannot disagree with them.
+
+    Separate from the profile response on purpose: it parses the payload, and
+    doing that for every row of a listing would be paid on every page load for
+    something only the detail page shows.
+    """
+    profile = await _load_readable(db, profile_id, user)
+    version = await db.get(ProfileVersion, version_id)
+    if version is None or version.profile_id != profile.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "版本不存在")
+    document = json.loads(version.payload.decode("utf-8"))
+    return {"revision_no": version.revision_no, **describe(version.doc_type, document)}
 
 
 @router.post("/profiles/{profile_id}/validate", status_code=status.HTTP_200_OK)

@@ -16,14 +16,8 @@ const loading = ref(true);
 const error = ref("");
 
 const showForm = ref(false);
-const title = ref("");
-const docType = ref<DocType | "">("");
-const document_ = ref<unknown>(null);
-const fileName = ref("");
+// 可见性每次打开表单都回到私有，见 resetForm 里的说明。
 const visibility = ref<Visibility>("private");
-const gameId = ref("");
-const gameQuery = ref("");
-const games = ref<{ id: string; name: string }[]>([]);
 const busy = ref(false);
 const formError = ref("");
 
@@ -70,73 +64,117 @@ async function copyPath() {
   }
 }
 
-async function acceptFile(file: File | undefined) {
+/** 一份待上传的文件：已解析、已识别类型。 */
+interface Pending {
+  fileName: string;
+  docType: DocType;
+  document: unknown;
+  title: string;
+  gameId: string;
+}
+
+const pending = ref<Pending[]>([]);
+
+async function acceptFiles(files: FileList | undefined | null) {
   formError.value = "";
-  if (!file) return;
-  fileName.value = file.name;
-  try {
-    const parsed = JSON.parse(await file.text());
-    const detected = detectDocType(parsed);
-    if (!detected) {
-      document_.value = null;
-      docType.value = "";
-      formError.value = "认不出这是哪种配置。支持游戏映射、动作映射、语音映射三种。";
-      return;
+  if (!files || !files.length) return;
+  const problems: string[] = [];
+  for (const file of Array.from(files)) {
+    try {
+      const parsed = JSON.parse(await file.text());
+      const detected = detectDocType(parsed);
+      if (!detected) {
+        problems.push(`${file.name}：认不出是哪种配置`);
+        continue;
+      }
+      // 同一种类型只保留最后选的那份——一次传两个游戏映射没有意义，
+      // 而静默忽略第二个会让人以为传上去了。
+      const existing = pending.value.findIndex(p => p.docType === detected);
+      const entry: Pending = {
+        fileName: file.name,
+        docType: detected,
+        document: parsed,
+        title: `我的${DOC_TYPE_NAMES[detected]}`,
+        gameId: detected === "profile_selection" && typeof parsed.selected_id === "string"
+          ? parsed.selected_id : "",
+      };
+      if (existing >= 0) pending.value[existing] = entry;
+      else pending.value.push(entry);
+    } catch {
+      problems.push(`${file.name}：不是有效的 JSON`);
     }
-    document_.value = parsed;
-    docType.value = detected;
-    if (!title.value) title.value = `我的${DOC_TYPE_NAMES[detected]}`;
-    if (detected === "profile_selection" && typeof parsed.selected_id === "string") {
-      gameId.value = parsed.selected_id;
-      gameQuery.value = parsed.selected_id;
-    }
-  } catch {
-    document_.value = null;
-    docType.value = "";
-    formError.value = "这个文件不是有效的 JSON。";
   }
+  if (problems.length) formError.value = problems.join("；");
 }
 
 function pickFile(event: Event) {
-  return acceptFile((event.target as HTMLInputElement).files?.[0]);
+  const input = event.target as HTMLInputElement;
+  const done = acceptFiles(input.files);
+  // 清空，否则再选同一个文件不会触发 change。
+  input.value = "";
+  return done;
 }
 
 function dropFile(event: DragEvent) {
   dragging.value = false;
-  return acceptFile(event.dataTransfer?.files?.[0]);
+  return acceptFiles(event.dataTransfer?.files);
 }
 
-async function searchGames() {
-  games.value = gameQuery.value.trim() ? await api.games(gameQuery.value) : [];
+function removePending(index: number) {
+  pending.value.splice(index, 1);
+}
+
+function resetForm() {
+  pending.value = [];
+  formError.value = "";
+  // 可见性也要归位。不归位的话它会跨次沿用：上一份选了公开，下一份就默认公开
+  // 而且没有任何提示——用户以为自己传的是私有的。其他字段忘了重置只是麻烦，
+  // 这个忘了重置是把东西公开出去。
+  visibility.value = "private";
 }
 
 async function submit() {
-  if (!docType.value || document_.value === null) {
+  if (!pending.value.length) {
     formError.value = "先选一个配置文件。";
     return;
   }
   formError.value = "";
   busy.value = true;
+  const failed: string[] = [];
   try {
-    await api.createProfile({
-      doc_type: docType.value,
-      title: title.value,
-      document: document_.value,
-      game_id: gameId.value || null,
-      visibility: visibility.value,
-    });
-    showForm.value = false;
-    document_.value = null;
-    fileName.value = "";
-    title.value = "";
-    docType.value = "";
+    // 一份一份传。某一份被服务端拒绝时，其余的已经传上去了——这比整批回滚好：
+    // 用户看到的是"三个里有一个不行"，而不是"全都没传成，原因是其中一个"。
+    for (const item of pending.value) {
+      try {
+        await api.createProfile({
+          doc_type: item.docType,
+          title: item.title,
+          document: item.document,
+          game_id: item.gameId || null,
+          visibility: visibility.value,
+        });
+      } catch (caught) {
+        // 服务端的措辞就是桌面校验器的措辞，原样显示。
+        failed.push(`${item.fileName}：${caught instanceof Error ? caught.message : "上传失败"}`);
+      }
+    }
+    if (failed.length) {
+      formError.value = failed.join("；");
+      pending.value = pending.value.filter(
+        item => failed.some(message => message.startsWith(item.fileName)));
+    } else {
+      showForm.value = false;
+      resetForm();
+    }
     await load();
-  } catch (caught) {
-    // The server's wording is the desktop validator's, so it is shown as-is.
-    formError.value = caught instanceof Error ? caught.message : "上传失败";
   } finally {
     busy.value = false;
   }
+}
+
+function toggleForm() {
+  showForm.value = !showForm.value;
+  if (showForm.value) resetForm();
 }
 
 onMounted(load);
@@ -146,59 +184,52 @@ onMounted(load);
   <div class="card">
     <header class="row">
       <h1>我的配置</h1>
-      <button @click="showForm = !showForm">{{ showForm ? "取消" : "上传配置" }}</button>
+      <button @click="toggleForm">{{ showForm ? "取消" : "上传配置" }}</button>
     </header>
 
     <form v-if="showForm" class="upload" @submit.prevent="submit">
       <div
         class="dropzone"
-        :class="{ dragging, loaded: !!docType }"
+        :class="{ dragging, loaded: pending.length > 0 }"
         @dragover.prevent="dragging = true"
         @dragleave.prevent="dragging = false"
         @drop.prevent="dropFile"
       >
-        <template v-if="docType">
-          <strong>{{ fileName }}</strong>
-          <span class="muted">识别为{{ DOC_TYPE_NAMES[docType] }}</span>
-          <label class="pick">
-            换一个
-            <input type="file" accept=".json,application/json" hidden @change="pickFile" />
-          </label>
-        </template>
+        <strong>{{ pending.length ? "再拖一个，或者" : "把配置文件拖到这里" }}</strong>
+        <label class="pick">
+          {{ pending.length ? "继续添加" : "或者选择文件" }}
+          <!-- multiple：三个文件可以一次选完。少了它，文件对话框里选三个只会
+               取第一个，而且不会有任何提示。 -->
+          <input type="file" accept=".json,application/json" multiple hidden @change="pickFile" />
+        </label>
 
-        <template v-else>
-          <strong>把配置文件拖到这里</strong>
-          <label class="pick">
-            或者选择文件
-            <input type="file" accept=".json,application/json" hidden @change="pickFile" />
-          </label>
-
-          <div class="where">
-            <span class="muted">文件在这个文件夹里，复制后粘到文件对话框的地址栏可以直达：</span>
-            <div class="path">
-              <code>{{ CONFIG_DIR }}</code>
-              <button type="button" class="ghost" @click="copyPath">
-                {{ copied ? "已复制" : "复制" }}
-              </button>
-            </div>
-            <ul>
-              <li v-for="name in CONFIG_FILES" :key="name"><code>{{ name }}</code></li>
-            </ul>
+        <div class="where" v-if="!pending.length">
+          <span class="muted">文件在这个文件夹里，复制后粘到文件对话框的地址栏可以直达：</span>
+          <div class="path">
+            <code>{{ CONFIG_DIR }}</code>
+            <button type="button" class="ghost" @click="copyPath">
+              {{ copied ? "已复制" : "复制" }}
+            </button>
           </div>
-        </template>
+          <ul>
+            <li v-for="name in CONFIG_FILES" :key="name"><code>{{ name }}</code></li>
+          </ul>
+          <span class="muted">三个可以一次选完。</span>
+        </div>
       </div>
-      <label>
-        标题
-        <input v-model="title" required maxlength="120" />
-      </label>
-      <label v-if="docType === 'profile_selection'">
-        对应游戏（可留空）
-        <input v-model="gameQuery" @input="searchGames" placeholder="搜游戏名或 id" list="game-list" />
-        <datalist id="game-list">
-          <option v-for="game in games" :key="game.id" :value="game.id">{{ game.name }}</option>
-        </datalist>
-        <small v-if="gameId">已选 {{ gameId }}</small>
-      </label>
+
+      <ul class="pending" v-if="pending.length">
+        <li v-for="(item, index) in pending" :key="item.fileName">
+          <div class="head">
+            <span class="tag">{{ DOC_TYPE_NAMES[item.docType] }}</span>
+            <code>{{ item.fileName }}</code>
+            <button type="button" class="ghost" @click="removePending(index)">移除</button>
+          </div>
+          <input v-model="item.title" required maxlength="120" aria-label="标题" />
+          <small v-if="item.gameId" class="muted">对应游戏：{{ item.gameId }}</small>
+        </li>
+      </ul>
+
       <label>
         可见性
         <select v-model="visibility">
@@ -206,6 +237,7 @@ onMounted(load);
           <option value="unlisted">不公开列出 —— 有链接的人能看</option>
           <option value="public">公开 —— 会出现在浏览页</option>
         </select>
+        <small class="muted">这一批全部用这个可见性。传完会自动回到「私有」。</small>
       </label>
       <p class="error" v-if="formError">{{ formError }}</p>
       <button type="submit" :disabled="busy">{{ busy ? "上传中…" : "上传" }}</button>
