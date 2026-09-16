@@ -48,19 +48,42 @@ async function load() {
   }
 }
 
-async function pickFile(event: Event) {
+/** 网页读不到你的磁盘，文件只能由你选或拖进来——这是浏览器的安全模型，绕不过去。
+ *  所以这里能做的是把「找到那个文件」这件事变容易：路径一键复制，粘进文件对话框
+ *  的地址栏就直达，不用一层层点过去。 */
+const CONFIG_DIR = "%LOCALAPPDATA%\\MotionControl";
+const CONFIG_FILES = [
+  "game_profile_selection.json",
+  "motion_mappings.json",
+  "voice_mappings.json",
+];
+const dragging = ref(false);
+const copied = ref(false);
+
+async function copyPath() {
+  try {
+    await navigator.clipboard.writeText(CONFIG_DIR);
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 2000);
+  } catch {
+    formError.value = "复制失败，手动选中上面那行路径复制吧。";
+  }
+}
+
+async function acceptFile(file: File | undefined) {
   formError.value = "";
-  const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
   fileName.value = file.name;
   try {
     const parsed = JSON.parse(await file.text());
-    document_.value = parsed;
     const detected = detectDocType(parsed);
     if (!detected) {
+      document_.value = null;
+      docType.value = "";
       formError.value = "认不出这是哪种配置。支持游戏映射、动作映射、语音映射三种。";
       return;
     }
+    document_.value = parsed;
     docType.value = detected;
     if (!title.value) title.value = `我的${DOC_TYPE_NAMES[detected]}`;
     if (detected === "profile_selection" && typeof parsed.selected_id === "string") {
@@ -68,8 +91,19 @@ async function pickFile(event: Event) {
       gameQuery.value = parsed.selected_id;
     }
   } catch {
+    document_.value = null;
+    docType.value = "";
     formError.value = "这个文件不是有效的 JSON。";
   }
+}
+
+function pickFile(event: Event) {
+  return acceptFile((event.target as HTMLInputElement).files?.[0]);
+}
+
+function dropFile(event: DragEvent) {
+  dragging.value = false;
+  return acceptFile(event.dataTransfer?.files?.[0]);
 }
 
 async function searchGames() {
@@ -116,12 +150,43 @@ onMounted(load);
     </header>
 
     <form v-if="showForm" class="upload" @submit.prevent="submit">
-      <label>
-        配置文件
-        <input type="file" accept=".json,application/json" @change="pickFile" />
-        <small v-if="fileName">{{ fileName }} · 识别为{{ docType ? DOC_TYPE_NAMES[docType] : "未知" }}</small>
-        <small v-else>在 %LOCALAPPDATA%\MotionControl\ 里，三个 .json 文件</small>
-      </label>
+      <div
+        class="dropzone"
+        :class="{ dragging, loaded: !!docType }"
+        @dragover.prevent="dragging = true"
+        @dragleave.prevent="dragging = false"
+        @drop.prevent="dropFile"
+      >
+        <template v-if="docType">
+          <strong>{{ fileName }}</strong>
+          <span class="muted">识别为{{ DOC_TYPE_NAMES[docType] }}</span>
+          <label class="pick">
+            换一个
+            <input type="file" accept=".json,application/json" hidden @change="pickFile" />
+          </label>
+        </template>
+
+        <template v-else>
+          <strong>把配置文件拖到这里</strong>
+          <label class="pick">
+            或者选择文件
+            <input type="file" accept=".json,application/json" hidden @change="pickFile" />
+          </label>
+
+          <div class="where">
+            <span class="muted">文件在这个文件夹里，复制后粘到文件对话框的地址栏可以直达：</span>
+            <div class="path">
+              <code>{{ CONFIG_DIR }}</code>
+              <button type="button" class="ghost" @click="copyPath">
+                {{ copied ? "已复制" : "复制" }}
+              </button>
+            </div>
+            <ul>
+              <li v-for="name in CONFIG_FILES" :key="name"><code>{{ name }}</code></li>
+            </ul>
+          </div>
+        </template>
+      </div>
       <label>
         标题
         <input v-model="title" required maxlength="120" />
@@ -173,6 +238,28 @@ onMounted(load);
           padding: 1.25rem; border: 1px solid var(--line); border-radius: 8px; }
 .upload label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.9rem; }
 .upload small { color: var(--muted); font-size: 0.8rem; }
+
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+  padding: 1.75rem 1.25rem; text-align: center;
+  border: 2px dashed var(--line); border-radius: 10px;
+  transition: border-color .12s, background .12s;
+}
+.dropzone.dragging { border-color: var(--accent); background: var(--chip); }
+.dropzone.loaded { border-style: solid; }
+/* 真正的 input 是隐藏的，这个 label 就是那颗按钮——点它等于点 input。 */
+.pick {
+  display: inline-block; padding: 0.45rem 0.9rem; border-radius: 6px;
+  background: var(--accent); color: #fff; font-size: 0.9rem; cursor: pointer;
+}
+.where { margin-top: 0.4rem; font-size: 0.82rem; }
+.path { display: flex; align-items: center; justify-content: center;
+        gap: 0.5rem; margin: 0.4rem 0; }
+.path code { font-size: 0.85rem; }
+.ghost { background: none; border: 1px solid var(--line); color: var(--accent);
+         padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+.where ul { list-style: none; padding: 0; margin: 0.3rem 0 0;
+            display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
 .list { list-style: none; padding: 0; margin: 1.5rem 0 0; }
 .list li { padding: 0.9rem 0; border-top: 1px solid var(--line); }
 .title { font-size: 1.05rem; font-weight: 600; }
