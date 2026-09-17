@@ -231,7 +231,16 @@ def _phone_control_payload() -> dict:
         # keeps one list authoritative: a phrase added on the desktop is heard
         # by the phone microphone too, without shipping a new build.
         "voice_phrases": VOICE.grammar_phrases(),
+        # 手部模型是手机上的第二次推理，实测要花掉一成帧率，所以只有真的在用手
+        # 控鼠标时才让它跑。手也一起告诉它：设备按这只手的手腕裁图，裁哪里是这
+        # 边说了算的，就不存在把左右手认反的问题。
+        "hand_tracking": _hand_tracking_request(),
     }
+
+
+def _hand_tracking_request() -> dict:
+    status = KERNEL.hand_mouse_controller.status()
+    return {"enabled": bool(status["enabled"]), "hand": str(status["hand"])}
 
 provider = getattr(INPUT_BRIDGE, "configure_control_config_provider", None)
 if provider is not None:
@@ -1087,6 +1096,11 @@ class AdminHandler(_BaseHandler):
                 return
             try:
                 status = KERNEL.configure_hand_mouse(body)
+                # 开关和左右手都写在这份配置里，改完必须马上推给手机，否则它要么
+                # 白跑一次推理，要么该跑的时候没跑。
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
                 self._send_json({"ok": True, "hand_mouse": status})
             except (ValueError, TypeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)

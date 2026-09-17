@@ -196,3 +196,54 @@ def test_nothing_is_suppressed_while_disabled():
     feed(kernel, body(wrist=(0.75, 0.28), spread=0.1), frames=3)
     assert kernel.hand_mouse_controller.engaged is False
     assert kernel.zone_state["rightHand"]["pressed"] is True
+
+
+# --- finger joints from the camera device ---------------------------------
+
+
+def fingers(*, curl, wrist=(0.70, 0.30), reach=0.06):
+    """21 个手部点，四根手指从手腕呈扇形张开，伸展倍数为 ``curl``。"""
+    import math
+
+    from hand_mouse_control import _FINGER_KNUCKLES, _FINGER_TIPS
+
+    wx, wy = wrist
+    points = [p(wx, wy) for _ in range(21)]
+    for index, (knuckle, tip) in enumerate(zip(_FINGER_KNUCKLES, _FINGER_TIPS)):
+        angle = math.radians(-90.0 + (index - 1.5) * 12.0)
+        ux, uy = math.cos(angle), math.sin(angle)
+        points[knuckle] = p(wx + ux * reach, wy + uy * reach)
+        points[tip] = p(wx + ux * reach * curl, wy + uy * reach * curl)
+    return points
+
+
+def test_finger_joints_reach_the_fist_gate_through_the_kernel():
+    """三个指尖读成握拳，手指关节说是摊开的——整条路走下来要听关节的。"""
+    kernel, _ = kernel_with_hand_mouse(hand="right")
+    kernel.handle_pose_map("hand-mouse-test", body(wrist=(0.70, 0.30), spread=0.1),
+                           width=640, height=480,
+                           hands={"right": fingers(curl=2.0)})
+    status = kernel.hand_mouse_controller.status()
+    assert status["engaged"] is False
+    assert status["grip_source"] == "hand"
+
+
+def test_the_kernel_only_reads_the_steering_hand():
+    """左手摊开着不该影响右手控鼠标，否则两只手会互相顶。"""
+    kernel, _ = kernel_with_hand_mouse(hand="right")
+    kernel.handle_pose_map("hand-mouse-test", body(wrist=(0.70, 0.30), spread=0.1),
+                           width=640, height=480,
+                           hands={"left": fingers(curl=2.0, wrist=(0.30, 0.30))})
+    status = kernel.hand_mouse_controller.status()
+    assert status["grip_source"] == "pose"
+    assert status["engaged"] is True
+
+
+def test_losing_the_body_forgets_the_hands():
+    """人走开之后留着上一帧的手会让下一次握拳从陈旧读数开始。"""
+    kernel, _ = kernel_with_hand_mouse(hand="right")
+    kernel.handle_pose_map("hand-mouse-test", body(spread=0.5), width=640, height=480,
+                           hands={"right": fingers(curl=2.0)})
+    assert kernel.latest_hands is not None
+    kernel.handle_pose_map("another-source", body(spread=0.5), width=640, height=480)
+    assert kernel.latest_hands is None

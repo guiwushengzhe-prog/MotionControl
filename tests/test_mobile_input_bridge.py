@@ -307,3 +307,69 @@ def test_web_mobile_pose_uses_same_body_action_and_head_pipeline():
     assert "requestAnimationFrame" not in text
     assert "detectForVideo" not in text
     assert "post('/api/output/buttons'" not in text
+
+
+# --- the optional hand block ----------------------------------------------
+#
+# A camera device attaches 21 points per hand only while the desktop has asked
+# for them, so every check here has to hold with the block absent too: that is
+# what every already-installed phone sends.
+
+
+def packed_hand(handedness="Right", *, x=0.30):
+    return {"handedness": handedness,
+            "points": [[x + index * 0.001, 0.40, 0.0, 0.9] for index in range(21)]}
+
+
+def test_a_frame_without_hands_still_expands():
+    """装着旧版本的手机发的就是这种帧，不能因为少了这块就出错。"""
+    expanded = _expand_pose_features(pose_features())
+    assert expanded["hands"] == []
+
+
+def test_packed_hands_expand_into_landmarks():
+    message = {**pose_features(), "hands": [packed_hand("Right")]}
+    expanded = _expand_pose_features(message)
+    assert len(expanded["hands"]) == 1
+    hand = expanded["hands"][0]
+    assert hand["handedness"] == "Right"
+    assert len(hand["landmarks"]) == 21
+    assert hand["landmarks"][0] == {"x": 0.30, "y": 0.40, "z": 0.0, "visibility": 0.9}
+
+
+@pytest.mark.parametrize(
+    "hands",
+    [
+        [{"handedness": "Maybe", "points": [[0.3, 0.4, 0.0, 0.9] for _ in range(21)]}],
+        [{"handedness": "Right", "points": [[0.3, 0.4, 0.0, 0.9] for _ in range(20)]}],
+        [{"handedness": "Right", "points": [[float("nan"), 0.4, 0.0, 0.9] for _ in range(21)]}],
+        [{"handedness": "Right", "points": [[0.3, 0.4, 0.0, 1.4] for _ in range(21)]}],
+        [{"handedness": "Right", "points": [[0.3, 0.4, 0.0] for _ in range(21)]}],
+        [packed_hand(), packed_hand(), packed_hand()],
+    ],
+)
+def test_packed_hands_use_strict_validation(hands):
+    with pytest.raises(ValueError):
+        _expand_pose_features({**pose_features(), "hands": hands})
+
+
+def test_the_kernel_reads_hands_in_unmirrored_coordinates():
+    """内核只认原始未镜像的坐标，手部点要和姿态点走同一次纠正。"""
+    from control_kernel import ControlKernel
+
+    message = {"hands": [packed_hand("Right", x=0.30)], "coordinates_mirrored": False}
+    straight = ControlKernel.hand_map_from_message(_expand_pose_features(
+        {**pose_features(), **message}))
+    assert straight is not None
+    assert straight["right"][0]["x"] == pytest.approx(0.30)
+
+    mirrored = ControlKernel.hand_map_from_message(_expand_pose_features(
+        {**pose_features(), "hands": [packed_hand("Right", x=0.30)],
+         "coordinates_mirrored": True}))
+    assert mirrored["right"][0]["x"] == pytest.approx(0.70)
+
+
+def test_the_kernel_takes_no_hands_from_a_plain_frame():
+    from control_kernel import ControlKernel
+
+    assert ControlKernel.hand_map_from_message(_expand_pose_features(pose_features())) is None

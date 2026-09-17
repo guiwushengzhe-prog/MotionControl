@@ -587,25 +587,38 @@ async function refreshPerformance(){try{renderPerformance(await api('/api/perfor
 async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference}catch{}}
 // --- hand mouse -----------------------------------------------------------
 // The fist thresholds shipped as estimates rather than measurements, so the
-// live spread reading sits next to them: open the hand, read the number, close
-// it, read again, then put the thresholds between the two.
+// live reading sits next to them: open the hand, read the number, close it,
+// read again, then put the thresholds between the two.
+//
+// Which reading, and therefore which pair of sliders, depends on what the
+// phone is sending.  With finger joints the number is how far the fingertips
+// reach past their knuckles; without them it is the coarse fingertip spread.
+// Showing both pairs at once would leave the player tuning whichever one
+// happens to do nothing.
 function renderHandMouse(state){
   if(!state)return;
   const c=state.config||{};
   $('#handMouseEnabled').checked=Boolean(c.enabled);
   $('#handMouseHand').value=c.hand||'right';
   $('#handMouseInvertX').checked=Boolean(c.invert_x);
-  for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open]]){
+  for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open],['handMouseCurlClose',c.curl_close],['handMouseCurlOpen',c.curl_open]]){
     if(value!==undefined)$('#'+id).value=value;
   }
   $('#handMouseSensitivityValue').textContent=Number(c.sensitivity||0).toFixed(0);
   $('#handMouseDeadzoneValue').textContent=Number(c.deadzone||0).toFixed(2);
   $('#handMouseCloseValue').textContent=Number(c.fist_close||0).toFixed(2);
   $('#handMouseOpenValue').textContent=Number(c.fist_open||0).toFixed(2);
-  const spread=state.spread==null?'看不到手':Number(state.spread).toFixed(3);
+  $('#handMouseCurlCloseValue').textContent=Number(c.curl_close||0).toFixed(2);
+  $('#handMouseCurlOpenValue').textContent=Number(c.curl_open||0).toFixed(2);
+  const byHand=state.grip_source==='hand';
+  $('#handMouseCurlRow').hidden=!byHand;
+  $('#handMouseSpreadRow').hidden=byHand;
+  const reading=byHand
+    ?(state.curl==null?'看不到手':`手指伸展 ${Number(state.curl).toFixed(2)}`)
+    :(state.spread==null?'看不到手':`张开度 ${Number(state.spread).toFixed(3)}`);
   const label={disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'}[state.state]||state.state;
   $('#handMouseStatus').textContent=c.enabled
-    ?`${label} · 张开度 ${spread} · 输出 ${Number(state.output_x||0).toFixed(2)} / ${Number(state.output_y||0).toFixed(2)}`
+    ?`${label} · ${reading} · 输出 ${Number(state.output_x||0).toFixed(2)} / ${Number(state.output_y||0).toFixed(2)}`
     :'未启用';
 }
 // --- skeleton recording ---------------------------------------------------
@@ -653,6 +666,8 @@ async function saveHandMouse(){
     deadzone:Number($('#handMouseDeadzone').value),
     fist_close:Number($('#handMouseClose').value),
     fist_open:Number($('#handMouseOpen').value),
+    curl_close:Number($('#handMouseCurlClose').value),
+    curl_open:Number($('#handMouseCurlOpen').value),
   };
   $('#handMouseSaveStatus').textContent='正在保存…';
   try{
@@ -1010,7 +1025,7 @@ bind('mainActionBtn',handleMainAction);
 bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
 bind('sourceStopBtn',()=>setSource(sourceMode,false));
 bind('overlayBtn',toggleOverlay);
-for(const id of ['handMouseEnabled','handMouseHand','handMouseInvertX','handMouseSensitivity','handMouseDeadzone','handMouseClose','handMouseOpen']){
+for(const id of ['handMouseEnabled','handMouseHand','handMouseInvertX','handMouseSensitivity','handMouseDeadzone','handMouseClose','handMouseOpen','handMouseCurlClose','handMouseCurlOpen']){
   const el=$('#'+id);
   if(el)el.addEventListener('change',()=>void saveHandMouse());
 }

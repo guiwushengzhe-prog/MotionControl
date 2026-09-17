@@ -278,3 +278,100 @@ def test_a_hand_at_the_very_edge_still_counts():
     ctl = controller(hand="right")
     spread, _ = ctl.measure_spread(pose(spread=0.2, wrist=(0.01, 0.5)), "right")
     assert spread is not None
+
+
+# --- grip read from real finger joints ------------------------------------
+#
+# 真机实测（荣耀 200，姿态模型 full）：手部模型每帧 23 毫秒，帧率 15.3 掉到
+# 13.9，认出手的比例 111/112。开销可接受，读数可靠，所以只要设备给了 21 个点
+# 就用它，指尖张开度退为没有手部模型时的兜底。
+
+
+def hand_points(*, curl, wrist=(0.5, 0.9), reach=0.10, fan_degrees=12.0):
+    """21 个手部点，四根手指从手腕呈扇形张开，按给定的伸展倍数摆好。
+
+    ``curl`` 就是这套算法读出来的那个比值：指尖到手腕的距离是指根到手腕距离的
+    几倍。摊平的手约 2.0，攥紧的拳约 1.0。指根和指尖放在同一条从手腕出发的射
+    线上，读出来的比值才正好等于 ``curl``。
+    """
+    import math
+
+    from hand_mouse_control import _FINGER_KNUCKLES, _FINGER_TIPS
+
+    wx, wy = wrist
+    points = [{"x": wx, "y": wy, "score": 0.9} for _ in range(21)]
+    for index, (knuckle_index, tip_index) in enumerate(zip(_FINGER_KNUCKLES, _FINGER_TIPS)):
+        angle = math.radians(-90.0 + (index - 1.5) * fan_degrees)
+        ux, uy = math.cos(angle), math.sin(angle)
+        points[knuckle_index] = {"x": wx + ux * reach, "y": wy + uy * reach, "score": 0.9}
+        points[tip_index] = {"x": wx + ux * reach * curl, "y": wy + uy * reach * curl, "score": 0.9}
+    return points
+
+
+def test_flat_fingers_read_near_two_and_a_fist_near_one():
+    """这两个数就是默认阈值 1.35/1.60 的由来，读错了阈值全部失效。"""
+    from hand_mouse_control import measure_curl
+
+    assert measure_curl(hand_points(curl=2.0)) == pytest.approx(2.0, abs=0.01)
+    assert measure_curl(hand_points(curl=1.0)) == pytest.approx(1.0, abs=0.01)
+
+
+def test_curl_survives_the_player_standing_further_away():
+    """所有距离都从手腕起算，整只手缩小时比值不变。"""
+    from hand_mouse_control import measure_curl
+
+    near = measure_curl(hand_points(curl=1.8, reach=0.20))
+    far = measure_curl(hand_points(curl=1.8, reach=0.05))
+    assert near == pytest.approx(far, abs=0.01)
+
+
+def test_a_closed_fist_engages_from_finger_joints():
+    ctl = controller(hand="right")
+    state = ctl.update(pose(spread=0.5), now=1.0, hand_points=hand_points(curl=1.0))
+    assert state["engaged"] is True
+    assert state["grip_source"] == "hand"
+    assert state["curl"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_finger_joints_outrank_the_fingertip_spread():
+    """姿态模型那三个指尖说这是拳头，手指关节说没有——听手指的。
+
+    这正是加手部模型的理由：姿态模型只有三个指尖，读错的时候鼠标会一直卡在
+    按下状态。
+    """
+    ctl = controller(hand="right")
+    state = ctl.update(pose(spread=0.1), now=1.0, hand_points=hand_points(curl=2.0))
+    assert state["engaged"] is False
+    assert state["grip_source"] == "hand"
+
+
+def test_without_hand_points_the_spread_still_drives_the_gate():
+    """没有手部模型的设备照旧能用，只是粗一些。"""
+    ctl = controller(hand="right")
+    state = ctl.update(pose(spread=0.1), now=1.0)
+    assert state["engaged"] is True
+    assert state["grip_source"] == "pose"
+    assert state["curl"] is None
+
+
+def test_a_hand_outside_the_picture_is_not_believed():
+    """和姿态那条路同一条规矩：出了画面的点是外推的，不是看见的。"""
+    from hand_mouse_control import measure_curl
+
+    assert measure_curl(hand_points(curl=1.0, wrist=(-0.2, 0.5))) is None
+
+
+def test_curl_keeps_its_hysteresis():
+    """中间地带维持原状，否则鼠标会在移动中途松手。"""
+    ctl = controller(hand="right")
+    ctl.update(pose(spread=0.5), now=1.0, hand_points=hand_points(curl=1.0))
+    assert ctl.engaged is True
+    between = ctl.update(pose(spread=0.5), now=1.1, hand_points=hand_points(curl=1.45))
+    assert between["engaged"] is True
+    opened = ctl.update(pose(spread=0.5), now=1.2, hand_points=hand_points(curl=1.9))
+    assert opened["engaged"] is False
+
+
+def test_a_thresholds_pair_without_a_gap_is_refused():
+    with pytest.raises(ValueError):
+        merge_config(None, {"curl_close": 1.6, "curl_open": 1.5})

@@ -302,8 +302,39 @@ def _validate_pose_features(message: dict) -> None:
                 raise ValueError("packed world coordinate exceeds safety limit")
             if not 0.0 <= visibility <= 1.0:
                 raise ValueError("packed world visibility must be in [0,1]")
+    _validate_packed_hands(message.get("hands"))
     if not _is_number(message.get("inference_ms", 0)) or float(message.get("inference_ms", 0)) < 0:
         raise ValueError("inference_ms must be >= 0")
+
+
+def _validate_packed_hands(hands: object) -> None:
+    """Check the optional hand block a camera device may attach to a frame.
+
+    The device runs the hand model only while the desktop has asked for it, so
+    absent is the normal case and must stay cheap; a device that never gained
+    the feature keeps working unchanged.  Handedness is the side the desktop
+    asked the device to look at, not a guess made from the picture -- the
+    device crops around the wrist it was told to watch, so there is nothing to
+    guess and nothing to mix up.
+    """
+    if hands is None:
+        return
+    if not isinstance(hands, list) or len(hands) > 2:
+        raise ValueError("hands must contain 0 to 2 items")
+    for hand in hands:
+        if not isinstance(hand, dict) or hand.get("handedness") not in {"Left", "Right"}:
+            raise ValueError("handedness must be Left or Right")
+        points = hand.get("points")
+        if not isinstance(points, list) or len(points) != 21:
+            raise ValueError("each hand must contain exactly 21 packed landmarks")
+        for point in points:
+            if not isinstance(point, list) or len(point) != 4 or not all(_is_number(v) for v in point):
+                raise ValueError("each packed hand point must be [x,y,z,score]")
+            x, y, z, score = map(float, point)
+            if max(abs(x), abs(y), abs(z)) > LANDMARK_COORDINATE_ABS_LIMIT:
+                raise ValueError("packed hand coordinate exceeds safety limit")
+            if not 0.0 <= score <= 1.0:
+                raise ValueError("packed hand score must be in [0,1]")
 
 
 def _expand_pose_features(message: dict) -> dict:
@@ -335,6 +366,16 @@ def _expand_pose_features(message: dict) -> dict:
                 "z": float(values[2]), "visibility": float(values[3]),
             }
         poses = [{"detection_id": None, "pose": full, "world_pose": world_pose}]
+    hands = [
+        {
+            "handedness": hand["handedness"],
+            "landmarks": [
+                {"x": float(v[0]), "y": float(v[1]), "z": float(v[2]), "visibility": float(v[3])}
+                for v in hand["points"]
+            ],
+        }
+        for hand in (message.get("hands") or [])
+    ]
     return {
         "type": "pose_frame_v2",
         "role": "camera",
@@ -352,7 +393,7 @@ def _expand_pose_features(message: dict) -> dict:
         "actual_model": str(message.get("actual_model", "")),
         "voice_state": str(message.get("voice_state", "not_connected")),
         "poses": poses,
-        "hands": [],
+        "hands": hands,
         "inference_ms": float(message.get("inference_ms", 0.0)),
         "wire_protocol": "pose_features_v1",
     }
