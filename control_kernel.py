@@ -29,7 +29,7 @@ from head_control import (
 )
 from motioncontrol_shared.profile_schema import flatten_bindings
 from motioncontrol_shared.motion_conflicts import validate_motion_config
-from hand_mouse_control import HandMouseController
+from hand_mouse_control import HANDS, HandMouseController
 from pose_recorder import PoseRecorder
 
 
@@ -273,6 +273,10 @@ class ControlKernel:
         self.width = 640
         self.height = 480
         self.latest_pose: dict[str, dict] | None = None
+        # 21 points per hand, keyed "left"/"right".  Only present while the
+        # desktop has asked a device for them; everything here still works
+        # without it, just from the coarser pose fingertips.
+        self.latest_hands: dict[str, list[dict]] | None = None
         # World landmarks are needed during the v153 personal-PnP center
         # capture, but are deliberately kept separate from the normalized
         # image pose so body zones and renderers never see metric coordinates.
@@ -485,6 +489,38 @@ class ControlKernel:
         return result
 
     @staticmethod
+    def hand_map_from_message(message: dict) -> dict[str, list[dict]] | None:
+        """Named 21-point hands from a frame, in the kernel's canonical space.
+
+        The device labels each hand with the side the desktop asked it to
+        watch, so no handedness has to be inferred here.  Mirroring is undone
+        exactly as it is for the pose: this kernel only ever reasons in raw,
+        unmirrored camera coordinates.
+        """
+        hands = message.get("hands") if isinstance(message, dict) else None
+        if not isinstance(hands, list) or not hands:
+            return None
+        coordinates_mirrored = bool(message.get("coordinates_mirrored", False))
+        result: dict[str, list[dict]] = {}
+        for hand in hands:
+            if not isinstance(hand, dict):
+                continue
+            side = str(hand.get("handedness", "")).lower()
+            landmarks = hand.get("landmarks")
+            if side not in HANDS or not isinstance(landmarks, list) or len(landmarks) != 21:
+                continue
+            if not all(isinstance(item, dict) for item in landmarks):
+                continue
+            points = []
+            for item in landmarks:
+                point = _point(item)
+                if coordinates_mirrored:
+                    point["x"] = 1.0 - point["x"]
+                points.append(point)
+            result[side] = points
+        return result or None
+
+    @staticmethod
     def world_pose_map_from_message(message: dict) -> dict[str, dict] | None:
         """Convert the first MediaPipe world_pose list to a named map.
 
@@ -619,7 +655,7 @@ class ControlKernel:
         height = int(message.get("height") or 480)
         return self.handle_pose_map(
             source_id, pose_map, width=width, height=height,
-            world_pose=world_pose,
+            world_pose=world_pose, hands=self.hand_map_from_message(message),
         )
 
     def handle_pose_map(
@@ -630,6 +666,7 @@ class ControlKernel:
         width: int = 640,
         height: int = 480,
         world_pose: dict[str, dict] | list[dict] | None = None,
+        hands: dict[str, list[dict]] | None = None,
     ) -> dict:
         now = time.monotonic()
         with self._lock:
@@ -648,6 +685,10 @@ class ControlKernel:
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
             self.latest_world_pose = copy.deepcopy(world_pose) if world_pose else None
+            # Read back out inside _process_pose_locked rather than threaded
+            # through it: that hook still has callers passing positional
+            # arguments only, and this keeps them working untouched.
+            self.latest_hands = copy.deepcopy(hands) if hands else None
             if pose_map:
                 self.pose_last_valid_at = now
                 self.pose_history.append((now, copy.deepcopy(pose_map)))
@@ -757,7 +798,8 @@ class ControlKernel:
         # final apply() both consult the engaged state, and they run at
         # opposite ends of this function.  Updating it in between would let a
         # zone button fire on the very frame the fist closes.
-        self.hand_mouse_controller.update(pose_map, now)
+        self.hand_mouse_controller.update(
+            pose_map, now, self._hand_points_for_mouse_locked())
         # Recorded after the hand pass so the saved frames carry the fist
         # reading alongside the skeleton -- that pairing is the point of
         # recording at all when tuning the thresholds.
@@ -1234,6 +1276,12 @@ class ControlKernel:
             if self._point_in_circle({"x": a["x"] + t * dx, "y": a["y"] + t * dy, "score": min(_score(a), _score(b))}, circle):
                 return True
         return False
+
+    def _hand_points_for_mouse_locked(self) -> list[dict] | None:
+        """The 21 points for whichever hand is steering, if the device sent them."""
+        if not self.latest_hands:
+            return None
+        return self.latest_hands.get(str(self.hand_mouse_controller.config.get("hand", "right")))
 
     def configure_hand_mouse(self, updates: dict | None) -> dict:
         """Apply a settings change under the kernel lock and report the result."""
@@ -1966,6 +2014,7 @@ class ControlKernel:
             self.head_controller.cancel_center("人体来源已断开")
         self.latest_pose = None
         self.latest_world_pose = None
+        self.latest_hands = None
         self.pose_last_valid_at = 0.0
         self._clear_body_outputs_locked()
 

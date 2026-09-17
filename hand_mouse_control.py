@@ -1,10 +1,21 @@
 """Steer the mouse with one hand, gated by a closed fist.
 
-The pose model gives four points per hand -- wrist, thumb, index, pinky -- and
-nothing else.  There are no finger joints, so "is this a fist" has to come from
-how far the fingertips sit from the wrist rather than from joint angles.  That
-is coarser than a dedicated hand model, but a hand model is a second inference
-pass and an extra 8 MB in the APK, and the pose model is already running.
+There are two ways to read the fist, and which one is available depends on
+what the camera device sends.
+
+*Finger joints, when the device sends them.*  A phone running the hand model
+reports 21 points per hand.  Curl is then measured directly: each fingertip's
+distance from the wrist against its own knuckle's distance from the wrist.
+Extended, a tip sits about twice as far out as its knuckle; curled, it comes
+back level with it or nearer.  Both distances start at the wrist, so the ratio
+survives the hand rotating, and both scale together, so it survives the player
+standing closer to or further from the camera.
+
+*Fingertip spread, otherwise.*  The pose model gives four points per hand --
+wrist, thumb, index, pinky -- and no finger joints at all, so "is this a fist"
+has to come from how far those three tips sit from the wrist.  That is much
+coarser.  It is the fallback, not the plan: it is what a device without the
+hand model can still manage.
 
 Two things make the coarse measure workable:
 
@@ -23,9 +34,9 @@ shape as head control, and the reason the hand can be re-centred by opening and
 closing again, like lifting a mouse off the desk.
 
 The thresholds are defaults, not truths: they were reasoned from the geometry,
-not measured against a population of hands.  ``status()`` therefore reports the
-live ``spread`` value so a user whose hand does not match can watch the number
-and set their own.
+not measured against a population of hands.  ``status()`` therefore reports
+the live ``spread`` and ``curl`` readings, and which of the two drove the gate,
+so a user whose hand does not match can watch the number and set their own.
 """
 
 from __future__ import annotations
@@ -38,9 +49,16 @@ DEFAULT_CONFIG = {
     "enabled": False,
     "hand": "right",
     # Fraction of forearm length.  Below `fist_close` counts as closed, above
-    # `fist_open` as open; between them the previous state persists.
+    # `fist_open` as open; between them the previous state persists.  Used only
+    # when the device sends no finger joints.
     "fist_close": 0.30,
     "fist_open": 0.40,
+    # Fingertip distance from the wrist as a multiple of that finger's own
+    # knuckle distance, averaged over the four fingers.  A flat hand measures
+    # around 2.0 and a fist around 1.0, so the pair below straddles the
+    # midpoint with the same kind of hysteresis gap as the spread pair.
+    "curl_close": 1.35,
+    "curl_open": 1.60,
     # Offset from the anchor, as a fraction of forearm length, that produces
     # full-speed movement.
     "range": 0.55,
@@ -68,6 +86,16 @@ DEFAULT_CONFIG = {
 _FRAME_MARGIN = 0.03
 
 _TIPS = ("thumb", "index", "pinky")
+
+# MediaPipe hand landmark order: 0 is the wrist, then each finger runs from
+# knuckle to tip.  Only the four fingers count towards curl.  The thumb folds
+# across the palm rather than back towards the wrist, so its tip barely moves
+# closer when the hand closes; including it only blunts the signal.
+HAND_LANDMARK_COUNT = 21
+_HAND_WRIST = 0
+_FINGER_KNUCKLES = (5, 9, 13, 17)
+_FINGER_TIPS = (8, 12, 16, 20)
+_MIN_FINGERS = 3
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -100,6 +128,47 @@ def _distance(a: dict, b: dict) -> float:
     return math.hypot(float(a["x"]) - float(b["x"]), float(a["y"]) - float(b["y"]))
 
 
+def _in_frame(point: dict) -> bool:
+    for axis in ("x", "y"):
+        value = point.get(axis)
+        if not isinstance(value, (int, float)):
+            return False
+        if value < -_FRAME_MARGIN or value > 1.0 + _FRAME_MARGIN:
+            return False
+    return True
+
+
+def measure_curl(points: object) -> float | None:
+    """Mean fingertip reach in knuckle-distances, or None if unusable.
+
+    Extended fingers read near 2.0 and a closed fist near 1.0.  Every distance
+    starts at the wrist, which is what makes the number independent of how the
+    hand is rotated and how far away the player is standing.
+    """
+    if not isinstance(points, list) or len(points) != HAND_LANDMARK_COUNT:
+        return None
+    if not all(isinstance(point, dict) for point in points):
+        return None
+    wrist = points[_HAND_WRIST]
+    # Same rule as the pose path: a landmark outside the picture was inferred
+    # from the ones inside it, not seen.  See _FRAME_MARGIN.
+    if not _in_frame(wrist):
+        return None
+    ratios = []
+    for knuckle_index, tip_index in zip(_FINGER_KNUCKLES, _FINGER_TIPS):
+        knuckle = points[knuckle_index]
+        tip = points[tip_index]
+        if not _in_frame(knuckle) or not _in_frame(tip):
+            continue
+        base = _distance(wrist, knuckle)
+        if base <= 1e-6:
+            continue
+        ratios.append(_distance(wrist, tip) / base)
+    if len(ratios) < _MIN_FINGERS:
+        return None
+    return sum(ratios) / len(ratios)
+
+
 def merge_config(current: dict | None, updates: dict | None) -> dict:
     """Validate an update and fold it into a full config."""
     config = dict(DEFAULT_CONFIG)
@@ -120,6 +189,8 @@ def merge_config(current: dict | None, updates: dict | None) -> dict:
     if config["fist_open"] <= config["fist_close"]:
         # Without a gap the fist flickers, which drops the pointer mid-move.
         raise ValueError("松开阈值必须大于握拳阈值，否则握拳状态会抖动")
+    if config["curl_open"] <= config["curl_close"]:
+        raise ValueError("手指伸开阈值必须大于手指弯曲阈值，否则握拳状态会抖动")
     config["deadzone"] = _clamp(config["deadzone"], 0.0, 0.9)
     config["range"] = max(0.05, config["range"])
     config["sensitivity"] = _clamp(config["sensitivity"], 1.0, 200.0)
@@ -138,6 +209,8 @@ class HandMouseController:
         self.engaged = False
         self.anchor: tuple[float, float] | None = None
         self.spread: float | None = None
+        self.curl: float | None = None
+        self.grip_source = "none"
         self.output = (0.0, 0.0)
         self.offset = (0.0, 0.0)
         self.tips_seen = 0
@@ -177,7 +250,8 @@ class HandMouseController:
 
     # -- update ------------------------------------------------------------
 
-    def update(self, pose_map: dict, now: float) -> dict:
+    def update(self, pose_map: dict, now: float,
+               hand_points: list | None = None) -> dict:
         config = self.config
         if not config["enabled"]:
             self.reset()
@@ -188,8 +262,27 @@ class HandMouseController:
         spread, tips = self.measure_spread(pose_map, hand)
         self.spread = spread
         self.tips_seen = tips
+        curl = measure_curl(hand_points)
+        self.curl = curl
 
-        if spread is None:
+        # Both readings shrink as the hand closes, so the gate below is the
+        # same shape either way; only the number and its thresholds change.
+        # Real finger joints win whenever the device sends them.
+        if curl is not None:
+            grip = curl
+            close_at = float(config["curl_close"])
+            open_at = float(config["curl_open"])
+            self.grip_source = "hand"
+        elif spread is not None:
+            grip = spread
+            close_at = float(config["fist_close"])
+            open_at = float(config["fist_open"])
+            self.grip_source = "pose"
+        else:
+            grip = None
+            self.grip_source = "none"
+
+        if grip is None:
             # Losing sight of the hand must release, not freeze: a stuck
             # engagement would keep driving the pointer from a stale anchor.
             if self.engaged:
@@ -200,10 +293,10 @@ class HandMouseController:
 
         was_engaged = self.engaged
         if self.engaged:
-            if spread > float(config["fist_open"]):
+            if grip > open_at:
                 self._release("opened")
                 return self.status()
-        elif spread < float(config["fist_close"]):
+        elif grip < close_at:
             self.engaged = True
 
         if not self.engaged:
@@ -269,6 +362,11 @@ class HandMouseController:
             # Surfaced so a user whose hand does not match the default
             # thresholds can watch the number and set their own.
             "spread": None if self.spread is None else round(float(self.spread), 4),
+            # Which reading drove the gate this frame: "hand" for real finger
+            # joints, "pose" for the fingertip-spread fallback, "none" when
+            # neither was usable.
+            "grip_source": str(self.grip_source),
+            "curl": None if self.curl is None else round(float(self.curl), 4),
             "tips_seen": int(self.tips_seen),
             "offset_x": self.offset[0],
             "offset_y": self.offset[1],
