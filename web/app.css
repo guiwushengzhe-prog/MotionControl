@@ -19,12 +19,18 @@ h1 small { color: var(--accent); font-size: 13px; }
 h2 { font-size: 19px; }
 h3, .title { font-size: 16px; font-weight: 700; }
 .tagline, .muted, .profile-meta, .section-sub, .viewer-note { color: var(--muted); font-size: 13px; }
+.lede { margin: 0 0 8px; font-size: 13.5px; }
+.fineprint { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+.lede-list { margin: 0 0 12px; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
+.lede-list li { margin-bottom: 3px; }
+.lede-list b { color: #edf3f8; }
 .profile-unverified { margin: 6px 0 0; padding: 8px 10px; border-left: 3px solid #d08a2a; background: rgba(208,138,42,.10); color: #e0b878; font-size: 12px; line-height: 1.6; border-radius: 0 6px 6px 0; }
 .command-dock { position: sticky; top: 0; z-index: 20; padding-bottom: 12px; background: #0b1118f5; border-bottom: 1px solid var(--line); }
 .top { display: flex; align-items: center; gap: 20px; min-height: 80px; }
 .brand { margin-right: auto; }
-nav { display: flex; gap: 8px; padding-bottom: 12px; }
+nav { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; }
 nav [aria-current] { background: #203b53; border-color: var(--accent); }
+.view-hint { color: var(--muted); font-size: 12.5px; }
 .session-bar { display: grid; grid-template-columns: 1fr minmax(320px, 1fr); align-items: center; gap: 16px; }
 #currentGameName { font-size: 19px; font-weight: 700; }
 .main-action-btn { width: 100%; min-height: 46px; font-size: 17px; }
@@ -87,9 +93,28 @@ main { padding-top: 20px; }
 .steps { padding-left: 25px; margin: 0; }
 .steps li { padding: 0 0 17px 3px; }
 .steps .health-strip { margin-top: 8px; }
+.checklist { list-style: none; margin: 0; padding: 0; }
+.checklist li { padding: 0 0 14px; }
+.checklist li + li { padding-top: 14px; border-top: 1px solid var(--line); }
+.check-line { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.check-line b { flex: 1; font-size: 14.5px; }
+.check-num { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%;
+  background: #203b53; color: var(--accent); font-size: 12px; font-weight: 700; }
+.checklist .fineprint { margin: 0 0 6px 30px; }
+.checklist .health-strip, .checklist .quick-tools { margin-left: 30px; }
+/* 设置本身都没错、组合起来却静默失效——那种坏法要在玩家正看着的地方点名。 */
+.conflicts { margin-top: 4px; }
+.conflict { display: flex; align-items: center; gap: 9px; margin-top: 8px; padding: 9px 11px;
+  border: 1px solid #7a5a2a; border-radius: 8px; background: #241c10; font-size: 12.5px; }
+.conflict span { flex: 1; }
 .section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .settings-grid, .controls, .advgrid, .scene-zone-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .settings-grid { align-items: start; }
+.group-head { grid-column: 1 / -1; margin: 6px 0 0; padding-bottom: 6px;
+  border-bottom: 1px solid var(--line); font-size: 13px; letter-spacing: 2px; color: var(--muted); }
+.group-head:first-child { margin-top: 0; }
+/* 一组里只有一块时占满整行，否则旁边就是一整屏空白——口令列表能有一千多像素高。 */
+.settings-section.wide { grid-column: 1 / -1; }
 .settings-section { margin-bottom: 16px; }
 .settings-actions, .profile-actions { margin: 12px 0; }
 .slider, .checkrow, #phoneGuide { margin-top: 16px; }

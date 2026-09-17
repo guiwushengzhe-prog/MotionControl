@@ -24,7 +24,9 @@ def test_only_full_model_is_registered():
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    for required in ['2.0', '开始游戏', '游戏配置', '设备与设置', '站好并校准', '重新识别位置', '视角回正', '紧急停止 · F9', '自定义口令 · 所有游戏通用', '三维头姿（推荐）', '调整区域位置', 'profileBindingRows']:
+    # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩，本游戏 = 换游戏会变的，
+    # 通用设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
+    for required in ['2.0', '开始', '本游戏', '通用设置', '站好并校准', '重新识别位置', '重设正前方', '紧急停止 · F9', '自定义口令', '三维头姿（推荐）', '挪动区域', 'profileBindingRows']:
         assert required in page
     assert '开始游戏控制' in app and '暂停游戏控制' in app
     for removed in ['开始 30 秒性能测试', '静止抖动测试', '实时性能数据', 'Lite / Full 对比结果', 'modelSelect']:

@@ -84,4 +84,6 @@ def test_frozen22_missing_11_point_neutralizes_horizontal_output(tmp_path):
     assert state["frozen22_frame_valid"] is False
     assert state["horizontal_calibrated"] is True
     assert state["frozen22_missing_points"] == ["left_eye_inner"]
-    assert "左眼内侧" in state["quality"]
+    # 少了哪些点是诊断，走 frozen22_missing_points（上一行已经断言）。
+    # quality 是摆在"准备开玩"第一眼的那行字，只说人该做什么。
+    assert state["quality"] == "看不清脸，请正对摄像头"
