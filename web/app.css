@@ -175,7 +175,9 @@ dialog::backdrop { background: #030812dc; }
 #customPoseCaptureBtn.counting{font-size:1.6em;font-weight:700;min-width:4.5rem;
   font-variant-numeric:tabular-nums}
 /* 录制瞬间的骨架缩略图。名字记不住那么多，靠它认出是哪个姿势。 */
-.pose-thumb{flex:0 0 3.2rem;width:3.2rem;height:3.2rem;border-radius:6px;
+/* 5.6rem 而不是 3.2：这张图是用户认出"这是哪个姿势"的唯一凭据，小了就只是
+   一团线。SVG 用的是 viewBox，线宽和点径跟着一起放大，不用另调。 */
+.pose-thumb{flex:0 0 5.6rem;width:5.6rem;height:5.6rem;border-radius:8px;
   background:rgba(127,127,127,.12)}
 .pose-thumb line{stroke:currentColor;stroke-width:2.4;stroke-linecap:round;opacity:.55}
 .pose-thumb circle{fill:currentColor;opacity:.85}
@@ -188,9 +190,9 @@ dialog::backdrop { background: #030812dc; }
 /* 当前等着的那一帧。动作断在哪一步，一眼能看见。 */
 .pose-cell.awaiting .pose-thumb{outline:2px solid #4c8dff;outline-offset:1px}
 .pose-arrow{color:var(--muted,#9aa3af);font-size:.9em}
-.pose-drop{position:absolute;top:-6px;right:-6px;width:1.1rem;height:1.1rem;padding:0;
+.pose-drop{position:absolute;top:-7px;right:-7px;width:1.3rem;height:1.3rem;padding:0;
   line-height:1;border-radius:50%;border:none;background:#8a2b2b;color:#fff;
-  font-size:.75rem;cursor:pointer;opacity:0;transition:opacity .1s}
+  font-size:.85rem;cursor:pointer;opacity:0;transition:opacity .1s}
 .pose-cell:hover .pose-drop{opacity:1}
 .pose-add{padding:.25rem .6rem;font-size:.8em}
 
