@@ -101,10 +101,15 @@ def test_closing_captures_an_anchor_and_emits_nothing_yet():
 
 
 def test_moving_while_closed_drives_both_axes():
+    """画面里的手往 +x 走，是玩家把手往自己的左边移，所以指针往左。
+
+    内核用的是没镜像过的原始画面：面对镜头的人，他的右手在画面的左半边。直接
+    拿 x 的增减当方向，玩家往右挥手指针会往左走——所以这一路是反的。
+    """
     ctl = controller(deadzone=0.0)
     ctl.update(pose(spread=0.2, wrist=(0.5, 0.5)), now=1.0)
     state = ctl.update(pose(spread=0.2, wrist=(0.58, 0.56)), now=1.1)
-    assert state["output_x"] > 0
+    assert state["output_x"] < 0
     assert state["output_y"] > 0
 
 
@@ -118,6 +123,7 @@ def test_image_down_moves_pointer_down():
 
 
 def test_invert_x_flips_only_the_horizontal_axis():
+    """invert_x 已经不是给用户的开关了，但翻转这件事本身还得成立。"""
     ctl = controller(deadzone=0.0, invert_x=True)
     ctl.update(pose(spread=0.2, wrist=(0.5, 0.5)), now=1.0)
     state = ctl.update(pose(spread=0.2, wrist=(0.60, 0.60)), now=1.1)
@@ -138,7 +144,8 @@ def test_output_is_clamped():
     state = ctl.update(pose(spread=0.2, wrist=(0.9, 0.9)), now=1.1)
     assert -1.0 <= state["output_x"] <= 1.0
     assert -1.0 <= state["output_y"] <= 1.0
-    assert state["output_x"] == 1.0
+    # 这条测的是"到顶就不再涨"，不是方向，所以只看大小。
+    assert abs(state["output_x"]) == 1.0
 
 
 def test_reopening_and_closing_recentres():
@@ -187,7 +194,7 @@ def test_left_hand_works_the_same():
     ctl.update(pose(hand="left", spread=0.2, wrist=(0.5, 0.5)), now=1.0)
     state = ctl.update(pose(hand="left", spread=0.2, wrist=(0.6, 0.5)), now=1.1)
     assert state["engaged"] is True
-    assert state["output_x"] > 0
+    assert state["output_x"] < 0
 
 
 def test_disabled_controller_emits_nothing():
