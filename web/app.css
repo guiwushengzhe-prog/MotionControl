@@ -152,11 +152,17 @@ dialog::backdrop { background: #030812dc; }
 
 /* 自定义姿势：一行一个，名字 + 实时相似度条，下面是阈值/停留/启用/删除。 */
 #customPoseList{display:flex;flex-direction:column;gap:.6rem;margin-top:.6rem}
-.custom-pose{padding:.6rem .75rem;border:1px solid var(--line,#2a2e35);border-radius:8px}
+/* 两列：左边是关键帧，右边是名字+相似度和那排参数。
+   原来三样各占一行，图右边整片空着，行还被撑得很高。 */
+.custom-pose{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  column-gap:.9rem;row-gap:.45rem;align-items:start;
+  padding:.6rem .75rem;border:1px solid var(--line,#2a2e35);border-radius:8px}
 .custom-pose.hit{border-color:#4c8dff}
 .custom-pose.firing{border-color:#39c07a;box-shadow:0 0 0 1px #39c07a inset}
-.custom-pose-head{display:flex;align-items:center;gap:.75rem}
-.custom-pose-name{flex:0 0 11rem;font-weight:600}
+.custom-pose-head{grid-column:2;align-self:center;display:flex;align-items:center;gap:.75rem}
+.custom-pose-name{flex:0 0 8.5rem;font-weight:600}
 /* 相似度条。用户摆姿势时盯的就是它，所以给足宽度。 */
 /* 相似度条只在你动这一行的控件时显示——点或拖阈值滑块，那才是真正需要看它的
    时刻。
@@ -171,8 +177,8 @@ dialog::backdrop { background: #030812dc; }
 .custom-pose.firing .custom-pose-fill{background:#39c07a;opacity:.6}
 .custom-pose-score{position:relative;display:block;text-align:center;
   line-height:1.35rem;font-size:.82em;font-variant-numeric:tabular-nums}
-.custom-pose-tools{display:flex;flex-wrap:wrap;align-items:center;gap:1rem;
-  margin-top:.5rem;font-size:.85em}
+.custom-pose-tools{grid-column:2;align-self:center;
+  display:flex;flex-wrap:wrap;align-items:center;gap:1rem;font-size:.85em}
 .custom-pose-tools label{display:flex;align-items:center;gap:.4rem}
 .custom-pose-tools input[type=range]{width:8rem}
 .custom-pose-value{min-width:3.5rem;font-variant-numeric:tabular-nums}
@@ -191,7 +197,10 @@ dialog::backdrop { background: #030812dc; }
 .custom-pose.firing .pose-thumb{color:#39c07a}
 
 /* 关键帧一排：一帧是静态姿势，多帧要按顺序依次做出来。 */
-.pose-strip{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;margin-bottom:.5rem}
+/* 关键帧占满左列的两行，右边两行才贴得上来。
+   限宽是为了多帧时不把右边挤没——超过就在自己这一列里换行。 */
+.pose-strip{grid-row:1 / span 2;grid-column:1;
+  display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;max-width:19rem}
 .pose-cell{position:relative;line-height:0}
 /* 当前等着的那一帧。动作断在哪一步，一眼能看见。 */
 .pose-cell.awaiting .pose-thumb{outline:2px solid #4c8dff;outline-offset:1px}
