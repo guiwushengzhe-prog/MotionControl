@@ -79,8 +79,8 @@ def test_there_is_a_limit(store):
 @pytest.mark.parametrize("field, value, message", [
     ("threshold", 1.5, "相似度阈值"),
     ("threshold", "abc", "相似度阈值"),
-    ("dwell_frames", 0, "停留帧数"),
-    ("dwell_frames", 500, "停留帧数"),
+    ("dwell_frames", 0, "保持时间"),
+    ("dwell_frames", 500, "保持时间"),
     ("name", "   ", "名字不能为空"),
 ])
 def test_bad_settings_are_refused_with_a_readable_message(store, field, value, message):
@@ -327,7 +327,7 @@ def test_removing_a_frame_turns_it_back_into_a_static_pose(wave):
 
 def test_the_last_frame_cannot_be_removed(wave):
     wave.remove_frame("custom1", 1)
-    with pytest.raises(CustomPoseError, match="至少要留一帧"):
+    with pytest.raises(CustomPoseError, match="至少要留一个姿势"):
         wave.remove_frame("custom1", 0)
 
 

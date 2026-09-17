@@ -155,7 +155,7 @@ class CustomPoseStore:
         """给一个已有动作再加一帧，把它变成（或延长）连贯动作。"""
         entry = self.get(pose_id)
         if len(entry["frames"]) >= MAX_FRAMES:
-            raise CustomPoseError(f"一个动作最多 {MAX_FRAMES} 帧")
+            raise CustomPoseError(f"一个动作最多 {MAX_FRAMES} 个姿势")
         template, preview = self._frame_from(pose_map)
         entry["frames"].append(template)
         entry["previews"].append(preview)
@@ -166,9 +166,9 @@ class CustomPoseStore:
     def remove_frame(self, pose_id: str, index: int) -> dict:
         entry = self.get(pose_id)
         if len(entry["frames"]) <= 1:
-            raise CustomPoseError("至少要留一帧。想删掉整个动作请用删除。")
+            raise CustomPoseError("至少要留一个姿势。想删掉整个动作请用删除。")
         if not 0 <= index < len(entry["frames"]):
-            raise CustomPoseError("没有这一帧")
+            raise CustomPoseError("没有这个姿势")
         entry["frames"].pop(index)
         entry["previews"].pop(index)
         self._reset(pose_id)
@@ -185,7 +185,7 @@ class CustomPoseStore:
         if "threshold" in changes:
             entry["threshold"] = _clamp(changes["threshold"], 0.50, 0.999, "相似度阈值")
         if "dwell_frames" in changes:
-            entry["dwell_frames"] = int(_clamp(changes["dwell_frames"], 1, 90, "停留帧数"))
+            entry["dwell_frames"] = int(_clamp(changes["dwell_frames"], 1, 90, "保持时间"))
         if "step_window_s" in changes:
             entry["step_window_s"] = _clamp(changes["step_window_s"], 0.3, 10.0, "每步时限")
         if "enabled" in changes:
