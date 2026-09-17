@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from urllib.parse import parse_qs, urlparse
 
 import device_pairing
+import local_endpoints
 
 
 class IdentityViolation(ValueError):
@@ -479,30 +480,15 @@ def _validate_sensor_frame(message: dict) -> tuple[set[str], float, float, float
 
 
 def _local_addresses() -> list[str]:
-    values: set[str] = set()
+    """Addresses the phone can reach this PC at, best link first.
 
-    def add(address: str) -> None:
-        try:
-            parsed = ipaddress.ip_address(address)
-        except ValueError:
-            return
-        # Only advertise usable private LAN addresses.  In particular, do
-        # not put loopback/APIPA/VPN-less placeholders into the phone field.
-        if parsed.version == 4 and parsed.is_private and not parsed.is_loopback and not parsed.is_link_local:
-            values.add(str(parsed))
-
-    try:
-        for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            add(str(item[4][0]))
-    except OSError:
-        pass
-    try:
-        _, _, addresses = socket.gethostbyname_ex(socket.gethostname())
-        for address in addresses:
-            add(str(address))
-    except OSError:
-        pass
-    return sorted(values)
+    This used to resolve the machine's own hostname.  Measured on a Windows
+    machine with a phone tethered over USB, that returned only the USB address
+    and hid the Wi-Fi one -- and it never saw the virtual adapters at all, so
+    it could not have filtered them either.  local_endpoints asks Windows the
+    same way Windows asks itself.
+    """
+    return local_endpoints.addresses()
 
 
 class InputBridge:
@@ -662,6 +648,38 @@ class InputBridge:
         addresses = _local_addresses()
         return addresses[0] if addresses else None
 
+    def usb_tether_status(self) -> dict:
+        """Whether a USB tether is up, and whether it took the PC's internet.
+
+        Worth reporting rather than silently fixing: the fix is an interface
+        metric, which needs administrator rights the app does not have and
+        should not want.  Telling the player what happened, with a script that
+        asks for elevation once, beats either a silent surprise on the phone
+        bill or an app that demands elevation to drive a gamepad.
+        """
+        carrier = local_endpoints.tether_carries_internet()
+        tether = next((item for item in local_endpoints.endpoints()
+                       if item["kind"] == local_endpoints.KIND_USB), None)
+        return {
+            "present": tether is not None,
+            "address": tether["address"] if tether else None,
+            "adapter": tether["adapter"] if tether else None,
+            "carries_internet": carrier is not None,
+        }
+
+    def server_candidates(self) -> list[dict]:
+        """Every address the phone should try, best link first.
+
+        Handing the phone the whole list is what stops a changed address from
+        meaning "连不上": it tries them all and keeps whichever answers.  The
+        kind travels with each one so a cable can win on merit rather than on
+        the player knowing to pick it.
+        """
+        return [
+            {"host": item["address"], "port": self._port, "kind": item["kind"]}
+            for item in local_endpoints.endpoints()
+        ]
+
     @staticmethod
     def _rate(times: deque[float]) -> float | None:
         if len(times) < 2:
@@ -780,6 +798,7 @@ class InputBridge:
             "server_host": host,
             "server_port": port,
             "lan_ipv4": self.lan_ipv4(),
+            "usb_tether": self.usb_tether_status(),
             "body_mode": self._body_mode,
             "phone_ws_urls": self.phone_ws_urls(),
             "mobile_pose_connected": any(item["connected"] for item in pose_sources),
