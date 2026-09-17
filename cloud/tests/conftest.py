@@ -33,7 +33,7 @@ from alembic.config import Config  # noqa: E402
 
 from cloud.app.db import SessionLocal, engine  # noqa: E402
 from cloud.app.main import app  # noqa: E402
-from cloud.app.models import Invite, RateLimit  # noqa: E402
+from cloud.app.models import Game, Invite, RateLimit, search_key  # noqa: E402
 from cloud.app.security import new_token, token_digest  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -83,3 +83,18 @@ async def _fresh_rate_limits():
         await db.execute(delete(RateLimit))
         await db.commit()
     yield
+
+
+@pytest_asyncio.fixture
+async def game() -> str:
+    """一条真实的游戏记录。
+
+    配置引用 game_id 时服务端会核对它存不存在——那是防止配置指向一个桌面端根本
+    不认识的游戏。测试库跑的是迁移，不跑种子，所以要用到的那条得自己插。
+    """
+    ident = "steam-1659420-uncharted"
+    async with SessionLocal() as db:
+        if await db.get(Game, ident) is None:
+            db.add(Game(id=ident, name="UNCHARTED", search_key=search_key("UNCHARTED")))
+            await db.commit()
+    return ident
