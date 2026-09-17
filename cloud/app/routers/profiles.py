@@ -319,11 +319,19 @@ async def browse_public(db: DbSession,
                         game_id: str | None = Query(default=None, max_length=80),
                         doc_type: str | None = Query(default=None, max_length=32),
                         limit: int = Query(default=30, ge=1, le=100)) -> list[ProfileOut]:
-    """Only ``public`` appears here. ``unlisted`` is reachable by link, not by search."""
+    """Only ``public`` appears here. ``unlisted`` is reachable by link, not by search.
+
+    ``game_id`` means "relevant to this game", which includes the two document
+    types that have no game at all: motion and voice mappings apply to every
+    game, so filtering them out of a per-game list would hide exactly the
+    configs that are always applicable. The desktop relies on this -- it only
+    ever asks for the game being played.
+    """
     query = select(Profile).where(Profile.visibility == "public",
                                   Profile.moderation_status == "clean")
     if game_id:
-        query = query.where(Profile.game_id == game_id)
+        query = query.where(
+            (Profile.game_id == game_id) | (Profile.game_id.is_(None)))
     if doc_type:
         query = query.where(Profile.doc_type == doc_type)
     rows = (await db.execute(

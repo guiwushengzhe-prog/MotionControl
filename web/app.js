@@ -1105,26 +1105,43 @@ function cloudSay(text, kind = '') {
   cloudStatusEl.className = kind === 'error' ? 'statusline error' : 'statusline';
 }
 
+/** 云端地址，从服务端读一次，用来拼「在网站上打开」的链接。 */
+let cloudEndpoint = '';
+
 async function cloudRefresh() {
   if (!cloudListEl) return;
   cloudSay('正在连接云端…');
   cloudListEl.innerHTML = '';
   try {
     const status = await api('/api/cloud/status', { timeoutMs: 12000 });
+    cloudEndpoint = status.endpoint || '';
     if (!status.reachable) {
       cloudSay(`连不上 ${status.endpoint}：${status.error || '未知原因'}`, 'error');
       return;
     }
-    const { profiles } = await post('/api/cloud/browse', {}, 15000);
+
+    // 只查当前这个游戏。桌面端要回答的问题是"我现在玩的这个游戏有什么现成配置"，
+    // 不是"云端一共有什么"——后者配置一多就是一堵墙，那是网站该干的事。
+    // 服务端把没有游戏的配置（动作映射、语音映射）也算作与当前游戏相关：它们对
+    // 每个游戏都适用，筛掉等于藏起最该出现的那几份。
+    const gameId = gameProfile.selected?.selected_id || gameProfile.selected?.id || '';
+    const gameName = gameProfile.selected?.name || gameId;
+    const { profiles } = await post('/api/cloud/browse', { game_id: gameId }, 15000);
     if (!profiles.length) {
-      cloudSay('云端还没有公开的配置。');
+      cloudSay(`《${gameName}》还没有人公开分享配置。`);
       return;
     }
-    cloudSay(`${status.endpoint} · ${profiles.length} 份公开配置`);
+    cloudSay(`《${gameName}》· ${profiles.length} 份`);
     for (const item of profiles) cloudListEl.appendChild(cloudRow(item));
   } catch (error) {
     cloudSay(error.message, 'error');
   }
+}
+
+/** 在系统浏览器里打开网站上的某一页。详情、浏览全部、上传都在那边。 */
+function openOnSite(path = '') {
+  if (!cloudEndpoint) { cloudSay('还没连上云端', 'error'); return; }
+  window.open(cloudEndpoint + path, '_blank', 'noopener');
 }
 
 const CLOUD_DOC_NAMES = {
@@ -1139,12 +1156,22 @@ function cloudRow(item) {
 
   const label = document.createElement('div');
   label.className = 'cloud-row-label';
-  const name = document.createElement('strong');
+  // 标题就是去网站看详情的入口——这里只放够认出它的信息，绑了哪些键、改了什么
+  // 都在网站上，塞进这个小面板只会两边都说不清楚。
+  const name = document.createElement('a');
+  name.href = '#';
+  name.className = 'cloud-row-title';
   name.textContent = item.title;
+  name.title = '在网站上查看这份配置的详细内容';
+  name.addEventListener('click', event => {
+    event.preventDefault();
+    openOnSite(`/config/${item.id}`);
+  });
   const meta = document.createElement('span');
   meta.className = 'muted';
   const parts = [CLOUD_DOC_NAMES[item.doc_type] || item.doc_type, item.owner_name];
-  if (item.game_name) parts.push(item.game_name);
+  // 没有游戏的那两种是通用配置，标出来，否则在"当前游戏"的列表里看着突兀。
+  parts.push(item.game_name || '所有游戏通用');
   if (item.current_version) parts.push(`v${item.current_version.revision_no}`);
   meta.textContent = parts.join(' · ');
   label.append(name, meta);
@@ -1525,3 +1552,5 @@ function paintCustomPoseScores() {
 }
 
 document.getElementById('customPoseCaptureBtn')?.addEventListener('click', captureCustomPose);
+
+document.getElementById('cloudSiteBtn')?.addEventListener('click', () => openOnSite('/'));

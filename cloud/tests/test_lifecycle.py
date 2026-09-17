@@ -307,3 +307,37 @@ async def test_failed_logins_count_towards_the_limit(client, invite_code):
             break
     assert 429 in codes, f"guessing was never rate-limited: {codes}"
     assert codes.count(401) <= 10
+
+
+async def test_browsing_by_game_keeps_the_configs_that_apply_to_every_game(
+        client, invite_code, game):
+    """按游戏筛选时，动作映射和语音映射也要留下。
+
+    它们本来就没有游戏——对每个游戏都适用。按游戏筛掉它们，等于把最该出现的那几份
+    藏起来。桌面端只按当前游戏查，所以这条决定了它能不能看到语音和动作映射。
+    """
+    await sign_up(client, invite_code, "pergame@example.com")
+
+    first = await create(client, "profile_selection", load_real("profile_selection"),
+                         game_id=game, visibility="public")
+    second = await create(client, "voice_mappings", load_real("voice_mappings"),
+                          visibility="public")
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+
+    response = await client.get(f"/api/v1/public/profiles?game_id={game}")
+    # 按 id 认，不按集合相等认：同一个库里别人公开的配置也会出现在这个列表里，
+    # 那正是这个接口该做的事，不该让这条测试红。
+    listed = {item["id"] for item in response.json()}
+    assert first.json()["id"] in listed, "这个游戏的映射被漏掉了"
+    assert second.json()["id"] in listed, "没有游戏的语音映射被筛掉了"
+
+
+async def test_browsing_by_game_hides_other_games(client, invite_code, game):
+    await sign_up(client, invite_code, "othergame@example.com")
+    created = await create(client, "profile_selection", load_real("profile_selection"),
+                           game_id=game, visibility="public")
+    assert created.status_code == 201, created.text
+
+    response = await client.get("/api/v1/public/profiles?game_id=generic-xbox")
+    assert all(item["game_id"] is None for item in response.json())
