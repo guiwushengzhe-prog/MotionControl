@@ -231,6 +231,9 @@ def _phone_control_payload() -> dict:
         # keeps one list authoritative: a phrase added on the desktop is heard
         # by the phone microphone too, without shipping a new build.
         "voice_phrases": VOICE.grammar_phrases(),
+        # 电脑能被连到的所有地址，有线在前。手机自己试，谁答应用谁——地址一变
+        # 就连不上，是这个项目里最常见的一种"坏了"。
+        "server_candidates": INPUT_BRIDGE.server_candidates(),
         # 手部模型是手机上的第二次推理，实测要花掉一成帧率，所以只有真的在用手
         # 控鼠标时才让它跑。手也一起告诉它：设备按这只手的手腕裁图，裁哪里是这
         # 边说了算的，就不存在把左右手认反的问题。
