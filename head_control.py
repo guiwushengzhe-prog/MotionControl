@@ -3692,12 +3692,9 @@ class HeadController:
         policy_name = str(self.config.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"]))
         if policy_name in FROZEN22_POLICIES and not self.calibrating:
             if self.frozen22_missing_points:
-                point_labels = {
-                    "left_eye_inner": "左眼内侧",
-                    "right_eye_inner": "右眼内侧",
-                }
-                missing = "、".join(point_labels.get(name, name) for name in self.frozen22_missing_points)
-                quality = f"Frozen22 缺少关键点：{missing}"
+                # 这行字第一次开机就摆在"准备开玩"里。少了哪些点属于诊断，
+                # 已经在 frozen22_missing_points 里；这里只说人该做什么。
+                quality = "看不清脸，请正对摄像头"
             elif self.calibrated and not self.frozen22_calibration_valid:
                 quality = "Frozen22 校准无效，请正视并保持稳定后重试"
         horizontal_calibrated = bool(

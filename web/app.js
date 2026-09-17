@@ -183,6 +183,37 @@ function renderMainStatus(){
     zoneEditMode?'区域调整中 · 体感输出已关闭':
     (output.enabled?'正在控制游戏':'游戏控制已暂停')+(missing.length?' · '+missing.join('；'):' · 可以开玩');
   $('#hint').textContent=currentPoseMap?'区域亮起表示动作已触发':'请让头部和双肩入镜；脚部动作需要脚部入镜';
+  renderConflicts();
+}
+
+// 两个设置各自都合法，合起来却什么都不做。玩家看不出区别——功能开着、读数在跳、
+// 就是没反应。所以在"开始"那一页点名，并把能一键改的那一下也给出来。
+function mergeOwnsSticks(){return output.xinputEnabled&&output.mode==='gamepad'}
+function setupConflicts(){
+  const hand=kernelState?.head?.hand_mouse||{};
+  const items=[];
+  if(inputStatus.phone_ignored)
+    items.push(['手机正在传画面，但来源选的是电脑摄像头——手机传来的都被丢掉了。','改用手机',()=>setSource('phone',true)]);
+  if(mergeOwnsSticks()&&hand.enabled)
+    items.push(['物理手柄合流占着两个摇杆，手控鼠标不会动。','关掉合流',async()=>{$('#xinputMerge').value='';await setXinputMerge()}]);
+  if(hand.enabled&&hand.grip_source==='pose')
+    items.push(['手机没传手指关节，握拳只能拿三个指尖估，张开和握紧分不太开。',null,null]);
+  return items;
+}
+function renderConflicts(){
+  const box=$('#setupConflicts');
+  if(!box)return;
+  const items=setupConflicts();
+  box.hidden=!items.length;
+  box.replaceChildren(...items.map(([text,label,action])=>{
+    const row=document.createElement('div');row.className='conflict';
+    const words=document.createElement('span');words.textContent=text;row.append(words);
+    if(label){
+      const fix=document.createElement('button');fix.className='btn';fix.textContent=label;
+      fix.addEventListener('click',()=>runAction(action));row.append(fix);
+    }
+    return row;
+  }));
 }
 function renderKernelState(runtime){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
@@ -219,7 +250,8 @@ function renderKernelState(runtime){
   if(hs.calibrated!==undefined){
     $('#calBtn').textContent=hs.calibrating?'取消校准':'站好并校准';
     $('#calStatus').textContent=hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'等待校准，可说“开始校准”');
-    $('#calStatus').title=hs.estimate_error||'';
+    const missingPoints=(hs.frozen22_missing_points||[]).join('、');
+    $('#calStatus').title=[hs.estimate_error,missingPoints&&'缺少关键点：'+missingPoints].filter(Boolean).join(' · ');
     renderCalibrationOverlay(hs);
   }
   if(hs.algorithm&&!headDirty&&!document.activeElement?.closest('#headSettings,#advancedSettings')){
@@ -598,6 +630,9 @@ async function refreshCameraConfig(){try{const data=await api('/api/camera/confi
 function renderHandMouse(state){
   if(!state)return;
   const c=state.config||{};
+  // 合流模式下摇杆归物理手柄，手控鼠标接不上任何东西——勾着不起作用比灰着更糟。
+  const blocked=mergeOwnsSticks();
+  $('#handMouseEnabled').disabled=blocked;
   $('#handMouseEnabled').checked=Boolean(c.enabled);
   $('#handMouseHand').value=c.hand||'right';
   for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open],['handMouseCurlClose',c.curl_close],['handMouseCurlOpen',c.curl_open]]){
@@ -616,9 +651,9 @@ function renderHandMouse(state){
     ?(state.curl==null?'看不到手':`手指伸展 ${Number(state.curl).toFixed(2)}`)
     :(state.spread==null?'看不到手':`张开度 ${Number(state.spread).toFixed(3)}`);
   const label={disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'}[state.state]||state.state;
-  $('#handMouseStatus').textContent=c.enabled
+  $('#handMouseStatus').textContent=blocked?'物理手柄合流占着摇杆，手控鼠标用不了':(c.enabled
     ?`${label} · ${reading} · 输出 ${Number(state.output_x||0).toFixed(2)} / ${Number(state.output_y||0).toFixed(2)}`
-    :'未启用';
+    :'未启用');
 }
 // --- skeleton recording ---------------------------------------------------
 // Polls only while something is actually happening, so an idle settings page
@@ -979,6 +1014,8 @@ function showView(view){
   document.querySelectorAll('[data-view]').forEach(el=>{
     if(el.dataset.view===view)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');
   });
+  const tab=document.querySelector(`[data-view="${view}"]`);
+  $('#viewHint').textContent=tab?.dataset.viewHint||'';
   if(view==='devices'){void refreshXinput();void refreshHandMouse();void refreshPoseRecord()}
   window.scrollTo(0,0);
 }
