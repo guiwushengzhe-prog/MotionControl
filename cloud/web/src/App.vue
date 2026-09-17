@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { RouterLink, RouterView, useRouter } from "vue-router";
+import { computed } from "vue";
+import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { ready, signOut, user } from "./session";
 
 const router = useRouter();
+const route = useRoute();
+
+// 登录页是整页一张深色的图，自己铺满窗口，顶栏压在上面只会碍事——而且那上面
+// 每一个链接都要求先登录。
+const bare = computed(() => route.path === "/login");
 
 async function leave() {
   await signOut();
@@ -11,7 +17,7 @@ async function leave() {
 </script>
 
 <template>
-  <nav>
+  <nav v-if="!bare">
     <RouterLink to="/" class="brand">MotionControl</RouterLink>
     <div class="links" v-if="ready">
       <RouterLink to="/browse">公开配置</RouterLink>
@@ -24,7 +30,7 @@ async function leave() {
     </div>
   </nav>
 
-  <main>
+  <main :class="{ bare }">
     <RouterView v-if="ready" />
     <p v-else class="card">读取中…</p>
   </main>
@@ -39,4 +45,5 @@ nav {
 .links { display: flex; align-items: center; gap: 1.25rem; font-size: 0.9rem; }
 .who { color: var(--muted); }
 main { max-width: 56rem; margin: 0 auto; padding: 1.5rem; }
+main.bare { max-width: none; padding: 0; }
 </style>
