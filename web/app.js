@@ -294,6 +294,17 @@ function renderInputStatus(status){
     $('#'+id).textContent=connected?(status.mobile_pose_connected?'手机摄像头已连接':'手机手持端已连接'):'手机未连接';
     $('#'+id).className='pill '+(connected?'ok':'bad');
   }
+  // 手机慢下来只有两种可能：模型退回了 CPU，或者这台机器就这么快。光看帧率分
+  // 不出来，所以把 delegate 和每帧耗时一起摆出来。
+  const phone=(status.mobile_pose_sources||[]).find(item=>item.active)||(status.mobile_pose_sources||[])[0];
+  const perf=$('#phonePerf');
+  if(perf){
+    const ms=Number(phone?.inference_ms);
+    const parts=[];
+    if(phone?.delegate)parts.push(phone.delegate==='CPU'?'跑在 CPU（慢一倍，GPU 不可用时的退路）':'跑在 GPU');
+    if(Number.isFinite(ms)&&ms>0)parts.push(`每帧 ${Math.round(ms)} ms · 约 ${Math.round(1000/ms)} 帧/秒`);
+    perf.textContent=parts.join(' · ');
+  }
   const field=$('#phoneWsUrl'),urls=status.phone_ws_urls||[];
   if(document.activeElement!==field&&JSON.stringify(urls)!==field.dataset.urls){
     field.dataset.urls=JSON.stringify(urls);
