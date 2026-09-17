@@ -218,6 +218,20 @@ PAIRING = _build_pairing_service()
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE, pairing=PAIRING)
 INPUT_BRIDGE.configure_scene_snapshot_handler(_scene_snapshot_from_phone)
 
+def find_phone_web(root: Path) -> Path | None:
+    """手机的网页包在哪：发布包里带着，开发时用隔壁仓库的构建产物。"""
+    candidates = [root / "phone_web"]
+    configured = os.environ.get("PHONE_WEB_DIR", "").strip().strip('"')
+    if configured:
+        candidates.insert(0, Path(configured))
+    # 开发时两个仓库并排放着。发布包里 phone_web 一定在，走不到这一条。
+    candidates.append(root.parent / "switch" / "mobile" / "dist")
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def _phone_control_payload() -> dict:
     profile = PROFILES.effective_profile()
     scene = SCENE.status()
@@ -260,6 +274,10 @@ MODEL_PATH: Path | None = None
 # 电脑自己的识别器加载的就是这个目录，手机要的是同一份。找不到也不报错：这台
 # 机器没配语音，手机那边会看到 available 为假，然后照实说，而不是装死。
 VOICE_MODEL = ModelShare("vosk-model-small-cn-0.22", find_vosk_model(ROOT))
+# 手机的网页包，随 PC 发布包一起分发。手机侧改动有一半只动这 200 KB，让它跟着
+# 电脑走就不用为此发新 APK，也不用你的服务器出流量。
+# 只有发布包里才有；从仓库直接跑时这里是空的，手机照旧用 APK 自带的那份。
+PHONE_WEB = ModelShare("phone-web", find_phone_web(ROOT), skip=("models/", "wasm/"))
 MOTION_CONFIG_FILE = user_path("motion_mappings")
 DEFAULT_MOTIONS = [
     {"id": "march", "name": "原地踏步", "enabled": False, "type": "gamepad_axis", "target": "LS_UP"},
@@ -689,6 +707,17 @@ class _BaseHandler(SimpleHTTPRequestHandler):
             path = VOICE_MODEL.resolve(wanted)
             if path is None:
                 self.send_error(404, "voice model file unavailable")
+            else:
+                self._serve_file(path)
+            return True
+        if route == "/api/bundle/phone-web":
+            self._send_json({"version": VERSION, **PHONE_WEB.manifest()})
+            return True
+        if route == "/api/bundle/phone-web/file":
+            wanted = parse_qs(urlparse(self.path).query).get("path", [""])[0]
+            path = PHONE_WEB.resolve(wanted)
+            if path is None:
+                self.send_error(404, "phone web bundle file unavailable")
             else:
                 self._serve_file(path)
             return True
