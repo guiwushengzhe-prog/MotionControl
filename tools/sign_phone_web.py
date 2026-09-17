@@ -7,7 +7,8 @@ argument, it is an assumption.
 
 So the phone does not trust the link. It trusts one public key, compiled into
 the APK, and refuses any bundle not signed by the matching private key. The
-private key never leaves your machine and never enters either repository.
+private key never enters either repository; where it does live is per-machine
+and is named in config/phone_web_signing_key.txt, which is not committed.
 
 This cannot be added later. A build that ships without verification accepts
 unsigned bundles forever, and the patch that would fix it has to travel down
@@ -37,8 +38,9 @@ sys.path.insert(0, str(ROOT))
 
 from model_share import ModelShare, SIGNATURE_NAME  # noqa: E402
 
-# 私钥默认放在安卓签名密钥旁边：同一类东西，同一个"绝不进仓库"的规矩。
-DEFAULT_KEY = ROOT.parent / "switch" / "mobile" / "android" / "phone-web-signing.pem"
+# 私钥放哪是每台机器自己的事，所以写在配置文件里，跟 vosk 模型路径同一个做法。
+# 那个文件不进仓库。
+KEY_CONFIG = ROOT / "config" / "phone_web_signing_key.txt"
 SKIP = ("models/", "wasm/")
 
 
@@ -52,8 +54,16 @@ def load_backend():
 
 
 def key_path(argument: str | None) -> Path:
+    """命令行参数 > 环境变量 > 配置文件。"""
     configured = argument or os.environ.get("PHONE_WEB_SIGNING_KEY", "").strip().strip('"')
-    return Path(configured) if configured else DEFAULT_KEY
+    if not configured and KEY_CONFIG.is_file():
+        configured = KEY_CONFIG.read_text(encoding="utf-8-sig").strip().strip('"')
+    if not configured:
+        raise SystemExit(
+            f"不知道私钥在哪。把路径写进 {KEY_CONFIG}"
+            f"（参考同名 .example），或者设环境变量 PHONE_WEB_SIGNING_KEY。")
+    path = Path(configured)
+    return path if path.is_absolute() else ROOT / path
 
 
 def generate(path: Path) -> int:

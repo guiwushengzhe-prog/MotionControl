@@ -28,3 +28,6 @@ cloud/*.db-shm
 # Anything here that turns out to be worth keeping belongs in docs/ or tests/
 # with an explanation, not in a folder tools write to.
 output/
+
+# 指向网页包签名私钥的位置。路径本身不是秘密，但没必要写进公开历史。
+config/phone_web_signing_key.txt
