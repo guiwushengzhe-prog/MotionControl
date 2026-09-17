@@ -33,6 +33,9 @@ from pathlib import Path
 
 _CHUNK = 1 << 20
 
+# 签名文件自己不进清单：它签的就是那份清单，进去就成了循环。
+SIGNATURE_NAME = ".signature"
+
 # Joins the manifest's fields. A NUL cannot occur in a path or a hex digest,
 # so no combination of field values can be mistaken for a different listing.
 _SEPARATOR = chr(0)
@@ -41,9 +44,13 @@ _SEPARATOR = chr(0)
 class ModelShare:
     """One model directory, offered to the phone as a manifest plus files."""
 
-    def __init__(self, name: str, root: Path | None) -> None:
+    def __init__(self, name: str, root: Path | None,
+                 skip: tuple[str, ...] = ()) -> None:
         self.name = str(name)
         self.root = Path(root).resolve() if root else None
+        # 相对路径前缀，命中的不进清单。手机的网页包目录里还躺着 25 MB 的模型和
+        # WASM，那些永远从 APK 读，不该出现在要下载的列表里。
+        self.skip = tuple(skip)
         # Digest cache keyed by (size, mtime_ns): hashing 68 MB on every
         # manifest request would make an idle phone expensive to have around.
         self._digests: dict[str, tuple[int, int, str]] = {}
@@ -55,10 +62,15 @@ class ModelShare:
         # Path comparison is case-insensitive on Windows and case-sensitive on
         # Linux, which would hand out a manifest whose order depends on which
         # machine is serving it.
-        return sorted(
-            (item for item in self.root.rglob("*") if item.is_file()),
-            key=lambda item: item.relative_to(self.root).as_posix(),
-        )
+        found = []
+        for item in self.root.rglob("*"):
+            if not item.is_file():
+                continue
+            relative = item.relative_to(self.root).as_posix()
+            if relative.startswith(self.skip) or relative == SIGNATURE_NAME:
+                continue
+            found.append(item)
+        return sorted(found, key=lambda item: item.relative_to(self.root).as_posix())
 
     def _digest(self, path: Path, stat) -> str:
         key = path.as_posix()
@@ -109,9 +121,30 @@ class ModelShare:
             "name": self.name,
             "available": bool(files),
             "digest": summary.hexdigest() if files else "",
+            # 没签名就是空的。手机拿到空签名会拒绝安装——宁可不更新，也不能装
+            # 一份来路不明的代码。
+            **self.signature(),
             "files": files,
             "total_bytes": total,
         }
+
+    def signature(self) -> dict:
+        """The detached signature for this listing, if one was made."""
+        if self.root is None:
+            return {}
+        path = self.root / SIGNATURE_NAME
+        if not path.is_file() or path.stat().st_size > 8192:
+            return {}
+        try:
+            import json
+            signed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        payload = signed.get("payload")
+        signature = signed.get("signature")
+        if not isinstance(payload, str) or not isinstance(signature, str):
+            return {}
+        return {"payload": payload, "signature": signature}
 
     def resolve(self, relative: str) -> Path | None:
         """The file for a requested path, or None if it is not one we offer.

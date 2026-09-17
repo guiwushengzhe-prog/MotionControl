@@ -161,10 +161,66 @@ def stale_bytecode(target: Path) -> list[Path]:
                   if path.is_dir())
 
 
+# 手机网页包里不进发布的部分：模型和 WASM 有 25 MB，它们留在 APK 里，手机永远
+# 从 APK 读（见 WebUpdateRoutes）。进来的只有真正会变的那 200 KB。
+PHONE_WEB_SKIP = ("models/", "wasm/")
+
+
+def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
+    """Copy the phone's built web app into the release. Returns (files, bytes)."""
+    root = target / "phone_web"
+    wanted = {}
+    for path in sorted(source.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(source).as_posix()
+        if relative.startswith(PHONE_WEB_SKIP) or relative.endswith(".map"):
+            continue
+        wanted[relative] = path
+    for existing in sorted(root.rglob("*"), reverse=True):
+        if existing.is_file() and existing.relative_to(root).as_posix() not in wanted:
+            existing.unlink()
+        elif existing.is_dir() and not any(existing.iterdir()):
+            existing.rmdir()
+    total = 0
+    for relative, path in wanted.items():
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.is_file() or destination.read_bytes() != path.read_bytes():
+            shutil.copy2(path, destination)
+        total += path.stat().st_size
+    return len(wanted), total
+
+
+def check_phone_web_signature(bundle: Path) -> str:
+    """签名对不对得上这一份包。
+
+    每跑一次 npm run build，包的内容就变了，上一次的签名立刻作废——而手机会
+    安静地拒绝，界面上什么都不说。开发时踩过两次，所以让打包这一步直接说出来。
+    """
+    sys.path.insert(0, str(ROOT))
+    from model_share import ModelShare, SIGNATURE_NAME
+
+    share = ModelShare("phone-web", bundle, skip=("models/", "wasm/"))
+    manifest = share.manifest()
+    if not manifest.get("payload"):
+        return ("没有签名 —— 手机会拒绝这份包。跑：" + chr(10) +
+                f'     python tools/sign_phone_web.py --bundle "{bundle}"')
+    import base64
+    import json as _json
+    signed = _json.loads(base64.b64decode(manifest["payload"]))
+    if signed.get("digest") != manifest["digest"]:
+        return ("签名对不上这一份包（构建过但没重新签）—— 手机会拒绝。跑：" + chr(10) +
+                f'     python tools/sign_phone_web.py --bundle "{bundle}"')
+    return "签名有效"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", required=True, help="portable bundle root")
     parser.add_argument("--check", action="store_true", help="report only")
+    parser.add_argument("--phone-web", default="../switch/mobile/dist",
+                        help="手机端 npm run build 的产物目录")
     args = parser.parse_args()
 
     target = Path(args.target)
@@ -203,6 +259,14 @@ def main() -> int:
         path.unlink()
     for path in bytecode:
         shutil.rmtree(path, ignore_errors=True)
+
+    phone_web = Path(args.phone_web)
+    if phone_web.is_dir():
+        files, size = stage_phone_web(phone_web, target)
+        print(f"phone_web: {files} 个文件 {size / 1024:.0f} KB（手机连上时自己来取）")
+        print("  " + check_phone_web_signature(target / "phone_web"))
+    else:
+        print(f"WARNING: 找不到手机网页包 {phone_web}，发布包里不会带更新用的那一份")
 
     print()
     print("staged. Now verify the bundled interpreter has every runtime dependency:")
