@@ -206,3 +206,59 @@ def test_template_is_json_safe():
 def test_full_scale_is_documented_as_sixty_degrees():
     """改了这个值等于改了所有人已经调好的阈值，不该是随手改的。"""
     assert FULL_SCALE_ERROR == pytest.approx(math.radians(60.0))
+
+
+# --- 录制瞬间的骨架预览 --------------------------------------------------------
+
+def test_preview_frames_the_body_the_same_way_wherever_it_stood():
+    """人站画面哪个角落、占多大，缩略图里都该一样大。
+
+    不归一化的话，站远时缩略图里就是一个几像素的小点，认不出是什么姿势。
+    """
+    from motioncontrol_shared.pose_template import build_preview
+
+    near = build_preview(T_POSE)
+    far = build_preview(moved(T_POSE, scale=0.4, shift_x=0.5, shift_y=0.4))
+    assert near is not None and far is not None
+    for name, point in near["points"].items():
+        assert far["points"][name] == pytest.approx(point, abs=1e-3)
+
+
+def test_preview_keeps_the_aspect_ratio():
+    """不等比缩放会把站远的人拉成一条细线。"""
+    from motioncontrol_shared.pose_template import build_preview
+
+    preview = build_preview(T_POSE)
+    xs = [x for x, _ in preview["points"].values()]
+    ys = [y for _, y in preview["points"].values()]
+    # T 字比人高要宽，所以横向铺满、纵向居中留白。
+    assert max(xs) - min(xs) == pytest.approx(1.0, abs=0.02)
+    assert max(ys) - min(ys) < 0.98
+
+
+def test_preview_only_draws_bones_whose_ends_are_visible():
+    """腿看不见时不该画出两条连到画面角落的线。"""
+    from motioncontrol_shared.pose_template import build_preview
+
+    no_legs = {name: ({**point, "score": 0.1} if "knee" in name or "ankle" in name else point)
+               for name, point in T_POSE.items()}
+    preview = build_preview(no_legs)
+    joined = {name for bone in preview["bones"] for name in bone}
+    assert not any("knee" in name or "ankle" in name for name in joined)
+
+
+def test_preview_gives_up_when_there_is_almost_nothing_to_draw():
+    from motioncontrol_shared.pose_template import build_preview
+
+    assert build_preview({name: {**p, "score": 0.1} for name, p in T_POSE.items()}) is None
+
+
+def test_preview_is_json_safe_and_small():
+    """要存进配置文件，也要跟着配置走到别的机器上。"""
+    import json
+    from motioncontrol_shared.pose_template import build_preview
+
+    preview = build_preview(T_POSE)
+    encoded = json.dumps(preview)
+    assert json.loads(encoded) == preview
+    assert len(encoded) < 1200, f"预览 {len(encoded)} 字节，太大了"

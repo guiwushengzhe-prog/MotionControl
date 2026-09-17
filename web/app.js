@@ -1236,16 +1236,47 @@ async function refreshCustomPoses({ rebuild = true } = {}) {
   }
 }
 
+/** 倒计时期间可以取消——按错了不用等它数完。 */
+let customPoseCountdown = null;
+
 async function captureCustomPose() {
   const button = document.getElementById('customPoseCaptureBtn');
+  if (customPoseCountdown) {  // 再点一次 = 取消
+    clearTimeout(customPoseCountdown);
+    customPoseCountdown = null;
+    button.textContent = '录下当前姿势';
+    button.classList.remove('counting');
+    customPoseSay('已取消');
+    return;
+  }
+
+  // 人要从电脑前走到镜头前再摆好姿势，点完立刻拍等于拍到一个走路的背影。
+  const seconds = Number(document.getElementById('customPoseDelay')?.value || 3);
   const nameInput = document.getElementById('customPoseName');
+  button.classList.add('counting');
+
+  await new Promise(resolve => {
+    let left = seconds;
+    const tick = () => {
+      if (left <= 0) { customPoseCountdown = null; resolve(); return; }
+      button.textContent = String(left);
+      customPoseSay(`${left} 秒后拍下当前姿势，摆好别动（再点一次取消）`);
+      left -= 1;
+      customPoseCountdown = setTimeout(tick, 1000);
+    };
+    tick();
+  });
+
+  button.textContent = '录下当前姿势';
+  button.classList.remove('counting');
   button.disabled = true;
   customPoseSay('正在读取当前姿势…');
   try {
     const data = await post('/api/pose/custom/capture', { name: nameInput.value || '' });
     nameInput.value = '';
     customPoses = data.poses || [];
-    customPoseSay('已录「' + data.pose.name + '」。到上面的映射列表里给它绑一个按键。');
+    customPoseSay('已录「' + data.pose.name + '」。下面是拍到的骨架，'
+      + '不对就删掉重录；对了就到上面的映射列表里给它绑一个按键。');
     renderCustomPoses();
     renderProfileBindingRows();
   } catch (error) {
@@ -1253,6 +1284,39 @@ async function captureCustomPose() {
   } finally {
     button.disabled = false;
   }
+}
+
+/** 录制瞬间的骨架，画成一个小人。用户靠它认出这是哪个姿势。 */
+function poseThumbnail(preview) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.classList.add('pose-thumb');
+  if (!preview || !preview.points) {
+    svg.classList.add('empty');
+    return svg;
+  }
+  const at = name => {
+    const p = preview.points[name];
+    return p ? [p[0] * 90 + 5, p[1] * 90 + 5] : null;
+  };
+  for (const [a, b] of preview.bones || []) {
+    const from = at(a), to = at(b);
+    if (!from || !to) continue;
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', from[0]); line.setAttribute('y1', from[1]);
+    line.setAttribute('x2', to[0]); line.setAttribute('y2', to[1]);
+    svg.appendChild(line);
+  }
+  for (const name of Object.keys(preview.points)) {
+    const at_ = at(name);
+    const dot = document.createElementNS(NS, 'circle');
+    dot.setAttribute('cx', at_[0]); dot.setAttribute('cy', at_[1]);
+    // 头稍大一点，一眼能看出人是正着还是倒着。
+    dot.setAttribute('r', name === 'nose' ? 4 : 2.4);
+    svg.appendChild(dot);
+  }
+  return svg;
 }
 
 async function updateCustomPose(id, changes) {
@@ -1343,7 +1407,7 @@ function renderCustomPoses() {
 
     const head = document.createElement('div');
     head.className = 'custom-pose-head';
-    head.append(name, meter);
+    head.append(poseThumbnail(item.preview), name, meter);
 
     const tools = document.createElement('div');
     tools.className = 'custom-pose-tools';
