@@ -53,6 +53,20 @@ DEFAULT_CONFIG = {
     "min_tips": 2,
 }
 
+# How far outside the picture a landmark may sit and still be believed.
+#
+# This is the check that visibility alone does not give.  Measured on a live
+# phone feed: a hand held outside the frame still came back at 0.68 visibility,
+# with x around -0.15 -- MediaPipe extrapolates the wrist and fingers from the
+# arm rather than reporting that it cannot see them.  Those guessed tips land
+# close to the guessed wrist, so the spread reads about 0.24, which is under
+# fist_close, and the hand is reported as a permanently clenched fist.
+#
+# A coordinate outside the picture is not an observation at any confidence, so
+# this is a hard geometric test rather than another tunable threshold.  The
+# small margin keeps a fingertip resting exactly on the edge usable.
+_FRAME_MARGIN = 0.03
+
 _TIPS = ("thumb", "index", "pinky")
 
 
@@ -60,7 +74,8 @@ def _clamp(value: float, low: float, high: float) -> float:
     return low if value < low else high if value > high else value
 
 
-def _point(pose_map: dict, name: str, min_visibility: float) -> dict | None:
+def _point(pose_map: dict, name: str, min_visibility: float,
+           *, require_in_frame: bool = True) -> dict | None:
     point = pose_map.get(name)
     if not isinstance(point, dict):
         return None
@@ -72,6 +87,12 @@ def _point(pose_map: dict, name: str, min_visibility: float) -> dict | None:
         return None
     if not all(isinstance(point.get(axis), (int, float)) for axis in ("x", "y")):
         return None
+    # Out of the picture: extrapolated, not seen. See _FRAME_MARGIN.
+    if require_in_frame:
+        for axis in ("x", "y"):
+            value = float(point[axis])
+            if value < -_FRAME_MARGIN or value > 1.0 + _FRAME_MARGIN:
+                return None
     return point
 
 
@@ -135,7 +156,11 @@ class HandMouseController:
         """Fingertip spread as a fraction of forearm length, and tips used."""
         min_visibility = float(self.config["min_visibility"])
         wrist = _point(pose_map, f"{hand}_wrist", min_visibility)
-        elbow = _point(pose_map, f"{hand}_elbow", min_visibility)
+        # 手肘允许在画面外：它只是长度基准，而"握没握拳"由指尖相对手腕的位置决定。
+        # 两个方向的失败代价也不同——手肘估偏会让比值偏大、误判成"张开"，那只是
+        # 不响应；手腕和指尖是猜出来的则会误判成"握拳"，鼠标会一直卡在按下状态。
+        # 手举到画面下缘外时手肘出画是常事，为此整只手作废太苛刻。
+        elbow = _point(pose_map, f"{hand}_elbow", min_visibility, require_in_frame=False)
         if wrist is None or elbow is None:
             return None, 0
         forearm = _distance(elbow, wrist)
@@ -188,7 +213,8 @@ class HandMouseController:
             return self.status()
 
         wrist = _point(pose_map, f"{hand}_wrist", float(config["min_visibility"]))
-        elbow = _point(pose_map, f"{hand}_elbow", float(config["min_visibility"]))
+        elbow = _point(pose_map, f"{hand}_elbow", float(config["min_visibility"]),
+                       require_in_frame=False)
         if wrist is None or elbow is None:
             self._release("lost")
             return self.status()

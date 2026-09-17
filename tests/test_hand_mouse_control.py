@@ -222,3 +222,59 @@ def test_status_reports_spread_for_calibration():
     state = ctl.update(pose(spread=0.33), now=1.0)
     assert state["spread"] == pytest.approx(0.33, abs=1e-3)
     assert state["tips_seen"] == 3
+
+
+# --- 画面外的手 ---------------------------------------------------------------
+
+def out_of_frame_hand():
+    """一只举在画面左侧外面的右手，数值取自真机。
+
+    2026-09-17 从跑着的服务上读到的实况：手在画面外，MediaPipe 仍然给出 0.68 的
+    置信度和 x≈-0.15 的坐标——它是从手臂外推的，不是看到的。外推的指尖挨着外推的
+    手腕，张开度算出来约 0.24，低于 fist_close，于是"一直在握拳"。
+    """
+    return {
+        "right_elbow":  {"x": -0.05, "y": 0.62, "score": 0.74},
+        "right_wrist":  {"x": -0.127, "y": 0.720, "score": 0.74},
+        "right_pinky":  {"x": -0.191, "y": 0.759, "score": 0.68},
+        "right_index":  {"x": -0.157, "y": 0.749, "score": 0.68},
+        "right_thumb":  {"x": -0.113, "y": 0.747, "score": 0.68},
+    }
+
+
+def test_a_hand_outside_the_picture_is_not_a_fist():
+    """这是真机上出过的 bug：手看不见时，鼠标被判定为一直按着。
+
+    置信度那道门拦不住——外推出来的点带着 0.68 的分数，比 min_visibility 高得多。
+    坐标出画是硬事实，不是可调的阈值，所以用它来拦。
+    """
+    ctl = controller(hand="right")
+    spread, tips = ctl.measure_spread(out_of_frame_hand(), "right")
+    assert spread is None, f"画面外的手仍然给出了张开度 {spread}"
+    assert tips == 0
+
+
+def test_an_out_of_frame_hand_does_not_engage_the_mouse(monkeypatch):
+    """误判方向要紧：判成"张开"只是不响应，判成"握拳"会让鼠标一直拖着。"""
+    ctl = controller(hand="right")
+    state = ctl.update(out_of_frame_hand(), now=1.0)
+    assert state["engaged"] is False
+    assert state["spread"] is None
+
+
+def test_the_elbow_may_leave_the_picture():
+    """手举到画面下缘外时手肘出画是常事，不该因此整只手作废。
+
+    手肘只是长度基准；判断握没握拳靠的是指尖相对手腕的位置，那两样仍然看得见。
+    """
+    ctl = controller(hand="right")
+    low = pose(spread=0.2, wrist=(0.9, 0.9), forearm=0.2)   # 手肘在 y=1.1
+    spread, tips = ctl.measure_spread(low, "right")
+    assert spread is not None and tips == 3
+
+
+def test_a_hand_at_the_very_edge_still_counts():
+    """贴着边缘的手是真看得见的，容差要留住它。"""
+    ctl = controller(hand="right")
+    spread, _ = ctl.measure_spread(pose(spread=0.2, wrist=(0.01, 0.5)), "right")
+    assert spread is not None
