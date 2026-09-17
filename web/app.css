@@ -164,14 +164,14 @@ dialog::backdrop { background: #030812dc; }
 .custom-pose-head{grid-column:2;align-self:center;display:flex;align-items:center;gap:.75rem}
 .custom-pose-name{flex:0 0 8.5rem;font-weight:600}
 /* 相似度条。用户摆姿势时盯的就是它，所以给足宽度。 */
-/* 相似度条只在你动这一行的控件时显示——点或拖阈值滑块，那才是真正需要看它的
-   时刻。
-   hover 不行：鼠标扫过面板就会把所有行点亮，和常驻没区别。
-   匹配上时也不显示：那时候边框和骨架图已经变绿了，数字是多余的。 */
+/* 相似度条由一个开关控制，默认关。
+   做动作的人站在几米外，够不着鼠标——所以不能用 hover 或 focus 触发：那两个恰好
+   在最需要看它的时刻都不成立。开关是走开之前按一下，回来再按一下。 */
 .custom-pose-meter{position:relative;flex:1;height:1.35rem;border-radius:4px;
   background:rgba(127,127,127,.18);overflow:hidden;
   opacity:0;transition:opacity .12s}
-.custom-pose:focus-within .custom-pose-meter{opacity:1}
+#customPoseList.show-scores .custom-pose-meter{opacity:1}
+#customPoseScoresBtn.on{background:var(--accent,#4c8dff);border-color:var(--accent,#4c8dff);color:#fff}
 .custom-pose-fill{position:absolute;inset:0 auto 0 0;background:#4c8dff;opacity:.45;
   transition:width .08s linear}
 .custom-pose.firing .custom-pose-fill{background:#39c07a;opacity:.6}
@@ -214,3 +214,5 @@ dialog::backdrop { background: #030812dc; }
 /* 配置名就是去网站看详情的入口。 */
 .cloud-row-title{font-weight:600;cursor:pointer;text-decoration:none}
 .cloud-row-title:hover{text-decoration:underline}
+
+
