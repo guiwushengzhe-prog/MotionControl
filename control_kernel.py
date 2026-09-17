@@ -1679,25 +1679,27 @@ class ControlKernel:
             for ident in self.pose_debounce:
                 self._set_pose_debounced(ident, False)
 
-        self._update_custom_poses_locked(pose_map, active, confidence)
+        self._update_custom_poses_locked(pose_map, now, active, confidence)
         self.pose_active = active
         self.pose_confidence = confidence
 
-    def _update_custom_poses_locked(self, pose_map: dict[str, dict],
+    def _update_custom_poses_locked(self, pose_map: dict[str, dict], now: float,
                                     active: set[str], confidence: dict) -> None:
-        """把用户录的姿势并进同一套 pose_active。
+        """把用户录的动作并进同一套 pose_active。
 
         并进来而不是另开一条通路：这样它们自动获得按游戏映射、冲突检查、绑定界面、
         紧急停止时一起松开——全部已有的行为。
 
-        触发与否交给 _set_pose_debounced，它本来就是"连续多少帧成立才算"，也就是
-        用户设的停留时间。比对器只回答"这一帧够不够像"，判定只有一处。
+        触发判定全在 store 里。早先的版本把"够不够像"放在 store、把"保持了几帧"
+        放在这里的去抖，各管一半；连贯动作一来就站不住了——每一步都有自己的计时，
+        还有步与步之间的超时，硬拆成两处等于让两份状态互相猜对方到哪一步。
+        所以这里只保留松开方向的去抖：少数几帧的抖动不至于让键闪断。
         """
         store = self.custom_pose_store
         if store is None:
             return
         try:
-            results = store.evaluate(pose_map)
+            results = store.evaluate(pose_map, now)
         except Exception:  # noqa: BLE001 - 一个坏模板不该让整个识别停摆
             return
         scores: dict[str, float] = {}
@@ -1710,9 +1712,8 @@ class ControlKernel:
                 continue
             scores[ident] = round(float(result["score"]), 3)
             confidence[ident] = scores[ident]
-            dwell = int(entry.get("dwell_frames", 5))
             if self._set_pose_debounced(ident, bool(result["hit"]),
-                                        on_frames=dwell, off_frames=2):
+                                        on_frames=1, off_frames=2):
                 active.add(ident)
         self.custom_pose_scores = scores
 

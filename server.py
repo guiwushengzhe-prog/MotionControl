@@ -864,9 +864,27 @@ class AdminHandler(_BaseHandler):
                         KERNEL.configure_custom_poses(CUSTOM_POSES)
                         self._send_json({"ok": True, "pose": _custom_pose_out(entry),
                                          "poses": CUSTOM_POSES.status()})
+                    elif route == "/api/pose/custom/frame":
+                        # 给已有动作再加一帧，把它变成（或延长）连贯动作。
+                        snapshot = KERNEL.stable_pose_snapshot(window_s=0.40, min_samples=3)
+                        if not snapshot:
+                            self._send_json({"ok": False,
+                                             "error": "还没有看到人。先让摄像头拍到你，再加一帧。"}, 400)
+                            return
+                        entry = CUSTOM_POSES.append_frame(str(body.get("id", "")), snapshot)
+                        KERNEL.configure_custom_poses(CUSTOM_POSES)
+                        self._send_json({"ok": True, "pose": _custom_pose_out(entry),
+                                         "poses": CUSTOM_POSES.status()})
+                    elif route == "/api/pose/custom/frame/remove":
+                        entry = CUSTOM_POSES.remove_frame(str(body.get("id", "")),
+                                                          int(body.get("index", -1)))
+                        KERNEL.configure_custom_poses(CUSTOM_POSES)
+                        self._send_json({"ok": True, "pose": _custom_pose_out(entry),
+                                         "poses": CUSTOM_POSES.status()})
                     elif route == "/api/pose/custom/update":
                         changes = {k: body[k] for k in
-                                   ("name", "threshold", "dwell_frames", "enabled") if k in body}
+                                   ("name", "threshold", "dwell_frames",
+                                    "step_window_s", "enabled") if k in body}
                         entry = CUSTOM_POSES.update(str(body.get("id", "")), **changes)
                         KERNEL.configure_custom_poses(CUSTOM_POSES)
                         self._send_json({"ok": True, "pose": _custom_pose_out(entry),
