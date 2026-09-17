@@ -373,3 +373,80 @@ def test_the_kernel_takes_no_hands_from_a_plain_frame():
     from control_kernel import ControlKernel
 
     assert ControlKernel.hand_map_from_message(_expand_pose_features(pose_features())) is None
+
+
+# --- 选了电脑摄像头，手机还在传 -------------------------------------------
+#
+# 这个组合两边看着都正常：手机显示"已连接电脑"，电脑一动不动。以前手机的每一帧
+# 都被收下然后直接丢掉，没有任何地方说过这件事。
+
+
+class _KernelSpy:
+    """只记下收到过什么，以及假装本地摄像头在不在出画面。"""
+
+    def __init__(self, local_source=None, local_age=0.0):
+        self.frames = []
+        self.active_body_source = local_source
+        self.body_last_at = (time.monotonic() - local_age) if local_source else 0.0
+
+    def handle_pose_message(self, source_id, message):
+        self.frames.append(source_id)
+        return {}
+
+    def handle_sensor(self, *args, **kwargs):
+        return {}
+
+    def status(self):
+        return {}
+
+
+def _bridge_with(kernel, mode):
+    bridge = InputBridge(FakeOutput(), kernel=kernel)
+    bridge.set_body_mode(mode)
+    return bridge
+
+
+def test_the_phone_drives_when_the_local_camera_is_not_running():
+    """来源写着电脑，但电脑摄像头根本没开——手机是唯一的画面，不能扔掉。"""
+    kernel = _KernelSpy()
+    bridge = _bridge_with(kernel, "computer")
+    try:
+        bridge._handle_pose(FakePeer(), pose_frame("camera-1"))
+        assert kernel.frames == ["mobile_pose:camera-1"]
+        assert bridge.status()["phone_ignored"] is False
+    finally:
+        bridge.close()
+
+
+def test_a_running_local_camera_wins_and_says_so():
+    """电脑摄像头真的在出画面时，忽略手机是对的——但必须说出来。"""
+    kernel = _KernelSpy(local_source="computer_camera", local_age=0.05)
+    bridge = _bridge_with(kernel, "computer")
+    try:
+        bridge._handle_pose(FakePeer(), pose_frame("camera-1"))
+        assert kernel.frames == []
+        assert bridge.status()["phone_ignored"] is True
+    finally:
+        bridge.close()
+
+
+def test_a_stalled_local_camera_hands_the_picture_back():
+    """本地摄像头停了一秒以上就不算在跑，手机重新接手。"""
+    kernel = _KernelSpy(local_source="computer_camera", local_age=3.0)
+    bridge = _bridge_with(kernel, "computer")
+    try:
+        bridge._handle_pose(FakePeer(), pose_frame("camera-1"))
+        assert kernel.frames == ["mobile_pose:camera-1"]
+    finally:
+        bridge.close()
+
+
+def test_another_phone_does_not_count_as_the_local_camera():
+    """active_body_source 是另一台手机时，本地摄像头并没有在跑。"""
+    kernel = _KernelSpy(local_source="mobile_pose:camera-9", local_age=0.05)
+    bridge = _bridge_with(kernel, "computer")
+    try:
+        bridge._handle_pose(FakePeer(), pose_frame("camera-1"))
+        assert kernel.frames == ["mobile_pose:camera-1"]
+    finally:
+        bridge.close()
