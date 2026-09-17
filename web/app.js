@@ -1331,15 +1331,15 @@ async function captureCustomPose() {
     nameInput.value = '';
     applyPoses(data);
     customPoseSay('已录「' + data.pose.name + '」。下面是拍到的骨架，不对就删掉重录。'
-      + '想做成连贯动作，摆下一个姿势再点「加一帧」。');
+      + '想做成连续动作，摆好下一个姿势再点「再加一个姿势」。');
   });
 }
 
 async function appendCustomPoseFrame(item, button) {
-  await withCountdown(button, '加一帧', async () => {
+  await withCountdown(button, '再加一个姿势', async () => {
     const data = await post('/api/pose/custom/frame', { id: item.id });
     applyPoses(data);
-    customPoseSay(`「${data.pose.name}」现在有 ${data.pose.frames} 帧，`
+    customPoseSay(`「${data.pose.name}」现在有 ${data.pose.frames} 个姿势，`
       + '要按顺序依次做出来才会触发。');
   });
 }
@@ -1491,7 +1491,7 @@ function renderCustomPoses() {
         drop.className = 'pose-drop';
         drop.type = 'button';
         drop.textContent = '×';
-        drop.title = `删掉第 ${index + 1} 帧`;
+        drop.title = `删掉第 ${index + 1} 个姿势`;
         drop.addEventListener('click', () => removeCustomPoseFrame(item, index));
         cell.appendChild(drop);
       }
@@ -1501,8 +1501,8 @@ function renderCustomPoses() {
     const addFrame = document.createElement('button');
     addFrame.className = 'btn pose-add';
     addFrame.type = 'button';
-    addFrame.textContent = '加一帧';
-    addFrame.title = '摆好下一个姿势再点，做成连贯动作';
+    addFrame.textContent = '再加一个姿势';
+    addFrame.title = '摆好下一个姿势再点。做完的动作要按顺序依次做出来才触发';
     addFrame.addEventListener('click', () => appendCustomPoseFrame(item, addFrame));
     strip.appendChild(addFrame);
 
@@ -1513,9 +1513,9 @@ function renderCustomPoses() {
     const tools = document.createElement('div');
     tools.className = 'custom-pose-tools';
     tools.append(
-      customPoseSlider('阈值 ', threshold, v => v + '%'),
+      customPoseSlider('像到 ', threshold, v => v + '% 才算'),
       // 帧数对用户没有意义，换算成秒。30fps 是相机的常见帧率。
-      customPoseSlider(item.frames > 1 ? '最后一帧停留 ' : '停留 ', dwell,
+      customPoseSlider(item.frames > 1 ? '最后一个姿势保持 ' : '保持 ', dwell,
                        v => (v / 30).toFixed(2) + ' 秒'));
     if (item.frames > 1) {
       const window_ = document.createElement('input');
@@ -1524,7 +1524,7 @@ function renderCustomPoses() {
       window_.value = String(Math.round(item.step_window_s * 10));
       window_.addEventListener('change', () =>
         updateCustomPose(item.id, { step_window_s: Number(window_.value) / 10 }));
-      tools.append(customPoseSlider('每步时限 ', window_, v => (v / 10).toFixed(1) + ' 秒'));
+      tools.append(customPoseSlider('每步最多 ', window_, v => (v / 10).toFixed(1) + ' 秒'));
     }
     tools.append(enabled, remove);
 

@@ -869,7 +869,7 @@ class AdminHandler(_BaseHandler):
                         snapshot = KERNEL.stable_pose_snapshot(window_s=0.40, min_samples=3)
                         if not snapshot:
                             self._send_json({"ok": False,
-                                             "error": "还没有看到人。先让摄像头拍到你，再加一帧。"}, 400)
+                                             "error": "还没有看到人。先让摄像头拍到你，再加姿势。"}, 400)
                             return
                         entry = CUSTOM_POSES.append_frame(str(body.get("id", "")), snapshot)
                         KERNEL.configure_custom_poses(CUSTOM_POSES)
