@@ -64,7 +64,9 @@ DEFAULT_CONFIG = {
     "range": 0.55,
     "deadzone": 0.12,
     "sensitivity": 70.0,
-    "invert_x": False,
+    # 常开，不再是一个开关。摄像头看到的左右和玩家感觉到的左右本来就是相反的,
+    # 每个人都要去勾一下的"选项"说明默认值就是错的，不是一个偏好。
+    "invert_x": True,
     # A fingertip below this visibility is ignored; too few usable tips means
     # "unknown", not "open".
     "min_visibility": 0.35,

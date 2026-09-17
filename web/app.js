@@ -24,7 +24,7 @@ const BODY_ZONES = {leftHand:{label:'X',body:'左手',button:'X'},rightHand:{lab
 
 let currentPoseMap=null, kernelState=null, sourceMode='phone', cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'gamepad',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
-const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertX:false,invertY:false,verticalLookSource:'hand',verticalExclusive:false,bodyMotionGuard:true};
+const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalExclusive:false,bodyMotionGuard:true};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
@@ -236,7 +236,7 @@ function renderKernelState(runtime){
     document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));
     $('#deadzone').value=Math.round(Number(hs.deadzone||.10)*100);
     $('#speedX').value=Number(hs.sensitivity_x||58);$('#speedY').value=Number(hs.sensitivity_y||46);
-    $('#headEnable').checked=!!hs.enabled;$('#invertX').checked=!!hs.invert_x;$('#invertY').checked=!!hs.invert_y;syncControlLabels();
+    $('#headEnable').checked=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();
   }
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;
@@ -600,7 +600,6 @@ function renderHandMouse(state){
   const c=state.config||{};
   $('#handMouseEnabled').checked=Boolean(c.enabled);
   $('#handMouseHand').value=c.hand||'right';
-  $('#handMouseInvertX').checked=Boolean(c.invert_x);
   for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open],['handMouseCurlClose',c.curl_close],['handMouseCurlOpen',c.curl_open]]){
     if(value!==undefined)$('#'+id).value=value;
   }
@@ -661,7 +660,6 @@ async function saveHandMouse(){
   const payload={
     enabled:$('#handMouseEnabled').checked,
     hand:$('#handMouseHand').value,
-    invert_x:$('#handMouseInvertX').checked,
     sensitivity:Number($('#handMouseSensitivity').value),
     deadzone:Number($('#handMouseDeadzone').value),
     fist_close:Number($('#handMouseClose').value),
@@ -855,13 +853,13 @@ function renderVoiceCommandCatalog(commands){
 }
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertX=$('#invertX').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){
   syncControlLabels();
   renderKernelState(await post('/api/head/config',{
     algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,
     sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,
-    invert_x:head.invertX,invert_y:head.invertY,vertical_look_source:head.verticalLookSource,
+    invert_y:head.invertY,vertical_look_source:head.verticalLookSource,
     vertical_exclusive:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard,
   }));
   if(sceneConfigured){
@@ -1025,7 +1023,7 @@ bind('mainActionBtn',handleMainAction);
 bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
 bind('sourceStopBtn',()=>setSource(sourceMode,false));
 bind('overlayBtn',toggleOverlay);
-for(const id of ['handMouseEnabled','handMouseHand','handMouseInvertX','handMouseSensitivity','handMouseDeadzone','handMouseClose','handMouseOpen','handMouseCurlClose','handMouseCurlOpen']){
+for(const id of ['handMouseEnabled','handMouseHand','handMouseSensitivity','handMouseDeadzone','handMouseClose','handMouseOpen','handMouseCurlClose','handMouseCurlOpen']){
   const el=$('#'+id);
   if(el)el.addEventListener('change',()=>void saveHandMouse());
 }
@@ -1084,7 +1082,7 @@ $('#strength').addEventListener('change',()=>runAction(async()=>{
   const gain=Number($('#strength').value)/100;++outputEpoch;
   renderOutput(await post('/api/output/config',{mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain}));
 }));
-for(const id of ['headAlgorithm','headHorizontalAlgorithm','verticalLookSource','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','headEnable','invertX','invertY']){
+for(const id of ['headAlgorithm','headHorizontalAlgorithm','verticalLookSource','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','headEnable','invertY']){
   $('#'+id).addEventListener('input',()=>{headSaver.dirty();syncControlLabels()});
   $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels()});
 }

@@ -75,7 +75,8 @@ RATIO_PITCH_SPAN = 0.16
 DEFAULT_CONFIG = {
     "algorithm": "pnp",
     "enabled": True,
-    "invert_x": False,
+    # 常开，不再是一个开关。理由同手控鼠标：这不是偏好，是默认值本来就错了。
+    "invert_x": True,
     "invert_y": False,
     # Horizontal (yaw) output policy; see HORIZONTAL_ALGORITHMS below.
     # Default to the responsive PnP route; classic is a compatibility alias.
@@ -3920,7 +3921,9 @@ class HeadController:
             self.config.update({
                 "algorithm": algorithm,
                 "enabled": bool(params.get("enabled", True)),
-                "invert_x": bool(params.get("invert_x", False)),
+                # 存盘里那个值故意不读：它已经不是设置了。老档案里存着 false，
+                # 照读会让改过默认值的这台机器行为跟没改一样。
+                "invert_x": True,
                 "invert_y": bool(params.get("invert_y", False)),
                 "horizontal_algorithm": horizontal_algorithm,
                 "deadzone": _clamp(params.get("deadzone", DEFAULT_CONFIG["deadzone"]), 0.03, 0.25),

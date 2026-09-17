@@ -94,11 +94,12 @@ def test_closed_fist_drives_both_mouse_axes():
     kernel, output = kernel_with_hand_mouse(hand="right", sensitivity=100.0)
     feed(kernel, body(wrist=(0.70, 0.30), spread=0.2))   # closes, anchors here
     output.applied.clear()
-    feed(kernel, body(wrist=(0.80, 0.40), spread=0.2))   # moves right and down
+    feed(kernel, body(wrist=(0.80, 0.40), spread=0.2))   # 画面里往 +x +y 走
 
     assert output.applied, "the kernel must still be driving output"
     x, y = output.applied[-1]
-    assert x > 0 and y > 0
+    # 画面 +x 是玩家把手往自己的左边移（原始画面没镜像），所以指针往左。
+    assert x < 0 and y > 0
 
 
 def test_open_hand_leaves_the_pointer_to_head_control():
