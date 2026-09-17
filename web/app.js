@@ -1551,6 +1551,14 @@ function paintCustomPoseScores() {
   }
 }
 
+/** 相似度条的开关。做动作的人在几米外，够不着鼠标——所以是走开前按一下的开关，
+ *  不是 hover 或 focus 那种"手在鼠标上"才成立的触发。 */
+document.getElementById('customPoseScoresBtn')?.addEventListener('click', event => {
+  const on = customPoseListEl.classList.toggle('show-scores');
+  event.currentTarget.classList.toggle('on', on);
+  event.currentTarget.textContent = on ? '隐藏相似度' : '显示相似度';
+});
+
 document.getElementById('customPoseCaptureBtn')?.addEventListener('click', captureCustomPose);
 
 document.getElementById('cloudSiteBtn')?.addEventListener('click', () => openOnSite('/'));
