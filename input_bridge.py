@@ -529,6 +529,9 @@ class InputBridge:
         self._pose_last_count = 0
         # The phone is the usual body source whether or not a kernel is wired in.
         self._body_mode = "phone"
+        # 最近一次因为"来源选的是电脑"而丢掉手机画面的时刻。界面靠它把这件事说
+        # 出来：两边都显示正常、什么都不动，是最难查的一种坏法。
+        self._phone_ignored_at = 0.0
         self._pose_frames_with_people = 0
         self._host = "0.0.0.0"
         self._port = 8765
@@ -799,6 +802,9 @@ class InputBridge:
             "server_port": port,
             "lan_ipv4": self.lan_ipv4(),
             "usb_tether": self.usb_tether_status(),
+            # 手机在传，但来源选的是电脑摄像头，所以它的画面正在被丢掉。
+            "phone_ignored": bool(self._phone_ignored_at
+                                  and now - self._phone_ignored_at < 2.0),
             "body_mode": self._body_mode,
             "phone_ws_urls": self.phone_ws_urls(),
             "mobile_pose_connected": any(item["connected"] for item in pose_sources),
@@ -898,9 +904,21 @@ class InputBridge:
             except (ConnectionError, OSError):
                 self.disconnect(peer)
 
+    def _local_camera_live(self) -> bool:
+        """Is the PC's own camera actually producing poses right now?"""
+        kernel = self.kernel
+        source = getattr(kernel, "active_body_source", None)
+        if not source or str(source).startswith(POSE_SOURCE_PREFIX):
+            return False
+        last = float(getattr(kernel, "body_last_at", 0.0) or 0.0)
+        return last > 0.0 and (time.monotonic() - last) < 1.0
+
     def _handle_pose(self, peer: WebSocketPeer, message: dict) -> None:
         _validate_pose_frame(message)
-        if self.kernel is not None and self._body_mode != "phone":
+        # 来源选的是电脑摄像头。只有它真的在出画面时才忽略手机——否则手机是唯一
+        # 的来源，丢掉就等于手机显示"已连接电脑"、电脑一动不动，两边看着都正常。
+        if self.kernel is not None and self._body_mode != "phone" and self._local_camera_live():
+            self._phone_ignored_at = time.monotonic()
             self._accept_input(peer)
             return
         device_id = message["device_id"].strip()
