@@ -19,7 +19,8 @@ from game_profiles import GameProfileStore, ProfileSelectionChanged
 from motioncontrol_shared.profile_schema import action_catalog
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
-from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService
+from model_share import ModelShare
+from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
 from scene_layout import SceneLayoutManager
 from user_paths import migrate_legacy_user_data, user_data_root, user_path
 
@@ -256,6 +257,9 @@ if CUSTOM_POSES.last_error:
 
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
+# 电脑自己的识别器加载的就是这个目录，手机要的是同一份。找不到也不报错：这台
+# 机器没配语音，手机那边会看到 available 为假，然后照实说，而不是装死。
+VOICE_MODEL = ModelShare("vosk-model-small-cn-0.22", find_vosk_model(ROOT))
 MOTION_CONFIG_FILE = user_path("motion_mappings")
 DEFAULT_MOTIONS = [
     {"id": "march", "name": "原地踏步", "enabled": False, "type": "gamepad_axis", "target": "LS_UP"},
@@ -673,6 +677,20 @@ class _BaseHandler(SimpleHTTPRequestHandler):
                 self.send_error(404, "MediaPipe Full model unavailable")
             else:
                 self._serve_file(MODEL_PATH)
+            return True
+        # 中文语音模型。手机以前自己背一份 41.5 MB 的副本，占了安装包的一半，
+        # 而那些文件跟这台电脑上的逐字节一样——手机本来就要配对一台电脑，让它
+        # 从电脑取就行，谁的流量都不用花。
+        if route == "/api/model/voice-cn":
+            self._send_json({"version": VERSION, **VOICE_MODEL.manifest()})
+            return True
+        if route == "/api/model/voice-cn/file":
+            wanted = parse_qs(urlparse(self.path).query).get("path", [""])[0]
+            path = VOICE_MODEL.resolve(wanted)
+            if path is None:
+                self.send_error(404, "voice model file unavailable")
+            else:
+                self._serve_file(path)
             return True
         return False
 
