@@ -158,8 +158,15 @@ dialog::backdrop { background: #030812dc; }
 .custom-pose-head{display:flex;align-items:center;gap:.75rem}
 .custom-pose-name{flex:0 0 11rem;font-weight:600}
 /* 相似度条。用户摆姿势时盯的就是它，所以给足宽度。 */
+/* 相似度条平时不显示。玩的时候它一直杵在那里跳数字，是纯噪声——真正需要看它的
+   只有两个时刻：你正在调阈值（鼠标移上去），和它真的匹配上了（该给反馈）。 */
 .custom-pose-meter{position:relative;flex:1;height:1.35rem;border-radius:4px;
-  background:rgba(127,127,127,.18);overflow:hidden}
+  background:rgba(127,127,127,.18);overflow:hidden;
+  opacity:0;transition:opacity .12s}
+.custom-pose:hover .custom-pose-meter,
+.custom-pose:focus-within .custom-pose-meter,
+.custom-pose.hit .custom-pose-meter,
+.custom-pose.firing .custom-pose-meter{opacity:1}
 .custom-pose-fill{position:absolute;inset:0 auto 0 0;background:#4c8dff;opacity:.45;
   transition:width .08s linear}
 .custom-pose.firing .custom-pose-fill{background:#39c07a;opacity:.6}
