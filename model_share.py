@@ -33,6 +33,10 @@ from pathlib import Path
 
 _CHUNK = 1 << 20
 
+# Joins the manifest's fields. A NUL cannot occur in a path or a hex digest,
+# so no combination of field values can be mistaken for a different listing.
+_SEPARATOR = chr(0)
+
 
 class ModelShare:
     """One model directory, offered to the phone as a manifest plus files."""
@@ -73,7 +77,14 @@ class ModelShare:
         return value
 
     def manifest(self) -> dict:
-        """What the phone needs to fetch, and how to know it arrived intact."""
+        """What the phone needs to fetch, and how to know it arrived intact.
+
+        ``digest`` identifies this exact set of files.  Without it the phone
+        can only ask "do I have a model", which is the wrong question the day
+        the model is replaced by a better one: it would keep using the copy it
+        downloaded once and never notice.  With it, one cheap request tells the
+        phone whether what it has is still what the PC is offering.
+        """
         files = []
         total = 0
         for path in self._files():
@@ -87,9 +98,17 @@ class ModelShare:
                 "sha256": self._digest(path, stat),
             })
             total += stat.st_size
+        # Over the listing rather than the bytes: the per-file digests are
+        # already the bytes' identity, and this stays cheap to recompute.
+        summary = hashlib.sha256()
+        for item in files:
+            summary.update(_SEPARATOR.join(
+                (item["path"], str(item["size"]), item["sha256"], "")
+            ).encode("utf-8"))
         return {
             "name": self.name,
             "available": bool(files),
+            "digest": summary.hexdigest() if files else "",
             "files": files,
             "total_bytes": total,
         }

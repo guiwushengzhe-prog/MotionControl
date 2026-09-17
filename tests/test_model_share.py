@@ -120,3 +120,40 @@ def test_digests_are_not_recomputed_for_unchanged_files(model, monkeypatch):
     monkeypatch.setattr(type(model.root), "open", counting_open)
     model.manifest()
     assert opened == []
+
+
+# --- telling one model from another ---------------------------------------
+#
+# 换一个更大更好的模型时，手机必须发现"我手上这份不是电脑现在给的那份"。只问
+# "有没有模型"会让它抱着几个月前下的那份不放。
+
+
+def test_the_manifest_identifies_the_exact_set_of_files(model):
+    assert len(model.manifest()["digest"]) == 64
+
+
+def test_editing_any_file_changes_the_manifest_digest(model):
+    before = model.manifest()["digest"]
+    (model.root / "conf" / "model.conf").write_text("--min-active=400", encoding="utf-8")
+    assert model.manifest()["digest"] != before
+
+
+def test_adding_a_file_changes_the_manifest_digest(model):
+    before = model.manifest()["digest"]
+    (model.root / "graph").mkdir()
+    (model.root / "graph" / "HCLr.fst").write_bytes(b"graph")
+    assert model.manifest()["digest"] != before
+
+
+def test_removing_a_file_changes_the_manifest_digest(model):
+    before = model.manifest()["digest"]
+    (model.root / "README").unlink()
+    assert model.manifest()["digest"] != before
+
+
+def test_an_unchanged_model_keeps_its_digest(model):
+    assert model.manifest()["digest"] == model.manifest()["digest"]
+
+
+def test_a_missing_model_has_no_digest(tmp_path):
+    assert ModelShare("gone", tmp_path / "nowhere").manifest()["digest"] == ""
