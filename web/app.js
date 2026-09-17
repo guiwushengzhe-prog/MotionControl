@@ -1239,26 +1239,33 @@ async function refreshCustomPoses({ rebuild = true } = {}) {
 /** 倒计时期间可以取消——按错了不用等它数完。 */
 let customPoseCountdown = null;
 
-async function captureCustomPose() {
-  const button = document.getElementById('customPoseCaptureBtn');
+/**
+ * 倒数几秒再执行。人要从电脑前走到镜头前摆好姿势，点完立刻拍等于拍到一个走路的
+ * 背影。数字在按钮上放大显示：这时候人站在几米外，小字看不见。
+ *
+ * 返回 false 表示被取消了。
+ */
+async function withCountdown(button, label, action) {
   if (customPoseCountdown) {  // 再点一次 = 取消
     clearTimeout(customPoseCountdown);
     customPoseCountdown = null;
-    button.textContent = '录下当前姿势';
-    button.classList.remove('counting');
+    document.querySelectorAll('.counting').forEach(el => {
+      el.classList.remove('counting');
+      el.textContent = el.dataset.label || el.textContent;
+    });
     customPoseSay('已取消');
-    return;
+    return false;
   }
 
-  // 人要从电脑前走到镜头前再摆好姿势，点完立刻拍等于拍到一个走路的背影。
   const seconds = Number(document.getElementById('customPoseDelay')?.value || 3);
-  const nameInput = document.getElementById('customPoseName');
+  button.dataset.label = label;
   button.classList.add('counting');
 
-  await new Promise(resolve => {
+  const finished = await new Promise(resolve => {
     let left = seconds;
     const tick = () => {
-      if (left <= 0) { customPoseCountdown = null; resolve(); return; }
+      if (!button.classList.contains('counting')) { resolve(false); return; }
+      if (left <= 0) { customPoseCountdown = null; resolve(true); return; }
       button.textContent = String(left);
       customPoseSay(`${left} 秒后拍下当前姿势，摆好别动（再点一次取消）`);
       left -= 1;
@@ -1267,22 +1274,54 @@ async function captureCustomPose() {
     tick();
   });
 
-  button.textContent = '录下当前姿势';
   button.classList.remove('counting');
+  button.textContent = label;
+  if (!finished) return false;
+
   button.disabled = true;
   customPoseSay('正在读取当前姿势…');
   try {
-    const data = await post('/api/pose/custom/capture', { name: nameInput.value || '' });
-    nameInput.value = '';
-    customPoses = data.poses || [];
-    customPoseSay('已录「' + data.pose.name + '」。下面是拍到的骨架，'
-      + '不对就删掉重录；对了就到上面的映射列表里给它绑一个按键。');
-    renderCustomPoses();
-    renderProfileBindingRows();
+    await action();
   } catch (error) {
     customPoseSay(error.message, 'error');
   } finally {
     button.disabled = false;
+  }
+  return true;
+}
+
+function applyPoses(data) {
+  customPoses = data.poses || [];
+  renderCustomPoses();
+  renderProfileBindingRows();
+}
+
+async function captureCustomPose() {
+  const button = document.getElementById('customPoseCaptureBtn');
+  const nameInput = document.getElementById('customPoseName');
+  await withCountdown(button, '录下当前姿势', async () => {
+    const data = await post('/api/pose/custom/capture', { name: nameInput.value || '' });
+    nameInput.value = '';
+    applyPoses(data);
+    customPoseSay('已录「' + data.pose.name + '」。下面是拍到的骨架，不对就删掉重录。'
+      + '想做成连贯动作，摆下一个姿势再点「加一帧」。');
+  });
+}
+
+async function appendCustomPoseFrame(item, button) {
+  await withCountdown(button, '加一帧', async () => {
+    const data = await post('/api/pose/custom/frame', { id: item.id });
+    applyPoses(data);
+    customPoseSay(`「${data.pose.name}」现在有 ${data.pose.frames} 帧，`
+      + '要按顺序依次做出来才会触发。');
+  });
+}
+
+async function removeCustomPoseFrame(item, index) {
+  try {
+    applyPoses(await post('/api/pose/custom/frame/remove', { id: item.id, index }));
+  } catch (error) {
+    customPoseSay(error.message, 'error');
   }
 }
 
@@ -1405,19 +1444,64 @@ function renderCustomPoses() {
     remove.textContent = '删除';
     remove.addEventListener('click', () => removeCustomPose(item));
 
+    // 关键帧一排。多于一帧就是连贯动作，要按顺序依次做出来。
+    const strip = document.createElement('div');
+    strip.className = 'pose-strip';
+    (item.previews || []).forEach((preview, index) => {
+      if (index) {
+        const arrow = document.createElement('span');
+        arrow.className = 'pose-arrow';
+        arrow.textContent = '→';
+        strip.appendChild(arrow);
+      }
+      const cell = document.createElement('div');
+      cell.className = 'pose-cell';
+      // 当前等着的那一帧高亮：动作断在哪一步，用户一眼能看见。
+      if (item.frames > 1 && index === item.step) cell.classList.add('awaiting');
+      cell.appendChild(poseThumbnail(preview));
+      if (item.frames > 1) {
+        const drop = document.createElement('button');
+        drop.className = 'pose-drop';
+        drop.type = 'button';
+        drop.textContent = '×';
+        drop.title = `删掉第 ${index + 1} 帧`;
+        drop.addEventListener('click', () => removeCustomPoseFrame(item, index));
+        cell.appendChild(drop);
+      }
+      strip.appendChild(cell);
+    });
+
+    const addFrame = document.createElement('button');
+    addFrame.className = 'btn pose-add';
+    addFrame.type = 'button';
+    addFrame.textContent = '加一帧';
+    addFrame.title = '摆好下一个姿势再点，做成连贯动作';
+    addFrame.addEventListener('click', () => appendCustomPoseFrame(item, addFrame));
+    strip.appendChild(addFrame);
+
     const head = document.createElement('div');
     head.className = 'custom-pose-head';
-    head.append(poseThumbnail(item.preview), name, meter);
+    head.append(name, meter);
 
     const tools = document.createElement('div');
     tools.className = 'custom-pose-tools';
     tools.append(
       customPoseSlider('阈值 ', threshold, v => v + '%'),
       // 帧数对用户没有意义，换算成秒。30fps 是相机的常见帧率。
-      customPoseSlider('停留 ', dwell, v => (v / 30).toFixed(2) + ' 秒'),
-      enabled, remove);
+      customPoseSlider(item.frames > 1 ? '最后一帧停留 ' : '停留 ', dwell,
+                       v => (v / 30).toFixed(2) + ' 秒'));
+    if (item.frames > 1) {
+      const window_ = document.createElement('input');
+      window_.type = 'range';
+      window_.min = '3'; window_.max = '100'; window_.step = '1';  // 0.3 ~ 10 秒
+      window_.value = String(Math.round(item.step_window_s * 10));
+      window_.addEventListener('change', () =>
+        updateCustomPose(item.id, { step_window_s: Number(window_.value) / 10 }));
+      tools.append(customPoseSlider('每步时限 ', window_, v => (v / 10).toFixed(1) + ' 秒'));
+    }
+    tools.append(enabled, remove);
 
-    row.append(head, tools);
+    row.append(strip, head, tools);
     customPoseListEl.appendChild(row);
   }
   paintCustomPoseScores();
