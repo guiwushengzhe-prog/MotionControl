@@ -223,3 +223,63 @@ def weakest_segments(result: dict, limit: int = 3) -> list[tuple[str, float]]:
     if not isinstance(segments, dict):
         return []
     return sorted(segments.items(), key=lambda item: item[1])[:limit]
+
+
+# --- 录下来那一瞬间长什么样 ----------------------------------------------------
+#
+# 模板本身只有方向向量，画不出人形——那是刻意的，位置和体型必须被消掉才能比对。
+# 但用户需要认出"这个是哪个姿势"，光看名字不够。所以另存一份用于显示的骨架点。
+#
+# 存点而不是存照片：摄像头在手机上时，电脑这边根本没有画面；骨架点则一定有，
+# 而且只有几百字节，跟着配置走到别的机器上也画得出来。
+
+PREVIEW_POINTS = (
+    "nose",
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist",
+    "left_hip", "right_hip", "left_knee", "right_knee",
+    "left_ankle", "right_ankle",
+)
+
+# 连线。放在共享包里，桌面和云端画出来的是同一个人形。
+PREVIEW_BONES = (
+    ("left_shoulder", "right_shoulder"),
+    ("left_shoulder", "left_hip"), ("right_shoulder", "right_hip"),
+    ("left_hip", "right_hip"),
+    ("left_shoulder", "left_elbow"), ("left_elbow", "left_wrist"),
+    ("right_shoulder", "right_elbow"), ("right_elbow", "right_wrist"),
+    ("left_hip", "left_knee"), ("left_knee", "left_ankle"),
+    ("right_hip", "right_knee"), ("right_knee", "right_ankle"),
+)
+
+
+def build_preview(pose: dict) -> dict | None:
+    """录制瞬间的骨架，缩放到 0~1 的框里，只用于显示。
+
+    按可见点的外接矩形等比缩放居中：人站在画面哪个角落、占多大，缩略图里都一样大。
+    不等比的话，站远时人会被拉成一条细线。
+    """
+    points: dict[str, tuple[float, float]] = {}
+    for name in PREVIEW_POINTS:
+        position = _xy(pose, name)
+        if position is not None and _score(pose, name) >= MIN_SCORE:
+            points[name] = position
+    if len(points) < 4:
+        return None
+
+    xs = [x for x, _ in points.values()]
+    ys = [y for _, y in points.values()]
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+    # 等比：取长边当基准，短边居中。
+    span = max(width, height, 1e-6)
+    offset_x = (span - width) / 2.0
+    offset_y = (span - height) / 2.0
+
+    return {
+        "points": {name: [round((x - min(xs) + offset_x) / span, 4),
+                          round((y - min(ys) + offset_y) / span, 4)]
+                   for name, (x, y) in points.items()},
+        "bones": [list(bone) for bone in PREVIEW_BONES
+                  if bone[0] in points and bone[1] in points],
+    }

@@ -170,3 +170,14 @@ dialog::backdrop { background: #030812dc; }
 .custom-pose-tools label{display:flex;align-items:center;gap:.4rem}
 .custom-pose-tools input[type=range]{width:8rem}
 .custom-pose-value{min-width:3.5rem;font-variant-numeric:tabular-nums}
+
+/* 录制倒计时：人站在镜头前，几米外要看得见，所以数字要大。 */
+#customPoseCaptureBtn.counting{font-size:1.6em;font-weight:700;min-width:4.5rem;
+  font-variant-numeric:tabular-nums}
+/* 录制瞬间的骨架缩略图。名字记不住那么多，靠它认出是哪个姿势。 */
+.pose-thumb{flex:0 0 3.2rem;width:3.2rem;height:3.2rem;border-radius:6px;
+  background:rgba(127,127,127,.12)}
+.pose-thumb line{stroke:currentColor;stroke-width:2.4;stroke-linecap:round;opacity:.55}
+.pose-thumb circle{fill:currentColor;opacity:.85}
+.pose-thumb.empty{opacity:.3}
+.custom-pose.firing .pose-thumb{color:#39c07a}

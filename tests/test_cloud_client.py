@@ -196,3 +196,26 @@ def test_backup_copies_the_syncable_files_and_nothing_else(tmp_path):
 
 def test_backup_of_an_empty_directory_reports_nothing_to_do(tmp_path):
     assert backup_user_data(tmp_path) is None
+
+
+def test_the_desktop_default_endpoint_matches_the_deploy_config():
+    """桌面端默认连的地址，必须和部署脚本里配的对外地址是同一个。
+
+    这两处不一致过：子域名定下来之前 server.py 先写了 config.，实际定的是
+    motioncontrol.，结果桌面端一直报 getaddrinfo failed——不是连不上，是那个域名
+    根本不存在。错得很安静，只有真的去点一下才会发现。
+
+    读源码而不是 import server：那个 import 会把整个控制内核和输出后端都拉起来，
+    为了核对一行字符串不值得。
+    """
+    import re
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parent.parent
+    desktop = re.search(r'DEFAULT_CLOUD_ENDPOINT = "([^"]+)"',
+                        (repo / "server.py").read_text(encoding="utf-8"))
+    deploy = re.search(r'SITE_ORIGIN=\$\{SITE_ORIGIN:-([^}]+)\}',
+                       (repo / "cloud" / "deploy" / "bootstrap.sh").read_text(encoding="utf-8"))
+    assert desktop and deploy, "两边的常量都要能找得到"
+    assert desktop.group(1) == deploy.group(1), (
+        f"桌面端默认连 {desktop.group(1)}，而部署到的是 {deploy.group(1)}")

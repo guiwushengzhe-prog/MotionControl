@@ -75,7 +75,7 @@ python -m uvicorn cloud.app.main:app --host 127.0.0.1 --port 8000
 **用 Caddy，不要装 nginx。** 计划书里原本写的是 nginx + certbot，但目标服务器上 Caddy 已经占着 80/443 并在服务 `guiwu-aware.icu`，再装 nginx 会抢端口。Caddy 自带自动 HTTPS，不需要 certbot。加一段即可：
 
 ```
-config.guiwu-aware.icu {
+motioncontrol.guiwu-aware.icu {
 	reverse_proxy 127.0.0.1:8000
 }
 ```

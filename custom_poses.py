@@ -27,7 +27,7 @@ import os
 import time
 from pathlib import Path
 
-from motioncontrol_shared.pose_template import build_template, compare
+from motioncontrol_shared.pose_template import build_preview, build_template, compare
 
 SCHEMA = "motioncontrol.custom_poses.v1"
 
@@ -114,6 +114,9 @@ class CustomPoseStore:
             "id": self._next_id(),
             "name": clean or f"姿势 {len(self.poses) + 1}",
             "template": template,
+            # 录下来那一瞬间的骨架，只用于显示。模板里只有方向向量，画不出人形，
+            # 而用户要靠看图认出"这是哪个姿势"——名字记不住那么多。
+            "preview": build_preview(pose_map),
             "threshold": DEFAULT_THRESHOLD,
             "dwell_frames": DEFAULT_DWELL_FRAMES,
             "enabled": True,
@@ -178,10 +181,15 @@ class CustomPoseStore:
         return results
 
     def status(self) -> list[dict]:
-        """给界面看的列表。不含模板本身——那是几十个浮点数，界面用不上。"""
+        """给界面看的列表。
+
+        不含模板本身——那是十几个浮点数，界面用不上。但含 preview：那是用户认出
+        "这是哪个姿势"的唯一凭据，几百字节，值得发。
+        """
         return [{
             "id": entry["id"],
             "name": entry["name"],
+            "preview": entry.get("preview"),
             "threshold": entry.get("threshold", DEFAULT_THRESHOLD),
             "dwell_frames": entry.get("dwell_frames", DEFAULT_DWELL_FRAMES),
             "enabled": bool(entry.get("enabled", True)),

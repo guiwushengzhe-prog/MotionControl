@@ -264,7 +264,10 @@ DEFAULT_MOTIONS = [
 # now -- these routes fail and no other code path notices.
 
 CLOUD_ENDPOINT_FILE = user_path("cloud_endpoint")
-DEFAULT_CLOUD_ENDPOINT = "https://config.guiwu-aware.icu"
+# 必须和 cloud/deploy/bootstrap.sh 的 SITE_ORIGIN 一致。这两处曾经不一致过：
+# 子域名定下来之前这里先写了 config.，定的却是 motioncontrol.，于是桌面端一直
+# 报 getaddrinfo failed——域名根本没解析。tests/test_cloud_client.py 现在会核对。
+DEFAULT_CLOUD_ENDPOINT = "https://motioncontrol.guiwu-aware.icu"
 
 
 def cloud_endpoint() -> str:
