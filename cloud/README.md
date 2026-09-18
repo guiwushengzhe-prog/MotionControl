@@ -17,7 +17,7 @@ desktop → motioncontrol_shared ← cloud
 ```bash
 pip install -r cloud/requirements.txt
 
-export MC_DB_URL="sqlite+aiosqlite:///F:/MotionControl-App/cloud/cloud.db"
+export MC_DB_URL="sqlite+aiosqlite:///cloud/cloud.db"   # 相对仓库根目录
 export MC_SECRET_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
 
 python -m alembic -c cloud/alembic.ini upgrade head   # 建表，独立一步
