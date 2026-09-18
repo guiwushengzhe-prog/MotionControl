@@ -195,3 +195,30 @@ I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full_compatible_07
 原始 `pose_landmarker_full.task` 保留不覆盖；服务找不到兼容副本时才回退到原始文件。
 
 如果 8765 或 8766 已被旧的 MotionControl 实例占用，启动窗口会指明是哪一个面并退出当前实例；不会自动结束旧进程，可先关闭旧实例，或用 `--port` / `--admin-port` 分别指定其他端口。
+
+## 许可证
+
+Copyright (C) 2026 guiwushengzhe
+
+本项目采用 **GNU Affero General Public License v3.0**（AGPL-3.0），完整条文见
+[LICENSE](LICENSE)。
+
+简单说：你可以自由使用、研究、修改和分发这份代码。但如果你分发修改版，或者
+把修改版当成网络服务给别人用（AGPL 第 13 条，这是它和 GPL 的唯一区别），你
+必须同样以 AGPL-3.0 公开你那份的完整源码。
+
+    This program is free software: you can redistribute it and/or modify it
+    under the terms of the GNU Affero General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or (at
+    your option) any later version.
+
+    This program is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Affero
+    General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+第三方组件各自遵循自己的许可证，不受本项目许可证影响：ViGEmBus（BSD-3-Clause，
+随发布包附 `LICENSE-ViGEmBus.txt`）、MediaPipe（Apache-2.0）、Vosk（Apache-2.0）。

@@ -1,243 +1,252 @@
-:root {
-  color-scheme: dark;
-  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
-  color: #edf3f8;
-  background: #0b1118;
-  --panel: #131d29;
-  --line: #2b3a4b;
-  --muted: #a0b0c0;
-  --accent: #67b8ee;
-}
-* { box-sizing: border-box; }
-[hidden] { display: none !important; }
-body { margin: 0; font-size: 14px; line-height: 1.55; }
-html { scroll-padding-top: 240px; }
-.wrap { max-width: 1440px; margin: auto; padding: 0 24px 28px; }
-h1, h2, h3, p { margin: 0 0 12px; }
-h1 { font-size: 24px; margin: 0; }
-h1 small { color: var(--accent); font-size: 13px; }
-h2 { font-size: 19px; }
-h3, .title { font-size: 16px; font-weight: 700; }
-.tagline, .muted, .profile-meta, .section-sub, .viewer-note { color: var(--muted); font-size: 13px; }
-.lede { margin: 0 0 8px; font-size: 13.5px; }
-.fineprint { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
-.lede-list { margin: 0 0 12px; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
-.lede-list li { margin-bottom: 3px; }
-.lede-list b { color: #edf3f8; }
-.profile-unverified { margin: 6px 0 0; padding: 8px 10px; border-left: 3px solid #d08a2a; background: rgba(208,138,42,.10); color: #e0b878; font-size: 12px; line-height: 1.6; border-radius: 0 6px 6px 0; }
-.command-dock { position: sticky; top: 0; z-index: 20; padding-bottom: 12px; background: #0b1118f5; border-bottom: 1px solid var(--line); }
-.top { display: flex; align-items: center; gap: 20px; min-height: 80px; }
-.brand { margin-right: auto; }
-nav { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; }
-nav [aria-current] { background: #203b53; border-color: var(--accent); }
-.view-hint { color: var(--muted); font-size: 12.5px; }
-.session-bar { display: grid; grid-template-columns: 1fr minmax(320px, 1fr); align-items: center; gap: 16px; }
-#currentGameName { font-size: 19px; font-weight: 700; }
-.main-action-btn { width: 100%; min-height: 46px; font-size: 17px; }
-#mainActionStatus { margin-top: 5px; color: var(--muted); font-size: 13px; }
-button, select, input { font: inherit; }
-.btn, select, input:not([type=checkbox]):not([type=range]) { border: 1px solid var(--line); border-radius: 9px; background: #1c2938; color: inherit; padding: 9px 12px; min-height: 42px; }
-button { cursor: pointer; }
-button:hover { filter: brightness(1.18); }
-button:disabled { opacity: .5; cursor: default; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.primary { background: #266aa9; border-color: #548dc0; }
-.danger { background: #722d39; border-color: #c46672; }
-.safe { background: #226243; border-color: #428d65; }
-input[type=range] { width: 100%; accent-color: var(--accent); }
-input[type=checkbox] { accent-color: var(--accent); }
-label { display: block; color: #cbd7e2; }
-label select { display: block; width: 100%; margin-top: 5px; }
-.notice { margin: 14px 0; padding: 12px 16px; background: #342c1b; border: 1px solid #66552b; border-radius: 10px; }
-main { padding-top: 20px; }
-.layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
-.card, .settings-section { padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
-.viewer-heading, .viewer-foot, .health-strip, .settings-actions, .profile-actions, .quick-tools, .dialog-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
-.viewer-heading { justify-content: space-between; margin-bottom: 12px; }
-.viewer-heading h2 { margin: 0; }
-.eyebrow { color: var(--accent); font-size: 12px; }
-.viewer { position: relative; aspect-ratio: 4/3; background: #05090d; border-radius: 10px; overflow: hidden; }
-.viewer img, .viewer canvas, .zones { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
-.viewer img { object-fit: fill; }
-.zones { pointer-events: none; }
-/* Follow-mode regions are rectangles in the kernel's own hit test, so draw them
-   as rectangles.  An inscribed ellipse hides about a fifth of the real trigger
-   area and hides all of it in the corners, which is exactly where the hand
-   regions reach.  Fixed-scene regions are true circles and opt in through
-   .circle-shape, which renderKernelZones already sets; the overlay canvas has
-   always drawn the two shapes apart. */
-.zone { display: none; position: absolute; border: 2px solid #67b8ee; background: #24608b33; border-radius: 14px; transform: scaleX(-1); place-content: center; text-align: center; line-height: 1.2; container-type: size; }
-.zone.circle-shape { border-radius: 50%; }
-/* The button name is what the player glances at mid-game, so size it from the
-   region rather than fixing it: regions differ several-fold in size. cqmin
-   follows the shorter side, so the text stays inside narrow and short regions
-   alike, and the clamp keeps it legible in the smallest one and sane in the
-   largest. */
-.zone strong { display: block; font-size: clamp(15px, 30cqmin, 54px); line-height: 1; letter-spacing: .02em; text-shadow: 0 2px 6px #000000b0; }
-.zone small { display: block; font-size: clamp(10px, 11cqmin, 18px); opacity: .85; }
-.zone.hand-right { border-color: #e6a164; }
-.zone.foot { border-color: #b599e0; }
-.zone.head-jump { border-color: #e7cb70; }
-.zone.look-gate { border: 2px dashed #6ade98; border-radius: 12px; }
-.zone.active { background: #c54b6266; border-color: #ff8c9b; }
-.zone-editing .zone { pointer-events: auto; cursor: grab; touch-action: none; }
-.zone:focus { outline: 3px solid white; }
-.hint { position: absolute; bottom: 10px; left: 10px; padding: 7px 10px; border-radius: 7px; background: #080e17dc; font-size: 12px; pointer-events: none; }
-.viewer-foot, .trigger-summary { margin-top: 10px; }
-.statusline, .look-gate-status { color: var(--muted); font-size: 13px; }
-.pill, .trigger-chip, .key, .shoulder-key { display: inline-block; padding: 4px 7px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: 12px; }
-.ok, .active { color: #90e8b3; border-color: #398257; }
-.bad, .warn { color: #ebbc99; }
-.trigger-summary { display: flex; flex-wrap: wrap; gap: 6px; }
-.mini-pad { display: flex; gap: 4px; }
-.steps { padding-left: 25px; margin: 0; }
-.steps li { padding: 0 0 17px 3px; }
-.steps .health-strip { margin-top: 8px; }
-.checklist { list-style: none; margin: 0; padding: 0; }
-.checklist li { padding: 0 0 14px; }
-.checklist li + li { padding-top: 14px; border-top: 1px solid var(--line); }
-.check-line { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
-.check-line b { flex: 1; font-size: 14.5px; }
-.check-num { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%;
-  background: #203b53; color: var(--accent); font-size: 12px; font-weight: 700; }
-.checklist .fineprint { margin: 0 0 6px 30px; }
-.checklist .health-strip, .checklist .quick-tools { margin-left: 30px; }
-/* 设置本身都没错、组合起来却静默失效——那种坏法要在玩家正看着的地方点名。 */
-.conflicts { margin-top: 4px; }
-.conflict { display: flex; align-items: center; gap: 9px; margin-top: 8px; padding: 9px 11px;
-  border: 1px solid #7a5a2a; border-radius: 8px; background: #241c10; font-size: 12.5px; }
-.conflict span { flex: 1; }
-.section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
-.settings-grid, .controls, .advgrid, .scene-zone-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.settings-grid { align-items: start; }
-.group-head { grid-column: 1 / -1; margin: 6px 0 0; padding-bottom: 6px;
-  border-bottom: 1px solid var(--line); font-size: 13px; letter-spacing: 2px; color: var(--muted); }
-.group-head:first-child { margin-top: 0; }
-/* 一组里只有一块时占满整行，否则旁边就是一整屏空白——口令列表能有一千多像素高。 */
-.settings-section.wide { grid-column: 1 / -1; }
-.settings-section { margin-bottom: 16px; }
-.settings-actions, .profile-actions { margin: 12px 0; }
-.slider, .checkrow, #phoneGuide { margin-top: 16px; }
-.checkrow { display: flex; gap: 12px; flex-wrap: wrap; }
-.profile-bar { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 10px; }
-.profile-bar select, .profile-bar input { width: 100%; min-width: 0; }
-.profile-game-name { font-size: 22px; }
-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-summary { cursor: pointer; padding: 8px 0; font-weight: 700; }
-.binding-group { margin-top: 12px; }
-.binding-group-help { color: var(--muted); margin-bottom: 10px; }
-.binding-group-rows { display: grid; gap: 8px; }
-.binding-row { display: grid; grid-template-columns: 1.2fr 1fr 1.2fr 1fr; align-items: center; gap: 12px; padding: 10px; background: #0d151f; border-radius: 9px; border: 1px solid var(--line); }
-.binding-row input, .binding-row select { width: 100%; min-width: 0; }
-.motion-conflict-note { grid-column: 1/-1; color: #ebbc99; }
-.motion-conflict-blocked { opacity: .65; }
-.motion-conflict-error { border-color: #d48389; }
-.voice-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr auto; gap: 10px; margin: 10px 0; }
-.voice-row input, .voice-row select { width: 100%; min-width: 0; }
-/* The gamepad picker adds a second control for combos; it stays hidden until
-   the combo option is chosen, so the cell normally holds one row. */
-.voice-target-cell { display: grid; gap: 6px; min-width: 0; align-content: start; }
-.combo-picker { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
-.combo-picker label { display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
-.combo-picker input { width: auto; min-height: 0; }
-.voice-command-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.voice-command-card { padding: 12px; background: #1c2938; border-radius: 9px; }
-.voice-command-card small { display: block; color: var(--muted); }
-.voice-group { margin: 16px 0; }
-.perf-details, .diagnostic-text, .model-path { white-space: pre-line; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
-.zone-edit-bar { margin-top: 14px; }
-dialog { background: var(--panel); color: inherit; border: 1px solid var(--line); border-radius: 16px; padding: 24px; width: min(900px, 94vw); max-height: 88vh; }
-dialog::backdrop { background: #030812dc; }
-.dialog-head { justify-content: space-between; }
-.calibration-card { text-align: center; padding: 18px; }
-.calibration-stage { font-size: 32px; }
-.calibration-prompt { font-size: 23px; }
-.calibration-countdown { font-size: 72px; color: #e7cb70; }
-.calibration-progress { height: 12px; background: #263647; border-radius: 6px; overflow: hidden; }
-#calibrationProgressBar { height: 100%; background: #67b8ee; }
-.calibration-detail { margin: 15px 0; }
-.calibration-cancel { padding: 12px 24px; border-radius: 9px; background: #722d39; border: 1px solid #c46672; color: white; font: inherit; }
-@media (max-width: 760px) {
-  .wrap { padding: 0 12px 20px; }
-  .top { gap: 8px; flex-wrap: wrap; padding: 10px 0; }
-  #serviceStatus { order: 3; width: 100%; }
-  .session-bar { grid-template-columns: 1fr 1fr; }
-  .layout, .settings-grid { grid-template-columns: 1fr; }
-  .control-card { order: -1; }
-  .binding-row, .voice-command-grid { grid-template-columns: 1fr 1fr; }
-  .voice-row { grid-template-columns: 1fr 1fr; }
-}
-
-/* 云端配置列表：一行一份，名字在左、安装按钮在右。 */
-.cloud-row{align-items:center;gap:.75rem;justify-content:space-between}
-.cloud-row-label{display:flex;flex-direction:column;gap:.15rem;min-width:0}
-.cloud-row-label span{font-size:.85em}
-#cloudList:empty{display:none}
-#cloudList{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem}
-
-/* 自定义姿势：一行一个，名字 + 实时相似度条，下面是阈值/停留/启用/删除。 */
-#customPoseList{display:flex;flex-direction:column;gap:.6rem;margin-top:.6rem}
-/* 两列：左边是关键帧，右边是名字+相似度和那排参数。
-   原来三样各占一行，图右边整片空着，行还被撑得很高。 */
-.custom-pose{
-  display:grid;
-  grid-template-columns:auto minmax(0,1fr);
-  column-gap:.9rem;row-gap:.45rem;align-items:start;
-  padding:.6rem .75rem;border:1px solid var(--line,#2a2e35);border-radius:8px}
-.custom-pose.hit{border-color:#4c8dff}
-.custom-pose.firing{border-color:#39c07a;box-shadow:0 0 0 1px #39c07a inset}
-.custom-pose-head{grid-column:2;align-self:center;display:flex;align-items:center;gap:.75rem}
-.custom-pose-name{flex:0 0 8.5rem;font-weight:600}
-/* 相似度条。用户摆姿势时盯的就是它，所以给足宽度。 */
-/* 相似度条由一个开关控制，默认关。
-   做动作的人站在几米外，够不着鼠标——所以不能用 hover 或 focus 触发：那两个恰好
-   在最需要看它的时刻都不成立。开关是走开之前按一下，回来再按一下。 */
-.custom-pose-meter{position:relative;flex:1;height:1.35rem;border-radius:4px;
-  background:rgba(127,127,127,.18);overflow:hidden;
-  opacity:0;transition:opacity .12s}
-#customPoseList.show-scores .custom-pose-meter{opacity:1}
-#customPoseScoresBtn.on{background:var(--accent,#4c8dff);border-color:var(--accent,#4c8dff);color:#fff}
-.custom-pose-fill{position:absolute;inset:0 auto 0 0;background:#4c8dff;opacity:.45;
-  transition:width .08s linear}
-.custom-pose.firing .custom-pose-fill{background:#39c07a;opacity:.6}
-.custom-pose-score{position:relative;display:block;text-align:center;
-  line-height:1.35rem;font-size:.82em;font-variant-numeric:tabular-nums}
-.custom-pose-tools{grid-column:2;align-self:center;
-  display:flex;flex-wrap:wrap;align-items:center;gap:1rem;font-size:.85em}
-.custom-pose-tools label{display:flex;align-items:center;gap:.4rem}
-.custom-pose-tools input[type=range]{width:8rem}
-.custom-pose-value{min-width:3.5rem;font-variant-numeric:tabular-nums}
-
-/* 录制倒计时：人站在镜头前，几米外要看得见，所以数字要大。 */
-#customPoseCaptureBtn.counting{font-size:1.6em;font-weight:700;min-width:4.5rem;
-  font-variant-numeric:tabular-nums}
-/* 录制瞬间的骨架缩略图。名字记不住那么多，靠它认出是哪个姿势。 */
-/* 5.6rem 而不是 3.2：这张图是用户认出"这是哪个姿势"的唯一凭据，小了就只是
-   一团线。SVG 用的是 viewBox，线宽和点径跟着一起放大，不用另调。 */
-.pose-thumb{flex:0 0 5.6rem;width:5.6rem;height:5.6rem;border-radius:8px;
-  background:rgba(127,127,127,.12)}
-.pose-thumb line{stroke:currentColor;stroke-width:2.4;stroke-linecap:round;opacity:.55}
-.pose-thumb circle{fill:currentColor;opacity:.85}
-.pose-thumb.empty{opacity:.3}
-.custom-pose.firing .pose-thumb{color:#39c07a}
-
-/* 关键帧一排：一帧是静态姿势，多帧要按顺序依次做出来。 */
-/* 关键帧占满左列的两行，右边两行才贴得上来。
-   限宽是为了多帧时不把右边挤没——超过就在自己这一列里换行。 */
-.pose-strip{grid-row:1 / span 2;grid-column:1;
-  display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;max-width:19rem}
-.pose-cell{position:relative;line-height:0}
-/* 当前等着的那一帧。动作断在哪一步，一眼能看见。 */
-.pose-cell.awaiting .pose-thumb{outline:2px solid #4c8dff;outline-offset:1px}
-.pose-arrow{color:var(--muted,#9aa3af);font-size:.9em}
-.pose-drop{position:absolute;top:-7px;right:-7px;width:1.3rem;height:1.3rem;padding:0;
-  line-height:1;border-radius:50%;border:none;background:#8a2b2b;color:#fff;
-  font-size:.85rem;cursor:pointer;opacity:0;transition:opacity .1s}
-.pose-cell:hover .pose-drop{opacity:1}
-.pose-add{padding:.25rem .6rem;font-size:.8em}
-
-/* 配置名就是去网站看详情的入口。 */
-.cloud-row-title{font-weight:600;cursor:pointer;text-decoration:none}
-.cloud-row-title:hover{text-decoration:underline}
-
-
+:root {
+  color-scheme: dark;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  color: #edf3f8;
+  background: #0b1118;
+  --panel: #131d29;
+  --line: #2b3a4b;
+  --muted: #a0b0c0;
+  --accent: #67b8ee;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font-size: 14px; line-height: 1.55; }
+html { scroll-padding-top: 240px; }
+.wrap { max-width: 1440px; margin: auto; padding: 0 24px 28px; }
+h1, h2, h3, p { margin: 0 0 12px; }
+h1 { font-size: 24px; margin: 0; }
+h1 small { color: var(--accent); font-size: 13px; }
+h2 { font-size: 19px; }
+h3, .title { font-size: 16px; font-weight: 700; }
+.tagline, .muted, .profile-meta, .section-sub, .viewer-note { color: var(--muted); font-size: 13px; }
+.lede { margin: 0 0 8px; font-size: 13.5px; }
+.fineprint { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+.lede-list { margin: 0 0 12px; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
+.lede-list li { margin-bottom: 3px; }
+.lede-list b { color: #edf3f8; }
+.profile-unverified { margin: 6px 0 0; padding: 8px 10px; border-left: 3px solid #d08a2a; background: rgba(208,138,42,.10); color: #e0b878; font-size: 12px; line-height: 1.6; border-radius: 0 6px 6px 0; }
+.command-dock { position: sticky; top: 0; z-index: 20; padding-bottom: 12px; background: #0b1118f5; border-bottom: 1px solid var(--line); }
+.top { display: flex; align-items: center; gap: 20px; min-height: 80px; }
+.brand { margin-right: auto; }
+nav { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; }
+nav [aria-current] { background: #203b53; border-color: var(--accent); }
+.view-hint { color: var(--muted); font-size: 12.5px; }
+.session-bar { display: grid; grid-template-columns: 1fr minmax(320px, 1fr); align-items: center; gap: 16px; }
+#currentGameName { font-size: 19px; font-weight: 700; }
+.main-action-btn { width: 100%; min-height: 46px; font-size: 17px; }
+#mainActionStatus { margin-top: 5px; color: var(--muted); font-size: 13px; }
+button, select, input { font: inherit; }
+.btn, select, input:not([type=checkbox]):not([type=range]) { border: 1px solid var(--line); border-radius: 9px; background: #1c2938; color: inherit; padding: 9px 12px; min-height: 42px; }
+button { cursor: pointer; }
+button:hover { filter: brightness(1.18); }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.primary { background: #266aa9; border-color: #548dc0; }
+.danger { background: #722d39; border-color: #c46672; }
+.safe { background: #226243; border-color: #428d65; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+input[type=checkbox] { accent-color: var(--accent); }
+label { display: block; color: #cbd7e2; }
+label select { display: block; width: 100%; margin-top: 5px; }
+.notice { margin: 14px 0; padding: 12px 16px; background: #342c1b; border: 1px solid #66552b; border-radius: 10px; }
+main { padding-top: 20px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
+.card, .settings-section { padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+.viewer-heading, .viewer-foot, .health-strip, .settings-actions, .profile-actions, .quick-tools, .dialog-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.viewer-heading { justify-content: space-between; margin-bottom: 12px; }
+.viewer-heading h2 { margin: 0; }
+.eyebrow { color: var(--accent); font-size: 12px; }
+.viewer { position: relative; aspect-ratio: 4/3; background: #05090d; border-radius: 10px; overflow: hidden; }
+.viewer img, .viewer canvas, .zones { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+.viewer img { object-fit: fill; }
+.zones { pointer-events: none; }
+/* Follow-mode regions are rectangles in the kernel's own hit test, so draw them
+   as rectangles.  An inscribed ellipse hides about a fifth of the real trigger
+   area and hides all of it in the corners, which is exactly where the hand
+   regions reach.  Fixed-scene regions are true circles and opt in through
+   .circle-shape, which renderKernelZones already sets; the overlay canvas has
+   always drawn the two shapes apart. */
+.zone { display: none; position: absolute; border: 2px solid #67b8ee; background: #24608b33; border-radius: 14px; transform: scaleX(-1); place-content: center; text-align: center; line-height: 1.2; container-type: size; }
+.zone.circle-shape { border-radius: 50%; }
+/* The button name is what the player glances at mid-game, so size it from the
+   region rather than fixing it: regions differ several-fold in size. cqmin
+   follows the shorter side, so the text stays inside narrow and short regions
+   alike, and the clamp keeps it legible in the smallest one and sane in the
+   largest. */
+.zone strong { display: block; font-size: clamp(15px, 30cqmin, 54px); line-height: 1; letter-spacing: .02em; text-shadow: 0 2px 6px #000000b0; }
+.zone small { display: block; font-size: clamp(10px, 11cqmin, 18px); opacity: .85; }
+.zone.hand-right { border-color: #e6a164; }
+.zone.foot { border-color: #b599e0; }
+.zone.head-jump { border-color: #e7cb70; }
+.zone.look-gate { border: 2px dashed #6ade98; border-radius: 12px; }
+.zone.active { background: #c54b6266; border-color: #ff8c9b; }
+.zone-editing .zone { pointer-events: auto; cursor: grab; touch-action: none; }
+.zone:focus { outline: 3px solid white; }
+.hint { position: absolute; bottom: 10px; left: 10px; padding: 7px 10px; border-radius: 7px; background: #080e17dc; font-size: 12px; pointer-events: none; }
+.viewer-foot, .trigger-summary { margin-top: 10px; }
+.statusline, .look-gate-status { color: var(--muted); font-size: 13px; }
+.pill, .trigger-chip, .key, .shoulder-key { display: inline-block; padding: 4px 7px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: 12px; }
+.ok, .active { color: #90e8b3; border-color: #398257; }
+.bad, .warn { color: #ebbc99; }
+.trigger-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.mini-pad { display: flex; gap: 4px; }
+.steps { padding-left: 25px; margin: 0; }
+.steps li { padding: 0 0 17px 3px; }
+.steps .health-strip { margin-top: 8px; }
+.checklist { list-style: none; margin: 0; padding: 0; }
+.checklist li { padding: 0 0 14px; }
+.checklist li + li { padding-top: 14px; border-top: 1px solid var(--line); }
+.check-line { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.check-line b { flex: 1; font-size: 14.5px; }
+.check-num { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%;
+  background: #203b53; color: var(--accent); font-size: 12px; font-weight: 700; }
+.checklist .fineprint { margin: 0 0 6px 30px; }
+.checklist .health-strip, .checklist .quick-tools { margin-left: 30px; }
+/* 设置本身都没错、组合起来却静默失效——那种坏法要在玩家正看着的地方点名。 */
+.conflicts { margin-top: 4px; }
+.conflict { display: flex; align-items: center; gap: 9px; margin-top: 8px; padding: 9px 11px;
+  border: 1px solid #7a5a2a; border-radius: 8px; background: #241c10; font-size: 12.5px; }
+.conflict span { flex: 1; }
+.section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.settings-grid, .controls, .advgrid, .scene-zone-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.settings-grid { align-items: start; }
+.group-head { grid-column: 1 / -1; margin: 6px 0 0; padding-bottom: 6px;
+  border-bottom: 1px solid var(--line); font-size: 13px; letter-spacing: 2px; color: var(--muted); }
+.group-head:first-child { margin-top: 0; }
+/* 一组里只有一块时占满整行，否则旁边就是一整屏空白——口令列表能有一千多像素高。 */
+.settings-section.wide { grid-column: 1 / -1; }
+.settings-section { margin-bottom: 16px; }
+.settings-actions, .profile-actions { margin: 12px 0; }
+.slider, .checkrow, #phoneGuide { margin-top: 16px; }
+.checkrow { display: flex; gap: 12px; flex-wrap: wrap; }
+.profile-bar { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 10px; }
+.profile-bar select, .profile-bar input { width: 100%; min-width: 0; }
+.profile-game-name { font-size: 22px; }
+fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+summary { cursor: pointer; padding: 8px 0; font-weight: 700; }
+.binding-group { margin-top: 12px; }
+.binding-group-help { color: var(--muted); margin-bottom: 10px; }
+.binding-group-rows { display: grid; gap: 8px; }
+.binding-row { display: grid; grid-template-columns: 1.2fr 1fr 1.2fr 1fr; align-items: center; gap: 12px; padding: 10px; background: #0d151f; border-radius: 9px; border: 1px solid var(--line); }
+.binding-row input, .binding-row select { width: 100%; min-width: 0; }
+.motion-conflict-note { grid-column: 1/-1; color: #ebbc99; }
+.motion-conflict-blocked { opacity: .65; }
+.motion-conflict-error { border-color: #d48389; }
+.voice-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr auto; gap: 10px; margin: 10px 0; }
+.voice-row input, .voice-row select { width: 100%; min-width: 0; }
+/* The gamepad picker adds a second control for combos; it stays hidden until
+   the combo option is chosen, so the cell normally holds one row. */
+.voice-target-cell { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.combo-picker { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
+.combo-picker label { display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+.combo-picker input { width: auto; min-height: 0; }
+.voice-command-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.voice-command-card { padding: 12px; background: #1c2938; border-radius: 9px; }
+.voice-command-card small { display: block; color: var(--muted); }
+.voice-group { margin: 16px 0; }
+.perf-details, .diagnostic-text, .model-path { white-space: pre-line; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.zone-edit-bar { margin-top: 14px; }
+dialog { background: var(--panel); color: inherit; border: 1px solid var(--line); border-radius: 16px; padding: 24px; width: min(900px, 94vw); max-height: 88vh; }
+dialog::backdrop { background: #030812dc; }
+.dialog-head { justify-content: space-between; }
+.calibration-card { text-align: center; padding: 18px; }
+.calibration-stage { font-size: 32px; }
+.calibration-prompt { font-size: 23px; }
+.calibration-countdown { font-size: 72px; color: #e7cb70; }
+.calibration-progress { height: 12px; background: #263647; border-radius: 6px; overflow: hidden; }
+#calibrationProgressBar { height: 100%; background: #67b8ee; }
+.calibration-detail { margin: 15px 0; }
+.calibration-cancel { padding: 12px 24px; border-radius: 9px; background: #722d39; border: 1px solid #c46672; color: white; font: inherit; }
+@media (max-width: 760px) {
+  .wrap { padding: 0 12px 20px; }
+  .top { gap: 8px; flex-wrap: wrap; padding: 10px 0; }
+  #serviceStatus { order: 3; width: 100%; }
+  .session-bar { grid-template-columns: 1fr 1fr; }
+  .layout, .settings-grid { grid-template-columns: 1fr; }
+  .control-card { order: -1; }
+  .binding-row, .voice-command-grid { grid-template-columns: 1fr 1fr; }
+  .voice-row { grid-template-columns: 1fr 1fr; }
+}
+
+/* 云端配置列表：一行一份，名字在左、安装按钮在右。 */
+.cloud-row{align-items:center;gap:.75rem;justify-content:space-between}
+.cloud-row-label{display:flex;flex-direction:column;gap:.15rem;min-width:0}
+.cloud-row-label span{font-size:.85em}
+#cloudList:empty{display:none}
+#cloudList{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem}
+
+/* 自定义姿势：一行一个，名字 + 实时相似度条，下面是阈值/停留/启用/删除。 */
+#customPoseList{display:flex;flex-direction:column;gap:.6rem;margin-top:.6rem}
+/* 两列：左边是关键帧，右边是名字+相似度和那排参数。
+   原来三样各占一行，图右边整片空着，行还被撑得很高。 */
+.custom-pose{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  column-gap:.9rem;row-gap:.45rem;align-items:start;
+  padding:.6rem .75rem;border:1px solid var(--line,#2a2e35);border-radius:8px}
+.custom-pose.hit{border-color:#4c8dff}
+.custom-pose.firing{border-color:#39c07a;box-shadow:0 0 0 1px #39c07a inset}
+.custom-pose-head{grid-column:2;align-self:center;display:flex;align-items:center;gap:.75rem}
+.custom-pose-name{flex:0 0 8.5rem;font-weight:600}
+/* 相似度条。用户摆姿势时盯的就是它，所以给足宽度。 */
+/* 相似度条由一个开关控制，默认关。
+   做动作的人站在几米外，够不着鼠标——所以不能用 hover 或 focus 触发：那两个恰好
+   在最需要看它的时刻都不成立。开关是走开之前按一下，回来再按一下。 */
+.custom-pose-meter{position:relative;flex:1;height:1.35rem;border-radius:4px;
+  background:rgba(127,127,127,.18);overflow:hidden;
+  opacity:0;transition:opacity .12s}
+#customPoseList.show-scores .custom-pose-meter{opacity:1}
+#customPoseScoresBtn.on{background:var(--accent,#4c8dff);border-color:var(--accent,#4c8dff);color:#fff}
+.custom-pose-fill{position:absolute;inset:0 auto 0 0;background:#4c8dff;opacity:.45;
+  transition:width .08s linear}
+.custom-pose.firing .custom-pose-fill{background:#39c07a;opacity:.6}
+.custom-pose-score{position:relative;display:block;text-align:center;
+  line-height:1.35rem;font-size:.82em;font-variant-numeric:tabular-nums}
+.custom-pose-tools{grid-column:2;align-self:center;
+  display:flex;flex-wrap:wrap;align-items:center;gap:1rem;font-size:.85em}
+.custom-pose-tools label{display:flex;align-items:center;gap:.4rem}
+.custom-pose-tools input[type=range]{width:8rem}
+.custom-pose-value{min-width:3.5rem;font-variant-numeric:tabular-nums}
+
+/* 录制倒计时：人站在镜头前，几米外要看得见，所以数字要大。 */
+#customPoseCaptureBtn.counting{font-size:1.6em;font-weight:700;min-width:4.5rem;
+  font-variant-numeric:tabular-nums}
+/* 录制瞬间的骨架缩略图。名字记不住那么多，靠它认出是哪个姿势。 */
+/* 5.6rem 而不是 3.2：这张图是用户认出"这是哪个姿势"的唯一凭据，小了就只是
+   一团线。SVG 用的是 viewBox，线宽和点径跟着一起放大，不用另调。 */
+.pose-thumb{flex:0 0 5.6rem;width:5.6rem;height:5.6rem;border-radius:8px;
+  background:rgba(127,127,127,.12)}
+.pose-thumb line{stroke:currentColor;stroke-width:2.4;stroke-linecap:round;opacity:.55}
+.pose-thumb circle{fill:currentColor;opacity:.85}
+.pose-thumb.empty{opacity:.3}
+.custom-pose.firing .pose-thumb{color:#39c07a}
+
+/* 关键帧一排：一帧是静态姿势，多帧要按顺序依次做出来。 */
+/* 关键帧占满左列的两行，右边两行才贴得上来。
+   限宽是为了多帧时不把右边挤没——超过就在自己这一列里换行。 */
+.pose-strip{grid-row:1 / span 2;grid-column:1;
+  display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;max-width:19rem}
+.pose-cell{position:relative;line-height:0}
+/* 当前等着的那一帧。动作断在哪一步，一眼能看见。 */
+.pose-cell.awaiting .pose-thumb{outline:2px solid #4c8dff;outline-offset:1px}
+.pose-arrow{color:var(--muted,#9aa3af);font-size:.9em}
+.pose-drop{position:absolute;top:-7px;right:-7px;width:1.3rem;height:1.3rem;padding:0;
+  line-height:1;border-radius:50%;border:none;background:#8a2b2b;color:#fff;
+  font-size:.85rem;cursor:pointer;opacity:0;transition:opacity .1s}
+.pose-cell:hover .pose-drop{opacity:1}
+.pose-add{padding:.25rem .6rem;font-size:.8em}
+
+/* 配置名就是去网站看详情的入口。 */
+.cloud-row-title{font-weight:600;cursor:pointer;text-decoration:none}
+.cloud-row-title:hover{text-decoration:underline}
+
+/* AGPL 第 13 条：这个界面是通过网络访问的，就得让用的人能拿到源码。
+   顺带也是反馈入口——写在每一页底下，不用去翻设置。 */
+.sitefoot {
+  display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline;
+  padding: 14px 18px; margin-top: 8px;
+  border-top: 1px solid var(--line, #2a2f3a);
+  font-size: 12px; color: var(--muted, #8b93a7);
+}
+.sitefoot a { color: inherit; text-decoration: underline; }
+.sitefoot a:hover { color: var(--text, #e6e9f0); }

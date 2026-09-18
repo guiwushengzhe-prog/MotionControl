@@ -133,10 +133,15 @@ def plan(target: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
         if name not in REMOVE_FROM_CONFIG:
             wanted.add(app / "config" / name)
 
-    readme = ROOT / "release" / "请先看.txt"
-    if readme.is_file():
-        copies.append((readme, target / readme.name))
-        wanted.add(target / readme.name)
+    # release/ 里的东西原样搬到包的顶层。早先这里只认一个写死的文件名，
+    # 结果改个名字旧的就永远留在包里——发布包必须能从零重建，不能靠谁
+    # 记得手动放文件。AGPL 要求随源码一起分发许可证，LICENSE 就在这里。
+    for source in sorted((ROOT / "release").rglob("*")):
+        if source.is_dir():
+            continue
+        destination = target / source.relative_to(ROOT / "release")
+        copies.append((source, destination))
+        wanted.add(destination)
 
     stale = []
     if app.is_dir():
