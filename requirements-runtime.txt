@@ -19,7 +19,13 @@
 cryptography>=42.0
 
 # Camera capture and pose inference.
-opencv-python>=4.9
+#
+# headless 而不是完整版：整个程序只用 core 里的那几个调用（cvtColor、solvePnP、
+# findHomography、ORB/BFMatcher、imencode/imdecode、VideoCapture），一次 GUI
+# 调用都没有。完整版多出来的 aruco、xfeatures2d、cuda 这些一个都用不上，
+# 光 cv2.pyd 就大 26 MB。发布包里还会再删掉 ffmpeg 后端——VideoCapture 只接
+# 整数摄像头号和明确指定的 MSMF/DSHOW 后端，从不读视频文件或网络流。
+opencv-python-headless>=4.9
 numpy>=1.26
 mediapipe>=0.10
 
