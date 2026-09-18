@@ -9,7 +9,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# 脚本搬进 tools/ 之后，仓库根目录是它的上一级；下面所有相对路径
+# （game_profiles\、tools\）都按根目录解析，所以不能再用脚本自己的目录。
+$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
 function Resolve-Python {

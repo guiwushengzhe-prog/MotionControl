@@ -26,7 +26,7 @@
 Windows 直接运行：
 
 ```text
-BUILD_GAME_LIBRARY.bat
+tools\BUILD_GAME_LIBRARY.bat
 ```
 
 流程为：Steam Windows Top Sellers 种子 → SteamInputDB 候选配置 → 下载 VDF → 确定性解析 → 紧凑 JSON Profile → 库审计。默认目标种子数为 500，但它只是目标：**没有“少于 300 个 Profile 就失败”的硬门槛**。网络中断或部分游戏没有可解析配置时，已经生成的 Profile 仍会保存并可正常使用。
@@ -36,7 +36,7 @@ BUILD_GAME_LIBRARY.bat
 只重建/检查 6 个重点游戏：
 
 ```text
-BUILD_PRIORITY_PROFILES.bat
+tools\BUILD_PRIORITY_PROFILES.bat
 ```
 
 当前重点集：Red Dead Redemption 2、GTA V Legacy、GTA V Enhanced、Forza Horizon 4、Forza Horizon 5、Black Myth: Wukong。
