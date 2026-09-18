@@ -25,7 +25,7 @@ from scene_layout import SceneLayoutManager
 from user_paths import migrate_legacy_user_data, user_data_root, user_path
 
 # Desktop workflow and per-game persistence release; phone protocol versions stay unchanged.
-VERSION = "2.0"
+VERSION = "2.0.0"
 
 
 def application_root() -> Path:
