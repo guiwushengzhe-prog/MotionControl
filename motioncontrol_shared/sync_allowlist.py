@@ -66,6 +66,11 @@ CLASSIFICATION = {
     # 暂时不进同步白名单：进白名单就要有对应的规范化入口，而云端还没有校验姿势
     # 模板的逻辑。以后补是纯加法。
     "custom_poses": USER_CONFIGURATION,
+    # 和 head_profile 同一种情况：上下视角开不开是纯偏好，换台机器一样成立；
+    # 但手控鼠标的握拳阈值是照着你的手和你的摄像头读出来的两个数定的（张开一次、
+    # 握紧一次，取中间），换个人换个机位就不对了。拆开文件是同步一半的前提，
+    # 还没做，所以整份不走。
+    "general_settings": DEVICE_CONFIGURATION,
     "scene_layout": SPATIAL_CALIBRATION,
     "scene_reference": SPATIAL_CALIBRATION,
 }

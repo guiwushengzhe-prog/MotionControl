@@ -422,6 +422,7 @@ class ControlKernel:
         # profile.  Legacy five-stage/head-face state is no longer part of the
         # runtime path.
         self.head_controller = HeadController(self._head_profile_path())
+        self._load_general_settings()
         self.head = self.head_controller.status(time.monotonic())
         self.sensor_sources: dict[str, dict] = {}
         self._thread.start()
@@ -429,6 +430,62 @@ class ControlKernel:
     def _head_profile_path(self) -> Path:
         root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
         return root / "MotionControl" / "head_profile.json"
+
+    def _general_settings_path(self) -> Path:
+        root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        return root / "MotionControl" / "general_settings.json"
+
+    def _load_general_settings(self) -> None:
+        """把「通用设置」里不跟游戏走的那几项读回来。
+
+        这两组原来一个都不存盘：手控鼠标压根没写过盘，上下视角只写在
+        scene_layout.json 里，而没定位过区域的人根本没有那个文件。于是每次启动
+        都悄悄回到默认值——玩家只会觉得「我明明开过」，界面上看不出任何异常。
+
+        读不出来就当没有：这份文件丢了或者坏了，不该让整个程序起不来。
+        """
+        try:
+            data = json.loads(self._general_settings_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(data, dict):
+            return
+        hand_mouse = data.get("hand_mouse")
+        if isinstance(hand_mouse, dict):
+            try:
+                self.hand_mouse_controller.configure(hand_mouse)
+            except (ValueError, TypeError):
+                pass
+        vertical = data.get("vertical_look")
+        if isinstance(vertical, dict):
+            if "enabled" in vertical:
+                self.vertical_look["enabled"] = bool(vertical["enabled"])
+            source = str(vertical.get("source", "")).lower()
+            if source in {"hand", "head"}:
+                self.vertical_look["source"] = source
+                self.vertical_look["verticalLookSource"] = source
+
+    def _save_general_settings(self) -> None:
+        """写盘。失败不抛：存不下设置也不该打断正在进行的游戏。"""
+        path = self._general_settings_path()
+        payload = {
+            "saved_at_unix": time.time(),
+            "hand_mouse": dict(self.hand_mouse_controller.config),
+            "vertical_look": {
+                "enabled": bool(self.vertical_look.get("enabled", True)),
+                "source": str(self.vertical_look.get("source", "hand")),
+            },
+        }
+        temp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp, path)
+        except OSError:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def cancel_calibration(self, reason: str = "用户取消") -> dict:
         with self._lock:
@@ -606,6 +663,7 @@ class ControlKernel:
                     self.vertical_look["source"] = source
                     self.vertical_look["verticalLookSource"] = source
                     self._reset_vertical_head_locked()
+                self._save_general_settings()
             if vertical_exclusive is not None:
                 self.vertical_look["exclusive_axes"] = bool(vertical_exclusive)
             if body_motion_guard is not None:
@@ -1297,6 +1355,7 @@ class ControlKernel:
         """Apply a settings change under the kernel lock and report the result."""
         with self._lock:
             status = self.hand_mouse_controller.configure(updates)
+            self._save_general_settings()
             if not status["enabled"]:
                 # Leaving the pointer mid-drift after a disable would keep the
                 # last velocity applied until head control next writes.

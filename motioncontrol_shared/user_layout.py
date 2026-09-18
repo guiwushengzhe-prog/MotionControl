@@ -33,6 +33,11 @@ USER_DATA_FILES = {
     # holding one URL; it is per-installation, so it never travels.
     "cloud_endpoint": "cloud_endpoint.txt",
     "custom_poses": "custom_poses.json",
+    # 「通用设置」那一页里不跟游戏走的东西：手控鼠标、上下视角开关。
+    # 它们原来一个都不存盘——手控鼠标压根没写过盘，上下视角只写在
+    # scene_layout.json 里，而没定位过区域的人根本没有那个文件。结果是每次
+    # 启动都悄悄回到默认值，玩家只会觉得"我明明开过"。
+    "general_settings": "general_settings.json",
 }
 
 # Where 2.0 and earlier wrote them, relative to the program directory.  Only
