@@ -1,0 +1,12 @@
+ViGEmBus 1.22.0
+Copyright (c) 2016-2020, Nefarius Software Solutions e.U.
+License: BSD-3-Clause（完整条款见 LICENSE-ViGEmBus.txt）
+Official release: https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0
+Official asset: https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe
+Unmodified installer SHA256: 89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd014c6a
+Authenticode signer: Nefarius Software Solutions e.U.
+
+MotionBridge never installs this driver silently. Installation starts only after
+the local user clicks the install button or manually opens the installer and
+accepts the Windows administrator prompt. It does not automatically reboot,
+uninstall, update, or replace other virtual controller drivers.
