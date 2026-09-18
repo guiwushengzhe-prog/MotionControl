@@ -9,11 +9,10 @@
 | 部分 | 在哪 | 是什么 |
 |---|---|---|
 | 电脑端 | 本仓库根目录 | Python 服务 + 本地网页界面，摄像头识别、映射、虚拟手柄输出 |
-| 手机端 | 独立仓库，尚未公开 | Capacitor + Android，手机当摄像头用 |
+| 手机端 | [MotionControl-Android](https://github.com/guiwushengzhe-prog/MotionControl-Android) | Capacitor + Android，手机当摄像头用 |
 | 云端 | `cloud/` | 配置的上传、版本和分享，跑在 motioncontrol.guiwu-aware.icu |
 
-手机端目前还在独立仓库里没有公开，想参与那部分先开个 issue 问一下。
-只改电脑端或云端的话不用管它。
+手机端是独立仓库。只改电脑端或云端的话不用管它。
 
 ## 跑起来
 
