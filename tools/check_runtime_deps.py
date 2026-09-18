@@ -26,7 +26,7 @@ REQUIREMENTS = ROOT / "requirements-runtime.txt"
 
 # Distribution name -> import name, where they differ.
 IMPORT_NAMES = {
-    "opencv-python": "cv2",
+    "opencv-python-headless": "cv2",
     "vosk": "vosk",
     "mediapipe": "mediapipe",
     "sounddevice": "sounddevice",
