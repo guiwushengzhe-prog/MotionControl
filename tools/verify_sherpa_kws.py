@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(r"F:\MotionControl-App")
 sys.path.insert(0, str(ROOT))
 
-from sherpa_kws_backend import SherpaKwsCommandRecognizer, find_sherpa_kws_model
+from motioncontrol.sherpa_kws_backend import SherpaKwsCommandRecognizer, find_sherpa_kws_model
 
 config = json.loads((ROOT / "config" / "voice_mappings.json").read_text(encoding="utf-8"))
 model = find_sherpa_kws_model(ROOT)

@@ -61,7 +61,7 @@ def test_trigger_names_match_the_desktop_ui():
 @windows_only
 def test_every_body_zone_has_a_name():
     """control_kernel 认识的每一块区域都要能翻译，否则详情页会露出英文 id。"""
-    from control_kernel import BODY_ZONES, RUNTIME_BODY_ZONES, ZONE_ALIASES
+    from motioncontrol.control_kernel import BODY_ZONES, RUNTIME_BODY_ZONES, ZONE_ALIASES
 
     for zone in {*BODY_ZONES, *RUNTIME_BODY_ZONES}:
         assert zone in ZONE_NAMES, f"{zone} 没有中文名"

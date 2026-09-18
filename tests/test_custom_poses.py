@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from custom_poses import (
+from motioncontrol.custom_poses import (
     DEFAULT_DWELL_FRAMES,
     DEFAULT_THRESHOLD,
     MAX_FRAMES,
@@ -145,8 +145,8 @@ def test_an_invisible_body_is_reported_as_such_not_as_zero_similarity(store):
 
 @pytest.fixture
 def kernel():
-    from control_kernel import ControlKernel
-    from output_backend import OutputManager
+    from motioncontrol.control_kernel import ControlKernel
+    from motioncontrol.output_backend import OutputManager
 
     import pathlib
     return ControlKernel(OutputManager(pathlib.Path(".")))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from control_kernel import ControlKernel
-from vertical_hand_control import VerticalHandController
+from motioncontrol.control_kernel import ControlKernel
+from motioncontrol.vertical_hand_control import VerticalHandController
 
 
 CONFIG = {"point": "right_wrist", "range_y": 0.18, "deadzone": 0.10}

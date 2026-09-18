@@ -1,7 +1,7 @@
 import math
 
-from hand_anchor import HandAnchorTracker, pose_with_hand_anchors
-from control_kernel import ControlKernel, RUNTIME_BODY_ZONES
+from motioncontrol.hand_anchor import HandAnchorTracker, pose_with_hand_anchors
+from motioncontrol.control_kernel import ControlKernel, RUNTIME_BODY_ZONES
 
 
 def p(x, y, score=0.9, z=0.0):

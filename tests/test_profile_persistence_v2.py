@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from game_profiles import GameProfileStore, ProfileSelectionChanged
+from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
 from test_game_profiles_v097 import make_store
 
 
@@ -51,7 +51,7 @@ def test_failed_save_preserves_memory_and_disk(tmp_path):
     store = make_store(tmp_path)
     store.set_overrides(mapping("Q"))
     before = store.selection_path.read_bytes()
-    with patch("game_profiles.os.replace", side_effect=PermissionError("文件被占用")):
+    with patch("motioncontrol.game_profiles.os.replace", side_effect=PermissionError("文件被占用")):
         with pytest.raises(PermissionError):
             store.set_overrides(mapping("E"))
         with pytest.raises(PermissionError):

@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from profile_audit import audit_library, write_audit_report
+from motioncontrol.profile_audit import audit_library, write_audit_report
 
 
 def main() -> int:

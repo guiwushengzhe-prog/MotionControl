@@ -1,6 +1,6 @@
 import time
 
-from output_backend import OutputManager
+from motioncontrol.output_backend import OutputManager
 
 
 class FakeReader:
@@ -154,7 +154,7 @@ def test_motion_apply_cannot_overwrite_physical_right_stick(tmp_path):
 
 def test_raw_report_preserves_every_axis_bit_and_atomic_chord():
     import ctypes
-    from output_backend import VX360Gamepad, XINPUT_GAMEPAD, XUSB_GAMEPAD_BUTTONS
+    from motioncontrol.output_backend import VX360Gamepad, XINPUT_GAMEPAD, XUSB_GAMEPAD_BUTTONS
     pad = object.__new__(VX360Gamepad)
     frames = []
     pad.update = lambda: frames.append(bytes(pad.report))
@@ -249,7 +249,7 @@ def test_switch_to_mouse_disables_merge_and_clears_physical_state(tmp_path):
 
 
 def test_virtual_identity_uses_new_slot_instead_of_incorrect_driver_zero():
-    from output_backend import VX360Gamepad
+    from motioncontrol.output_backend import VX360Gamepad
     class Reader:
         def read(self, user):
             return {} if user in (0, 1) else None
@@ -262,7 +262,7 @@ def test_virtual_identity_uses_new_slot_instead_of_incorrect_driver_zero():
 
 def test_virtual_identity_rejects_ambiguous_simultaneous_connections():
     import pytest
-    from output_backend import VX360Gamepad
+    from motioncontrol.output_backend import VX360Gamepad
     class Reader:
         def read(self, user):
             return {} if user in (0, 1, 2) else None
@@ -281,11 +281,11 @@ class ReportPad(Pad):
         self.frames = []
 
     def set_merged_report(self, state, names, motion_left=(0.0, 0.0)):
-        from output_backend import VX360Gamepad
+        from motioncontrol.output_backend import VX360Gamepad
         VX360Gamepad.set_merged_report(self, state, names, motion_left)
 
     def update(self):
-        from output_backend import XUSB_GAMEPAD_BUTTONS
+        from motioncontrol.output_backend import XUSB_GAMEPAD_BUTTONS
         self.frames.append(bytes(self.report))
         self.buttons = tuple(k for k, v in XUSB_GAMEPAD_BUTTONS.items() if self.report.wButtons & v)
         def axis(v):
@@ -296,7 +296,7 @@ class ReportPad(Pad):
 
 
 def _report_manager(tmp_path, lx=0, ly=0):
-    from output_backend import XINPUT_GAMEPAD
+    from motioncontrol.output_backend import XINPUT_GAMEPAD
     raw = bytes(XINPUT_GAMEPAD(0x1000, 17, 254, lx, ly, -12345, 23456))
     state = _state(raw_report=raw, buttons={'A'}, left_x=lx/(32768 if lx < 0 else 32767),
                    left_y=ly/(32768 if ly < 0 else 32767))

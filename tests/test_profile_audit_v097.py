@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from profile_audit import audit_library
-from steaminput_builder import BuildResult, SeedGame, profile_from_vdf, save_library
+from motioncontrol.profile_audit import audit_library
+from motioncontrol.steaminput_builder import BuildResult, SeedGame, profile_from_vdf, save_library
 
 
 SAMPLE = r'''

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from steaminput_builder import (
+from motioncontrol.steaminput_builder import (
     BuildResult,
     SeedGame,
     build_one,
@@ -128,7 +128,7 @@ def test_save_library_is_incremental_across_batches(tmp_path: Path):
 
 
 def test_existing_profile_appids_only_counts_catalog_backed_files(tmp_path):
-    from steaminput_builder import existing_profile_appids
+    from motioncontrol.steaminput_builder import existing_profile_appids
     library = tmp_path / "game_profiles"
     profiles = library / "profiles"
     profiles.mkdir(parents=True)
@@ -146,7 +146,7 @@ def test_existing_profile_appids_only_counts_catalog_backed_files(tmp_path):
 
 
 def test_search_configs_filters_by_appid_without_title_text():
-    from steaminput_builder import SteamInputDBClient
+    from motioncontrol.steaminput_builder import SteamInputDBClient
 
     class CaptureClient(SteamInputDBClient):
         def __init__(self):

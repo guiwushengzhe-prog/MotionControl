@@ -16,7 +16,7 @@ because both are about how it shares the kernel with everything else:
 
 from __future__ import annotations
 
-from control_kernel import ControlKernel
+from motioncontrol.control_kernel import ControlKernel
 
 
 class _Output:
@@ -206,7 +206,7 @@ def fingers(*, curl, wrist=(0.70, 0.30), reach=0.06):
     """21 个手部点，四根手指从手腕呈扇形张开，伸展倍数为 ``curl``。"""
     import math
 
-    from hand_mouse_control import _FINGER_KNUCKLES, _FINGER_TIPS
+    from motioncontrol.hand_mouse_control import _FINGER_KNUCKLES, _FINGER_TIPS
 
     wx, wy = wrist
     points = [p(wx, wy) for _ in range(21)]

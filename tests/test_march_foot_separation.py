@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from control_kernel import ControlKernel
+from motioncontrol.control_kernel import ControlKernel
 from test_minimal_controls import KernelOutput, _standing_pose, _zone_feeder
 
 

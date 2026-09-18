@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from control_kernel import ControlKernel
-from head_control import HeadController, HeadEstimate, IntentAxis
+from motioncontrol.control_kernel import ControlKernel
+from motioncontrol.head_control import HeadController, HeadEstimate, IntentAxis
 
 
 class NumericEstimator:

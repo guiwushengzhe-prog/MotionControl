@@ -15,7 +15,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from hand_anchor import HAND_ANCHOR_VERSION, HandAnchorTracker
+from motioncontrol.hand_anchor import HAND_ANCHOR_VERSION, HandAnchorTracker
 
 
 ROOT = Path(__file__).resolve().parents[1]

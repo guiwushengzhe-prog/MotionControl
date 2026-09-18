@@ -23,8 +23,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from head_control import HeadController, HeadPoseEstimator  # noqa: E402
-from control_kernel import MP_NAMES  # noqa: E402
+from motioncontrol.head_control import HeadController, HeadPoseEstimator  # noqa: E402
+from motioncontrol.control_kernel import MP_NAMES  # noqa: E402
 
 
 FACE_NAMES = set(HeadPoseEstimator.required_points("pnp"))

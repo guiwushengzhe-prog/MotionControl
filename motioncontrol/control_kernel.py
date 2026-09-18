@@ -18,7 +18,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from head_control import (
+from motioncontrol.head_control import (
     HeadController,
     HeadPoseEstimator,
     IntentAxis,
@@ -29,8 +29,8 @@ from head_control import (
 )
 from motioncontrol_shared.profile_schema import flatten_bindings
 from motioncontrol_shared.motion_conflicts import validate_motion_config
-from hand_mouse_control import HANDS, HandMouseController
-from pose_recorder import PoseRecorder
+from motioncontrol.hand_mouse_control import HANDS, HandMouseController
+from motioncontrol.pose_recorder import PoseRecorder
 
 
 def _user_recordings_dir():
@@ -39,10 +39,10 @@ def _user_recordings_dir():
     Not in the program folder -- recordings are the user's, and since 2.0.x the
     program folder is treated as read-only so an upgrade can replace it.
     """
-    from user_paths import user_data_root
+    from motioncontrol.user_paths import user_data_root
 
     return user_data_root() / "recordings"
-from vertical_hand_control import VerticalHandController
+from motioncontrol.vertical_hand_control import VerticalHandController
 
 
 MP_NAMES = [
@@ -434,7 +434,7 @@ class ControlKernel:
         避开开发者真实数据的开关——绕过它，跑一次测试就可能覆盖掉你自己的
         头控校准或者设置。文件名也只在 motioncontrol_shared 里写一次。
         """
-        from user_paths import user_path
+        from motioncontrol.user_paths import user_path
 
         return user_path(key)
 
@@ -3074,6 +3074,6 @@ class LocalControlRuntime:
 
 # Keep the hand-anchor logic at the input/recognition boundary.  The existing
 # head-control and automatic-calibration implementation remains untouched.
-from hand_anchor import install_hand_anchor_adapter
+from motioncontrol.hand_anchor import install_hand_anchor_adapter
 
 install_hand_anchor_adapter(ControlKernel)

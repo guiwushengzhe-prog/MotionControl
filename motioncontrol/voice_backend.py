@@ -105,8 +105,8 @@ class VoskCommandRecognizer:
         self._recognizer = None
 
 
-from ascii_model_path import resolve_loadable_model_path
-from user_paths import user_path
+from motioncontrol.ascii_model_path import resolve_loadable_model_path
+from motioncontrol.user_paths import user_path
 from motioncontrol_shared.text_norm import compact_text
 from motioncontrol_shared.mapping_schema import (
     DEFAULT_EMERGENCY_STOP,

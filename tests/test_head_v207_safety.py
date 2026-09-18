@@ -2,8 +2,8 @@
 
 import pytest
 
-import head_control as head_module
-from head_control import (
+from motioncontrol import head_control as head_module
+from motioncontrol.head_control import (
     PNP_YAW_SPAN_DEG,
     V202_REARM_MIN_VISIBLE_QUIET_S,
     HeadController,

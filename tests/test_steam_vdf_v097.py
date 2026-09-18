@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from steam_vdf import extract_physical_bindings, parse_binding_action, parse_vdf
+from motioncontrol.steam_vdf import extract_physical_bindings, parse_binding_action, parse_vdf
 
 
 SAMPLE = r'''

@@ -1,4 +1,4 @@
-from control_kernel import ControlKernel
+from motioncontrol.control_kernel import ControlKernel
 
 
 class Output:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-import head_control as product
+from motioncontrol import head_control as product
 
 
 def _load_reference(path: Path):

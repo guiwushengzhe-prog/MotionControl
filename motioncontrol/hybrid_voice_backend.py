@@ -8,8 +8,8 @@ from array import array
 from collections import deque
 from pathlib import Path
 
-from funasr_command_backend import FunAsrWorkerClient, build_hotwords
-from sherpa_wake_backend import SherpaWakeWordRecognizer
+from motioncontrol.funasr_command_backend import FunAsrWorkerClient, build_hotwords
+from motioncontrol.sherpa_wake_backend import SherpaWakeWordRecognizer
 from motioncontrol_shared.text_norm import compact_text
 
 

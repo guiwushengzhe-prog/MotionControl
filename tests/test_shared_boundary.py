@@ -162,7 +162,7 @@ def test_pairing_dependency_is_declared_and_present():
     declared = (REPO / "requirements-runtime.txt").read_text(encoding="utf-8")
     assert "cryptography" in declared, "requirements-runtime.txt must declare cryptography"
 
-    import device_pairing
+    from motioncontrol import device_pairing
 
     assert device_pairing.crypto_available(), (
         "cryptography is missing from this environment; device pairing would "

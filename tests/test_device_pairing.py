@@ -21,7 +21,7 @@ import base64
 
 import pytest
 
-import device_pairing as dp
+from motioncontrol import device_pairing as dp
 
 pytestmark = pytest.mark.skipif(
     not dp.crypto_available(), reason="cryptography is not installed"

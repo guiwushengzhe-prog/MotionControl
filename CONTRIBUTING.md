@@ -84,18 +84,23 @@ python -m pytest -q
 ## 目录速览
 
 ```
-control_kernel.py     摄像头采集、姿态识别、区域判定的主循环
-head_control.py       头部控制视角
-hand_mouse_control.py 手控鼠标
-input_bridge.py       手机连接、配对、姿态数据接收
-output_backend.py     键盘、鼠标、虚拟手柄输出（仅 Windows）
-server.py             本地 HTTP 服务和接口
-web/                  电脑端网页界面
-motioncontrol_shared/ 电脑端和云端共用的配置规则
-cloud/                云端服务
-tools/                打包、构建配置库、签名等工具
-tests/                测试
+server.py                 入口。启动脚本跑的就是它
+motioncontrol/            程序本体
+  control_kernel.py         摄像头采集、姿态识别、区域判定的主循环
+  head_control.py           头部控制视角
+  hand_mouse_control.py     手控鼠标
+  input_bridge.py           手机连接、配对、姿态数据接收
+  output_backend.py         键盘、鼠标、虚拟手柄输出（仅 Windows）
+  voice_backend.py          语音识别
+  game_profiles.py          游戏配置库
+motioncontrol_shared/     电脑端和云端共用的配置规则
+web/                      电脑端网页界面
+cloud/                    云端服务
+tools/                    打包、构建配置库、签名等工具
+tests/                    测试
 ```
+
+入口留在根目录、其余收进 `motioncontrol/`，是为了让人一眼看出从哪读起。
 
 ## 授权
 

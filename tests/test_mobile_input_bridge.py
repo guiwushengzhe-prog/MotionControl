@@ -2,13 +2,13 @@ import time
 
 import pytest
 
-from input_bridge import (
+from motioncontrol.input_bridge import (
     InputBridge,
     MOBILE_POSE_FEATURE_INDICES,
     MOBILE_POSE_FEATURE_INDICES_V2,
     _expand_pose_features,
 )
-from output_backend import OutputManager
+from motioncontrol.output_backend import OutputManager
 
 
 class FakePeer:
@@ -300,7 +300,7 @@ def test_web_mobile_pose_uses_same_body_action_and_head_pipeline():
 
     root = Path(__file__).resolve().parents[1]
     text = (root / "web" / "app.js").read_text(encoding="utf-8")
-    kernel = (root / "control_kernel.py").read_text(encoding="utf-8")
+    kernel = (root / "motioncontrol" / "control_kernel.py").read_text(encoding="utf-8")
     assert "renderKernelState" in text and "/api/kernel/status" in text
     assert "handle_pose_message" in kernel and "_update_zones_locked" in kernel
     assert "_update_motion_locked" in kernel and "_update_head_locked" in kernel
@@ -355,7 +355,7 @@ def test_packed_hands_use_strict_validation(hands):
 
 def test_the_kernel_reads_hands_in_unmirrored_coordinates():
     """内核只认原始未镜像的坐标，手部点要和姿态点走同一次纠正。"""
-    from control_kernel import ControlKernel
+    from motioncontrol.control_kernel import ControlKernel
 
     message = {"hands": [packed_hand("Right", x=0.30)], "coordinates_mirrored": False}
     straight = ControlKernel.hand_map_from_message(_expand_pose_features(
@@ -370,7 +370,7 @@ def test_the_kernel_reads_hands_in_unmirrored_coordinates():
 
 
 def test_the_kernel_takes_no_hands_from_a_plain_frame():
-    from control_kernel import ControlKernel
+    from motioncontrol.control_kernel import ControlKernel
 
     assert ControlKernel.hand_map_from_message(_expand_pose_features(pose_features())) is None
 

@@ -1,7 +1,7 @@
 import ctypes
 import time
 
-from output_backend import KeyboardOutput, OutputManager, XUSB_GAMEPAD_BUTTONS, _KEYINPUT
+from motioncontrol.output_backend import KeyboardOutput, OutputManager, XUSB_GAMEPAD_BUTTONS, _KEYINPUT
 
 
 class Mouse:

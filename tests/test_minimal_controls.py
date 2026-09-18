@@ -6,10 +6,10 @@ import types
 
 import pytest
 
-from output_backend import OutputManager, XUSB_GAMEPAD_BUTTONS, GAMEPAD_AXES
-from control_kernel import ControlKernel
-from voice_backend import VoiceService, compact_text
-from sherpa_kws_backend import _spoken_command_candidates
+from motioncontrol.output_backend import OutputManager, XUSB_GAMEPAD_BUTTONS, GAMEPAD_AXES
+from motioncontrol.control_kernel import ControlKernel
+from motioncontrol.voice_backend import VoiceService, compact_text
+from motioncontrol.sherpa_kws_backend import _spoken_command_candidates
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,7 +52,7 @@ def test_v2_command_catalog_and_head_ui():
 
 
 def test_body_relative_zones_use_both_wrists_and_both_feet():
-    kernel = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
+    kernel = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     for name in ['left_wrist','right_wrist','left_ankle','right_ankle','left_foot_index','right_foot_index']:
         assert name in kernel
@@ -73,7 +73,7 @@ def test_body_relative_zones_use_both_wrists_and_both_feet():
 def test_seventh_look_gate_exists_before_and_after_fixed_scene_capture():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    kernel_text = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
+    kernel_text = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
     assert 'data-zone="lookGate"' in page
     assert "lookGate:{label:'上下视角'" in app
     assert 'state?.circle' in app and 'state?.rect' in app
@@ -93,7 +93,7 @@ def test_first_start_keeps_scene_capture_but_output_is_not_scene_gated():
 
 def test_four_motion_rules_and_settings_exist():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    kernel = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
+    kernel = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     for action in ['march','calf_back','squat','hands_up']:
         assert action in kernel and action in server
@@ -108,11 +108,11 @@ def test_four_motion_rules_and_settings_exist():
 
 def test_head_calibration_uses_default_until_atomic_success():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    kernel = (ROOT / 'control_kernel.py').read_text(encoding='utf-8')
-    head_control = (ROOT / 'head_control.py').read_text(encoding='utf-8')
+    kernel = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
+    head_control = (ROOT / "motioncontrol" / 'head_control.py').read_text(encoding='utf-8')
     assert 'head-control-v4.3-reference-video-tuned' in head_control
-    assert 'CENTER_PREPARE_S = 1.00' in (ROOT / 'head_control.py').read_text(encoding='utf-8')
-    assert 'CENTER_WALL_LIMIT_S = 6.00' in (ROOT / 'head_control.py').read_text(encoding='utf-8')
+    assert 'CENTER_PREPARE_S = 1.00' in (ROOT / "motioncontrol" / 'head_control.py').read_text(encoding='utf-8')
+    assert 'CENTER_WALL_LIMIT_S = 6.00' in (ROOT / "motioncontrol" / 'head_control.py').read_text(encoding='utf-8')
     assert 'cancel_calibration' in kernel
     assert '站好并校准' in (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     assert 'HeadController' in kernel
@@ -279,7 +279,7 @@ def test_output_api_is_loopback_only_and_has_buttons_route():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert '/api/output/buttons' in server
     assert 'game output is loopback-only' in server
-    backend = (ROOT / 'output_backend.py').read_text(encoding='utf-8')
+    backend = (ROOT / "motioncontrol" / 'output_backend.py').read_text(encoding='utf-8')
     assert 'self.enabled = False' in backend
     assert 'F8 toggles output; F9 always performs an emergency stop' in backend
 
@@ -342,7 +342,7 @@ def test_voice_parser_requires_wake_word_for_phone_and_clears_source(tmp_path):
 
 
 def test_voice_text_bridge_accepts_only_active_phone_body_source_and_releases_on_switch():
-    from input_bridge import InputBridge
+    from motioncontrol.input_bridge import InputBridge
 
     class FakeVoice:
         def __init__(self):
@@ -464,7 +464,7 @@ def test_look_gate_captures_stable_body_relative_anchor_without_freezing_horizon
     kernel = ControlKernel(output)
     try:
         clock = [0.0]
-        monkeypatch.setattr('control_kernel.time.monotonic', lambda: clock[0])
+        monkeypatch.setattr('motioncontrol.control_kernel.time.monotonic', lambda: clock[0])
         def feed(pose, count):
             for _ in range(count):
                 clock[0] += 0.10
@@ -564,7 +564,7 @@ def _standing_pose(dy=0.0, dx=0.0, left_wrist=None, right_wrist=None,
 
 def _zone_feeder(kernel, monkeypatch):
     clock = [0.0]
-    monkeypatch.setattr('control_kernel.time.monotonic', lambda: clock[0])
+    monkeypatch.setattr('motioncontrol.control_kernel.time.monotonic', lambda: clock[0])
 
     def feed(pose, count=1, step=1 / 30.0):
         for _ in range(count):

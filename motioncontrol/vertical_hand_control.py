@@ -6,6 +6,6 @@ versioned module so future experiments can be reviewed without replacing the
 production adapter or silently changing its import contract.
 """
 
-from vertical_hand_control_v160 import VerticalHandController
+from motioncontrol.vertical_hand_control_v160 import VerticalHandController
 
 __all__ = ["VerticalHandController"]

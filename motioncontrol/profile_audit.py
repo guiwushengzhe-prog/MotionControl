@@ -15,7 +15,7 @@ from typing import Iterable
 
 from motioncontrol_shared.profile_schema import normalize_bindings
 from motioncontrol_shared.profile_versions import CATALOG_SCHEMA, SCHEMA
-from steam_seed_catalog import PRIORITY_GAMES
+from motioncontrol.steam_seed_catalog import PRIORITY_GAMES
 
 
 EXPECTED_ZONE_IDS = {

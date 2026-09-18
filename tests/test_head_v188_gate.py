@@ -1,6 +1,6 @@
 import math
 
-from head_control import HeadController
+from motioncontrol.head_control import HeadController
 import pytest
 
 

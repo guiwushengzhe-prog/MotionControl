@@ -45,7 +45,7 @@ def test_shared_vocabulary_matches_the_desktop():
     they drift from the ones output_backend actually drives, the cloud starts
     either rejecting valid configs or accepting unplayable ones.
     """
-    from output_backend import KEY_CODES, XUSB_GAMEPAD_BUTTONS, KeyboardOutput
+    from motioncontrol.output_backend import KEY_CODES, XUSB_GAMEPAD_BUTTONS, KeyboardOutput
 
     from motioncontrol_shared.profile_schema import GAMEPAD_BUTTONS, KEYBOARD_KEYS
 
@@ -62,7 +62,7 @@ def test_shared_vocabulary_matches_the_desktop():
 def test_voice_rules_are_the_desktop_rules():
     """voice_backend must delegate rather than keep its own copy."""
     from motioncontrol_shared import mapping_schema
-    from voice_backend import VoiceService
+    from motioncontrol.voice_backend import VoiceService
 
     assert VoiceService._validate_mappings is mapping_schema.normalize_voice_mappings
     assert VoiceService._validate_wake_word is mapping_schema.normalize_wake_word

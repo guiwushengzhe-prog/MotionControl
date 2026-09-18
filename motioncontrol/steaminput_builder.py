@@ -18,7 +18,7 @@ from urllib import parse, request
 
 from motioncontrol_shared.profile_schema import normalize_action
 from motioncontrol_shared.profile_versions import CATALOG_SCHEMA, SCHEMA
-from steam_vdf import ParsedBinding, binding_summary, extract_physical_bindings
+from motioncontrol.steam_vdf import ParsedBinding, binding_summary, extract_physical_bindings
 
 
 API_BASE = "https://api.steaminputdb.com"

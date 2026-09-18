@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from steam_seed_catalog import PRIORITY_GAMES, collect_top_seller_seeds, merge_seed_games, parse_search_html
+from motioncontrol.steam_seed_catalog import PRIORITY_GAMES, collect_top_seller_seeds, merge_seed_games, parse_search_html
 
 
 HTML = '''

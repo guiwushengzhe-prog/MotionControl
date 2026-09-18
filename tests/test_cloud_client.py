@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from cloud_client import MAX_DOWNLOAD_BYTES, CloudClient, CloudError, backup_user_data
+from motioncontrol.cloud_client import MAX_DOWNLOAD_BYTES, CloudClient, CloudError, backup_user_data
 from motioncontrol_shared.canonical import canonicalize
 
 VALID_DOC = {

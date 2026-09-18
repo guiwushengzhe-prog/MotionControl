@@ -2,7 +2,7 @@
 
 import pytest
 
-from head_control import _RelativeYawAxisV153
+from motioncontrol.head_control import _RelativeYawAxisV153
 
 
 _UPDATE = dict(

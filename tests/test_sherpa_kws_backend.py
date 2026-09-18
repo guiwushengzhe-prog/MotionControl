@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sherpa_kws_backend import _spoken_command_candidates, find_sherpa_kws_model
+from motioncontrol.sherpa_kws_backend import _spoken_command_candidates, find_sherpa_kws_model
 
 
 def test_kws_excludes_one_character_commands_but_keeps_safe_aliases():

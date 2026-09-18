@@ -1,7 +1,7 @@
 import time
 
-from control_kernel import ControlKernel, MP_NAMES, NativeCameraService, CameraUnavailable
-from input_bridge import InputBridge
+from motioncontrol.control_kernel import ControlKernel, MP_NAMES, NativeCameraService, CameraUnavailable
+from motioncontrol.input_bridge import InputBridge
 
 
 class FakeOutput:

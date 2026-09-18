@@ -18,7 +18,7 @@ import sys
 
 import pytest
 
-import ascii_model_path as amp
+from motioncontrol import ascii_model_path as amp
 
 
 @pytest.fixture

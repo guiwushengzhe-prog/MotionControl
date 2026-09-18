@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from steaminput_builder import (
+from motioncontrol.steaminput_builder import (
     SteamInputDBClient,
     TARGET_PROFILE_COUNT,
     build_one,

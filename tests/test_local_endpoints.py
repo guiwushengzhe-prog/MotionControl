@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-import local_endpoints as le
+from motioncontrol import local_endpoints as le
 
 
 # --- telling one kind of link from another --------------------------------

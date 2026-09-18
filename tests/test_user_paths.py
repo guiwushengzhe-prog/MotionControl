@@ -28,7 +28,7 @@ from motioncontrol_shared.user_layout import (
     migration_plan,
     user_data_path,
 )
-import user_paths
+from motioncontrol import user_paths
 
 
 @pytest.fixture

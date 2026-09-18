@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from user_paths import user_path
+from motioncontrol.user_paths import user_path
 
 
 SCENE_VERSION = 2

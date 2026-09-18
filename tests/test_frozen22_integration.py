@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from head_control import FROZEN22_SIGNATURE, HeadController
+from motioncontrol.head_control import FROZEN22_SIGNATURE, HeadController
 
 
 def _pose(*, nose_x: float = 0.50, omit_inner: bool = False) -> dict[str, dict]:

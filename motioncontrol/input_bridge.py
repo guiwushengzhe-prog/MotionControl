@@ -13,8 +13,8 @@ from collections import deque
 from collections.abc import Iterable
 from urllib.parse import parse_qs, urlparse
 
-import device_pairing
-import local_endpoints
+from motioncontrol import device_pairing
+from motioncontrol import local_endpoints
 
 
 class IdentityViolation(ValueError):

@@ -1,8 +1,8 @@
 import time
 from pathlib import Path
 
-from funasr_command_backend import build_hotwords, find_fsmn_vad_model, find_funasr_python, find_seaco_model
-from hybrid_voice_backend import HybridWakeAsrRecognizer, resolve_command_candidate
+from motioncontrol.funasr_command_backend import build_hotwords, find_fsmn_vad_model, find_funasr_python, find_seaco_model
+from motioncontrol.hybrid_voice_backend import HybridWakeAsrRecognizer, resolve_command_candidate
 
 
 MAPPINGS = [

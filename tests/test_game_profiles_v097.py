@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from game_profiles import GameProfileStore
+from motioncontrol.game_profiles import GameProfileStore
 from motioncontrol_shared.profile_schema import normalize_action, flatten_bindings
 
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from hand_mouse_control import DEFAULT_CONFIG, HandMouseController, merge_config
+from motioncontrol.hand_mouse_control import DEFAULT_CONFIG, HandMouseController, merge_config
 
 
 def pose(hand="right", *, spread=0.5, wrist=(0.5, 0.5), forearm=0.2, visibility=0.9):
@@ -303,7 +303,7 @@ def hand_points(*, curl, wrist=(0.5, 0.9), reach=0.10, fan_degrees=12.0):
     """
     import math
 
-    from hand_mouse_control import _FINGER_KNUCKLES, _FINGER_TIPS
+    from motioncontrol.hand_mouse_control import _FINGER_KNUCKLES, _FINGER_TIPS
 
     wx, wy = wrist
     points = [{"x": wx, "y": wy, "score": 0.9} for _ in range(21)]
@@ -317,7 +317,7 @@ def hand_points(*, curl, wrist=(0.5, 0.9), reach=0.10, fan_degrees=12.0):
 
 def test_flat_fingers_read_near_two_and_a_fist_near_one():
     """这两个数就是默认阈值 1.35/1.60 的由来，读错了阈值全部失效。"""
-    from hand_mouse_control import measure_curl
+    from motioncontrol.hand_mouse_control import measure_curl
 
     assert measure_curl(hand_points(curl=2.0)) == pytest.approx(2.0, abs=0.01)
     assert measure_curl(hand_points(curl=1.0)) == pytest.approx(1.0, abs=0.01)
@@ -325,7 +325,7 @@ def test_flat_fingers_read_near_two_and_a_fist_near_one():
 
 def test_curl_survives_the_player_standing_further_away():
     """所有距离都从手腕起算，整只手缩小时比值不变。"""
-    from hand_mouse_control import measure_curl
+    from motioncontrol.hand_mouse_control import measure_curl
 
     near = measure_curl(hand_points(curl=1.8, reach=0.20))
     far = measure_curl(hand_points(curl=1.8, reach=0.05))
@@ -363,7 +363,7 @@ def test_without_hand_points_the_spread_still_drives_the_gate():
 
 def test_a_hand_outside_the_picture_is_not_believed():
     """和姿态那条路同一条规矩：出了画面的点是外推的，不是看见的。"""
-    from hand_mouse_control import measure_curl
+    from motioncontrol.hand_mouse_control import measure_curl
 
     assert measure_curl(hand_points(curl=1.0, wrist=(-0.2, 0.5))) is None
 

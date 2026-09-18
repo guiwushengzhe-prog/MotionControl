@@ -36,7 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from model_share import ModelShare, SIGNATURE_NAME  # noqa: E402
+from motioncontrol.model_share import ModelShare, SIGNATURE_NAME  # noqa: E402
 
 # 私钥放哪是每台机器自己的事，所以写在配置文件里，跟 vosk 模型路径同一个做法。
 # 那个文件不进仓库。

@@ -7,9 +7,9 @@ import time
 
 import pytest
 
-from control_kernel import ControlKernel, MP_NAMES
+from motioncontrol.control_kernel import ControlKernel, MP_NAMES
 from head_test_support import hold_head, turn_head
-from head_control import (
+from motioncontrol.head_control import (
     CENTER_MIN_COLLECTION_S,
     CENTER_MIN_SAMPLES,
     CENTER_TARGET_SAMPLES,

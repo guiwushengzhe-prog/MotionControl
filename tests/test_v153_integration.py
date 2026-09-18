@@ -11,8 +11,8 @@ import math
 
 import pytest
 
-from control_kernel import ControlKernel, MP_NAMES
-from head_control import HeadController, HeadPoseEstimator, _RelativeYawAxisV153
+from motioncontrol.control_kernel import ControlKernel, MP_NAMES
+from motioncontrol.head_control import HeadController, HeadPoseEstimator, _RelativeYawAxisV153
 
 
 def _point(x: float, y: float, z: float = 0.0, score: float = 0.98) -> dict:

@@ -19,7 +19,7 @@ import pytest
 
 pytestmark = pytest.mark.skip(reason="Superseded by the reference head-control-v4.3 tests in test_head_control_clean.py")
 
-from control_kernel import ControlKernel, MP_NAMES
+from motioncontrol.control_kernel import ControlKernel, MP_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +440,7 @@ def test_g_mobile_pose_with_mirrored_coordinates_reaches_kernel():
     output = FakeOutput()
     kernel = ControlKernel(output)
     try:
-        from input_bridge import InputBridge
+        from motioncontrol.input_bridge import InputBridge
         bridge = InputBridge(output, kernel)
 
         class FakePeer:

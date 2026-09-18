@@ -511,7 +511,7 @@ class SherpaCurrentCandidate(CandidateBase):
     def __init__(self, parser: CommandParser, repo: Path, model_dir: Path):
         super().__init__(parser)
         started = time.perf_counter()
-        from sherpa_phrase_kws import SherpaPhraseKws
+        from motioncontrol.sherpa_phrase_kws import SherpaPhraseKws
 
         self.engine = SherpaPhraseKws(
             model_dir=model_dir,

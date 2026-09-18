@@ -1,6 +1,6 @@
-from head_control import IntentAxis
+from motioncontrol.head_control import IntentAxis
 from motioncontrol_shared.profile_schema import flatten_bindings
-from steaminput_builder import SeedGame, profile_from_vdf
+from motioncontrol.steaminput_builder import SeedGame, profile_from_vdf
 
 
 def test_returning_is_latched_across_center_until_motion_settles():

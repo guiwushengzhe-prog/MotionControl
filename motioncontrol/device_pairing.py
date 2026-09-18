@@ -114,7 +114,7 @@ def _unb64(text, *, label: str, expect: int | None = None) -> bytes:
 
 
 def default_pairing_path() -> Path:
-    from user_paths import user_path
+    from motioncontrol.user_paths import user_path
 
     return user_path("paired_devices")
 

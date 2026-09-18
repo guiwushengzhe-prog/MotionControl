@@ -17,7 +17,7 @@ import threading
 from pathlib import Path
 
 from motioncontrol_shared.catalog import catalog_entry, load_catalog, load_profile
-from user_paths import user_path
+from motioncontrol.user_paths import user_path
 from motioncontrol_shared.motion_conflicts import validate_motion_bindings
 from motioncontrol_shared.profile_schema import _merge_bindings, normalize_bindings
 from motioncontrol_shared.profile_versions import (

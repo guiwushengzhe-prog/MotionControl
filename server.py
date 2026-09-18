@@ -11,18 +11,18 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from cloud_client import CloudClient, CloudError, backup_user_data
-from custom_poses import CustomPoseError, CustomPoseStore
-from control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
-from input_bridge import InputBridge
-from game_profiles import GameProfileStore, ProfileSelectionChanged
+from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
+from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
+from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
+from motioncontrol.input_bridge import InputBridge
+from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
 from motioncontrol_shared.profile_schema import action_catalog
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
-from output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
-from model_share import ModelShare
-from voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
-from scene_layout import SceneLayoutManager
-from user_paths import migrate_legacy_user_data, user_data_root, user_path
+from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
+from motioncontrol.model_share import ModelShare
+from motioncontrol.voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
+from motioncontrol.scene_layout import SceneLayoutManager
+from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
 
 # Desktop workflow and per-game persistence release; phone protocol versions stay unchanged.
 VERSION = "2.0.0"
@@ -205,7 +205,7 @@ def _build_pairing_service():
     redesign.
     """
     try:
-        from device_pairing import PairingService
+        from motioncontrol.device_pairing import PairingService
 
         required = user_path("require_paired_devices").exists()
         return PairingService(require_paired_devices=required)

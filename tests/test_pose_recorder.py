@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from pose_recorder import MAX_DURATION_S, PoseRecorder
+from motioncontrol.pose_recorder import MAX_DURATION_S, PoseRecorder
 
 
 def frame(x=0.5, y=0.5, score=0.9):
@@ -136,7 +136,7 @@ def test_absurd_durations_are_refused():
 
 def test_frame_cap_stops_a_recorder_nobody_stopped(recorder, monkeypatch):
     """Without a cap a stuck recorder would grow until the process died."""
-    monkeypatch.setattr("pose_recorder.MAX_FRAMES", 5)
+    monkeypatch.setattr("motioncontrol.pose_recorder.MAX_FRAMES", 5)
     recorder.start(delay_s=0.0, duration_s=MAX_DURATION_S, now=0.0)
     for i in range(20):
         recorder.capture(frame(), now=i * 0.01)

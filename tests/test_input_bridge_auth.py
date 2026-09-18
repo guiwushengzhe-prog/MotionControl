@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-import device_pairing as dp
-from input_bridge import InputBridge
+from motioncontrol import device_pairing as dp
+from motioncontrol.input_bridge import InputBridge
 
 DEVICE = "camera-aaaa"
 OTHER = "camera-bbbb"

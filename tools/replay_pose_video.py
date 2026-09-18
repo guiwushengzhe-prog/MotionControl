@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from control_kernel import ControlKernel  # noqa: E402
-from head_control import CENTER_MIN_SAMPLES, HEAD11_NAMES, HORIZONTAL_ALGORITHMS  # noqa: E402
+from motioncontrol.control_kernel import ControlKernel  # noqa: E402
+from motioncontrol.head_control import CENTER_MIN_SAMPLES, HEAD11_NAMES, HORIZONTAL_ALGORITHMS  # noqa: E402
 
 
 ANNOTATION_LABELS = (

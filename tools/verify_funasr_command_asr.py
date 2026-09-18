@@ -12,7 +12,7 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(args.root).resolve()
     sys.path.insert(0, str(root))
-    from funasr_command_backend import (
+    from motioncontrol.funasr_command_backend import (
         FunAsrWorkerClient,
         find_fsmn_vad_model,
         find_funasr_python,

@@ -4,9 +4,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from control_kernel import ControlKernel
-from scene_layout import SceneLayoutManager
-from voice_backend import VoiceService
+from motioncontrol.control_kernel import ControlKernel
+from motioncontrol.scene_layout import SceneLayoutManager
+from motioncontrol.voice_backend import VoiceService
 
 
 class FakeOutput:
@@ -151,7 +151,7 @@ def test_fixed_gate_enables_right_wrist_vertical_but_head_only_drives_x(monkeypa
     kernel = ControlKernel(output)
     try:
         clock = [0.0]
-        monkeypatch.setattr("control_kernel.time.monotonic", lambda: clock[0])
+        monkeypatch.setattr("motioncontrol.control_kernel.time.monotonic", lambda: clock[0])
         def feed(source, current_pose, count):
             state = None
             for _ in range(count):
@@ -285,7 +285,7 @@ def test_first_run_without_saved_scene_exposes_and_arms_provisional_gate(monkeyp
     kernel = ControlKernel(output)
     try:
         clock = [0.0]
-        monkeypatch.setattr("control_kernel.time.monotonic", lambda: clock[0])
+        monkeypatch.setattr("motioncontrol.control_kernel.time.monotonic", lambda: clock[0])
         def feed(current_pose, count):
             state = None
             for _ in range(count):

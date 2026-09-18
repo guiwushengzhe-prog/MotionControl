@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlparse
 import pytest
 
-from game_profiles import ProfileSelectionChanged
+from motioncontrol.game_profiles import ProfileSelectionChanged
 from test_game_profiles_v097 import make_store
 
 
