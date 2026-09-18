@@ -18,7 +18,7 @@ def test_only_full_model_is_registered():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert 'pose_landmarker_full.task' in server
     assert 'pose_landmarker_lite.task' not in server
-    assert 'VERSION = "2.0"' in server
+    assert 'VERSION = "2.0.0"' in server
 
 
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
@@ -42,7 +42,7 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
 
 def test_v2_command_catalog_and_head_ui():
     catalog = json.loads((ROOT / 'config' / 'voice_commands_v094.json').read_text(encoding='utf-8'))
-    assert catalog['product_version'] == '2.0'
+    assert catalog['product_version'] == '2.0.0'
     assert len(catalog['commands']) >= 39
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
