@@ -28,6 +28,8 @@ pip install -r requirements-runtime.txt
 
 手柄输出需要先装 ViGEmBus 驱动，[官方地址](https://github.com/nefarius/ViGEmBus/releases)。不装的话摄像头识别和鼠标控制照样能用，只是手柄按键没反应。
 
+没用过这个软件的话，先按 [新手指南](docs/新手指南.md) 跑一遍，比直接读代码快。
+
 云端部分怎么跑见 [cloud/README.md](cloud/README.md)，它不需要 Windows。
 
 ## 跑测试

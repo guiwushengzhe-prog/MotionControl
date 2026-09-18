@@ -4,6 +4,9 @@ MotionControl 2.0 电脑端
 第一次使用，按顺序做两件事
 ────────────────────────────
 
+（图文版的详细指南在这里，卡住了就去看：
+ https://github.com/guiwushengzhe-prog/MotionControl/blob/main/docs/新手指南.md ）
+
 1. 双击「安装虚拟手柄驱动.exe」，按提示装完，可能需要重启。
    不装的话所有手柄输出都没反应。每台电脑只需装一次。
 
