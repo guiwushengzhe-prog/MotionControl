@@ -427,13 +427,23 @@ class ControlKernel:
         self.sensor_sources: dict[str, dict] = {}
         self._thread.start()
 
+    def _user_file(self, key: str) -> Path:
+        """用户数据文件的位置，走 user_paths 而不是自己拼。
+
+        自己读 LOCALAPPDATA 会绕过 MOTIONCONTROL_USER_DIR，而那正是测试用来
+        避开开发者真实数据的开关——绕过它，跑一次测试就可能覆盖掉你自己的
+        头控校准或者设置。文件名也只在 motioncontrol_shared 里写一次。
+        """
+        from user_paths import user_path
+
+        return user_path(key)
+
     def _head_profile_path(self) -> Path:
-        root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
-        return root / "MotionControl" / "head_profile.json"
+        return self._user_file("head_profile")
 
     def _general_settings_path(self) -> Path:
-        root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
-        return root / "MotionControl" / "general_settings.json"
+        return self._user_file("general_settings")
+
 
     def _load_general_settings(self) -> None:
         """把「通用设置」里不跟游戏走的那几项读回来。

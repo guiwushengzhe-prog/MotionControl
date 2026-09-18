@@ -25,14 +25,17 @@ class Output:
 
 
 @pytest.fixture()
-def home(tmp_path, monkeypatch):
-    """一个干净的用户数据目录，两次内核共用它，就像重启一次。"""
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    return tmp_path
+def home(isolated_user_data):
+    """一个干净的用户数据目录，两次内核共用它，就像重启一次。
+
+    用 conftest 那个 autouse 的 isolated_user_data，而不是自己改 LOCALAPPDATA：
+    它设的是 MOTIONCONTROL_USER_DIR，优先级更高，自己另设一个只会被它盖掉。
+    """
+    return isolated_user_data
 
 
 def settings_file(home: Path) -> Path:
-    return home / "MotionControl" / "general_settings.json"
+    return home / "general_settings.json"
 
 
 def test_hand_mouse_survives_a_restart(home):
