@@ -24,7 +24,7 @@ const BODY_ZONES = {leftHand:{label:'X',body:'左手',button:'X'},rightHand:{lab
 
 let currentPoseMap=null, kernelState=null, sourceMode='phone', cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'gamepad',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
-const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalExclusive:false,bodyMotionGuard:true};
+const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:true,verticalExclusive:false,bodyMotionGuard:true};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
@@ -196,6 +196,9 @@ function setupConflicts(){
     items.push(['手机正在传画面，但来源选的是电脑摄像头——手机传来的都被丢掉了。','改用手机',()=>setSource('phone',true)]);
   if(mergeOwnsSticks()&&hand.enabled)
     items.push(['物理手柄合流占着两个摇杆，手控鼠标不会动。','关掉合流',async()=>{$('#xinputMerge').value='';await setXinputMerge()}]);
+  if(hand.enabled&&head.verticalLookEnabled&&head.verticalLookSource==='hand')
+    items.push(['手控鼠标已经在用右手转视角了，上下视角那道闸抢的是同一只右手，绿框白放。','关掉上下视角',
+      async()=>{const s=$('#verticalLookSource');if(s){s.value='off';s.dispatchEvent(new Event('change',{bubbles:true}))}}]);
   if(hand.enabled&&hand.grip_source==='pose')
     items.push(['手机没传手指关节，握拳只能拿三个指尖估，张开和握紧分不太开。',null,null]);
   return items;
@@ -260,9 +263,10 @@ function renderKernelState(runtime){
     head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
     if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
     head.verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'head':'hand';
+    head.verticalLookEnabled=k.vertical_look?.enabled!==false;
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
     head.bodyMotionGuard=k.vertical_look?.body_motion_guard!==false;
-    if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookSource;
+    if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookEnabled?head.verticalLookSource:'off';
     if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;
     if($('#bodyMotionGuard'))$('#bodyMotionGuard').checked=head.bodyMotionGuard;
     document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));
@@ -284,7 +288,7 @@ function renderKernelState(runtime){
   }
   $('#cameraPill').textContent=(sourceMode==='phone'?inputStatus.mobile_pose_connected:cameraRunning)?'摄像头 ✓':'摄像头';$('#cameraPill').className='pill '+(sourceMode==='phone'||cameraRunning?'ok':'bad');
   // phonePill is owned by renderInputStatus (/api/input/status); kernel status has no transport state.
-  $('#posePill').textContent=currentPoseMap?'人体 ✓':'人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){const paused=!!hs.horizontal_paused_by_vertical_gate;gateStatus.textContent=gateActive?`上下视角已开启 · ${verticalSource}控制上下${paused?' · 左右暂停':''}`:'上下视角待机 · 左手放入绿色区域开启';gateStatus.className='look-gate-status '+(gateActive?'active':'')}renderOverlay(currentPoseMap);renderMainStatus();
+  $('#posePill').textContent=currentPoseMap?'人体 ✓':'人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){const paused=!!hs.horizontal_paused_by_vertical_gate;gateStatus.textContent=head.verticalLookEnabled?(gateActive?`上下视角已开启 · ${verticalSource}控制上下${paused?' · 左右暂停':''}`:'上下视角待机 · 左手放入绿色区域开启'):'上下视角已关闭';gateStatus.className='look-gate-status '+(gateActive?'active':'')}renderOverlay(currentPoseMap);renderMainStatus();
 
 }
 function renderInputStatus(status){
@@ -899,17 +903,17 @@ function renderVoiceCommandCatalog(commands){
 }
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';head.verticalLookSource=$('#verticalLookSource')?.value==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){
   syncControlLabels();
   renderKernelState(await post('/api/head/config',{
     algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,
     sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,
-    invert_y:head.invertY,vertical_look_source:head.verticalLookSource,
+    invert_y:head.invertY,vertical_look_source:head.verticalLookEnabled?head.verticalLookSource:'off',
     vertical_exclusive:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard,
   }));
   if(sceneConfigured){
-    const vertical={...scene.status.vertical_look,source:head.verticalLookSource,verticalLookSource:head.verticalLookSource,
+    const vertical={...scene.status.vertical_look,enabled:head.verticalLookEnabled,source:head.verticalLookSource,verticalLookSource:head.verticalLookSource,
       exclusive_axes:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard};
     scene.status=await post('/api/scene/layout',{zones:scene.status.zones,vertical_look:vertical});
   }

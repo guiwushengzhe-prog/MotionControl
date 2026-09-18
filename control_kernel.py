@@ -587,15 +587,25 @@ class ControlKernel:
             )
             if vertical_look_source is not None:
                 source = str(vertical_look_source).strip().lower()
-                if source in {"right_wrist", "hand", "右手"}:
-                    source = "hand"
-                elif source in {"head", "头部"}:
-                    source = "head"
+                if source in {"off", "none", "关闭"}:
+                    # 开关必须走这条路，不能只存进场景布局：没定位过区域的玩家
+                    # 根本不会保存布局，那样「关闭」点了等于没点。
+                    # 保留上一次选的是右手还是头部，重新打开不用再选一次。
+                    self.vertical_look["enabled"] = False
+                    self.vertical_gate_active = False
+                    self._reset_vertical_hand_locked()
+                    self._reset_vertical_head_locked()
                 else:
-                    raise ValueError("vertical_look_source must be hand or head")
-                self.vertical_look["source"] = source
-                self.vertical_look["verticalLookSource"] = source
-                self._reset_vertical_head_locked()
+                    if source in {"right_wrist", "hand", "右手"}:
+                        source = "hand"
+                    elif source in {"head", "头部"}:
+                        source = "head"
+                    else:
+                        raise ValueError("vertical_look_source must be hand, head or off")
+                    self.vertical_look["enabled"] = True
+                    self.vertical_look["source"] = source
+                    self.vertical_look["verticalLookSource"] = source
+                    self._reset_vertical_head_locked()
             if vertical_exclusive is not None:
                 self.vertical_look["exclusive_axes"] = bool(vertical_exclusive)
             if body_motion_guard is not None:
@@ -1318,7 +1328,7 @@ class ControlKernel:
         else:
             self.zone_rects = self._compute_body_zones(pose_map, now)
         changed = False
-        gate_available = (self.fixed_zones_enabled and "lookGate" in self.fixed_zones) or (not self.fixed_zones_enabled and "lookGate" in self.zone_rects)
+        gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         for name in zone_names:
             state = self.zone_state.setdefault(name, {"inside": 0, "outside": 0, "pressed": False})
@@ -2027,9 +2037,24 @@ class ControlKernel:
             self.last_error = str(exc)
             return None
 
+    def _gate_available(self) -> bool:
+        """上下视角那道闸现在存不存在。
+
+        关掉上下视角时它一个字也不该出现。输出早就被 enabled 挡住了（见
+        vertical_look.get("enabled") 那一处），但区域原来照样上报，界面就照样
+        画出绿框和「左手放这里」——一个不起作用却还在指挥人的提示，比没有更糟。
+
+        判定循环和上报状态两个地方都要这个答案，规则只写在这里一份。
+        """
+        if not bool(self.vertical_look.get("enabled")):
+            return False
+        if self.fixed_zones_enabled:
+            return "lookGate" in self.fixed_zones
+        return "lookGate" in self.zone_rects
+
     def status_locked(self, now: float) -> dict:
         pose_age = round(max(0.0, (now - self.body_last_at) * 1000.0)) if self.body_last_at else None
-        gate_available = (self.fixed_zones_enabled and "lookGate" in self.fixed_zones) or (not self.fixed_zones_enabled and "lookGate" in self.zone_rects)
+        gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         zones = {}
         for name in zone_names:
