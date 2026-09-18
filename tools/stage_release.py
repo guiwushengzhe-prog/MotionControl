@@ -197,6 +197,29 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
     return len(wanted), total
 
 
+def check_vigem_installer(target: Path) -> str:
+    """驱动安装包还是不是官方那一个。
+
+    THIRD_PARTY_NOTICE-ViGEmBus.txt 里一直记着官方安装包的 SHA256，但从来没有
+    人拿它对过——记下来而不核对，等于只是写了一句好听的话。我们按 BSD-3 把
+    别人的二进制原样转发给玩家，那就有责任保证转发的确实是原样那一份。
+    """
+    import hashlib
+    import re
+
+    notice = target / "THIRD_PARTY_NOTICE-ViGEmBus.txt"
+    installer = target / "安装虚拟手柄驱动.exe"
+    if not notice.is_file() or not installer.is_file():
+        return "驱动安装包或它的第三方声明不见了"
+    found = re.search(r"SHA256:\s*([0-9a-f]{64})", notice.read_text(encoding="utf-8"))
+    if not found:
+        return "第三方声明里没写 SHA256，无法核对"
+    actual = hashlib.sha256(installer.read_bytes()).hexdigest()
+    if actual != found.group(1):
+        return f"驱动安装包和声明里的 SHA256 对不上：{actual}"
+    return "驱动安装包是官方原件"
+
+
 def check_phone_web_signature(bundle: Path) -> str:
     """签名对不对得上这一份包。
 
@@ -272,6 +295,8 @@ def main() -> int:
         print("  " + check_phone_web_signature(target / "phone_web"))
     else:
         print(f"WARNING: 找不到手机网页包 {phone_web}，发布包里不会带更新用的那一份")
+
+    print("  " + check_vigem_installer(target))
 
     print()
     print("staged. Now verify the bundled interpreter has every runtime dependency:")
