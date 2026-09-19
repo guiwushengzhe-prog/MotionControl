@@ -310,6 +310,16 @@ function renderInputStatus(status){
     if(Number.isFinite(ms)&&ms>0)parts.push(`每帧 ${Math.round(ms)} ms · 约 ${Math.round(1000/ms)} 帧/秒`);
     perf.textContent=parts.join(' · ');
   }
+  // 数据线插没插、网络共享开没开，服务端本来就知道，以前只是没说出来。而这正是
+  // 有线连不上时唯一的分岔：没开网络共享的话，线插得再紧也没有一条能通的路。
+  const tether=$('#usbTetherStatus');
+  if(tether){
+    const usb=status.usb_tether||{};
+    tether.textContent=usb.present
+      ? `数据线已接通（${usb.adapter||'USB'}）${usb.carries_internet?'，这台电脑正在走手机的网':''}`
+      : '没检测到数据线。走 WiFi 就不用管它；插了线还是这句话，就是手机上的「USB 网络共享」没打开。';
+    tether.className='statusline'+(usb.present?'':' warn');
+  }
   const field=$('#phoneWsUrl'),urls=status.phone_ws_urls||[];
   if(document.activeElement!==field&&JSON.stringify(urls)!==field.dataset.urls){
     field.dataset.urls=JSON.stringify(urls);
