@@ -290,6 +290,9 @@ class GameProfileStore:
             profile["name"] = entry["name"]
             profile["source"] = "custom"
             profile["base"] = entry["base"]
+            # AppID 也带出来。界面上要显示它，而且以后按 AppID 上传配置时，拿到
+            # 的就是这一份——不带的话每个用到 profile 的地方都要再回头查一次条目。
+            profile["appid"] = entry.get("appid", "")
             return profile
 
     def effective_profile(self) -> dict:

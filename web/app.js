@@ -420,6 +420,12 @@ function syncProfileZoneLabels(){
 function profileMetaText(profile){
   if(!profile)return '未选择游戏';
   const appid=profile.appid||profile.steam_appid||'';
+  // 自己加的游戏不是「实验配置」——那句话说的是自动生成的那两百个没人试过，而
+  // 这一个是他自己建的，本来就该自己调，说它"实验"只会让人以为是软件出的问题。
+  if(profile.source==='custom'){
+    return ['我自己加的', appid?'AppID '+appid:'没填 AppID',
+            '底档 '+(profile.base||'generic-xbox')].join(' · ');
+  }
   const source=profile.source||{};
   const verified=source.verified?' · 已验证':' · 实验配置';
   const sourceName=source.kind==='manual'?'人工':(source.kind==='steaminputdb'?'社区配置库':(source.kind==='builtin'?'内置':'离线库'));
@@ -433,6 +439,9 @@ function profileMetaText(profile){
 function renderProfileHeader(){
   const p=gameProfile.selected;
   renderOutputMix();
+  // 改名和删除只对自己加的那些有意义：内置那两百个删不得也改不得。
+  const mine=p?.source==='custom';
+  $('#customGameActions').hidden=!mine;
   $('#profileGameName').textContent=p?.name||'未选择游戏';
   $('#currentGameName').textContent=p?.name||'未选择游戏';
   $('#profileMeta').textContent=profileMetaText(p);
@@ -448,7 +457,14 @@ function renderProfileCatalog(games){
   // handful have actually been played, and a flat alphabetical list makes
   // an auto-generated one look as official as a tested one.
   const ordered=[...gameProfile.catalog].sort((a,b)=>(b.verified?1:0)-(a.verified?1:0)||String(a.name).localeCompare(String(b.name),'zh'));
-  for(const g of ordered){const o=document.createElement('option');o.value=g.id;o.textContent=`${g.verified?'✓ ':''}${g.name}${g.appid?` · ${g.appid}`:''}${g.verified?'':' · 实验'}`;select.appendChild(o)}
+  for(const g of ordered){
+    const o=document.createElement('option');o.value=g.id;
+    // 「实验」说的是没人试过的自动生成配置。自己加的不属于那一类，标错了会让人
+    // 以为是软件给的半成品，而不是他自己刚建的空白档。
+    const tail=g.source==='custom'?' · 我加的':(g.verified?'':' · 实验');
+    o.textContent=`${g.verified?'✓ ':''}${g.name}${g.appid?` · ${g.appid}`:''}${tail}`;
+    select.appendChild(o);
+  }
   if(gameProfile.catalog.some(g=>g.id===selectedId))select.value=selectedId;
 }
 async function searchProfiles(){
@@ -462,6 +478,51 @@ async function refreshProfile(){
   gameProfile.selected=selected.profile||null;gameProfile.actions=actions.actions||{};gameProfile.overrides=gameProfile.selected?.overrides||{};
   renderProfileHeader();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
 }
+// ---- 自己加的游戏 ---------------------------------------------------------
+// 内置目录只有两百个，而且是从 Steam 榜单生成的，漏掉很正常。以前搜不到就只能
+// 借用别人的坑位：界面上一直显示着错的游戏名，第二个未收录的游戏就没地方放。
+//
+// 加完直接选中它。会来加游戏的人就是为了马上用它——加完还要自己再去下拉框里找
+// 一遍，等于把一件事拆成两件。
+async function addCustomGame(){
+  const name=$('#customGameName').value.trim();
+  if(!name){notice('先给这个游戏起个名字');return}
+  await profileOperation(async()=>{
+    const data=await post('/api/game-profiles/custom/add',
+      {name,appid:$('#customGameAppid').value});
+    $('#customGameName').value='';$('#customGameAppid').value='';
+    const picked=await post('/api/game-profiles/select',{id:data.game.id});
+    gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};
+    await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();await searchProfiles();
+    notice(`已添加并切换到「${data.game.name}」。按键在下面自己绑。`);
+  });
+}
+async function renameCustomGame(){
+  const current=gameProfile.selected;
+  if(current?.source!=='custom')return;
+  const name=prompt('改成什么名字？按键映射不会丢，它是按编号存的。',current.name);
+  if(name===null)return;
+  await profileOperation(async()=>{
+    const data=await post('/api/game-profiles/custom/rename',{id:current.id,name});
+    gameProfile.selected={...current,name:data.game.name};
+    renderProfileHeader();await searchProfiles();
+    notice(`已改名为「${data.game.name}」`);
+  });
+}
+async function removeCustomGame(){
+  const current=gameProfile.selected;
+  if(current?.source!=='custom')return;
+  if(!confirm(`删掉「${current.name}」？给它调的按键映射会一起删掉，恢复不了。`))return;
+  await profileOperation(async()=>{
+    // 删的是正在用的那个，服务端会退回通用档并把新绑定推给内核和手机，所以这里
+    // 要用它返回的那份，不能继续显示一个已经不存在的游戏。
+    const data=await post('/api/game-profiles/custom/remove',{id:current.id});
+    gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
+    await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();await searchProfiles();
+    notice(`已删掉，当前游戏退回「${data.profile.name}」`);
+  });
+}
+
 async function applySelectedProfile(){
   const id=$('#profileSelect').value;if(!id||profileSwitching)return;
   await profileOperation(async()=>{
@@ -475,11 +536,11 @@ async function applySelectedProfile(){
 }
 async function profileOperation(operation){
   profileSwitching=true;$('#mappingFields').disabled=true;
-  for(const id of ['profileApplyBtn','resetProfileBindingsBtn','profileSelect'])$('#'+id).disabled=true;
+  for(const id of ['profileApplyBtn','resetProfileBindingsBtn','profileSelect','customGameAddBtn','customGameRenameBtn','customGameRemoveBtn'])$('#'+id).disabled=true;
   try{await operation()}
   finally{
     profileSwitching=false;$('#mappingFields').disabled=false;
-    for(const id of ['profileApplyBtn','resetProfileBindingsBtn','profileSelect'])$('#'+id).disabled=false;
+    for(const id of ['profileApplyBtn','resetProfileBindingsBtn','profileSelect','customGameAddBtn','customGameRenameBtn','customGameRemoveBtn'])$('#'+id).disabled=false;
   }
 }
 function makeTypeSelect(binding){
@@ -1148,6 +1209,11 @@ bind('poseRecordCancelBtn',cancelPoseRecord);
 bind('profileSearchBtn',searchProfiles);
 $('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(searchProfiles)});
 bind('profileApplyBtn',applySelectedProfile);bind('resetProfileBindingsBtn',resetProfileBindings);
+bind('customGameAddBtn',addCustomGame);
+bind('customGameRenameBtn',renameCustomGame);
+bind('customGameRemoveBtn',removeCustomGame);
+$('#customGameName').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(addCustomGame)});
+$('#customGameAppid').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(addCustomGame)});
 bind('retryProfileSaveBtn',retryProfileBindings);
 for(const event of ['input','change'])$('#profileBindingRows').addEventListener(event,e=>{syncMotionConflictChoices();scheduleProfileAutoSave(e)});
 bind('adjustZonesBtn',openLiveZoneEditor);bind('saveLiveZonesBtn',saveLiveZones);bind('cancelLiveZonesBtn',cancelLiveZones);

@@ -63,6 +63,12 @@
 <div class="profile-meta" id="profileMeta">正在读取离线游戏库…</div><p class="profile-unverified" hidden="" id="profileUnverified">自动生成的映射，没有人试玩过。不好用可以直接改，改完自动保存。</p>
 <div class="profile-bar"><input aria-label="搜索游戏名或游戏编号" id="profileSearch" placeholder="搜索游戏名或 Steam AppID" type="text"/><button class="btn" id="profileSearchBtn">搜索</button></div>
 <div class="profile-bar"><select aria-label="选择游戏" id="profileSelect"></select><button class="btn primary" id="profileApplyBtn">使用这个游戏</button></div>
+<div class="profile-bar" hidden="" id="customGameActions"><span class="statusline">这是你自己加的游戏。</span><button class="btn" id="customGameRenameBtn">改名</button><button class="btn danger" id="customGameRemoveBtn">删掉</button></div>
+<details id="customGameBox"><summary>搜不到你的游戏？自己加一个</summary>
+<p class="fineprint">内置那两百个是从 Steam 榜单生成的，漏掉很正常。加进来之后按键在下面自己绑，用起来和内置的一样。</p>
+<div class="profile-bar"><input id="customGameName" maxlength="80" placeholder="游戏名，例如：黑神话悟空" type="text"/><input id="customGameAppid" maxlength="120" placeholder="Steam 链接或 AppID（选填）" type="text"/><button class="btn primary" id="customGameAddBtn">添加</button></div>
+<p class="fineprint">AppID 选填，但填了这份配置才能和别人的对上号——游戏名每个人写法都不一样。把商店页链接整个粘进来就行，数字它自己挑。</p>
+</details>
 </section>
 
 <div class="settings-section">
