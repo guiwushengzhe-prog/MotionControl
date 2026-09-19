@@ -294,6 +294,9 @@ def test_first_run_without_saved_scene_exposes_and_arms_provisional_gate(monkeyp
             return state
 
         _prepare_v093_head_for_scene_test(kernel)
+        # 上下视角默认是关的（它和手控鼠标抢同一只右手）。这条钉的是"开着的时候
+        # 首次启动也有一个能用的临时闸"，所以先把它打开。
+        kernel.configure_head(vertical_look_source="hand")
         base = pose()
         state = feed(base, 1)
         assert state["scene_mode"] == "body_relative_provisional"

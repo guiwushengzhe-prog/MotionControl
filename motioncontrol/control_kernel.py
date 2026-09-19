@@ -303,7 +303,10 @@ class ControlKernel:
             # body-relative lookGate so the six-region layout is visible and usable.
             # The first reference capture replaces it with the fixed scene-space
             # gate; later starts load that fixed gate without auto-rematching.
-            "enabled": True, "gate_zone_id": "lookGate", "point": "right_wrist",
+            # 默认关。上下视角这道闸抢的是右手，而手控鼠标默认就在用右手——两个
+            # 一起开着，第一屏就会弹一条"绿框白放"的提示，而第一次打开的人根本
+            # 不知道那个绿框是什么。要用它的人去打开，开了会存盘。
+            "enabled": False, "gate_zone_id": "lookGate", "point": "right_wrist",
             "source": "hand", "verticalLookSource": "hand",
             # Optional axis exclusivity: entering the left-hand gate may pause
             # horizontal head output while vertical view control is active.

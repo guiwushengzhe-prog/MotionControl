@@ -79,30 +79,29 @@ def test_off_then_on_again_across_restarts(home):
     assert last.vertical_look["source"] == "hand"
 
 
-def test_a_broken_file_does_not_stop_the_program(home):
+@pytest.mark.parametrize("rubbish", ["{ 这不是 json", json.dumps(["不是字典"])])
+def test_a_broken_file_does_not_stop_the_program(home, rubbish):
+    """读不出来就当没有。写死默认值会让以后改默认值的人来改这条测试。"""
+    fresh = ControlKernel(Output())
+    default = fresh.vertical_look["enabled"]
+
     path = settings_file(home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{ 这不是 json", encoding="utf-8")
+    path.write_text(rubbish, encoding="utf-8")
 
     kernel = ControlKernel(Output())          # 不该抛
-    assert kernel.vertical_look["enabled"] is True, "读不出来就用默认值"
-
-
-def test_a_file_of_the_wrong_shape_is_ignored(home):
-    path = settings_file(home)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(["不是字典"]), encoding="utf-8")
-
-    kernel = ControlKernel(Output())
-    assert kernel.vertical_look["enabled"] is True
+    assert kernel.vertical_look["enabled"] is default
+    assert kernel.vertical_look["source"] in {"hand", "head"}
 
 
 def test_no_file_at_all_is_normal(home):
     assert not settings_file(home).exists()
     kernel = ControlKernel(Output())
-    assert kernel.vertical_look["enabled"] is True
     # 手控鼠标默认开着：第一次装完的人只有握拳看鼠标动不动这一个办法确认它活着。
     assert kernel.hand_mouse_controller.config["enabled"] is True
+    # 上下视角默认关着：它那道闸抢的是右手，和手控鼠标是同一只，两个一起开着
+    # 第一屏就会弹一条新手看不懂的"绿框白放"。
+    assert kernel.vertical_look["enabled"] is False
 
 
 def test_someone_elses_key_is_not_wiped_by_the_next_save(home):
