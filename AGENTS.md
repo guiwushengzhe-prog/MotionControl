@@ -1,14 +1,13 @@
 # AGENTS.md
 
-> **如果你是 Codex，这份就是给你的。你的实验分支叫 `exp/codex/描述`。**
-> Claude Code 读的是 CLAUDE.md，正文和这里逐字相同——不用去翻那一份。
-
 这个项目由 **Claude Code** 和 **Codex** 共同开发，人类负责人是 guiwu
-（GitHub: guiwushengzhe-prog）。下面只写两个 AI 都必须遵守、而 CONTRIBUTING.md
-没说的几条。其余（怎么跑起来、怎么跑测试、目录结构）看
-[CONTRIBUTING.md](CONTRIBUTING.md)。
+（GitHub: guiwushengzhe-prog）。**这份是两边共同遵守的长期规则，唯一真源。**
 
-<!-- 以下到文件末尾，两份逐字相同；tests/test_agent_docs_agree.py 盯着 -->
+- **Codex** 开始任务时自动读这份。你的实验分支叫 `exp/codex/描述`。
+- **Claude Code** 通过 `CLAUDE.md` 里的 `@AGENTS.md` 导入读到同一份内容。
+
+这里只写两个 AI 都必须遵守、而 CONTRIBUTING.md 没说的几条。其余（怎么跑起来、
+怎么跑测试、目录结构）看 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 分支
 
