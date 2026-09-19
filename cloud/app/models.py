@@ -246,6 +246,43 @@ class RateLimit(Base):
     count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class Feedback(Base):
+    """玩家发来的反馈。不要求登录。
+
+    这个软件是发网盘和 GitHub Release 的，绝大多数用的人不会有账号——注册还要
+    邀请码。如果反馈必须先注册，那等于没有反馈入口：真正会卡住的新手，恰恰是
+    最不可能为了说一句"我这儿打不开"去走一遍注册流程的人。
+
+    所以匿名可提交，用限流和长度上限挡滥用，而不是用账号门槛。
+
+    contact 是选填的自由文本：邮箱、QQ、微信都行。不做格式校验——强制邮箱会让
+    一部分人干脆不填，而能收到一个"我 QQ 是 xxx"比收到一个空字段有用。
+
+    reply 现在只是给开发者自己记"回过了、怎么回的"。站内对话要有账号、通知和
+    未读状态，那是另一件事；先把话收进来，回复走他留的联系方式。
+    """
+
+    __tablename__ = "feedback"
+
+    id: Mapped[str] = mapped_column(String(ID_LEN), primary_key=True, default=new_id)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)
+    # bug / idea / question / other，具体取值由 schemas 里的 Literal 管着。
+    kind: Mapped[str] = mapped_column(String(16), default="other")
+    message: Mapped[str] = mapped_column(Text)
+    contact: Mapped[str] = mapped_column(String(NAME_LEN), default="")
+    # 他用的哪一版、什么系统。自己填的，不保证真，但排查时比没有强。
+    app_version: Mapped[str] = mapped_column(String(32), default="")
+    # 登录了就记上，没登录就是空。
+    user_id: Mapped[str | None] = mapped_column(
+        String(ID_LEN), ForeignKey("users.id"), index=True)
+    # 和限流同一个做法：地址只存带盐的摘要，不存原文。同一个人刷屏能看出来，
+    # 但这张表泄漏了也不等于泄漏一串 IP。
+    ip_hash: Mapped[str] = mapped_column(String(HASH_LEN), default="")
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reply: Mapped[str] = mapped_column(Text, default="")
+
+
 def search_key(name: str) -> str:
     """Fold a game name so search ignores case and spacing."""
     return "".join(str(name or "").split()).lower()

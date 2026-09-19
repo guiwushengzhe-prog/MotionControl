@@ -118,6 +118,8 @@ export interface Summary {
   emergency_stop_phrases?: string[];
 }
 
+export type FeedbackKind = "bug" | "idea" | "question" | "other";
+
 export const api = {
   me: () => request<User>("/auth/me"),
   login: (email: string, password: string) => post<User>("/auth/login", { email, password }),
@@ -152,6 +154,11 @@ export const api = {
 
   updateProfile: (id: string, body: Partial<Pick<Profile, "title" | "summary" | "visibility" | "game_id">>) =>
     request<Profile>(`/profiles/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+
+  /** 留言给开发者。不要求登录，见 routers/feedback.py。 */
+  sendFeedback: (body: {
+    kind: FeedbackKind; message: string; contact?: string; app_version?: string;
+  }) => post<{ ok: boolean }>("/feedback", body),
 
   /** The download URL, used as an href so the browser saves the file itself. */
   downloadUrl: (profileId: string, versionId: string) =>

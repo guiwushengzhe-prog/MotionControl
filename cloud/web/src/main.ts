@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import App from "./App.vue";
 import Browse from "./pages/Browse.vue";
 import ConfigDetail from "./pages/ConfigDetail.vue";
+import Feedback from "./pages/Feedback.vue";
 import Login from "./pages/Login.vue";
 import MyConfigs from "./pages/MyConfigs.vue";
 import { ready, refresh, user } from "./session";
@@ -17,6 +18,9 @@ const router = createRouter({
     // Not marked auth: a public or unlisted config is readable by a visitor,
     // and the server decides that, not this guard.
     { path: "/config/:id", component: ConfigDetail },
+    // 不加 auth：绝大多数用这个软件的人没有账号，注册还要邀请码。
+    // 反馈入口要求先登录，等于这个入口不存在。
+    { path: "/feedback", component: Feedback },
     { path: "/login", component: Login },
   ],
 });

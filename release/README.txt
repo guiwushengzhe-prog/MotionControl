@@ -36,13 +36,16 @@ APK 和这个压缩包在同一个下载位置，文件名 MotionControl-Android
 重新记录一次。
 
 
-源码、反馈、参与开发
-────────────────────
+遇到问题、想要功能，直接跟我说
+──────────────────────────────
 
+    https://motioncontrol.guiwu-aware.icu/feedback
+
+不用注册，打开就能写。留个联系方式我才回得了你。
+这个网站上还能下载和分享别人调好的游戏配置。
+
+想公开讨论、或者自己改代码：
     https://github.com/guiwushengzhe-prog/MotionControl
-
-用着不对劲、想加功能、有游戏配置想贡献，都到上面提 issue，我看到会更新。
-也欢迎直接改代码提 PR。
 
 Copyright (C) 2026 guiwushengzhe
 本软件按 AGPL-3.0 授权，完整条文见同目录的 LICENSE。

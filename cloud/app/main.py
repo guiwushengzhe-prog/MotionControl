@@ -30,7 +30,7 @@ from sqlalchemy import func, select
 
 from .db import SessionLocal
 from .models import Game, Profile
-from .routers import auth, games, profiles
+from .routers import auth, feedback, games, profiles
 from .settings import get_settings
 
 settings = get_settings()
@@ -49,6 +49,7 @@ app = FastAPI(
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(games.router, prefix="/api/v1")
 app.include_router(profiles.router, prefix="/api/v1")
+app.include_router(feedback.router, prefix="/api/v1")
 
 
 @app.middleware("http")

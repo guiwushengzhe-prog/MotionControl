@@ -120,3 +120,35 @@ class InviteOut(BaseModel):
     code: str
     note: str
     expires_at: datetime | None
+
+
+FeedbackKind = Literal["bug", "idea", "question", "other"]
+
+
+class FeedbackRequest(BaseModel):
+    kind: FeedbackKind = "other"
+    # 4000 字够写清楚一个问题了，再长基本是粘贴了整个日志。上限存在是为了让
+    # 一次请求不可能塞满一张表，不是为了拦住话多的人。
+    message: str = Field(min_length=1, max_length=4000)
+    # 选填，不校验格式：邮箱、QQ、微信都行。强制邮箱只会让一部分人干脆不填。
+    contact: str = Field(default="", max_length=120)
+    app_version: str = Field(default="", max_length=32)
+
+    @field_validator("message")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("说点什么吧")
+        return text
+
+
+class FeedbackOut(BaseModel):
+    id: str
+    created_at: datetime
+    kind: str
+    message: str
+    contact: str
+    app_version: str
+    handled_at: datetime | None
+    reply: str
