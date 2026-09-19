@@ -197,6 +197,32 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
     return len(wanted), total
 
 
+def check_guide_html(target: Path) -> str:
+    """包里那份指南，是不是当前 docs/新手指南.md 生成的。
+
+    HTML 是生成物，源文件改了它不会自己跟着变。忘了重新生成的话，玩家拿到的
+    是旧指南——而这种错没人会发现，直到有人照着旧步骤做不通来问你。
+    """
+    import hashlib
+    import re
+
+    source = ROOT / "docs" / "新手指南.md"
+    html = target / "新手指南.html"
+    if not html.is_file():
+        return "包里没有新手指南"
+    if not source.is_file():
+        return "找不到指南源文件，无法核对"
+    found = re.search(r'name="mc-guide-source-sha256" content="([0-9a-f]{64})"',
+                      html.read_text(encoding="utf-8"))
+    if not found:
+        return "指南 HTML 里没有来源标记，重新生成一次：python tools/build_guide_html.py"
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    if found.group(1) != digest:
+        return ("指南 HTML 比源文件旧了。跑：" + chr(10)
+                + "     python tools/build_guide_html.py")
+    return "新手指南是最新的"
+
+
 def check_vigem_installer(target: Path) -> str:
     """驱动安装包还是不是官方那一个。
 
@@ -297,6 +323,7 @@ def main() -> int:
         print(f"WARNING: 找不到手机网页包 {phone_web}，发布包里不会带更新用的那一份")
 
     print("  " + check_vigem_installer(target))
+    print("  " + check_guide_html(target))
 
     print()
     print("staged. Now verify the bundled interpreter has every runtime dependency:")
