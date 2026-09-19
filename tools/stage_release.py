@@ -216,7 +216,11 @@ def check_guide_html(target: Path) -> str:
                       html.read_text(encoding="utf-8"))
     if not found:
         return "指南 HTML 里没有来源标记，重新生成一次：python tools/build_guide_html.py"
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    # 和 build_guide_html.py 一样按归一化后的文本算，不是原始字节：read_text 会
+    # 把 CRLF 变成 LF，两边不一致的话，只要文件是 CRLF 就永远报"旧了"。换行方式
+    # 变了内容其实没变，不该判定为过期。
+    digest = hashlib.sha256(
+        source.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
     if found.group(1) != digest:
         return ("指南 HTML 比源文件旧了。跑：" + chr(10)
                 + "     python tools/build_guide_html.py")
