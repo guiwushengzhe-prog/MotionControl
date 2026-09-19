@@ -155,7 +155,7 @@ def test_shared_import_closure_is_stdlib_only():
     assert not extra, f"shared package pulled in non-stdlib modules: {extra}"
 
 
-def test_pairing_dependency_is_declared_and_present():
+def test_pairing_dependency_is_declared():
     """cryptography is the one dependency whose absence is silent.
 
     Everything else fails at the point of use with a message the user sees --
@@ -163,16 +163,15 @@ def test_pairing_dependency_is_declared_and_present():
     catches ImportError and reports pairing as merely unavailable, so on a
     build with require_paired_devices on, a packaging slip would look like
     every phone being rejected for protocol reasons.
+
+    Only the declaration is checked here.  Whether this machine actually has it
+    installed is a desktop-runtime question, and it lives in
+    tests/test_runtime_deps.py -- this file is also run by the Linux CI job,
+    which installs nothing on purpose, so asserting it here failed every push
+    for reasons that had nothing to do with the boundary.
     """
     declared = (REPO / "requirements-runtime.txt").read_text(encoding="utf-8")
     assert "cryptography" in declared, "requirements-runtime.txt must declare cryptography"
-
-    from motioncontrol import device_pairing
-
-    assert device_pairing.crypto_available(), (
-        "cryptography is missing from this environment; device pairing would "
-        "silently degrade. Run: python tools/check_runtime_deps.py"
-    )
 
 
 # --- the other side of the arrow: cloud must not reach into the desktop ------
