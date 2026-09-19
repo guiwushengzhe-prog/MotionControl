@@ -33,9 +33,9 @@ from motioncontrol.scene_layout import SceneLayoutManager
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
 
 # Desktop workflow and per-game persistence release; phone protocol versions stay unchanged.
-VERSION = "2.0.0"
-
-# 这次启动之后查更新的结果，界面上要显示。
+VERSION = "2.0.0"
+
+# 这次启动之后查更新的结果，界面上要显示。
 UPDATE_STATE: dict = {"state": "unknown"}
 
 
