@@ -456,7 +456,11 @@ function renderProfileCatalog(games){
   // Hand-verified profiles come first: of ~200 shipped profiles only a
   // handful have actually been played, and a flat alphabetical list makes
   // an auto-generated one look as official as a tested one.
-  const ordered=[...gameProfile.catalog].sort((a,b)=>(b.verified?1:0)-(a.verified?1:0)||String(a.name).localeCompare(String(b.name),'zh'));
+  // 自己加的排在最前，比「已验证」还靠前：会来翻这个列表的人多半就是为了找自己
+  // 加的那个，而内置那两百个可以搜。服务端的 list_games 已经这么排了，前端又按
+  // verified 重排一遍，等于把它推回两百条里去。
+  const rank=g=>g.source==='custom'?2:(g.verified?1:0);
+  const ordered=[...gameProfile.catalog].sort((a,b)=>rank(b)-rank(a)||String(a.name).localeCompare(String(b.name),'zh'));
   for(const g of ordered){
     const o=document.createElement('option');o.value=g.id;
     // 「实验」说的是没人试过的自动生成配置。自己加的不属于那一类，标错了会让人
@@ -493,7 +497,8 @@ async function addCustomGame(){
     $('#customGameName').value='';$('#customGameAppid').value='';
     const picked=await post('/api/game-profiles/select',{id:data.game.id});
     gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};
-    await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();await searchProfiles();
+    // searchProfiles 会把 #profileMeta 写成库统计，所以头部要排在它后面重画一次。
+    await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
     notice(`已添加并切换到「${data.game.name}」。按键在下面自己绑。`);
   });
 }
@@ -505,7 +510,7 @@ async function renameCustomGame(){
   await profileOperation(async()=>{
     const data=await post('/api/game-profiles/custom/rename',{id:current.id,name});
     gameProfile.selected={...current,name:data.game.name};
-    renderProfileHeader();await searchProfiles();
+    await searchProfiles();renderProfileHeader();
     notice(`已改名为「${data.game.name}」`);
   });
 }
@@ -518,7 +523,7 @@ async function removeCustomGame(){
     // 要用它返回的那份，不能继续显示一个已经不存在的游戏。
     const data=await post('/api/game-profiles/custom/remove',{id:current.id});
     gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
-    await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();await searchProfiles();
+    await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
     notice(`已删掉，当前游戏退回「${data.profile.name}」`);
   });
 }
