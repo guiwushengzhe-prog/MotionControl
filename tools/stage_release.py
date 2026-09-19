@@ -256,7 +256,7 @@ def check_phone_web_signature(bundle: Path) -> str:
     安静地拒绝，界面上什么都不说。开发时踩过两次，所以让打包这一步直接说出来。
     """
     sys.path.insert(0, str(ROOT))
-    from motioncontrol.model_share import ModelShare, SIGNATURE_NAME
+    from motioncontrol_shared.model_share import ModelShare, SIGNATURE_NAME
 
     share = ModelShare("phone-web", bundle, skip=("models/", "wasm/"))
     manifest = share.manifest()

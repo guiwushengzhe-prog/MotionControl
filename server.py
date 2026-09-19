@@ -11,6 +11,20 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+# 换包必须排在导入 motioncontrol.* 之前：那之后模块已经加载进内存，换掉它脚下的
+# 文件只会得到一个半新半旧的程序。所以这一段刻意违反"import 都写在最上面"。
+_APP_DIR = Path(__file__).resolve().parent
+try:
+    from motioncontrol import app_update as _app_update
+
+    _PROMOTION = _app_update.promote(_APP_DIR)
+    if _PROMOTION == "promoted":
+        # 换完之后 server.py 自己也是旧的那一份了——它在换之前就被读进来了。
+        # 重新起一次进程，让新旧不要混着跑。
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+except Exception:  # noqa: BLE001 - 更新出任何问题都不该拦住启动
+    _PROMOTION = "skipped"
+
 from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
 from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
@@ -19,13 +33,16 @@ from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChange
 from motioncontrol_shared.profile_schema import action_catalog
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
-from motioncontrol.model_share import ModelShare
+from motioncontrol_shared.model_share import ModelShare
 from motioncontrol.voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
 from motioncontrol.scene_layout import SceneLayoutManager
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
 
 # Desktop workflow and per-game persistence release; phone protocol versions stay unchanged.
-VERSION = "2.0.0"
+VERSION = "2.0.0"
+
+# 这次启动之后查更新的结果，界面上要显示。
+UPDATE_STATE: dict = {"state": "unknown"}
 
 
 def application_root() -> Path:
@@ -759,6 +776,12 @@ class AdminHandler(_BaseHandler):
             except (KeyError, ValueError, OSError, json.JSONDecodeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 404)
             return
+        if route == "/api/app-update":
+            # 只读。界面拿它显示"已经下好，下次启动生效"，好让人知道重启一次
+            # 是有意义的——否则更新会安静地躺在那里，直到某天碰巧重启。
+            self._send_json({"version": VERSION, **UPDATE_STATE,
+                             "promotion": _PROMOTION})
+            return
         if route == "/api/output/actions":
             self._send_json({"version": VERSION, "actions": action_catalog()})
             return
@@ -1342,6 +1365,34 @@ def _enable_default_xinput_merge() -> None:
         print("物理手柄合流未开启：", exc)
 
 
+def _boot_ok_and_check() -> None:
+    """服务真的起来了，然后在后台看一眼有没有新版本。
+
+    查更新放后台线程：服务器不通、或者慢，都不该让启动卡在那里。任何失败都只是
+    "这次没更新"。
+    """
+    try:
+        from motioncontrol import app_update
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        app_update.boot_ok(_APP_DIR)
+    except Exception:  # noqa: BLE001
+        pass
+
+    def look() -> None:
+        try:
+            result = app_update.check_and_stage(_APP_DIR)
+        except Exception:  # noqa: BLE001
+            return
+        global UPDATE_STATE
+        UPDATE_STATE = result
+        if result.get("state") == "ready":
+            print("有新版本已经下好，下次启动生效。")
+
+    threading.Thread(target=look, name="motion-app-update", daemon=True).start()
+
+
 def main():
     global MODEL_ROOT, MODEL_PATH
     ap = argparse.ArgumentParser()
@@ -1395,6 +1446,11 @@ def main():
     device_thread = threading.Thread(
         target=device_server.serve_forever, name="motion-device-plane", daemon=True)
     device_thread.start()
+
+    # 两个监听都起来了，这一份就算站住了：清掉启动记号，不然下次启动会以为上次
+    # 崩了然后把包退回去。也顺手去查一次有没有新版本，下到暂存目录等下次启动。
+    _boot_ok_and_check()
+
     try:
         admin_server.serve_forever()
     except KeyboardInterrupt:

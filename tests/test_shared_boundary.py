@@ -23,9 +23,14 @@ SHARED = REPO / "motioncontrol_shared"
 # Anything that ships as a top-level module beside the package is desktop code.
 # Deriving this instead of hard-coding it means a newly added desktop module is
 # covered without anyone remembering to update a list.
+#
+# motioncontrol/ 要单独列出来：程序本体从根目录收进这个包之后，靠 glob("*.py")
+# 推导出的名单只剩下 server 一个，这条规则就等于没有了——而它正是"在开发机上看
+# 着没事、到服务器上启动时才炸"那一类问题唯一的防线。真撞上过：cloud 的更新接口
+# 一度 import 了 motioncontrol_shared.model_share，测试全绿。
 DESKTOP_MODULES = {
     path.stem for path in REPO.glob("*.py") if path.stem != "conftest"
-}
+} | {"motioncontrol"}
 
 PLATFORM_MODULES = {"ctypes", "winreg", "msvcrt", "_winapi", "win32api", "win32con"}
 SERVER_MODULES = {"fastapi", "sqlalchemy", "pydantic", "uvicorn", "alembic", "psycopg"}

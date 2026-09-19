@@ -12,7 +12,7 @@ import hashlib
 
 import pytest
 
-from motioncontrol.model_share import ModelShare
+from motioncontrol_shared.model_share import ModelShare
 
 
 @pytest.fixture
