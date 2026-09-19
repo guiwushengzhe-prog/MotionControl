@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import App from "./App.vue";
 import Browse from "./pages/Browse.vue";
+import Changelog from "./pages/Changelog.vue";
 import ConfigDetail from "./pages/ConfigDetail.vue";
 import Feedback from "./pages/Feedback.vue";
 import Login from "./pages/Login.vue";
@@ -15,6 +16,7 @@ const router = createRouter({
   routes: [
     { path: "/", component: MyConfigs, meta: { auth: true } },
     { path: "/browse", component: Browse },
+    { path: "/changelog", component: Changelog },
     // Not marked auth: a public or unlisted config is readable by a visitor,
     // and the server decides that, not this guard.
     { path: "/config/:id", component: ConfigDetail },

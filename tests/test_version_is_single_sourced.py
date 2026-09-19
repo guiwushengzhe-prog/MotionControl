@@ -31,6 +31,9 @@ ALLOWED = {
     "motioncontrol/version.py",          # 唯一那一处
     "tests/test_version_is_single_sourced.py",
     "CHANGELOG.md",                      # 更新日志当然要写版本号
+    # 从 CHANGELOG.md 生成的，不是手改的地方。它和源文件同步没同步，由下面
+    # test_the_website_copy_is_in_sync 管。
+    "cloud/web/public/changelog.json",
 }
 VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+\b")
 
@@ -92,3 +95,37 @@ def test_the_build_scripts_share_one_definition(script):
 def test_the_deploy_script_asks_instead_of_guessing():
     text = (ROOT / "cloud" / "deploy" / "push.sh").read_text(encoding="utf-8")
     assert "release_paths.py" in text
+
+
+def test_this_version_has_a_changelog_entry():
+    """发了版但忘了写日志，网站上就缺一条，而缺的那条没人会发现。
+
+    版本号现在改一个数字就全跟着走了——方便到了可以不小心发出去的程度。这一条
+    是唯一会拦住"改完数字直接打包"的东西。
+    """
+    path = ROOT / "CHANGELOG.md"
+    assert path.is_file(), "没有 CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    assert re.search(rf"^##\s+{re.escape(VERSION)}\b", text, re.M), (
+        f"CHANGELOG.md 里没有 {VERSION} 这一节。发版之前先写：\n"
+        f"    ## {VERSION} — YYYY-MM-DD")
+
+
+def test_the_website_copy_is_in_sync():
+    """网站读的是生成出来的 JSON，写完 md 忘了跑转换的话，网站上就缺这一版。
+
+    而缺的那一版正是刚发的那一版——最需要有人看见的那一条。
+    """
+    import json
+
+    from tools.build_changelog import TARGETS, parse
+
+    expected = parse((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
+    for target in TARGETS:
+        assert target.is_file(), f"{target.name} 还没生成：python tools/build_changelog.py"
+        actual = json.loads(target.read_text(encoding="utf-8"))["releases"]
+        assert actual == expected, (
+            f"{target.name} 和 CHANGELOG.md 对不上，跑一遍："
+            " python tools/build_changelog.py")
+    assert expected[0]["version"] == VERSION, (
+        "CHANGELOG 最上面那一版不是当前版本——新的要写在最前面")
