@@ -150,6 +150,14 @@ def plan(target: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
                 continue
             if existing not in wanted:
                 stale.append(existing)
+    # 包顶层那几个文件也要查。原来这里只扫 app/，所以 release/ 里删掉或改名的
+    # 东西会永远留在包里，而报告还写着 "0 stale"——已经踩过两次：请先看.txt
+    # 改名成 README.txt 之后旧的还在，新手指南.html 不再随包发布之后旧的也还在。
+    # 只看顶层文件：models/、python/、native/ 这些子目录不由这个脚本管。
+    if target.is_dir():
+        for existing in sorted(target.iterdir()):
+            if existing.is_file() and existing not in wanted:
+                stale.append(existing)
     return copies, stale
 
 
@@ -197,32 +205,23 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
     return len(wanted), total
 
 
-def check_guide_html(target: Path) -> str:
-    """包里那份指南，是不是当前 docs/新手指南.md 生成的。
+def check_guide_pdf(target: Path) -> str:
+    """包里那份 PDF，是不是照当前 docs/新手指南.md 生成的。
 
-    HTML 是生成物，源文件改了它不会自己跟着变。忘了重新生成的话，玩家拿到的
-    是旧指南——而这种错没人会发现，直到有人照着旧步骤做不通来问你。
+    PDF 是生成物，源文件改了它不会自己跟着变。忘了重新生成的话，玩家拿到的是
+    旧指南——而这种错没人会发现，直到有人照着旧步骤做不通来问你。
+
+    比的是修改时间，不是内容哈希：PDF 里没有地方能干净地塞一个来源标记，而
+    "源文件比产物新" 恰好就是"改了忘了重新生成"的样子。
     """
-    import hashlib
-    import re
-
     source = ROOT / "docs" / "新手指南.md"
-    html = target / "新手指南.html"
-    if not html.is_file():
-        return "包里没有新手指南"
+    pdf = target / "新手指南.pdf"
+    if not pdf.is_file():
+        return "包里没有新手指南，跑：python tools/build_guide_html.py"
     if not source.is_file():
         return "找不到指南源文件，无法核对"
-    found = re.search(r'name="mc-guide-source-sha256" content="([0-9a-f]{64})"',
-                      html.read_text(encoding="utf-8"))
-    if not found:
-        return "指南 HTML 里没有来源标记，重新生成一次：python tools/build_guide_html.py"
-    # 和 build_guide_html.py 一样按归一化后的文本算，不是原始字节：read_text 会
-    # 把 CRLF 变成 LF，两边不一致的话，只要文件是 CRLF 就永远报"旧了"。换行方式
-    # 变了内容其实没变，不该判定为过期。
-    digest = hashlib.sha256(
-        source.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
-    if found.group(1) != digest:
-        return ("指南 HTML 比源文件旧了。跑：" + chr(10)
+    if source.stat().st_mtime > pdf.stat().st_mtime + 1:
+        return ("指南 PDF 比源文件旧了。跑：" + chr(10)
                 + "     python tools/build_guide_html.py")
     return "新手指南是最新的"
 
@@ -327,7 +326,7 @@ def main() -> int:
         print(f"WARNING: 找不到手机网页包 {phone_web}，发布包里不会带更新用的那一份")
 
     print("  " + check_vigem_installer(target))
-    print("  " + check_guide_html(target))
+    print("  " + check_guide_pdf(target))
 
     print()
     print("staged. Now verify the bundled interpreter has every runtime dependency:")

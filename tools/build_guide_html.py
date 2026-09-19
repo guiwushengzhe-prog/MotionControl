@@ -23,7 +23,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "docs" / "新手指南.md"
-TARGET = ROOT / "release" / "新手指南.html"
+# HTML 只是转 PDF 的中间产物，不进发布包——包里放两份一模一样的东西，只会让
+# 打开的人犹豫该点哪个。它落在 build/ 里，方便改样式时直接在浏览器里看效果。
+TARGET = ROOT / "build" / "新手指南.html"
+PDF = ROOT / "release" / "新手指南.pdf"
 
 # 源文件的 sha256 写进 HTML，打包时对一次。改了 markdown 忘了重新生成，
 # 发布包里就会是旧指南——而这种错没人会发现，直到用户照着旧步骤做不通。
@@ -74,7 +77,25 @@ blockquote p { margin: 4px 0; }
 hr { border: 0; border-top: 1px solid #21262d; margin: 36px 0; }
 .foot { margin-top: 56px; padding-top: 16px; border-top: 1px solid #21262d;
         font-size: 13px; color: #8b949e; }
-@media print { body { background: #fff; color: #000; } }
+/* PDF 走的是打印样式。只翻 body 的底色不够——标题、表头、代码本来是浅色字，
+   在白底上会变成白底白字，整页看着是空的。所以这里把每一处都翻过来。 */
+@media print {
+  body { background: #fff; color: #1a1a1a; padding: 0; }
+  h1, h2, h3, strong, th { color: #000; }
+  h2 { border-bottom-color: #ccc; }
+  a { color: #0645ad; }
+  code { background: #f4f4f4; border-color: #ddd; color: #1a1a1a; }
+  pre { background: #f8f8f8; border-color: #ddd; }
+  th { background: #f0f0f0; }
+  th, td { border-color: #bbb; }
+  img { border-color: #ccc; page-break-inside: avoid; }
+  blockquote { background: #f1f8f2; border-left-color: #2a7; }
+  hr { border-top-color: #ddd; }
+  .foot { border-top-color: #ddd; color: #555; }
+  /* 标题不要落在页面最后一行，图不要被切成两半。 */
+  h1, h2, h3 { page-break-after: avoid; }
+}
+@page { margin: 16mm 14mm; }
 """
 
 
@@ -131,7 +152,45 @@ def main() -> int:
     print(f"{TARGET}")
     print(f"  内嵌 {n} 张图片，{TARGET.stat().st_size / 1024:.0f} KB")
     print(f"  源文件 sha256 {digest[:16]}…")
+
+    print()
+    print(build_pdf() or "  跳过 PDF")
     return 0
+
+
+def build_pdf() -> str:
+    """再出一份 PDF。
+
+    手机上打开 PDF 是一件不用教的事：系统自带阅读器，图在文件里，不联网也不用
+    找浏览器。HTML 虽然也自包含，但在手机上得先想办法用浏览器打开它。
+
+    用 Chrome 无头模式转现成的那份 HTML，不另外引一套排版库——图片已经内嵌，
+    Chrome 走的是上面那段 @media print，所以 PDF 是白底黑字，能看也能打印。
+    """
+    chrome = next((Path(p) for p in (
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ) if Path(p).is_file()), None)
+    if chrome is None:
+        return "  找不到 Chrome 或 Edge，PDF 没生成（HTML 不受影响）"
+
+    import subprocess
+    import tempfile
+
+    pdf = PDF
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as profile:
+        result = subprocess.run(
+            [str(chrome), "--headless=new", "--disable-gpu", "--no-sandbox",
+             f"--user-data-dir={profile}", "--no-pdf-header-footer",
+             f"--print-to-pdf={pdf}", TARGET.as_uri()],
+            capture_output=True, timeout=180)
+    if not pdf.is_file() or pdf.stat().st_size < 10_000:
+        tail = result.stderr.decode("utf-8", "ignore").strip().splitlines()[-2:]
+        return "  PDF 生成失败：" + " / ".join(tail)
+    return f"{pdf}" + chr(10) + f"  {pdf.stat().st_size / 1024:.0f} KB"
 
 
 if __name__ == "__main__":
