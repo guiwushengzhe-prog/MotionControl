@@ -180,7 +180,17 @@ PHONE_WEB_SKIP = ("models/", "wasm/")
 
 
 def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
-    """Copy the phone's built web app into the release. Returns (files, bytes)."""
+    """Copy the phone's built web app into the release. Returns (files, bytes).
+
+    The signature is not a source file, so the sweep below used to delete it on
+    every run -- including runs that changed nothing.  That turned "stage, sign,
+    stage again for any reason, zip" into a release the phone silently refuses,
+    and nothing says so until someone tries to update a real phone.
+
+    So: unchanged content keeps its signature, changed content loses it.  A
+    signature over bytes that have since moved is worse than none -- it would
+    fail verification on the phone rather than at the moment it went stale.
+    """
     root = target / "phone_web"
     wanted = {}
     for path in sorted(source.rglob("*")):
@@ -190,9 +200,16 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
         if relative.startswith(PHONE_WEB_SKIP) or relative.endswith(".map"):
             continue
         wanted[relative] = path
+    keep = {".signature"}
+    changed = False
     for existing in sorted(root.rglob("*"), reverse=True):
-        if existing.is_file() and existing.relative_to(root).as_posix() not in wanted:
-            existing.unlink()
+        if existing.is_file():
+            relative = existing.relative_to(root).as_posix()
+            if relative not in wanted and relative not in keep:
+                existing.unlink()
+                # 少一个文件同样改变了这份包，签名一样作废。漏掉这一条，删文件的
+                # 那种改动就会留着一个签的是旧清单的签名。
+                changed = True
         elif existing.is_dir() and not any(existing.iterdir()):
             existing.rmdir()
     total = 0
@@ -201,7 +218,10 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.is_file() or destination.read_bytes() != path.read_bytes():
             shutil.copy2(path, destination)
+            changed = True
         total += path.stat().st_size
+    if changed:
+        (root / ".signature").unlink(missing_ok=True)
     return len(wanted), total
 
 
