@@ -422,6 +422,7 @@ class ControlKernel:
         # profile.  Legacy five-stage/head-face state is no longer part of the
         # runtime path.
         self.head_controller = HeadController(self._head_profile_path())
+        self._general_raw: dict = {}
         self._load_general_settings()
         self.head = self.head_controller.status(time.monotonic())
         self.sensor_sources: dict[str, dict] = {}
@@ -460,6 +461,10 @@ class ControlKernel:
             return
         if not isinstance(data, dict):
             return
+        # 摄像头来源和第几个摄像头也存在这份文件里，但它们不属于内核——存它们
+        # 的是 LocalControlRuntime 和 NativeCameraService。原样留着，别的地方
+        # 通过 remember_general_setting 存的东西才不会被下一次写盘抹掉。
+        self._general_raw = dict(data)
         hand_mouse = data.get("hand_mouse")
         if isinstance(hand_mouse, dict):
             try:
@@ -475,10 +480,26 @@ class ControlKernel:
                 self.vertical_look["source"] = source
                 self.vertical_look["verticalLookSource"] = source
 
+    def general_setting(self, key: str, default=None):
+        """读一项不归内核管、但和它存在同一份文件里的设置。
+
+        摄像头来源、用第几个摄像头，都是"重启之后必须还在"的东西，和手控鼠标
+        是同一类；但它们归 LocalControlRuntime 和 NativeCameraService 管。与其
+        再开一份文件、再写一遍"坏了不要崩"的读盘代码，不如共用这一份。
+        """
+        return getattr(self, "_general_raw", {}).get(key, default)
+
+    def remember_general_setting(self, key: str, value) -> None:
+        if not hasattr(self, "_general_raw"):
+            self._general_raw = {}
+        self._general_raw[key] = value
+        self._save_general_settings()
+
     def _save_general_settings(self) -> None:
         """写盘。失败不抛：存不下设置也不该打断正在进行的游戏。"""
         path = self._general_settings_path()
         payload = {
+            **getattr(self, "_general_raw", {}),
             "saved_at_unix": time.time(),
             "hand_mouse": dict(self.hand_mouse_controller.config),
             "vertical_look": {
@@ -2299,11 +2320,19 @@ class NativeCameraService:
     # when no browser is looking at the preview.
     PREVIEW_FPS = 8.0
     PREVIEW_DEMAND_SECONDS = 1.0
+    # 扫到第几个为止。笔记本最多见的是"内置 + 外接"两个，留到 5 已经很宽；
+    # 每个打不开的序号都要等系统超时，扫太多只会让人干等。
+    MAX_CAMERA_INDEX = 5
 
-    def __init__(self, kernel: ControlKernel, model_path=None, camera_index: int = 0) -> None:
+    def __init__(self, kernel: ControlKernel, model_path=None, camera_index: int | None = None) -> None:
         self.kernel = kernel
         self.model_path = model_path
-        self.camera_index = int(camera_index)
+        # 不写死 0。一台电脑上可以有好几个摄像头（内置的、外接的、虚拟的），
+        # 而 0 号未必是对着人的那个——以前这个数字没有任何地方能改，插了采集卡
+        # 或者装了 OBS 虚拟摄像头的人就只能对着一块黑屏，没有别的办法。
+        if camera_index is None:
+            camera_index = self._remembered("camera_index", 0)
+        self.camera_index = max(0, min(self.MAX_CAMERA_INDEX, int(camera_index)))
         self.backend_preference = self.BACKEND_AUTO
         self.selected_backend: str | None = None
         self.selected_backend_name: str | None = None
@@ -2350,6 +2379,24 @@ class NativeCameraService:
         self._preview_times: deque[float] = deque(maxlen=120)
         self._preview_durations_ms: deque[float] = deque(maxlen=120)
         self._preview_sizes: deque[int] = deque(maxlen=120)
+
+    def _remembered(self, key: str, default):
+        """内核那份 general_settings.json。拿不到就用默认值。
+
+        测试里的内核可能是个假的，缺这两个方法很正常；存不下一个摄像头序号
+        也不该让摄像头开不起来。
+        """
+        try:
+            value = self.kernel.general_setting(key, default)
+        except Exception:
+            return default
+        return default if value is None else value
+
+    def _remember(self, key: str, value) -> None:
+        try:
+            self.kernel.remember_general_setting(key, value)
+        except Exception:
+            pass
 
     @staticmethod
     def _normalize_backend(value: str | None) -> str:
@@ -2431,10 +2478,83 @@ class NativeCameraService:
             self.backend_preference = preference
             return self.backend_config()
 
+    def set_camera_index(self, index: int) -> dict:
+        """换用第几个摄像头。运行中不给换，和换采集后端一样。
+
+        换了之后要把已选后端清掉：那套后端/格式是上一个镜头探出来的，新镜头
+        未必吃同一套，留着会让它带着一份不属于自己的参数去开。
+        """
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            raise CameraUnavailable("摄像头序号必须是数字") from None
+        if not 0 <= index <= self.MAX_CAMERA_INDEX:
+            raise CameraUnavailable(f"摄像头序号只能是 0 到 {self.MAX_CAMERA_INDEX}")
+        with self._lock:
+            if self.running and index != self.camera_index:
+                raise CameraUnavailable("摄像头运行中不能换摄像头，请先停止识别")
+            if index != self.camera_index:
+                self.camera_index = index
+                self.selected_backend = None
+                self.selected_backend_name = None
+                self.selected_fourcc = None
+                self._last_probe_results = []
+                self._remember("camera_index", index)
+            return self.backend_config()
+
+    def list_cameras(self, limit: int | None = None) -> dict:
+        """挨个序号试着打开，看哪几个是真的在。
+
+        OpenCV 给不出摄像头的名字，所以这里只能报序号和分辨率——名字要靠
+        Windows 那边另外一套接口，为一个下拉框不值得。分辨率加上界面里那块
+        实时画面，已经够人认出哪个是对着自己的：选一个、开一下、看画面。
+
+        正在用的那一个不去开第二遍：设备多半是独占的，第二次打开会失败，
+        于是"正在用的摄像头"反而会被报成不存在。
+        """
+        limit = self.MAX_CAMERA_INDEX if limit is None else max(0, min(self.MAX_CAMERA_INDEX, int(limit)))
+        with self._lock:
+            running, current = self.running, self.camera_index
+        try:
+            import cv2
+        except Exception as exc:
+            raise CameraUnavailable("本地 Python 未安装 opencv-python，无法列出摄像头") from exc
+
+        # DSHOW 打不开的序号失败得快；MSMF 会在不存在的设备上等很久。列表要
+        # 人站在那里等结果，所以这里选快的那个。
+        api = self._backend_api(cv2, self.BACKEND_DSHOW)
+        devices: list[dict] = []
+        for index in range(limit + 1):
+            if running and index == current:
+                devices.append({"index": index, "width": self.capture_width,
+                                "height": self.capture_height, "in_use": True})
+                continue
+            capture = None
+            try:
+                capture = cv2.VideoCapture(index, api)
+                if not capture.isOpened():
+                    continue
+                ok, frame = capture.read()
+                if not ok or not self._valid_frame(frame):
+                    continue
+                height, width = int(frame.shape[0]), int(frame.shape[1])
+                devices.append({"index": index, "width": width, "height": height, "in_use": False})
+            except Exception:
+                continue
+            finally:
+                if capture is not None:
+                    try:
+                        capture.release()
+                    except Exception:
+                        pass
+        return {"devices": devices, "camera_index": current, "scanned_to": limit}
+
     def backend_config(self) -> dict:
         with self._lock:
             cache = self._load_backend_cache()
             return {
+                "camera_index": self.camera_index,
+                "max_camera_index": self.MAX_CAMERA_INDEX,
                 "preference": self.backend_preference,
                 "selected_backend": self.selected_backend,
                 "selected_backend_name": self._backend_display_name(self.selected_backend_name),
@@ -3005,10 +3125,17 @@ class LocalControlRuntime:
     def __init__(self, kernel: ControlKernel, camera: NativeCameraService) -> None:
         self.kernel, self.camera = kernel, camera
         self._lock = threading.RLock()
-        # The phone is the usual body source, and selecting it costs nothing
-        # when absent: the desktop camera is still one click away and no local
-        # capture device is opened until a source is actually started.
-        self.body_mode = "phone"
+        # 默认电脑摄像头，并且记住上次选的那个。
+        #
+        # 以前默认手机。这对第一次打开的人是错的：他手机上还没装 APK，而电脑
+        # 摄像头是现成的——默认值对着的是少数情况，多数人一进来就得先改一个
+        # 自己还不知道含义的下拉框。
+        #
+        # 但这台电脑可能根本没有摄像头。那种人改成手机之后必须一直是手机，不
+        # 能每次启动又被推回一个打不开的东西，所以这里存盘。默认只在"从来没
+        # 选过"的时候才生效。
+        remembered = str(kernel.general_setting("body_source", "") or "").strip().lower()
+        self.body_mode = remembered if remembered in {"computer", "phone"} else "computer"
 
     def configure_model(self, model_path) -> None:
         self.camera.configure_model(model_path)
@@ -3019,6 +3146,12 @@ class LocalControlRuntime:
     def camera_backend_config(self) -> dict:
         return self.camera.backend_config()
 
+    def configure_camera_index(self, index) -> dict:
+        return self.camera.set_camera_index(index)
+
+    def list_cameras(self) -> dict:
+        return self.camera.list_cameras()
+
     def set_source(self, source: str, *, start_computer: bool = True) -> dict:
         source = str(source).strip().lower()
         if source not in {"computer", "phone"}:
@@ -3027,6 +3160,9 @@ class LocalControlRuntime:
             self.camera.stop()
             self.kernel.clear_body()
             self.body_mode = source
+            # 先记下来再开摄像头：开不起来也是一次有效的选择——没有摄像头的人
+            # 正是要靠这一步把"手机"钉住的。
+            self.kernel.remember_general_setting("body_source", source)
             if source == "computer" and start_computer:
                 self.camera.start()
             return self.status()

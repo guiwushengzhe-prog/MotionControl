@@ -762,20 +762,21 @@ def test_gamepad_combo_is_picked_not_typed_and_poses_can_hold():
     assert '.combo-picker' in css
 
 
-def test_gamepad_is_the_default_output_mode_everywhere(tmp_path):
-    """Mouse mode turns the physical-pad merge back off, by design.
+def test_mouse_is_the_default_output_mode_everywhere(tmp_path):
+    """默认鼠标：桌面上看得见，手柄摇杆要有游戏在前台才看得见。
 
-    With the merge enabled at startup, a page still defaulting to mouse pushed
-    that mode on its first exchange and silently undid it.  The default has to
-    agree in all three places or they keep fighting on every restart.
+    三个地方必须说同一件事，否则它们每次启动都要打一架——页面一进来就把自己
+    那个默认值推给服务端，推的是另一个值就等于悄悄改了设置。以前反过来（三处
+    都是 gamepad）踩过一次：页面默认鼠标、服务端默认手柄，物理手柄合流在第一
+    次交互里就被关掉了，而界面上看不出来。
     """
     out = OutputManager(tmp_path, mouse=FakeMouse(), keyboard=FakeKeyboard())
     try:
-        assert out.status()['mode'] == 'gamepad'
+        assert out.status()['mode'] == 'mouse'
     finally:
         out.close()
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    assert "mode:'gamepad'" in app
+    assert "mode:'mouse'" in app
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     modes = page.split('id="outputMode"', 1)[1].split('</select>', 1)[0]
-    assert modes.index('value="gamepad"') < modes.index('value="mouse"'), 'the first option is the one selected'
+    assert modes.index('value="mouse"') < modes.index('value="gamepad"'), 'the first option is the one selected'

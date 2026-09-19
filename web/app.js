@@ -22,8 +22,8 @@ const EDGES = [
 ];
 const BODY_ZONES = {leftHand:{label:'X',body:'左手',button:'X'},rightHand:{label:'B',body:'右手',button:'B'},leftFoot:{label:'LB',body:'左脚',button:'LB'},rightFoot:{label:'RB',body:'右脚',button:'RB'},headJump:{label:'A',body:'头顶跳跃',button:'A'},lookGate:{label:'上下视角',body:'左手放这里',button:null,gate:true}};
 
-let currentPoseMap=null, kernelState=null, sourceMode='phone', cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
-const output={enabled:false,mode:'gamepad',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
+let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
+const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
 const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:true,verticalExclusive:false,bodyMotionGuard:true};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
@@ -278,6 +278,7 @@ function renderKernelState(runtime){
   cameraRunning=!!camera.running;
   sessionStarted=sourceMode==='phone'?true:cameraRunning;
   if(desiredSource===null)$('#poseSource').value=sourceMode;
+  syncCameraDeviceRow();
 
   if(cameraPreview){
     const showPreview=sourceMode==='computer'&&cameraRunning;
@@ -421,6 +422,7 @@ function profileMetaText(profile){
 }
 function renderProfileHeader(){
   const p=gameProfile.selected;
+  renderOutputMix();
   $('#profileGameName').textContent=p?.name||'未选择游戏';
   $('#currentGameName').textContent=p?.name||'未选择游戏';
   $('#profileMeta').textContent=profileMetaText(p);
@@ -631,7 +633,26 @@ function renderPerformance(data){
 }
 
 async function refreshPerformance(){try{renderPerformance(await api('/api/performance'))}catch{}}
-async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference}catch{}}
+async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference;renderCameraDevices(null,data.camera_index)}catch{}}
+
+// 开机不扫。挨个序号去开摄像头要好几秒，而绝大多数人只有一个，不该为了那个
+// 下拉框每次启动都等一遍。所以先只把"现在用的是第几个"摆出来，真要换的人点
+// 一下扫描，列表才填满。
+function renderCameraDevices(devices,current){
+  const select=$('#cameraDevice');if(!select)return;
+  if(current!==undefined&&current!==null)cameraIndex=Number(current);
+  const list=devices&&devices.length?devices:[{index:cameraIndex,width:0,height:0}];
+  select.innerHTML=list.map(d=>{
+    const size=d.width&&d.height?` · ${d.width}×${d.height}`:'';
+    return `<option value="${d.index}">摄像头 ${d.index}${size}</option>`;
+  }).join('');
+  select.value=String(cameraIndex);
+  if(select.value!==String(cameraIndex))select.selectedIndex=0;
+}
+function syncCameraDeviceRow(){
+  const computer=($('#poseSource')?.value||'computer')==='computer';
+  for(const id of ['cameraDeviceRow','cameraScanRow']){const el=$('#'+id);if(el)el.hidden=!computer}
+}
 // --- hand mouse -----------------------------------------------------------
 // The fist thresholds shipped as estimates rather than measurements, so the
 // live reading sits next to them: open the hand, read the number, close it,
@@ -649,6 +670,7 @@ function renderHandMouse(state){
   const blocked=mergeOwnsSticks();
   $('#handMouseEnabled').disabled=blocked;
   $('#handMouseEnabled').checked=Boolean(c.enabled);
+  renderOutputMix();
   $('#handMouseHand').value=c.hand||'right';
   for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open],['handMouseCurlClose',c.curl_close],['handMouseCurlOpen',c.curl_open]]){
     if(value!==undefined)$('#'+id).value=value;
@@ -763,7 +785,34 @@ function renderOutput(s=output.server){
     output.xinputEnabled=!!s.xinput_merge_enabled;output.xinputUser=s.xinput_selected_user??null;
     output.xinputMotionLeft=!!s.xinput_motion_left_enabled;renderXinputMotionLeft();
   }
+  renderOutputMix();
   renderMainStatus();
+}
+
+// 一台电脑上只能有一套"当前输入设备"。体感这边一半出鼠标、一半出 Xbox，游戏
+// 就会在两种按键提示之间来回跳；而全都出 Xbox 的时候，右摇杆推不动桌面鼠标，
+// 握拳看上去像是坏了。两种都不报错，只是怎么弄都不对——所以得写出来。
+function gamepadBindingCount(){
+  const bindings=gameProfile.selected?.bindings||{};let n=0;
+  for(const group of ['zones','poses','motions','voice']){
+    for(const item of Object.values(bindings[group]||{})){
+      const type=String(item?.action?.type||'');
+      if(type.startsWith('gamepad')||type==='xinput_button')n++;
+    }
+  }
+  return n;
+}
+function renderOutputMix(){
+  const el=$('#outputMixWarn');if(!el)return;
+  const handMouseOn=!!$('#handMouseEnabled')?.checked;
+  const pads=gamepadBindingCount();
+  let text='';
+  if(output.mode==='gamepad'&&handMouseOn){
+    text='视角输出是 Xbox 右摇杆，所以握拳推的是摇杆，桌面上的鼠标不会动。想用握拳直接控制鼠标，把上面的视角输出改成“鼠标视角”。';
+  }else if(output.mode==='mouse'&&pads>0){
+    text=`视角走鼠标，但这个游戏方案里还有 ${pads} 个动作出的是 Xbox 按键。两种混着出，游戏会在手柄提示和键鼠提示之间反复切换。要么把视角输出改成 Xbox，要么给这些动作换成键盘/鼠标按键。`;
+  }
+  el.hidden=!text;el.textContent=text;
 }
 async function refreshOutput(){
   const epoch=outputEpoch;
@@ -798,7 +847,12 @@ async function setSource(source,enabled=true){
   const epoch=++kernelEpoch;
   const result=await post('/api/input/source',{source,enabled});
   if(epoch!==kernelEpoch)throw new Error('操作已中断');
-  if(enabled&&source==='computer'&&!result.camera?.running)throw new Error(result.camera?.last_error||'摄像头启动失败');
+  if(enabled&&source==='computer'&&!result.camera?.running){
+    // 没有摄像头的电脑在这里是死路：报一句"无法打开"然后没有下文。所以失败时
+    // 直接把另外两条出路说出来——换一个摄像头，或者改用手机。
+    throw new Error((result.camera?.last_error||'摄像头启动失败')
+      +'。这台电脑如果没有摄像头，把“摄像头来源”改成手机摄像头；有好几个的话，点“扫描摄像头”换一个试试。');
+  }
   ++kernelEpoch;desiredSource=source;
   renderKernelState(result);await refreshInput();
   notice(enabled?(source==='phone'?'已选择手机摄像头，等待手机连接':'摄像头识别已启动，游戏控制保持暂停'):'识别已停止');
@@ -1118,7 +1172,24 @@ $('#fixedZonesCancel').addEventListener('click',()=>$('#fixedZonesMask').close('
 $('#closeVoiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').close());
 $('#poseSource').addEventListener('change',()=>{
   desiredSource=$('#poseSource').value;$('#phoneGuide').open=desiredSource==='phone';
+  syncCameraDeviceRow();
   notice('已选择'+(desiredSource==='phone'?'手机摄像头':'电脑摄像头')+'，点击“连接并开始识别”应用');
+});
+$('#cameraDevice').addEventListener('change',e=>runAction(async()=>{
+  const data=await post('/api/camera/config',{index:Number(e.target.value)});
+  cameraIndex=Number(data.camera_index??e.target.value);
+  notice('已选择摄像头 '+cameraIndex+'，点“连接并开始识别”看看画面对不对');
+}));
+bind('cameraScanBtn',async()=>{
+  const status=$('#cameraScanStatus');if(status)status.textContent='正在逐个尝试，可能要几秒…';
+  try{
+    const data=await api('/api/camera/devices',{timeoutMs:60000});
+    renderCameraDevices(data.devices,data.camera_index);
+    if(!status)return;
+    const n=(data.devices||[]).length;
+    status.textContent=n?`找到 ${n} 个。选一个，连接之后看画面里是不是你。`
+      :'一个也没找到。这台电脑可能没有摄像头，或者被别的软件占着——把上面的来源改成手机摄像头也能用。';
+  }catch(e){if(status)status.textContent='扫描失败：'+(e?.message||e)}
 });
 bind('copyPhoneUrlBtn',async()=>{await navigator.clipboard.writeText($('#phoneWsUrl').value);notice('连接地址已复制')});
 $('#cameraBackend').addEventListener('change',e=>runAction(async()=>{

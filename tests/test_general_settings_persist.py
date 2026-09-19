@@ -101,4 +101,25 @@ def test_no_file_at_all_is_normal(home):
     assert not settings_file(home).exists()
     kernel = ControlKernel(Output())
     assert kernel.vertical_look["enabled"] is True
-    assert kernel.hand_mouse_controller.config["enabled"] is False
+    # 手控鼠标默认开着：第一次装完的人只有握拳看鼠标动不动这一个办法确认它活着。
+    assert kernel.hand_mouse_controller.config["enabled"] is True
+
+
+def test_someone_elses_key_is_not_wiped_by_the_next_save(home):
+    """摄像头来源和第几个摄像头也存在这份文件里，存它们的不是内核。
+
+    内核每次写盘都是整份覆盖。要是只写自己那两块，别人刚存进去的东西下一次
+    改手控鼠标就没了——而且是悄悄没的：文件还在，值回到默认。
+    """
+    first = ControlKernel(Output())
+    first.remember_general_setting("body_source", "phone")
+    first.configure_hand_mouse({"sensitivity": 42})
+
+    second = ControlKernel(Output())
+    assert second.general_setting("body_source") == "phone"
+    assert second.hand_mouse_controller.config["sensitivity"] == 42
+
+
+def test_an_unknown_key_reads_back_as_its_default(home):
+    kernel = ControlKernel(Output())
+    assert kernel.general_setting("从来没存过的东西", "兜底") == "兜底"

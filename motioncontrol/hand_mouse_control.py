@@ -46,7 +46,14 @@ import math
 HANDS = ("left", "right")
 
 DEFAULT_CONFIG = {
-    "enabled": False,
+    # 默认就开着。第一次打开这个软件的人，能自己验证"它真的在动"的动作只有
+    # 一个：握拳，看桌面鼠标跟不跟着走。手柄摇杆得先有游戏在前台才看得见,
+    # 而鼠标在哪儿都看得见。把它默认关掉，等于要求新手先找到一个开关，才能
+    # 知道自己装对了没有——那个开关他不知道存在。
+    #
+    # 代价是手机端多跑一次手部识别，帧率大约降一成。用手柄玩的人可以关掉，
+    # 而且关掉之后会存盘，不会自己开回来。
+    "enabled": True,
     "hand": "right",
     # Fraction of forearm length.  Below `fist_close` counts as closed, above
     # `fist_open` as open; between them the previous state persists.  Used only

@@ -831,6 +831,13 @@ class AdminHandler(_BaseHandler):
         if route == "/api/camera/config":
             self._send_json(RUNTIME.camera_backend_config())
             return
+        if route == "/api/camera/devices":
+            # 一个一个去开，几秒钟起步，所以它是"点了才扫"而不是随状态轮询。
+            try:
+                self._send_json({"ok": True, **RUNTIME.list_cameras()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if route == "/api/voice/status":
             self._send_json({"version": VERSION, **VOICE.status()})
             return
@@ -1153,7 +1160,11 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "camera config is loopback-only"}, 403)
                 return
             try:
-                self._send_json({"ok": True, **RUNTIME.configure_camera_backend(body.get("backend", body.get("preference", "auto")))})
+                if "index" in body or "camera_index" in body:
+                    data = RUNTIME.configure_camera_index(body.get("index", body.get("camera_index")))
+                else:
+                    data = RUNTIME.configure_camera_backend(body.get("backend", body.get("preference", "auto")))
+                self._send_json({"ok": True, **data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.camera_backend_config()}, 400)
             return

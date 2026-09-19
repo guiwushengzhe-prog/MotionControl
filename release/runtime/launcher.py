@@ -10,6 +10,10 @@ Windows 不允许删除或改名自己所在的目录，退回时会删到一半
 所以这个文件待在 app/ 外面，工作目录也在外面。它只做三件事：把下好的换进去、
 需要时退回去、然后把控制权交给 app/server.py。它自己不参与更新——不能更新的
 东西就该尽量少，所以这里只有这些。
+
+它也不待在包的顶层。原来它和「启动.bat」并排放着，解压完一眼看过去有两个
+像是"要点的东西"，第一次用的人会先愣一下——而点错了（直接双击 .py）多半是
+没反应或者一闪而过。顶层只留一个中文的 .bat，剩下的收进这个文件夹里。
 """
 
 from __future__ import annotations
@@ -19,7 +23,8 @@ import runpy
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+# 上一级才是包的根：这个文件在 runtime/ 里，app/ 和它是兄弟。
+ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "app"
 
 

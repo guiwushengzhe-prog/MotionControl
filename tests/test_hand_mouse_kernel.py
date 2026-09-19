@@ -191,6 +191,8 @@ def test_look_gate_belongs_to_the_left_hand():
 def test_nothing_is_suppressed_while_disabled():
     output = _Output()
     kernel = ControlKernel(output)
+    # 手控鼠标默认开着，关掉它才是这条要钉的情形：关掉之后握拳不该再压住区域按键。
+    kernel.hand_mouse_controller.configure({"enabled": False})
     kernel.configure_bindings({"zones": {
         "rightHand": {"action": {"type": "gamepad", "target": "B"}},
     }})

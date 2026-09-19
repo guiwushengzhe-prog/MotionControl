@@ -109,10 +109,12 @@
 <h2 class="group-head">设备</h2>
 <div class="settings-section">
 <div class="title">输入来源</div>
-<p class="lede">先选画面来自手机还是电脑，再点连接。</p>
+<p class="lede">先选画面来自手机还是电脑，再点连接。选过之后会记住，下次打开还是它。</p>
 <div class="controls">
-<label>摄像头来源<select id="poseSource"><option value="phone">手机摄像头</option><option value="computer">电脑摄像头</option></select></label>
+<label>摄像头来源<select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></label>
+<label id="cameraDeviceRow">用哪个摄像头<select id="cameraDevice"></select></label>
 </div>
+<div class="settings-actions" id="cameraScanRow"><button class="btn" id="cameraScanBtn">扫描摄像头</button><span class="fineprint" id="cameraScanStatus">这台电脑上不止一个摄像头（外接的、采集卡、OBS 虚拟摄像头）时，在这里换。</span></div>
 <div class="pill bad" id="mobileStatus">手机未连接</div>
 <p class="fineprint" id="phonePerf"></p>
 <div class="settings-actions"><button class="btn" id="sourceStartBtn">连接并开始识别</button><button class="btn" id="sourceStopBtn">停止识别</button></div><p class="fineprint" id="modelStatus"></p>
@@ -122,7 +124,8 @@
 <div class="settings-section" id="outputSettings">
 <div class="title">游戏输出</div>
 <p class="lede">体感最后变成什么：手柄摇杆，还是鼠标。</p>
-<div class="controls"><label>视角输出<select id="outputMode"><option value="gamepad">Xbox 360 右摇杆</option><option value="mouse">鼠标视角</option></select></label><label>物理手柄合流<select id="xinputMerge"><option value="">关闭体感合流</option></select></label></div>
+<div class="controls"><label>视角输出<select id="outputMode"><option value="mouse">鼠标视角</option><option value="gamepad">Xbox 360 右摇杆</option></select></label><label>物理手柄合流<select id="xinputMerge"><option value="">关闭体感合流</option></select></label></div>
+<div class="statusline warn" id="outputMixWarn" hidden=""></div>
 <div class="statusline" id="xinputStatus">未启用物理手柄合流</div><div class="statusline" id="outputStatus"></div>
 <label><input disabled="" id="xinputMotionLeft" type="checkbox"/>允许体感左摇杆合成</label>
 <p class="fineprint">左摇杆两边相加：同向限幅、异向合成、反向抵消。右摇杆和扳机始终由物理手柄控制。</p>
@@ -134,7 +137,7 @@
 <div class="title">手控鼠标</div>
 <p class="lede">握拳移动手掌控制鼠标，松开就停。握拳期间这只手的区域按键暂停。</p>
 <p class="fineprint">开启后手机多跑一次手部识别，帧率约降一成。需要手机端 33 点传输。</p>
-<label><input id="handMouseEnabled" type="checkbox"><span>启用手控鼠标</span></label>
+<label><input checked="" id="handMouseEnabled" type="checkbox"><span>启用手控鼠标</span></label>
 <div class="advgrid">
 <label>使用哪只手<select id="handMouseHand"><option value="right">右手</option><option value="left">左手</option></select></label>
 <label>灵敏度 <span id="handMouseSensitivityValue">—</span><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"></label>

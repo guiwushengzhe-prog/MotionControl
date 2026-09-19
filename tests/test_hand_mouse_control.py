@@ -198,7 +198,9 @@ def test_left_hand_works_the_same():
 
 
 def test_disabled_controller_emits_nothing():
+    # 默认是开着的（新手要靠握拳看鼠标动不动来确认装对了），所以这里得显式关掉。
     ctl = HandMouseController()
+    ctl.configure({"enabled": False})
     state = ctl.update(pose(spread=0.1), now=1.0)
     assert state["engaged"] is False
     assert state["state"] == "disabled"

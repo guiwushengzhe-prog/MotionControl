@@ -598,9 +598,14 @@ class OutputManager:
         self.root = root
         self.mouse = mouse or MouseOutput()
         self.keyboard = keyboard or KeyboardOutput()
-        # Gamepad is the default: the physical-pad merge needs it, and a
-        # mouse-mode session silently turns that merge back off.
-        self.mode = "gamepad"
+        # 鼠标是默认。手柄摇杆只有在游戏窗口里才看得出动静，而第一次装完的人
+        # 面前没有游戏，只有桌面——他需要立刻看到"有东西在动"，否则分不清是
+        # 没装好还是没学会。鼠标在桌面上就能看见，手柄不能。
+        #
+        # 反过来的理由（物理手柄合流要求手柄模式）没有丢：打开合流会自己把
+        # 模式切回 gamepad，见 configure_xinput_merge。合流默认是关的，所以
+        # 这里不会和它打架。
+        self.mode = "mouse"
         self.enabled = False
         self.mouse_speed_x = 600.0
         self.mouse_speed_y = 450.0

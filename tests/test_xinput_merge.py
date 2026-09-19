@@ -432,3 +432,19 @@ def test_ordinary_configuration_does_not_clear_left_axis(tmp_path):
         assert not out.xinput_status()['motion_left_enabled']
     finally:
         out.close()
+
+
+def test_turning_the_merge_on_pulls_the_mode_back_to_gamepad(tmp_path):
+    """默认输出已经是鼠标了，合流不能因此变成一个按了没反应的开关。
+
+    合流按定义只有一份虚拟 Xbox 报文，鼠标模式下它无处可去。以前默认就是手柄，
+    所以这条路从来没被走到过；现在默认是鼠标，开合流必须自己把模式带回去。
+    """
+    out = OutputManager(tmp_path, xinput_reader=FakeReader())
+    out._pad = Pad()
+    try:
+        assert out.status()['mode'] == 'mouse'
+        out.configure_xinput_merge(enabled=True, user=0)
+        assert out.status()['mode'] == 'gamepad'
+    finally:
+        out.close()
