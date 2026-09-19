@@ -43,6 +43,19 @@ fi
     exit 1
 }
 
+echo "==> 电脑端更新包"
+# 已经装了的人靠这一份更新，不用重下 174 MB。打包时会签名——电脑端拒绝没签名
+# 的包，所以这一步失败就该停下，而不是发一份装不上的东西上去。
+if [ -d "build/release/电脑端/MotionControl-PC-2.0.0/app" ]; then
+    python tools/build_app_bundle.py || {
+        echo "更新包没做成，不部署" >&2; exit 1
+    }
+    rm -rf cloud/app_bundle
+    cp -r build/app_bundle cloud/app_bundle
+else
+    echo "    没有发布包，这次不带更新包（已经在服务器上的那份保持不变）"
+fi
+
 echo "==> 打包并上传"
 # 直接管道给 ssh，不落本地临时文件。在 Git Bash 里 /tmp 是一个 Windows 路径，
 # 而 scp 是 Windows 的 OpenSSH——它不认识 /tmp/xxx 这种写法，会报

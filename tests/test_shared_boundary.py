@@ -185,9 +185,14 @@ CLOUD = REPO / "cloud"
 CLOUD_FORBIDDEN = DESKTOP_MODULES | PLATFORM_MODULES | RUNTIME_MODULES
 
 
+# app_bundle/ 是部署时放进来的电脑端更新包——它是这个服务要发出去的载荷，不是
+# 服务自己的代码。里面当然满是 cv2、ctypes 和 motioncontrol，那正是它该有的样子。
+_NOT_CLOUD_CODE = {"__pycache__", "app_bundle"}
+
+
 def _cloud_sources():
     return sorted(path for path in CLOUD.rglob("*.py")
-                  if "__pycache__" not in path.parts)
+                  if not _NOT_CLOUD_CODE & set(path.parts))
 
 
 def test_cloud_package_is_populated():

@@ -56,6 +56,20 @@ _CHUNK = 1 << 16
 # 不如一开始就不下。
 MAX_TOTAL_BYTES = 64 << 20
 
+# 属于这一份安装、不属于代码的文件。它们指向发布包自己的相对位置（../models、
+# ../native/ViGEmClient.dll），换包时必须从旧的那份搬过来——跟着更新包走的话，
+# 每次更新都会把这台机器的模型位置覆盖掉，然后语音和手柄一起失灵，而界面上只
+# 会说"模型找不到"，没人会想到是更新干的。
+KEEP_FROM_OLD = (
+    "config/model_root.txt",
+    "config/vosk_model_path.txt",
+    "config/vigemclient_dll.txt",
+    "config/sherpa_kws_model_path.txt",
+    "config/funasr_python_path.txt",
+    "config/funasr_seaco_model_path.txt",
+    "config/funasr_vad_model_path.txt",
+)
+
 
 def _load_public_key():
     from cryptography.hazmat.primitives.serialization import load_der_public_key
@@ -210,6 +224,15 @@ def promote(app_dir: Path) -> str:
         backup = root / "app_previous"
         shutil.rmtree(backup, ignore_errors=True)
         os.replace(app_dir, backup)
+        # 先搬这一份安装自己的路径文件，再把新的放上去：顺序反过来的话，新包里
+        # 万一带了同名文件就会赢，而它写的是打包那台机器的路径。
+        for relative in KEEP_FROM_OLD:
+            source = backup / relative
+            if not source.is_file():
+                continue
+            target = staging / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
         os.replace(staging, app_dir)
     except OSError:
         return "swap-failed"

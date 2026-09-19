@@ -31,3 +31,7 @@ output/
 
 # 指向网页包签名私钥的位置。路径本身不是秘密，但没必要写进公开历史。
 config/phone_web_signing_key.txt
+
+# 部署时由 push.sh 从 build/app_bundle 复制过来的电脑端更新包。
+# 是构建产物，不进仓库——它就是 app/ 的一份拷贝。
+cloud/app_bundle/

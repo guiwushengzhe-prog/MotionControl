@@ -11,19 +11,13 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-# 换包必须排在导入 motioncontrol.* 之前：那之后模块已经加载进内存，换掉它脚下的
-# 文件只会得到一个半新半旧的程序。所以这一段刻意违反"import 都写在最上面"。
+# 换包不在这里做。server.py 就住在要被换掉的那个目录里，而启动时的工作目录也是
+# 它——Windows 不允许删除或改名自己所在的目录，退回时会删到一半然后失败，把安装
+# 掏空。真撞过一次，测试里 app/ 变成了空的。
+#
+# 所以换包交给 app/ 外面的 launcher.py，它的工作目录在外面。这里只负责在两个
+# 监听都起来之后确认"这一份跑起来了"。
 _APP_DIR = Path(__file__).resolve().parent
-try:
-    from motioncontrol import app_update as _app_update
-
-    _PROMOTION = _app_update.promote(_APP_DIR)
-    if _PROMOTION == "promoted":
-        # 换完之后 server.py 自己也是旧的那一份了——它在换之前就被读进来了。
-        # 重新起一次进程，让新旧不要混着跑。
-        os.execv(sys.executable, [sys.executable] + sys.argv)
-except Exception:  # noqa: BLE001 - 更新出任何问题都不该拦住启动
-    _PROMOTION = "skipped"
 
 from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
@@ -780,7 +774,7 @@ class AdminHandler(_BaseHandler):
             # 只读。界面拿它显示"已经下好，下次启动生效"，好让人知道重启一次
             # 是有意义的——否则更新会安静地躺在那里，直到某天碰巧重启。
             self._send_json({"version": VERSION, **UPDATE_STATE,
-                             "promotion": _PROMOTION})
+                             })
             return
         if route == "/api/output/actions":
             self._send_json({"version": VERSION, "actions": action_catalog()})

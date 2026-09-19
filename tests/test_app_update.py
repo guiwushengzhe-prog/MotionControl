@@ -276,3 +276,29 @@ def test_a_server_that_is_down_is_not_an_error(tmp_path, trust, monkeypatch):
     app = make_install(tmp_path)
     monkeypatch.setattr(app_update, "_fetch", explode)
     assert app_update.check_and_stage(app)["state"] == "failed"
+
+
+def test_the_installs_own_paths_survive_an_update(tmp_path):
+    """model_root.txt 指向这一份发布包自己的 ../models。
+
+    跟着更新包走的话，每次更新都会把这台机器的模型位置覆盖成打包那台机器的，
+    然后语音和手柄一起失灵，而界面上只会说"模型找不到"——没人会想到是更新干的。
+    """
+    app = make_install(tmp_path)
+    (app / "config").mkdir()
+    (app / "config" / "model_root.txt").write_text("../models", encoding="utf-8")
+    (app / "config" / "vigemclient_dll.txt").write_text("../native/ViGEmClient.dll",
+                                                        encoding="utf-8")
+
+    staging = stage(tmp_path, "v2")
+    (staging / "config").mkdir()
+    # 打包那台机器的路径，绝不能赢
+    (staging / "config" / "model_root.txt").write_text(r"I:\打包机器\models", encoding="utf-8")
+    (staging / "config" / "voice_commands_v094.json").write_text("{}", encoding="utf-8")
+
+    assert app_update.promote(app) == "promoted"
+    assert (app / "config" / "model_root.txt").read_text(encoding="utf-8") == "../models"
+    assert (app / "config" / "vigemclient_dll.txt").read_text(encoding="utf-8") \
+        == "../native/ViGEmClient.dll"
+    # 跟着代码走的那些照常更新
+    assert (app / "config" / "voice_commands_v094.json").is_file()
