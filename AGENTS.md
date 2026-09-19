@@ -1,19 +1,26 @@
 # 给 AI 协作者
 
-Claude Code 和 Codex 共同开发这个项目。这里只写**两个 AI 都必须遵守、而
-CONTRIBUTING.md 没说**的几条。其余（怎么跑起来、怎么跑测试、目录结构）看
+> **如果你是 Codex，这份就是给你的。**
+> Claude Code 读的是 [CLAUDE.md](CLAUDE.md)，那份指回这里——两边同一套规矩。
+
+这个项目由 **Claude Code** 和 **Codex** 共同开发，人类负责人是 guiwu
+（GitHub: guiwushengzhe-prog）。这里只写两个 AI 都必须遵守、而 CONTRIBUTING.md
+没说的几条。其余（怎么跑起来、怎么跑测试、目录结构）看
 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 分支
+## 分支：先认清你是谁
 
-```
-exp/claude/描述      Claude 开的实验分支
-exp/codex/描述       Codex 开的实验分支
-main                 只放已经发出去的版本
-```
+| 你是 | 实验分支就叫 |
+|---|---|
+| **Codex** | `exp/codex/描述` |
+| **Claude Code** | `exp/claude/描述` |
+
+`main` 只放已经发出去的版本。
+
+**别用别人的前缀**——分支名是用来看出"这是谁开的"，用错了这个信息就没了。
 
 仓库历史里有一批 `codex/xxx` 和 `zcode/xxx`（没有 `exp/` 前缀）。那是旧约定，
-**不要照着学**。实验分支一律以 `exp/` 开头，第二段是谁开的。
+**不要照着学**。实验分支一律 `exp/` 开头，第二段是你自己的名字。
 
 实验成了就合进 main，不成就删掉分支。不确定要不要保留时问人，不要自己决定。
 
