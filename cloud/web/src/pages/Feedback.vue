@@ -27,6 +27,20 @@ const busy = ref(false);
 const error = ref("");
 const done = ref(false);
 
+const QQ_GROUP = "1101605483";
+const copied = ref(false);
+
+async function copyGroup() {
+  try {
+    await navigator.clipboard.writeText(QQ_GROUP);
+  } catch {
+    // 非 https 或者浏览器不给权限时 clipboard 不可用。群号本来就显示在旁边，
+    // 手敲十位数字不是负担，所以这里不弹错误吓人一跳。
+  }
+  copied.value = true;
+  setTimeout(() => (copied.value = false), 2000);
+}
+
 function hintFor(value: FeedbackKind) {
   return KINDS.find((k) => k.value === value)?.hint ?? "";
 }
@@ -70,6 +84,9 @@ function again() {
     <p class="lede" v-else>
       你没留联系方式，所以这条我只能看、没法回。想要回复的话可以再发一条带上。
     </p>
+    <p class="lede">
+      等不及的话，QQ 群 <strong>{{ QQ_GROUP }}</strong> 里问会快很多。
+    </p>
     <div class="row">
       <button class="ghost" @click="again">再写一条</button>
       <RouterLink to="/browse" class="ghost link">去看看公开配置</RouterLink>
@@ -81,6 +98,18 @@ function again() {
     <p class="lede">
       不用注册，直接写。用着不对劲、想要什么功能、哪一步卡住了，都可以说。
     </p>
+
+    <!-- 排在表单前面：装不上、连不上这类问题，群里问比等我回快得多，
+         而且别人多半已经踩过同一个坑。表单适合说得长、或者不想进群的人。 -->
+    <div class="group">
+      <div>
+        <strong>急着解决问题？QQ 群 <span class="num">{{ QQ_GROUP }}</span></strong>
+        <p>装不上、连不上、动作不认，群里问最快，也能看到别人是怎么解决的。</p>
+      </div>
+      <button type="button" class="ghost" @click="copyGroup">
+        {{ copied ? "已复制" : "复制群号" }}
+      </button>
+    </div>
 
     <label class="field">
       <span>这是</span>
@@ -160,6 +189,14 @@ textarea { resize: vertical; min-height: 120px; line-height: 1.7; }
   background: transparent; border: 1px solid var(--line); color: var(--text);
 }
 .kind.on { border-color: var(--accent); color: var(--accent); }
+.group {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin: 0 0 22px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.group p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+.group .num { font-variant-numeric: tabular-nums; letter-spacing: .5px; }
+.group button { white-space: nowrap; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .note { font-size: 13px; color: var(--muted); }
 .link { display: inline-block; text-decoration: none; }
