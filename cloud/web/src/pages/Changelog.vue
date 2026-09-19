@@ -53,9 +53,9 @@ onMounted(async () => {
   <div class="card">
     <h1>更新日志</h1>
     <p class="lede">
-      每条说的是<strong>你会感觉到什么</strong>。
-      <code>2.0.x</code> 是修 bug 和改文案，<code>2.x.0</code> 加了新功能，
-      两种都不用你做任何事，老配置照常用。
+      各版本的变更记录，按对使用者的影响撰写。版本号遵循语义化版本规范：
+      <code>2.0.x</code> 为缺陷修复，<code>2.x.0</code> 为新增功能，两者均不影响现有配置；
+      <code>x.0.0</code> 含不兼容变更，会在对应条目中说明迁移方式。
     </p>
 
     <p v-if="loading" class="muted">读取中…</p>
@@ -84,9 +84,9 @@ onMounted(async () => {
     </section>
 
     <p class="fineprint">
-      下载最新版：<a href="https://github.com/guiwushengzhe-prog/MotionControl/releases"
+      安装包下载：<a href="https://github.com/guiwushengzhe-prog/MotionControl/releases"
          target="_blank" rel="noopener">GitHub Release</a>。
-      已经装了的话，电脑端打开时会自己检查更新，不用重下。
+      已安装的电脑端会在启动时自动检查更新，无需重新下载。
     </p>
   </div>
 </template>
