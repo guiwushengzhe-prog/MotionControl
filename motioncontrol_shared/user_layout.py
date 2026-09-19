@@ -38,6 +38,9 @@ USER_DATA_FILES = {
     # scene_layout.json 里，而没定位过区域的人根本没有那个文件。结果是每次
     # 启动都悄悄回到默认值，玩家只会觉得"我明明开过"。
     "general_settings": "general_settings.json",
+    # 玩家自己添加的游戏。内置目录只有两百个，搜不到的游戏以前只能占用别人的
+    # 坑位，界面上还一直显示着错的名字。
+    "custom_games": "custom_games.json",
 }
 
 # Where 2.0 and earlier wrote them, relative to the program directory.  Only

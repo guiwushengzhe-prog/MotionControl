@@ -1038,6 +1038,46 @@ class AdminHandler(_BaseHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
+        if route in {"/api/game-profiles/custom/add",
+                     "/api/game-profiles/custom/remove",
+                     "/api/game-profiles/custom/rename"}:
+            # 和 select / overrides 同样只接受本机：这些都在写用户数据，局域网上
+            # 的手机没有理由能改它。
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "custom games are loopback-only"}, 403)
+                return
+            try:
+                with PROFILE_UPDATE_LOCK:
+                    if route.endswith("/add"):
+                        game = PROFILES.add_custom_game(
+                            str(body.get("name", "")),
+                            base=str(body.get("base") or "generic-xbox"),
+                            appid=body.get("appid"))
+                        self._send_json({"ok": True, "game": game,
+                                         "catalog": PROFILES.list_games()})
+                        return
+                    if route.endswith("/rename"):
+                        game = PROFILES.rename_custom_game(
+                            str(body.get("id", "")), str(body.get("name", "")))
+                        self._send_json({"ok": True, "game": game,
+                                         "catalog": PROFILES.list_games()})
+                        return
+                    # 删除可能把当前选中的游戏删掉，那会换一份绑定，所以要和
+                    # select 一样把新的推给内核和手机，否则玩家手上还是旧映射。
+                    profile = PROFILES.remove_custom_game(str(body.get("id", "")))
+                    with VOICE._lock:
+                        VOICE._release_locked(VOICE.source_id)
+                        KERNEL.configure_bindings(profile.get("bindings", {}))
+                    broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                    if broadcaster is not None:
+                        broadcaster(_phone_control_payload())
+                self._send_json({"ok": True, "profile": profile,
+                                 "catalog": PROFILES.list_games()})
+            except KeyError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 404)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if route in {"/api/game-profiles/select", "/api/game-profiles/overrides"}:
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "game profile changes are loopback-only"}, 403)

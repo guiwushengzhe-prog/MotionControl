@@ -12,6 +12,9 @@ import copy
 
 SCHEMA = "motioncontrol.game_profile.v1"
 CATALOG_SCHEMA = "motioncontrol.game_catalog.v1"
+# 玩家自己添加的游戏。内置目录里只有两百个，搜不到的游戏以前只能占用别人的
+# 坑位——界面上一直显示着错的游戏名，而且第二个未收录的游戏就没地方放了。
+CUSTOM_GAMES_SCHEMA = "motioncontrol.custom_games.v1"
 SELECTION_SCHEMA = "motioncontrol.profile_selection.v2"
 SELECTION_SCHEMA_V1 = "motioncontrol.profile_selection.v1"
 

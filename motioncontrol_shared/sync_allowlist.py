@@ -71,6 +71,12 @@ CLASSIFICATION = {
     # 握紧一次，取中间），换个人换个机位就不对了。拆开文件是同步一半的前提，
     # 还没做，所以整份不走。
     "general_settings": DEVICE_CONFIGURATION,
+    # 自己添加的游戏只是一个名字加一个基础档 id，不含任何本机信息，换台机器
+    # 一样成立——它和 profile_selection 是同一类东西，理应一起走。
+    #
+    # 暂时不进白名单：云端还不认识这些 id，收到一个引用了 custom-xxx 的配置
+    # 会当成引用了一个不存在的游戏。要一起做，不是加一行能完的事。
+    "custom_games": USER_CONFIGURATION,
     "scene_layout": SPATIAL_CALIBRATION,
     "scene_reference": SPATIAL_CALIBRATION,
 }
