@@ -75,12 +75,12 @@ async def test_the_address_is_stored_as_a_digest_not_as_an_address(client):
 
 async def test_contact_and_version_are_kept_as_written(client):
     """联系方式不校验格式：QQ 号也要能收下。"""
-    response = await send(client, contact="QQ 12345678", app_version="2.0.0")
+    response = await send(client, contact="QQ 12345678", app_version="9.9.9")
     assert response.status_code == 201
     async with SessionLocal() as db:
         row = (await db.execute(select(Feedback))).scalars().one()
     assert row.contact == "QQ 12345678"
-    assert row.app_version == "2.0.0"
+    assert row.app_version == "9.9.9"
 
 
 async def test_a_signed_in_sender_is_linked_to_their_account(client, invite_code):

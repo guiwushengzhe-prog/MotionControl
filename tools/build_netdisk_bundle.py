@@ -17,13 +17,12 @@ import sys
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-PC_DIR = ROOT / "build" / "release" / "电脑端" / "MotionControl-PC-2.0.0"
-APK = ROOT / "build" / "release" / "手机端" / "MotionControl-Android-2.0.0.apk"
-GUIDE = ROOT / "release" / "新手指南.pdf"
-OUT = ROOT / "build" / "release" / "MotionControl-2.0.0-完整版.zip"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools.release_paths import APK, NETDISK_ZIP as OUT, PC_DIR, ROOT, VERSION  # noqa: E402
 
-TOP_README = """MotionControl 2.0
+GUIDE = ROOT / "release" / "新手指南.pdf"
+
+TOP_README = f"""MotionControl {VERSION}
 体感游戏控制器 —— 用普通摄像头把身体动作变成游戏操作
 
 
@@ -85,7 +84,7 @@ def main() -> int:
     if OUT.exists():
         OUT.unlink()
 
-    root = "MotionControl-2.0.0"
+    root = f"MotionControl-{VERSION}"
     files = 0
     with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(f"{root}/请先看.txt", TOP_README.replace("\n", "\r\n"))

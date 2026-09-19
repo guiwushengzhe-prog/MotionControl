@@ -37,15 +37,22 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from tools.release_paths import APK_NAME, VERSION  # noqa: E402
 
 # Frozen at 2.0 and not to be changed casually: the applicationId is the app's
 # permanent identity on every device that installs it, and versionCode may only
 # ever go up.
 EXPECTED_APPLICATION_ID = "cn.motioncontrol.app"
-EXPECTED_VERSION_NAME = "2.0.0"
-EXPECTED_VERSION_CODE = 20000
+# 手机端和电脑端同发一个版本号，所以核对的就是那一处。以前这里写死一个数字，
+# 发下一版时它会把一个正确的 APK 当成版本不对拒掉。
+EXPECTED_VERSION_NAME = VERSION
+# versionCode 只能往上走，而且要是整数：1.2.3 -> 10203。
+EXPECTED_VERSION_CODE = sum(
+    int(part) * scale for part, scale in zip(VERSION.split("."), (10000, 100, 1)))
 
-DEFAULT_APK = Path(r"F:\switch\output\MotionControl-Android-2.0.0.apk")
+DEFAULT_APK = Path(r"F:\switch\output") / APK_NAME
 DEBUG_SIGNER_MARKER = "CN=Android Debug"
 
 

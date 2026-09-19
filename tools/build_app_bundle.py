@@ -1,6 +1,6 @@
 """把电脑端的程序本体做成一份可下发的更新包，并签名。
 
-    python tools/build_app_bundle.py --target "build/release/电脑端/MotionControl-PC-2.0.0"
+    python tools/build_app_bundle.py            # 默认就是当前版本的发布包
 
 内容就是发布包里的 app/ 目录，减去属于某一份安装的路径文件——那些指向
 ../models、../native/ViGEmClient.dll，跟着更新包走的话会把每台机器的模型位置
@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from motioncontrol.app_update import KEEP_FROM_OLD  # noqa: E402
+from tools.release_paths import PC_DIR  # noqa: E402
 
 OUT = ROOT / "build" / "app_bundle"
 
@@ -69,7 +70,7 @@ def build(app_dir: Path) -> tuple[int, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="打包并签名电脑端更新包")
-    parser.add_argument("--target", default="build/release/电脑端/MotionControl-PC-2.0.0",
+    parser.add_argument("--target", default=str(PC_DIR),
                         help="发布包目录")
     parser.add_argument("--no-restage", action="store_true",
                         help="跳过对齐仓库这一步（只有你刚 stage 过才用）")

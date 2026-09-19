@@ -46,7 +46,8 @@ fi
 echo "==> 电脑端更新包"
 # 已经装了的人靠这一份更新，不用重下 174 MB。打包时会签名——电脑端拒绝没签名
 # 的包，所以这一步失败就该停下，而不是发一份装不上的东西上去。
-if [ -d "build/release/电脑端/MotionControl-PC-2.0.0/app" ]; then
+PC_DIR=$(python tools/release_paths.py pc_dir)
+if [ -d "$PC_DIR/app" ]; then
     python tools/build_app_bundle.py || {
         echo "更新包没做成，不部署" >&2; exit 1
     }

@@ -32,8 +32,9 @@ from motioncontrol.voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceServ
 from motioncontrol.scene_layout import SceneLayoutManager
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
 
-# Desktop workflow and per-game persistence release; phone protocol versions stay unchanged.
-VERSION = "2.0.0"
+# 版本号只有一处，在 motioncontrol/version.py。这里不再写数字：写了就会有第二个
+# 数字要记得跟着改，而漏改一次是看不出来的——界面和文件名各说各的。
+from motioncontrol.version import VERSION  # noqa: E402
 
 # 这次启动之后查更新的结果，界面上要显示。
 UPDATE_STATE: dict = {"state": "unknown"}

@@ -18,7 +18,9 @@ def test_only_full_model_is_registered():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert 'pose_landmarker_full.task' in server
     assert 'pose_landmarker_lite.task' not in server
-    assert 'VERSION = "2.0.0"' in server
+    # 版本号在 motioncontrol/version.py，server.py 只负责把它 import 进来。写死
+    # 一个数字在这里，等于给"改版本号"这件事加了一个会红的测试。
+    assert "from motioncontrol.version import VERSION" in server
 
 
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
@@ -42,7 +44,9 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
 
 def test_v2_command_catalog_and_head_ui():
     catalog = json.loads((ROOT / 'config' / 'voice_commands_v094.json').read_text(encoding='utf-8'))
-    assert catalog['product_version'] == '2.0.0'
+    # product_version 已经删掉：代码里从来没人读它，只有测试在核对，于是它的全部
+    # 作用就是多一个发版时要记得改、改漏了也没人知道的数字。
+    assert 'product_version' not in catalog
     assert len(catalog['commands']) >= 39
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')

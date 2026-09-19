@@ -12,7 +12,7 @@ repository, which means a module added tomorrow is included tomorrow.  Anything
 the graph does not reach -- dev tools, alternative speech backends, capture
 scripts -- stays out.
 
-    python tools/stage_release.py --target "build/release/电脑端/MotionControl-PC-2.0.0"
+    python tools/stage_release.py --target "$(python tools/release_paths.py pc_dir)"
     python tools/stage_release.py --target ... --check   # report, change nothing
 
 Model files, the bundled Python and the ViGEm DLL are not touched: they are
