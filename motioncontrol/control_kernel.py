@@ -29,7 +29,8 @@ from motioncontrol.head_control import (
 )
 from motioncontrol_shared.profile_schema import flatten_bindings
 from motioncontrol_shared.motion_conflicts import validate_motion_config
-from motioncontrol.hand_mouse_control import HANDS, HandMouseController
+from motioncontrol.hand_mouse_control import HANDS
+from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseController
 from motioncontrol.pose_recorder import PoseRecorder
 
 
@@ -911,7 +912,8 @@ class ControlKernel:
                 pose_map, now, width=self.width, height=self.height,
                 source=str(self.active_body_source or ""),
                 extra={"hand_spread": hand["spread"], "fist": hand["engaged"],
-                       "hand": hand["hand"]},
+                       "hand": hand["hand"], "hands": hand["hands"],
+                       "axes": hand["axes"]},
             )
         self._update_zones_locked(pose_map, now)
         self._update_motion_locked(pose_map, now)
@@ -1379,21 +1381,17 @@ class ControlKernel:
                 return True
         return False
 
-    def _hand_points_for_mouse_locked(self) -> list[dict] | None:
-        """The 21 points for whichever hand is steering, if the device sent them."""
-        if not self.latest_hands:
-            return None
-        return self.latest_hands.get(str(self.hand_mouse_controller.config.get("hand", "right")))
+    def _hand_points_for_mouse_locked(self) -> dict | None:
+        """两只手各自使用自己的关节点，缺失时分别退回人体指尖判断。"""
+        return self.latest_hands
 
     def configure_hand_mouse(self, updates: dict | None) -> dict:
         """Apply a settings change under the kernel lock and report the result."""
         with self._lock:
             status = self.hand_mouse_controller.configure(updates)
             self._save_general_settings()
-            if not status["enabled"]:
-                # Leaving the pointer mid-drift after a disable would keep the
-                # last velocity applied until head control next writes.
-                self._safe_output(self.output.apply, 0.0, 0.0)
+            # 换手或调参都废弃旧起点，立即清掉上一帧速度。
+            self._safe_output(self.output.apply, 0.0, 0.0)
             return status
 
     def _hand_mouse_owns_zone(self, name: str) -> bool:
@@ -1402,14 +1400,10 @@ class ControlKernel:
         lookGate is tied to the left wrist, so it belongs to the left hand here
         even though its name does not say so.
         """
-        if not self.hand_mouse_controller.engaged:
-            return False
-        hand = str(self.hand_mouse_controller.config.get("hand", "right"))
         if name == "lookGate":
-            return hand == "left"
-        # Only that hand's own zones.  A bare startswith(hand) would also catch
-        # leftFoot/rightFoot, and the feet are still free to act.
-        return name.startswith(f"{hand}Hand")
+            return self.hand_mouse_controller.owns_hand("left")
+        return any(name.startswith(f"{hand}Hand") and
+                   self.hand_mouse_controller.owns_hand(hand) for hand in HANDS)
 
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
         previous_gate = bool(self.vertical_gate_active)
@@ -2079,6 +2073,7 @@ class ControlKernel:
     # ---------- safety/status ----------
 
     def _clear_body_outputs_locked(self) -> None:
+        self.hand_mouse_controller.reset()
         for state in self.zone_state.values():
             state.update({"inside": 0, "outside": 0, "pressed": False})
         self.zone_rects = {}

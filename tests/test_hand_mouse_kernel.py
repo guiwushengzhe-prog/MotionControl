@@ -78,7 +78,9 @@ def body(*, hand="right", wrist=(0.75, 0.30), spread=0.5, forearm=0.18):
 def kernel_with_hand_mouse(**config):
     output = _Output()
     kernel = ControlKernel(output)
-    kernel.hand_mouse_controller.configure({"enabled": True, "deadzone": 0.0, **config})
+    hand = config.pop("hand", "right")
+    kernel.hand_mouse_controller.configure({"enabled": True, "deadzone": 0.0,
+                                           "horizontal_hand": hand, "vertical_hand": hand, **config})
     return kernel, output
 
 

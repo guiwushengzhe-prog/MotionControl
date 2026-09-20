@@ -197,7 +197,7 @@ function setupConflicts(){
   if(mergeOwnsSticks()&&hand.enabled)
     items.push(['物理手柄合流占着两个摇杆，手控鼠标不会动。','关掉合流',async()=>{$('#xinputMerge').value='';await setXinputMerge()}]);
   if(hand.enabled&&head.verticalLookEnabled&&head.verticalLookSource==='hand')
-    items.push(['手控鼠标已经在用右手转视角了，上下视角那道闸抢的是同一只右手，绿框白放。','关掉上下视角',
+    items.push(['手控鼠标握拳时会接管视角，与单独的上下视角控制同时开启可能相互干扰。','关掉上下视角',
       async()=>{const s=$('#verticalLookSource');if(s){s.value='off';s.dispatchEvent(new Event('change',{bubbles:true}))}}]);
   if(hand.enabled&&hand.grip_source==='pose')
     items.push(['手机没传手指关节，握拳只能拿三个指尖估，张开和握紧分不太开。',null,null]);
@@ -747,7 +747,8 @@ function renderHandMouse(state){
   $('#handMouseEnabled').disabled=blocked;
   $('#handMouseEnabled').checked=Boolean(c.enabled);
   renderOutputMix();
-  $('#handMouseHand').value=c.hand||'right';
+  $('#handMouseHorizontalHand').value=c.horizontal_hand||'right';
+  $('#handMouseVerticalHand').value=c.vertical_hand||'left';
   for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open],['handMouseCurlClose',c.curl_close],['handMouseCurlOpen',c.curl_open]]){
     if(value!==undefined)$('#'+id).value=value;
   }
@@ -757,15 +758,17 @@ function renderHandMouse(state){
   $('#handMouseOpenValue').textContent=Number(c.fist_open||0).toFixed(2);
   $('#handMouseCurlCloseValue').textContent=Number(c.curl_close||0).toFixed(2);
   $('#handMouseCurlOpenValue').textContent=Number(c.curl_open||0).toFixed(2);
-  const byHand=state.grip_source==='hand';
+  const readings=Object.values(state.axes||{});
+  const byHand=readings.some(s=>s.grip_source==='hand');
   $('#handMouseCurlRow').hidden=!byHand;
-  $('#handMouseSpreadRow').hidden=byHand;
+  $('#handMouseSpreadRow').hidden=readings.length>0&&readings.every(s=>s.grip_source==='hand');
   const reading=byHand
     ?(state.curl==null?'看不到手':`手指伸展 ${Number(state.curl).toFixed(2)}`)
     :(state.spread==null?'看不到手':`张开度 ${Number(state.spread).toFixed(3)}`);
+  const axisLabel=(axis,name)=>{const s=state.axes?.[axis];if(!s)return '';const hand=s.hand==='left'?'左手':'右手';const phase=({disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'})[s.state]||s.state;const measure=s.grip_source==='hand'?`手指伸展 ${Number(s.curl).toFixed(2)}`:s.spread==null?'看不到手':`张开度 ${Number(s.spread).toFixed(3)}`;return `${name}：${hand} · ${phase} · ${measure}`;};
   const label={disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'}[state.state]||state.state;
   $('#handMouseStatus').textContent=blocked?'物理手柄合流占着摇杆，手控鼠标用不了':(c.enabled
-    ?`${label} · ${reading} · 输出 ${Number(state.output_x||0).toFixed(2)} / ${Number(state.output_y||0).toFixed(2)}`
+    ?(state.axes?`${axisLabel('horizontal','水平')}；${axisLabel('vertical','垂直')}`:`${label} · ${reading} · 输出 ${Number(state.output_x||0).toFixed(2)} / ${Number(state.output_y||0).toFixed(2)}`)
     :'未启用');
 }
 // --- skeleton recording ---------------------------------------------------
@@ -807,7 +810,8 @@ async function refreshHandMouse(){try{const data=await api('/api/hand-mouse/conf
 async function saveHandMouse(){
   const payload={
     enabled:$('#handMouseEnabled').checked,
-    hand:$('#handMouseHand').value,
+    horizontal_hand:$('#handMouseHorizontalHand').value,
+    vertical_hand:$('#handMouseVerticalHand').value,
     sensitivity:Number($('#handMouseSensitivity').value),
     deadzone:Number($('#handMouseDeadzone').value),
     fist_close:Number($('#handMouseClose').value),
@@ -1205,7 +1209,7 @@ bind('mainActionBtn',handleMainAction);
 bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
 bind('sourceStopBtn',()=>setSource(sourceMode,false));
 bind('overlayBtn',toggleOverlay);
-for(const id of ['handMouseEnabled','handMouseHand','handMouseSensitivity','handMouseDeadzone','handMouseClose','handMouseOpen','handMouseCurlClose','handMouseCurlOpen']){
+for(const id of ['handMouseEnabled','handMouseHorizontalHand','handMouseVerticalHand','handMouseSensitivity','handMouseDeadzone','handMouseClose','handMouseOpen','handMouseCurlClose','handMouseCurlOpen']){
   const el=$('#'+id);
   if(el)el.addEventListener('change',()=>void saveHandMouse());
 }

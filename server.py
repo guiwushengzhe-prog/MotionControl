@@ -283,7 +283,9 @@ def _phone_control_payload() -> dict:
 
 def _hand_tracking_request() -> dict:
     status = KERNEL.hand_mouse_controller.status()
-    return {"enabled": bool(status["enabled"]), "hand": str(status["hand"])}
+    config = status["config"]
+    hands = list(dict.fromkeys([config["horizontal_hand"], config["vertical_hand"]]))
+    return {"enabled": bool(status["enabled"]), "hand": hands[0], "hands": hands}
 
 provider = getattr(INPUT_BRIDGE, "configure_control_config_provider", None)
 if provider is not None:
