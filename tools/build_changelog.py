@@ -34,13 +34,18 @@ TARGETS = (
     ROOT / "cloud" / "web" / "public" / "changelog.json",
 )
 
-RELEASE_RE = re.compile(r"^##\s+(?P<version>\d+\.\d+\.\d+)\s*(?:[—\-–]\s*(?P<date>.+))?$")
+# 手机端网页包能独立热更，于是它有自己的版本号，和电脑端那个不是一回事。两条线
+# 都可能出现 2.0.1，所以解析出来必须带上是哪条线——否则网站上两节标题一模一样，
+# 读的人说不清自己看的是哪个。channel 为 "web" 的那节只影响手机，不用重装。
+RELEASE_RE = re.compile(
+    r"^##\s+(?:(?P<channel>网页)\s+)?(?P<version>\d+\.\d+\.\d+)"
+    r"\s*(?:[—\-–]\s*(?P<date>.+))?$")
 SECTION_RE = re.compile(r"^###\s+(?P<title>.+)$")
 ITEM_RE = re.compile(r"^-\s+(?P<text>.+)$")
 
 
 def parse(text: str) -> list[dict]:
-    """(version, date, sections[]) 的列表，新的在前——文件里就是这个顺序。"""
+    """(version, channel, date, sections[]) 的列表，新的在前——文件里就是这个顺序。"""
     releases: list[dict] = []
     release: dict | None = None
     section: dict | None = None
@@ -50,11 +55,19 @@ def parse(text: str) -> list[dict]:
         match = RELEASE_RE.match(line)
         if match:
             release = {"version": match["version"],
+                       "channel": "web" if match["channel"] else "app",
                        "date": (match["date"] or "").strip(),
                        "sections": []}
             releases.append(release)
             section = None
             continue
+        if line.startswith("## "):
+            # 写错格式的版本标题最坏的地方是它不报错：整节连同下面所有条目一起
+            # 消失，md 里看着好好的，网站上就是没有。宁可现在炸。
+            raise ValueError(
+                f"这行像版本标题但格式不对，整节会被丢掉：{line!r}\n"
+                f"  电脑端写 '## 2.0.1 — 2026-01-01'\n"
+                f"  只热更网页包写 '## 网页 2.0.1 — 2026-01-01'")
         if release is None:
             # 版本号之前那一段是给读者的说明，不属于任何一版。
             continue

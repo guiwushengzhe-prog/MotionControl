@@ -13,7 +13,9 @@
 import { onMounted, ref } from "vue";
 
 type Section = { title: string; intro: string; items: string[] };
-type Release = { version: string; date: string; sections: Section[] };
+// channel 分开电脑端和手机端网页包两条版本线。两条线都可能出到 2.0.1，所以
+// 版本号单独一个不足以标识一节，v-for 的 key 也得带上它。
+type Release = { version: string; channel?: "app" | "web"; date: string; sections: Section[] };
 
 const releases = ref<Release[]>([]);
 const loading = ref(true);
@@ -62,9 +64,10 @@ onMounted(async () => {
     <p v-else-if="error" class="error">{{ error }}</p>
     <p v-else-if="!releases.length" class="muted">还没有记录。</p>
 
-    <section v-for="release in releases" :key="release.version" class="release">
+    <section v-for="release in releases" :key="`${release.channel ?? 'app'}-${release.version}`" class="release">
       <header>
         <h2>{{ release.version }}</h2>
+        <span v-if="release.channel === 'web'" class="chan">仅手机网页 · 热更新</span>
         <time v-if="release.date">{{ release.date }}</time>
       </header>
 
@@ -105,7 +108,12 @@ h1 { margin: 0 0 6px; font-size: 22px; }
   border-bottom: 1px solid var(--line);
 }
 .release h2 { margin: 0; font-size: 19px; }
-.release time { font-size: 13px; color: var(--muted); }
+/* 版本号本身看不出这一节只影响手机。不标出来，读的人会以为电脑端也得更新。 */
+.release .chan {
+  padding: 2px 8px; border-radius: 999px; font-size: 12px;
+  color: var(--accent); background: rgba(255, 255, 255, .07);
+}
+.release time { font-size: 13px; color: var(--muted); margin-left: auto; }
 .group { margin: 0 0 18px; }
 .group h3 { margin: 0 0 8px; font-size: 14px; color: var(--accent); font-weight: 600; }
 .intro { margin: 0 0 8px; color: var(--muted); line-height: 1.7; }

@@ -127,5 +127,35 @@ def test_the_website_copy_is_in_sync():
         assert actual == expected, (
             f"{target.name} 和 CHANGELOG.md 对不上，跑一遍："
             " python tools/build_changelog.py")
-    assert expected[0]["version"] == VERSION, (
-        "CHANGELOG 最上面那一版不是当前版本——新的要写在最前面")
+    # 最上面那一节可能是网页包的热更条目，它的号和电脑端不是一条线。要比的是
+    # 最新的那条电脑端条目。
+    newest_app = next((r for r in expected if r.get("channel", "app") == "app"), None)
+    assert newest_app is not None, "CHANGELOG 里一条电脑端版本都没有"
+    assert newest_app["version"] == VERSION, (
+        "CHANGELOG 里最新的电脑端版本不是当前版本——新的要写在最前面")
+
+
+def test_a_malformed_version_heading_is_not_silently_dropped():
+    """格式写错的版本标题最坏的地方是它不报错。
+
+    整节连同下面所有条目一起消失，md 里看着好好的，网站上就是没有——而缺的
+    通常正是刚发的那一版。
+    """
+    from tools.build_changelog import parse
+
+    with pytest.raises(ValueError, match="整节会被丢掉"):
+        parse("## 网页版 2.0.1 — 2026-01-01\n\n- 改了点东西\n")
+
+
+def test_a_web_only_entry_says_it_is_web_only():
+    """网页包能独立热更，所以它有自己的版本号，和电脑端不是一条线。
+
+    两条线都可能出到 2.0.1。解析结果不带 channel 的话，网站上两节标题一模一样，
+    读的人分不清哪一节要重装、哪一节手机自己就更了。
+    """
+    from tools.build_changelog import parse
+
+    releases = parse("## 网页 2.0.1 — 2026-01-01\n\n- 改了点东西\n\n"
+                     "## 2.0.1 — 2026-01-01\n\n- 另一件事\n")
+    assert [(r["channel"], r["version"]) for r in releases] == [
+        ("web", "2.0.1"), ("app", "2.0.1")]
