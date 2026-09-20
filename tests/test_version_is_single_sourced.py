@@ -97,6 +97,33 @@ def test_the_deploy_script_asks_instead_of_guessing():
     assert "release_paths.py" in text
 
 
+def _first_python_call(text: str) -> int:
+    """第一处真正调用 python 的位置。
+
+    不能直接找 "python" 这个词：两条护栏自己的报错信息里就写着它，找出来的位置
+    会落在护栏内部，于是"护栏在调用之前"这类断言都会因为错误的理由通过。第一版
+    就是这么写的，UTF-8 那条当场挂了，WSL 那条则是侥幸过的。
+    """
+    match = re.search(r"(?m)^[^#\n]*\bpython\s+(?:-m|tools/)", text)
+    assert match, "push.sh 里找不到任何一处 python 调用"
+    return match.start()
+
+
+def test_the_deploy_script_reads_python_output_as_utf8():
+    """发布目录名里有中文，而 Windows 的 Python 默认按控制台编码（GBK）写管道。
+
+    不设 PYTHONIOENCODING 的话，bash 拿到的是 GBK 字节、磁盘上是 UTF-8，
+    [ -d "$PC_DIR/app" ] 永远为假，电脑端更新包那一步被整个跳过。它跳过时说的是
+    "没有发布包，这次不带更新包"——一句听着完全正常的话。2026-09-20 真发生过，
+    线上那份自更新包因此一直没换，而部署输出里看不出任何异常。
+    """
+    text = (ROOT / "cloud" / "deploy" / "push.sh").read_text(encoding="utf-8")
+    export = text.find("PYTHONIOENCODING")
+    assert export != -1, "push.sh 没有强制 python 输出 UTF-8"
+    assert export < _first_python_call(text), (
+        "PYTHONIOENCODING 排在第一次调用 python 之后了，那次调用还是会拿到 GBK")
+
+
 def test_the_deploy_script_refuses_wsl_before_it_fails_obscurely():
     """在 PowerShell 里敲 bash 会落到 WSL，那里既没有 python 也没有 ssh 配置。
 
@@ -107,8 +134,7 @@ def test_the_deploy_script_refuses_wsl_before_it_fails_obscurely():
     text = (ROOT / "cloud" / "deploy" / "push.sh").read_text(encoding="utf-8")
     guard = text.find("/proc/sys/kernel/osrelease")
     assert guard != -1, "push.sh 里没有 WSL 护栏"
-    first_python = text.find("python ")
-    assert first_python != -1 and guard < first_python, (
+    assert guard < _first_python_call(text), (
         "WSL 护栏排在第一次调用 python 之后了——那时报错信息已经把人带偏")
 
 

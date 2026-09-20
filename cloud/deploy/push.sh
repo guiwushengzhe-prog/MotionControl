@@ -26,6 +26,12 @@ if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
     exit 1
 fi
 
+# Windows 的 Python 默认按控制台编码往管道里写，这台机器是 GBK；而发布目录名里
+# 有中文（build/release/电脑端/…），磁盘上是 UTF-8。不指定的话 bash 拿到的是一串
+# GBK 字节，[ -d "$PC_DIR/app" ] 永远为假，于是更新包那一步被整个跳过——而它跳过
+# 时打印的是"没有发布包，这次不带更新包"，听着像一句正常提示，没人会去查。
+export PYTHONIOENCODING=utf-8
+
 HOST=aliyun
 APP_DIR=/opt/motioncontrol
 SKIP_WEB=0
