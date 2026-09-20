@@ -14,6 +14,18 @@
 
 set -euo pipefail
 
+# 在 PowerShell 里敲 `bash`，Windows 解析到的是 WSL 的 bash，不是 Git Bash。WSL
+# 里没有 Linux 版 python——C:\Python313\python.exe 在它眼里叫 python.exe，`python`
+# 找不到；就算绕过去，ssh 也会读 WSL 自己的 ~/.ssh，那里没有 aliyun 这个别名。
+# 不拦的话表现是第 35 行一句 "python: command not found"，看不出跟 shell 有关，
+# 人会以为 Python 没装。
+if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+    echo "这是 WSL 的 bash，它看不到 Windows 的 python 和 ssh 配置。" >&2
+    echo "在 PowerShell 里改用 Git Bash 跑：" >&2
+    echo '    & "C:\Program Files\Git\bin\bash.exe" cloud/deploy/push.sh' >&2
+    exit 1
+fi
+
 HOST=aliyun
 APP_DIR=/opt/motioncontrol
 SKIP_WEB=0

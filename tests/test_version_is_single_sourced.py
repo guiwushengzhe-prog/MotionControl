@@ -97,6 +97,21 @@ def test_the_deploy_script_asks_instead_of_guessing():
     assert "release_paths.py" in text
 
 
+def test_the_deploy_script_refuses_wsl_before_it_fails_obscurely():
+    """在 PowerShell 里敲 bash 会落到 WSL，那里既没有 python 也没有 ssh 配置。
+
+    这一条钉的是顺序：护栏必须排在第一次用 python 之前。排在后面等于没有——
+    人先看到的是 "python: command not found"，然后去查 Python 装没装，而真正的
+    原因是这个 shell 不对。2026-09-20 真踩过一次。
+    """
+    text = (ROOT / "cloud" / "deploy" / "push.sh").read_text(encoding="utf-8")
+    guard = text.find("/proc/sys/kernel/osrelease")
+    assert guard != -1, "push.sh 里没有 WSL 护栏"
+    first_python = text.find("python ")
+    assert first_python != -1 and guard < first_python, (
+        "WSL 护栏排在第一次调用 python 之后了——那时报错信息已经把人带偏")
+
+
 def test_this_version_has_a_changelog_entry():
     """发了版但忘了写日志，网站上就缺一条，而缺的那条没人会发现。
 
