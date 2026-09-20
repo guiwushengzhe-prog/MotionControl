@@ -211,6 +211,13 @@ YAW_V2_MIN_DRIVE = 0.22
 # normal start detector is allowed to run again.
 YAW_V2_RETURN_EARLY_RETREAT = 0.025
 YAW_V2_RETURN_EARLY_TREND = 0.045
+# A short counter-swing is part of a natural outward turn.  Requiring this
+# much accumulated opposite-side movement prevents one small correction from
+# latching RETURNING; a smaller correction may still qualify when it remains
+# coherent for the time gate below.  This is a conservative default pending
+# calibration against the user's live raw_x scale.
+YAW_RETURN_MIN_REVERSAL_NORM = 0.055
+YAW_RETURN_MIN_REVERSAL_S = 0.12
 YAW_V2_RETURN_CENTER_STABLE_S = 0.14
 # After the signal has visibly crossed the calibrated centre, the opposite
 # side must be a deliberate, sustained turn.  The old low gate let a normal
@@ -1751,6 +1758,23 @@ class _RelativeYawAxisV153:
                 and s18<=-YAW_V2_RETURN_EARLY_TREND
             )
             if early_return:
+                # Do not let a single small back-swing seize the clutch.  A
+                # sustained, coherent reversal is still accepted through the
+                # time gate, while a larger reversal is accepted immediately.
+                self._return_confirm_s += dt
+            else:
+                self._return_confirm_s = max(0.0, self._return_confirm_s - dt * 0.6)
+            early_return_confirmed = (
+                early_return
+                and (
+                    retreat >= YAW_RETURN_MIN_REVERSAL_NORM
+                    or (
+                        self._return_confirm_s >= YAW_RETURN_MIN_REVERSAL_S
+                        and retreat >= YAW_V2_RETURN_EARLY_RETREAT
+                    )
+                )
+            )
+            if early_return_confirmed:
                 self._return_latched=True;self._return_from_direction=d;self._return_center_seen=False;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0.0;return 0.0
             # commit is position/time plus coherent trend; no single derivative ticket
             if not self._committed and (proj>=YAW_V2_COMMIT_ANGLE or (self._active_age_s>=.16 and proj>=center*1.35)):
@@ -1765,7 +1789,7 @@ class _RelativeYawAxisV153:
                     target=min(cur,cap); alpha=1-math.exp(-dt/.75); self._turn_baseline+=alpha*(target-self._turn_baseline)
                 self._baseline_ready_s+=dt
             # immediate huge retreat kept for direct 9->6-style compatibility; ordinary PnP needs trend confirmation
-            huge=(d*rd<=-.13 and retreat>=.13)
+            huge=(d*rd<=-.13 and retreat>=YAW_RETURN_MIN_REVERSAL_NORM)
             if self._turn_mode=='FAST': ret=retreat>=.045 and s18<=-.10 and (rs18<=-.06 or s45<=-.055); need=.07
             elif self._turn_mode=='NORMAL': ret=retreat>=.055 and s45<=-.045 and rs45<=-.025; need=.12
             else: ret=retreat>=.060 and s45<=-.030 and rs45<=-.018 and (e45>.12 or r245>.18); need=.20
