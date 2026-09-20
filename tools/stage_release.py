@@ -144,9 +144,16 @@ def plan(target: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
         wanted.add(destination)
 
     stale = []
+    # phone_web 归 stage_phone_web 管，它不在这个脚本的 import 图里。不排除的话
+    # 这里每次都把它整个当成陈年文件删掉，下一步再重建，于是「内容没变就留着
+    # 签名」永远不成立：每跑一次 stage 就得重签一次，而忘了重签不会报错，只有
+    # 真手机去更新时才拒绝。
+    phone_web_root = app / "phone_web"
     if app.is_dir():
         for existing in sorted(app.rglob("*")):
             if existing.is_dir() or "__pycache__" in existing.parts:
+                continue
+            if phone_web_root == existing or phone_web_root in existing.parents:
                 continue
             if existing not in wanted:
                 stale.append(existing)
@@ -197,6 +204,7 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
     # find_phone_web 本来就优先找 app/phone_web，所以装了旧版的人更新之后，他们
     # 那条一直是死的通道反而会跟着活过来。
     root = target / "app" / "phone_web"
+    signature_name = ".signature"
     wanted = {}
     for path in sorted(source.rglob("*")):
         if not path.is_file():
@@ -204,8 +212,15 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
         relative = path.relative_to(source).as_posix()
         if relative.startswith(PHONE_WEB_SKIP) or relative.endswith(".map"):
             continue
+        if relative == signature_name:
+            # 源目录自己也可能被签过：开发时电脑端直接从 switch/mobile/dist 供包
+            # 给手机，那份就得签。但它签的是 dist 的清单，不是这份发布包的，抄过
+            # 来永远对不上。更糟的是它和目标那份的签发时间不同，于是每次都判成
+            # "内容变了"，上面那条"没变就留着签名"彻底失效——每一次 restage 都把
+            # 刚签好的签名删掉，而删完不报错，只有真手机去更新时才拒绝。
+            continue
         wanted[relative] = path
-    keep = {".signature"}
+    keep = {signature_name}
     changed = False
     for existing in sorted(root.rglob("*"), reverse=True):
         if existing.is_file():

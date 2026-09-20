@@ -67,7 +67,7 @@ def test_a_removed_source_file_also_drops_it(built, tmp_path):
 
     (built / "assets" / "app.js").unlink()
     stage_phone_web(built, target)
-    assert not (target / "phone_web" / "assets" / "app.js").exists()
+    assert not (signature(target).parent / "assets" / "app.js").exists()
     assert not signature(target).exists()
 
 
@@ -113,3 +113,46 @@ def test_the_bundle_builder_checks_the_signature_after_restaging():
     packing = text.index("build(target / \"app\")")
     assert restage < check < packing, (
         "验签没夹在 restage 和打包之间：签名可能已经被 restage 丢掉，或者检查得太晚")
+
+
+def test_a_signature_in_the_source_does_not_wipe_the_staged_one(built, tmp_path):
+    """源目录自己也可能被签过。那份签的是它自己的清单，不是发布包的。
+
+    开发时电脑端直接从 switch/mobile/dist 供包给手机，那份就得签。把它当普通
+    源文件拷过来的话，它和目标那份的签发时间不同，每次都判成“内容变了”，
+    于是“没变就留着签名”那条逻辑彻底失效——每一次 restage 都把刚签好的删掉，
+    而删完不报错，只有真手机去更新时才拒绝。2026-09-20 撞上过。
+    """
+    target = tmp_path / "release"
+    stage_phone_web(built, target)
+    signature(target).write_text("发布包自己的签名", encoding="utf-8")
+    (built / ".signature").write_text("源目录的签名，签的是别的清单", encoding="utf-8")
+
+    stage_phone_web(built, target)
+    assert signature(target).is_file(), "源目录的签名把发布包的签名冲掉了"
+    assert signature(target).read_text(encoding="utf-8") == "发布包自己的签名"
+
+
+def test_the_app_sweep_leaves_phone_web_alone(tmp_path, monkeypatch):
+    """app/ 的打扫不能碰 app/phone_web——那是 stage_phone_web 的地盘。
+
+    打扫是按 import 图算的：app/ 里不在图里的文件一律当陈年文件删掉。
+    phone_web 挪进 app/ 之后整个落在这个范围里，于是每次 stage 都是“先删光、
+    再重建”，“内容没变就留着签名”永远不成立。后果不报错：打出的包没签名，
+    而只有真手机去更新时才拒绝。2026-09-20 撞上过：签一次、stage 一次、
+    签名就没了，来回两次才找到。
+    """
+    from tools.stage_release import plan
+
+    app = tmp_path / "app"
+    (app / "phone_web" / "assets").mkdir(parents=True)
+    (app / "phone_web" / "index.html").write_text("x", encoding="utf-8")
+    (app / "phone_web" / ".signature").write_text("sig", encoding="utf-8")
+    (app / "phone_web" / "assets" / "a.js").write_text("y", encoding="utf-8")
+    (app / "陈年文件.py").write_text("# 不在 import 图里", encoding="utf-8")
+
+    _, stale = plan(tmp_path)
+    names = {p.name for p in stale}
+    assert "陈年文件.py" in names, "真正的陈年文件应该照样被清"
+    assert not any("phone_web" in p.parts for p in stale), (
+        "app/ 的打扫把 phone_web 里的文件当成陈年文件了")
