@@ -7,6 +7,7 @@ import Changelog from "./pages/Changelog.vue";
 import ConfigDetail from "./pages/ConfigDetail.vue";
 import Feedback from "./pages/Feedback.vue";
 import Login from "./pages/Login.vue";
+import Invite from "./pages/Invite.vue";
 import MyConfigs from "./pages/MyConfigs.vue";
 import { ready, refresh, user } from "./session";
 import "./style.css";
@@ -23,6 +24,7 @@ const router = createRouter({
     // 不加 auth：绝大多数用这个软件的人没有账号，注册还要邀请码。
     // 反馈入口要求先登录，等于这个入口不存在。
     { path: "/feedback", component: Feedback },
+    { path: "/invite", component: Invite, meta: { auth: true } },
     { path: "/login", component: Login },
   ],
 });

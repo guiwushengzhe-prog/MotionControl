@@ -74,6 +74,9 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 玩家自助生成邀请码的持久冷却时间。单独存这一刻，服务重启或清理频率限制表
+    # 都不会让账号提前再生成一个；接口用条件更新，两个并发请求也只能成功一个。
+    last_invite_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     emails: Mapped[list[UserEmail]] = relationship(back_populates="user")
 

@@ -49,6 +49,20 @@ export interface User {
   created_at: string;
 }
 
+export interface InviteStatus {
+  can_create: boolean;
+  next_available_at: string;
+  daily_limit: number;
+  expires_days: number;
+}
+
+export interface Invite {
+  id: string;
+  code: string;
+  note: string;
+  expires_at: string | null;
+}
+
 export interface Version {
   id: string;
   revision_no: number;
@@ -127,6 +141,8 @@ export const api = {
   register: (body: {
     invite_code: string; email: string; password: string; display_name: string;
   }) => post<User>("/auth/register", body),
+  inviteStatus: () => request<InviteStatus>("/auth/invites/status"),
+  createInvite: () => post<Invite>("/auth/invites"),
 
   games: (q?: string) =>
     request<Game[]>(`/games${q ? `?q=${encodeURIComponent(q)}` : ""}`),

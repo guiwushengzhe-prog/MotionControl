@@ -122,6 +122,13 @@ class InviteOut(BaseModel):
     expires_at: datetime | None
 
 
+class InviteStatusOut(BaseModel):
+    can_create: bool
+    next_available_at: datetime
+    daily_limit: int
+    expires_days: int
+
+
 FeedbackKind = Literal["bug", "idea", "question", "other"]
 
 

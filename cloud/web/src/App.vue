@@ -25,6 +25,7 @@ async function leave() {
       <RouterLink to="/feedback">反馈</RouterLink>
       <template v-if="user">
         <RouterLink to="/">我的配置</RouterLink>
+        <RouterLink to="/invite">邀请朋友</RouterLink>
         <span class="who">{{ user.display_name }}</span>
         <a href="#" @click.prevent="leave">退出</a>
       </template>
