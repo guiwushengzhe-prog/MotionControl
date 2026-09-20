@@ -426,8 +426,8 @@ def test_turning_produces_output_and_returning_to_centre_stops(tmp_path):
     """
     c = _ready_controller(tmp_path)
     x, _y, now = turn_head(c, 9.0, start_at=1.0)
-    # 原始画面里的偏航角，方向跟玩家感觉到的相反，所以水平输出是反过来的。
-    assert x < 0
+    # 默认跟随玩家转头方向：头向右，鼠标向右。
+    assert x > 0
 
     # Returning physically to neutral must snap out the filter tail and stop.
     turn_head(c, 0.0, start_yaw=9.0, start_at=now)
@@ -472,9 +472,8 @@ def test_pnp_yaw_proxy_is_diagnostic_and_never_rewrites_or_suppresses(tmp_path):
         share = index / 6
         x, _ = c.update({"yaw": -30.0 * share, "proxy": 0.20 * share}, 640, 480, now=now)
         now += 1 / 30
-    # raw_yaw/control_yaw 才是这条测试的主角——方向由 PnP 说了算，proxy 不许
-    # 插手。输出 x 比它们多一次整体翻转（原始画面的左右跟玩家是反的）。
-    assert x > 0.0
+    # raw_yaw/control_yaw 才是这条测试的主角——方向由 PnP 说了算，proxy 不许插手。
+    assert x < 0.0
     assert c.status(1.0)["raw_yaw"] < 0.0
     assert c.status(1.0)["control_yaw"] < 0.0
     assert c.status(1.0)["yaw_guard_state"] == "proxy_motion"
@@ -486,7 +485,7 @@ def test_pnp_yaw_proxy_is_diagnostic_and_never_rewrites_or_suppresses(tmp_path):
         share = index / 6
         x, _ = c.update({"yaw": 28.0 * share, "proxy": 0.002 * share}, 640, 480, now=now)
         now += 1 / 30
-    assert x < 0.0
+    assert x > 0.0
     assert c.status(2.0)["yaw_guard_state"] == "proxy_neutral"
 
 
@@ -541,6 +540,20 @@ def test_the_horizontal_sign_has_exactly_one_switch(tmp_path):
     inverted, _y, _now = turn_head(c, 9.0, start_at=2.0)
     assert inverted < 0
     assert "invert_yaw" not in c.status()
+
+
+def test_horizontal_direction_defaults_to_following_the_turn(tmp_path):
+    c = HeadController(tmp_path / "head.json")
+    assert c.config["invert_x"] is False
+
+
+def test_saved_horizontal_direction_survives_restart(tmp_path):
+    path = tmp_path / "head.json"
+    c = HeadController(path)
+    c.configure(invert_x=True)
+    assert HeadController(path).config["invert_x"] is True
+    c.configure(invert_x=False)
+    assert HeadController(path).config["invert_x"] is False
 
 
 def test_mobile_mirror_is_normalized_exactly_once():

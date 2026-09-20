@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
     "algorithm": "pnp",
     "enabled": True,
     # 常开，不再是一个开关。理由同手控鼠标：这不是偏好，是默认值本来就错了。
-    "invert_x": True,
+    "invert_x": False,
     "invert_y": False,
     # Horizontal (yaw) output policy; see HORIZONTAL_ALGORITHMS below.
     # Default to the responsive PnP route; classic is a compatibility alias.
@@ -218,6 +218,11 @@ YAW_V2_RETURN_EARLY_TREND = 0.045
 # calibration against the user's live raw_x scale.
 YAW_RETURN_MIN_REVERSAL_NORM = 0.055
 YAW_RETURN_MIN_REVERSAL_S = 0.12
+# 摄像头可能在相邻两帧之间跨过中心；只认可短时间、小跨度且原始信号同向的穿越。
+# 这仅确认“经过中心”，后续仍需持续外转证据，不能把一次跟踪跳变当作新动作。
+YAW_RETURN_CROSSING_MAX_GAP_S = 0.10
+YAW_RETURN_CROSSING_MIN_STEP_LIMIT = 0.15
+YAW_RETURN_CROSSING_MAX_SPEED = 4.0
 YAW_V2_RETURN_CENTER_STABLE_S = 0.14
 # After the signal has visibly crossed the calibrated centre, the opposite
 # side must be a deliberate, sustained turn.  The old low gate let a normal
@@ -1518,11 +1523,13 @@ class _RelativeYawAxisV153:
         self._history=[]; self._peak_norm=abs(norm); self._turn_baseline=0.0; self._baseline_ready_s=0.0
         self._stop_s=0.0; self._turn_mode=''; self._center_stable_s=0.0; self._active_center_s=0.0; self._return_confirm_s=0.0
         self._hold_anchor=norm; self._held_from_turn=False; self._jump_pending_dir=0; self._jump_pending_s=0.0; self._jump_quarantine_until=0.0; self._startup_guard=False
+        self._early_return_confirm_s=0.0
 
     def _clear_motion_evidence(self) -> None:
         self._motion_evidence=0.0; self._evidence_direction=0; self._evidence_age_s=0.0
 
     def _clear_active(self) -> None:
+        self._early_return_confirm_s=0.0
         self._active_direction=0; self._active_age_s=0.0; self._committed=False
         self._return_evidence=0.0; self._turn_baseline=0.0; self._baseline_ready_s=0.0
         self._stop_s=0.0; self._turn_mode=''; self._active_center_s=0.0; self._return_confirm_s=0.0; self._startup_guard=False
@@ -1575,6 +1582,7 @@ class _RelativeYawAxisV153:
         self.state='TURN_RIGHT' if direction>0 else 'TURN_LEFT'; self.output=direction*mag; return self.output
 
     def _begin(self,direction:int,now:float,norm:float) -> float:
+        self._early_return_confirm_s=0.0
         self._active_direction=direction; self._active_age_s=0.0; self._committed=False; self._active_center_s=0.0; self._held_from_turn=False
         self._return_center_seen=False
         self._peak_norm=direction*norm; self._turn_baseline=0.0; self._baseline_ready_s=0.0
@@ -1599,6 +1607,8 @@ class _RelativeYawAxisV153:
                return_step:float=.025,curve_gamma:float=1.28)->float:
         del start_velocity,keep_velocity,return_velocity,stop_grace_s,acceleration_stop,curve_gamma
         norm=_clamp(norm,-4,4); raw=norm if raw_norm is None else _clamp(raw_norm,-4,4)
+        previous_norm=self._last_norm
+        elapsed=now-self._last_t if self._last_t else 1/30
         dt=_clamp(now-self._last_t,1/240,.10) if self._last_t else 1/30
         fd=norm-self._last_norm; rd=raw-self._last_raw_norm
         inst=fd/dt; a=self._exp_alpha(dt,self.velocity_tau); prev=self.velocity; self.velocity+=a*(inst-self.velocity)
@@ -1609,6 +1619,16 @@ class _RelativeYawAxisV153:
 
         if self._return_latched:
             self.state='RETURNING';self.output=0.0;orig=self._return_from_direction;opp=-orig if orig else 0
+            crossed_between_frames=(
+                orig and orig*previous_norm>0 and orig*norm<0
+                and 0<elapsed<=YAW_RETURN_CROSSING_MAX_GAP_S
+                and abs(fd)<=max(YAW_RETURN_CROSSING_MIN_STEP_LIMIT,
+                                 YAW_RETURN_CROSSING_MAX_SPEED*elapsed)
+                and orig*raw<0 and orig*rd<0
+                and abs(rd)<=max(.20,6.0*elapsed)
+            )
+            if crossed_between_frames:
+                self._return_center_seen=True
             if amount<=center:
                 # Crossing the centre is not the same as *stopping* at centre.
                 # Keep the return clutch latched while short-window motion is
@@ -1724,6 +1744,16 @@ class _RelativeYawAxisV153:
                     self.state='TURN_RIGHT' if d>0 else 'TURN_LEFT'; self.output=0.0; return 0.0
             self.state='CENTER';self.output=0;self._clear_active();self._clear_motion_evidence();return 0.0
 
+        # 已经在转动时也必须拒绝跟踪突跳，否则它会直接把学习速度推高到满速。
+        gross_jump=abs(fd)>=max(.32,12.0*dt) or abs(rd)>=max(.40,15.0*dt)
+        if self._active_direction and gross_jump:
+            self._clear_active();self._clear_motion_evidence()
+            self._jump_quarantine_until=now+.22
+            self._history=[(now,norm,raw)]
+            self.velocity=0.0;self.acceleration=0.0
+            self.output=0.0;self.state='STABLE_OFFSET';self._held_from_turn=False
+            return 0.0
+
         if self._active_direction:
             d=self._active_direction;self._active_age_s+=dt;self._active_center_s=0.0;proj=d*norm
             # If the filtered signal has actually crossed outside the centre on
@@ -1761,15 +1791,15 @@ class _RelativeYawAxisV153:
                 # Do not let a single small back-swing seize the clutch.  A
                 # sustained, coherent reversal is still accepted through the
                 # time gate, while a larger reversal is accepted immediately.
-                self._return_confirm_s += dt
+                self._early_return_confirm_s += dt
             else:
-                self._return_confirm_s = max(0.0, self._return_confirm_s - dt * 0.6)
+                self._early_return_confirm_s = max(0.0, self._early_return_confirm_s - dt * 0.6)
             early_return_confirmed = (
                 early_return
                 and (
                     retreat >= YAW_RETURN_MIN_REVERSAL_NORM
                     or (
-                        self._return_confirm_s >= YAW_RETURN_MIN_REVERSAL_S
+                        self._early_return_confirm_s >= YAW_RETURN_MIN_REVERSAL_S
                         and retreat >= YAW_V2_RETURN_EARLY_RETREAT
                     )
                 )
@@ -3944,7 +3974,7 @@ class HeadController:
                 "enabled": bool(params.get("enabled", True)),
                 # 存盘里那个值故意不读：它已经不是设置了。老档案里存着 false，
                 # 照读会让改过默认值的这台机器行为跟没改一样。
-                "invert_x": True,
+                "invert_x": bool(params.get("invert_x", DEFAULT_CONFIG["invert_x"])),
                 "invert_y": bool(params.get("invert_y", False)),
                 "horizontal_algorithm": horizontal_algorithm,
                 "deadzone": _clamp(params.get("deadzone", DEFAULT_CONFIG["deadzone"]), 0.03, 0.25),
