@@ -233,10 +233,17 @@ INPUT_BRIDGE.configure_scene_snapshot_handler(_scene_snapshot_from_phone)
 def find_phone_web(root: Path) -> Path | None:
     """手机的网页包在哪：发布包里带着，开发时用隔壁仓库的构建产物。
 
-    发布包里它在 app/ 的上一级（app/ 整个会被更新换掉，手机的包不该跟着一起被
-    换），所以 root.parent 那一条必须在。少了它的后果是不报错的：manifest 返回
-    0 个文件，手机每次都以为自己已经是最新的，网页包的更新通道等于不存在。
-    2.0 的包就是这样发出去的——server.py 从顶层搬进 app/ 之后没人改这里。
+    现在它在 app/ 里，也就是 root/phone_web 这一条，排在最前面。放这里是为了跟着
+    电脑端自更新走：自更新换的就是整个 app/，放在外面的东西一辈子不会被换，网页
+    包修好了也只能等下一次重装发布包。
+
+    root.parent 那一条留着，是给按老布局装出去的那批人：他们的 phone_web 在 app/
+    的同级。更新会把这个新 server.py 换进去，那一刻两个位置都可能有东西，app/ 里
+    那份是新的，所以它排在前面。
+
+    这两条少了任何一条，后果都是不报错的：manifest 返回 0 个文件，手机每次都以为
+    自己已经是最新的，更新通道等于不存在。2.0 的包就是这样发出去的——server.py
+    从顶层搬进 app/ 之后没人改这里。
     """
     candidates = [root / "phone_web", root.parent / "phone_web"]
     configured = os.environ.get("PHONE_WEB_DIR", "").strip().strip('"')

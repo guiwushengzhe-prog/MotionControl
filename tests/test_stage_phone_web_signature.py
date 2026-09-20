@@ -33,7 +33,9 @@ def built(tmp_path):
 
 
 def signature(target: Path) -> Path:
-    return target / "phone_web" / ".signature"
+    # app/ 里面，不是同级：电脑端自更新换的就是整个 app/，放在外面的东西永远
+    # 不会被换，网页包的修复也就到不了任何人手里。
+    return target / "app" / "phone_web" / ".signature"
 
 
 def test_staging_twice_keeps_the_signature(built, tmp_path):
@@ -73,8 +75,41 @@ def test_other_leftovers_are_still_swept(built, tmp_path):
     """只有签名享受这个待遇，别的陈年文件照删。"""
     target = tmp_path / "release"
     stage_phone_web(built, target)
-    stale = target / "phone_web" / "上一版留下的.js"
+    stale = signature(target).parent / "上一版留下的.js"
     stale.write_text("旧的", encoding="utf-8")
 
     stage_phone_web(built, target)
     assert not stale.exists()
+
+
+def test_it_lands_inside_app_so_the_pc_update_carries_it(built, tmp_path):
+    """放在 app/ 外面的东西，电脑端自更新一辈子不会换掉。
+
+    自更新换的是整个 app/（app_update.promote 里 os.replace(staging, app_dir)），
+    而更新包打的就是 app/ 的内容。phone_web 只要落在 app/ 同级，网页包的修复就
+    到不了任何人手里，只能等下一次重装整个发布包——而「网页包能热更」这句承诺
+    当初（3a04a03）许的就是让电脑端顺路把它带上。
+
+    这件事出过一次，没有任何地方报错：两个功能隔两天做，后一个的范围把前一个的
+    东西漏在了外面，部署输出、测试、界面全都正常。
+    """
+    target = tmp_path / "release"
+    stage_phone_web(built, target)
+    assert (target / "app" / "phone_web" / "index.html").is_file(), (
+        "phone_web 没落在 app/ 里")
+    assert not (target / "phone_web").exists(), (
+        "phone_web 落在 app/ 同级了，电脑端自更新带不上它")
+
+
+def test_the_bundle_builder_checks_the_signature_after_restaging():
+    """顺序：restage 会在内容变了时丢掉签名，所以验签必须排在它之后、打包之前。
+
+    排错了就会把一份没签名的网页包发给每一台电脑，再由电脑发给手机——手机全部
+    安静拒绝，而电脑端这边一切正常，没有一处会说话。
+    """
+    text = (ROOT / "tools" / "build_app_bundle.py").read_text(encoding="utf-8")
+    restage = text.index("restage(target)")
+    check = text.index("check_phone_web_signature(target")
+    packing = text.index("build(target / \"app\")")
+    assert restage < check < packing, (
+        "验签没夹在 restage 和打包之间：签名可能已经被 restage 丢掉，或者检查得太晚")

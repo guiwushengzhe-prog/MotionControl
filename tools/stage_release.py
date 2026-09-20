@@ -191,7 +191,12 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
     signature over bytes that have since moved is worse than none -- it would
     fail verification on the phone rather than at the moment it went stale.
     """
-    root = target / "phone_web"
+    # 放在 app/ 里面，不是它的同级。电脑端自更新换的就是整个 app/，放外面的东西
+    # 一辈子不会被换——网页包 2.0.1 修好了也只能到下一次重装发布包才到人手里，而
+    # 「网页包能热更」这句承诺当初（3a04a03）说的就是让电脑端顺路把它带上。
+    # find_phone_web 本来就优先找 app/phone_web，所以装了旧版的人更新之后，他们
+    # 那条一直是死的通道反而会跟着活过来。
+    root = target / "app" / "phone_web"
     wanted = {}
     for path in sorted(source.rglob("*")):
         if not path.is_file():
@@ -341,7 +346,7 @@ def main() -> int:
     if phone_web.is_dir():
         files, size = stage_phone_web(phone_web, target)
         print(f"phone_web: {files} 个文件 {size / 1024:.0f} KB（手机连上时自己来取）")
-        print("  " + check_phone_web_signature(target / "phone_web"))
+        print("  " + check_phone_web_signature(target / "app" / "phone_web"))
     else:
         print(f"WARNING: 找不到手机网页包 {phone_web}，发布包里不会带更新用的那一份")
 

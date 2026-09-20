@@ -81,6 +81,15 @@ def main() -> int:
     target = Path(args.target)
     if not args.no_restage:
         restage(target)
+    # phone_web 现在在 app/ 里，于是它跟着这份更新包发给每一台电脑，再由电脑发给
+    # 手机。手机只认签名：这里带出去一份没签名或签名过期的，所有手机都会安静地
+    # 拒绝，而电脑端这边一切正常，没有任何地方会说话。重新 stage 会在内容变了的
+    # 时候丢掉旧签名，所以这一步必须排在 restage 之后、打包之前。
+    from tools.stage_release import check_phone_web_signature
+    verdict = check_phone_web_signature(target / "app" / "phone_web")
+    if verdict != "签名有效":
+        raise SystemExit(f"更新包里的手机网页包{verdict}")
+
     files, total = build(target / "app")
     print(f"{OUT}")
     print(f"  {files} 个文件，{total / 1024:.0f} KB")
