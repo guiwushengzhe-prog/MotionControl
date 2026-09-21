@@ -302,6 +302,12 @@ class SceneLayoutManager:
                 return
             data = copy.deepcopy(data)
             data["zones"] = _canonicalize_zones(data.get("zones"))
+            vertical = data.get("vertical_look")
+            if isinstance(vertical, dict):
+                # Old scene files predate this switch. Keep an explicit true
+                # value intact, but make an omitted field a concrete disabled
+                # value as soon as the file is loaded.
+                vertical.setdefault("body_motion_guard", False)
             self.reference = data
             # On every program start, use the original reference coordinates.
             # Nothing adapts until the user explicitly requests a rematch.
@@ -447,7 +453,7 @@ class SceneLayoutManager:
             "source": "hand",
             "verticalLookSource": "hand",
             "exclusive_axes": False,
-            "body_motion_guard": True,
+            "body_motion_guard": False,
             "center_x": _clamp(rw["x"], 0.0, 1.0),
             "center_y": _clamp(rw["y"], 0.0, 1.0),
             "range_y": _clamp(torso * 0.75, 0.10, 0.28),
@@ -531,7 +537,7 @@ class SceneLayoutManager:
                 "source": "head" if str(vertical.get("source", vertical.get("verticalLookSource", old.get("source", "hand")))).lower() in {"head", "头部"} else "hand",
                 "verticalLookSource": "head" if str(vertical.get("verticalLookSource", vertical.get("source", old.get("source", "hand")))).lower() in {"head", "头部"} else "hand",
                 "exclusive_axes": bool(vertical.get("exclusive_axes", old.get("exclusive_axes", False))),
-                "body_motion_guard": bool(vertical.get("body_motion_guard", old.get("body_motion_guard", True))),
+                "body_motion_guard": bool(vertical.get("body_motion_guard", old.get("body_motion_guard", False))),
                 "center_x": _clamp(vertical.get("center_x", old.get("center_x", 0.5)), 0.0, 1.0),
                 "center_y": _clamp(vertical.get("center_y", old.get("center_y", 0.5)), 0.0, 1.0),
                 "range_y": _clamp(vertical.get("range_y", old.get("range_y", 0.18)), 0.06, 0.40),

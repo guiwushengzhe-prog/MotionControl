@@ -311,7 +311,7 @@ class ControlKernel:
             # Optional axis exclusivity: entering the left-hand gate may pause
             # horizontal head output while vertical view control is active.
             "exclusive_axes": False,
-            "body_motion_guard": True,
+            "body_motion_guard": False,
             "center_x": 0.5, "center_y": 0.5, "range_y": 0.18, "deadzone": 0.10,
         }
         self.vertical_gate_active = False
@@ -372,7 +372,7 @@ class ControlKernel:
         # Head estimation keeps observing frames, but strong exercise motion
         # must not move the in-game camera. This guard uses body-normalized
         # limb velocity because action labels can be intermittent or absent.
-        self.body_motion_guard_enabled = True
+        self.body_motion_guard_enabled = False
         self.body_motion_guard_active = False
         self.body_motion_guard_raw = 0.0
         self.body_motion_guard_score = 0.0
@@ -732,7 +732,7 @@ class ControlKernel:
                     "source": source,
                     "verticalLookSource": source,
                     "exclusive_axes": bool(vertical.get("exclusive_axes", self.vertical_look.get("exclusive_axes", False))),
-                    "body_motion_guard": bool(vertical.get("body_motion_guard", self.body_motion_guard_enabled)),
+                    "body_motion_guard": bool(vertical.get("body_motion_guard", False)),
                     "center_x": _clamp(vertical.get("center_x", 0.5), 0.0, 1.0),
                     "center_y": _clamp(vertical.get("center_y", 0.5), 0.0, 1.0),
                     "range_y": _clamp(vertical.get("range_y", 0.18), 0.05, 0.45),

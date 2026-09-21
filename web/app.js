@@ -24,7 +24,7 @@ const BODY_ZONES = {leftHand:{label:'X',body:'左手',button:'X'},rightHand:{lab
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
-const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:true,verticalExclusive:false,bodyMotionGuard:true};
+const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:true,verticalExclusive:false,bodyMotionGuard:false};
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
@@ -235,8 +235,8 @@ function renderKernelState(runtime){
   $('#motionStatus').textContent=statusParts.join(' · ')||'动作：未触发';
   const hs=k.head||{};
   const guardVersion=String(hs.body_motion_guard_version||k.body_motion_guard_version||'未上报');
-  const guardEnabled=hs.body_motion_guard_enabled??k.body_motion_guard_enabled;
-  const guardActive=hs.body_motion_guard_active??k.body_motion_guard_active;
+  const guardEnabled=hs.body_motion_guard_enabled??k.body_motion_guard_enabled??false;
+  const guardActive=hs.body_motion_guard_active??k.body_motion_guard_active??false;
   const guardBlocked=!!hs.horizontal_paused_by_body_motion;
   const guardReason=String(hs.body_motion_guard_veto_reason||'');
   const guardReasonLabel={early:'提前抑制',postburst:'动作后抑制',persistent:'持续防晃'}[guardReason]||'输出抑制';
@@ -265,7 +265,7 @@ function renderKernelState(runtime){
     head.verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'head':'hand';
     head.verticalLookEnabled=k.vertical_look?.enabled!==false;
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
-    head.bodyMotionGuard=k.vertical_look?.body_motion_guard!==false;
+    head.bodyMotionGuard=k.vertical_look?.body_motion_guard===true;
     if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookEnabled?head.verticalLookSource:'off';
     if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;
     if($('#bodyMotionGuard'))$('#bodyMotionGuard').checked=head.bodyMotionGuard;
@@ -1033,7 +1033,7 @@ function renderVoiceCommandCatalog(commands){
 }
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){
   syncControlLabels();
   renderKernelState(await post('/api/head/config',{
