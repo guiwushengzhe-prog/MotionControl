@@ -1626,7 +1626,11 @@ class _RelativeYawAxisV153:
         self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False
         self._center_stable_s=0.0;self._cross_evidence=0.0;self._resume_s=0.0
         self._reset_return_opposite_boundary();self._clear_active();self._clear_motion_evidence()
-        self._hold_anchor=norm;self._held_from_turn=not at_center
+        self._hold_anchor=norm
+        # A pose adopted after RETURNING is a new neutral boundary.  Marking
+        # it as an active-turn hold makes the next movement through centre
+        # look like another return and mutes one direction indefinitely.
+        self._held_from_turn=False
         self.state='CENTER' if at_center else 'STABLE_OFFSET';self.output=0.0
         self._history=[(now,norm,raw)]
         return 0.0

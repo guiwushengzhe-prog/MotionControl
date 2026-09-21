@@ -203,12 +203,31 @@ def test_return_lock_settles_at_quiet_off_center_pose(direction):
     assert not axis.return_latched
     assert axis.state == "STABLE_OFFSET"
     assert axis._hold_anchor == pytest.approx(direction * 0.14)
+    assert not axis._held_from_turn
 
     fresh_outward = [
         _step(axis, direction * value, index)
         for index, value in enumerate((0.16, 0.18, 0.20, 0.22, 0.24), start=12)
     ]
     assert any(direction * output > 0.0 for output in fresh_outward)
+
+
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_quiet_return_offset_does_not_mute_the_next_cross_center_turn(direction):
+    axis = _RelativeYawAxisV153()
+    axis._return_latched = True
+    axis._return_from_direction = direction
+    for index in range(12):
+        assert _step(axis, direction * 0.14, index) == pytest.approx(0.0)
+    assert not axis.return_latched
+    assert not axis._held_from_turn
+
+    values = (0.10, 0.06, 0.02, -0.03, -0.08, -0.13, -0.18, -0.23)
+    outputs = [
+        _step(axis, direction * value, index)
+        for index, value in enumerate(values, start=12)
+    ]
+    assert any(direction * output < 0.0 for output in outputs)
 
 
 @pytest.mark.parametrize("direction", [-1, 1])
