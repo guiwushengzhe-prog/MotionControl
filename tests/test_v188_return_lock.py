@@ -189,3 +189,39 @@ def test_center_settle_unlocks_normal_new_turn_detection():
     outputs = [_step(axis, norm, index + 8) for index, norm in enumerate((0.03, 0.06, 0.09, 0.12))]
     assert any(output > 0.0 for output in outputs)
     assert axis.state == "TURN_RIGHT"
+
+
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_return_lock_settles_at_quiet_off_center_pose(direction):
+    axis = _RelativeYawAxisV153()
+    axis._return_latched = True
+    axis._return_from_direction = direction
+
+    outputs = [_step(axis, direction * 0.14, index) for index in range(12)]
+
+    assert outputs == pytest.approx([0.0] * len(outputs))
+    assert not axis.return_latched
+    assert axis.state == "STABLE_OFFSET"
+    assert axis._hold_anchor == pytest.approx(direction * 0.14)
+
+    fresh_outward = [
+        _step(axis, direction * value, index)
+        for index, value in enumerate((0.16, 0.18, 0.20, 0.22, 0.24), start=12)
+    ]
+    assert any(direction * output > 0.0 for output in fresh_outward)
+
+
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_return_lock_does_not_settle_during_slow_continuous_motion(direction):
+    axis = _RelativeYawAxisV153()
+    axis._return_latched = True
+    axis._return_from_direction = -direction
+
+    outputs = [
+        _step(axis, direction * 0.012 * index, index)
+        for index in range(1, 31)
+    ]
+
+    assert outputs == pytest.approx([0.0] * len(outputs))
+    assert axis.return_latched
+    assert axis.state == "RETURNING"

@@ -239,6 +239,13 @@ YAW_V2_RETURN_OPPOSITE_SETTLE_S = 0.10
 YAW_V2_RETURN_OPPOSITE_NEW_MOTION_S = 0.08
 YAW_V2_RETURN_OPPOSITE_NEW_STEP = 0.012
 YAW_V2_RETURN_OPPOSITE_PROGRESS_EPS = 0.0020
+# A return may finish a little away from the calibrated centre.  Real
+# gesture_v188/frozen22 recordings show about 0.023 normalized yaw of quiet
+# three-frame drift, so use a longer window and also bound its full span.
+YAW_V2_RETURN_IDLE_WINDOW_S = 0.30
+YAW_V2_RETURN_IDLE_MIN_COVERAGE_S = 0.20
+YAW_V2_RETURN_IDLE_MAX_NET = 0.023
+YAW_V2_RETURN_IDLE_MAX_SPAN = 0.040
 # Stop confirmation uses a short recent window and a small frame bound.  The
 # longer trend windows remain available for turn classification and return
 # detection, but do not lease mouse output during a stationary hold.
@@ -1602,6 +1609,28 @@ class _RelativeYawAxisV153:
             float(direction*(pts[-1][2]-pts[0][2])),
         )
 
+    def _return_is_idle(self, now: float) -> bool:
+        pts=[p for p in self._history if now-p[0]<=YAW_V2_RETURN_IDLE_WINDOW_S+1e-9]
+        if len(pts)<4 or now-pts[0][0]<YAW_V2_RETURN_IDLE_MIN_COVERAGE_S:
+            return False
+        for idx in (1,2):
+            values=[p[idx] for p in pts]
+            if (
+                abs(values[-1]-values[0])>YAW_V2_RETURN_IDLE_MAX_NET
+                or max(values)-min(values)>YAW_V2_RETURN_IDLE_MAX_SPAN
+            ):
+                return False
+        return True
+
+    def _settle_return_at_current_pose(self, now: float, norm: float, raw: float, *, at_center: bool) -> float:
+        self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False
+        self._center_stable_s=0.0;self._cross_evidence=0.0;self._resume_s=0.0
+        self._reset_return_opposite_boundary();self._clear_active();self._clear_motion_evidence()
+        self._hold_anchor=norm;self._held_from_turn=not at_center
+        self.state='CENTER' if at_center else 'STABLE_OFFSET';self.output=0.0
+        self._history=[(now,norm,raw)]
+        return 0.0
+
     def _classify_mode(self, direction: int, now: float) -> str:
         s18,_,d18,_=self._trend(now,direction,.18); r18,_,rd18,_=self._trend(now,direction,.18,raw=True)
         s45,_,d45,_=self._trend(now,direction,.45); r45,_,rd45,_=self._trend(now,direction,.45,raw=True)
@@ -1665,6 +1694,13 @@ class _RelativeYawAxisV153:
             )
             if crossed_between_frames:
                 self._return_center_seen=True
+            # Returning is a clutch, not a permanent lock.  If the player has
+            # actually stopped, adopt that pose as the new silent anchor even
+            # when calibration leaves it just outside the centre corridor.
+            if self._return_is_idle(now):
+                return self._settle_return_at_current_pose(
+                    now,norm,raw,at_center=amount<=center,
+                )
             if amount<=center:
                 # Crossing the centre is not the same as *stopping* at centre.
                 # Keep the return clutch latched while short-window motion is

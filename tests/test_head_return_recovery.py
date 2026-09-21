@@ -39,8 +39,14 @@ def test_continuous_crossing_stays_silent_until_a_new_outward_boundary(direction
     for _ in range(max(4, int(0.18 * fps) + 2)):
         now += 1 / fps
         assert advance(axis, direction * -.24, now) == 0
-    assert axis.return_latched
-    assert axis._return_opposite_settled
+    # A stopped opposite-side pose may either still be inside the clutch's
+    # old re-arm boundary or already be adopted as a silent hold anchor.
+    # Both are safe; neither may emit until fresh outward movement arrives.
+    if axis.return_latched:
+        assert axis._return_opposite_settled
+    else:
+        assert axis.state == "STABLE_OFFSET"
+        assert axis.output == 0
 
     # Only a fresh outward movement after that stop may re-arm the other side.
     outputs = []
@@ -77,4 +83,6 @@ def test_single_tracking_jump_across_center_does_not_count_as_return(direction):
     for value in [-1.0] * 25:
         now += 1 / 30
         assert advance(axis, direction * value, now) == 0
-    assert axis.return_latched
+    assert not axis.return_latched
+    assert axis.state == "STABLE_OFFSET"
+    assert axis.output == 0
