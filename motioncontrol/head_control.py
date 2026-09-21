@@ -232,6 +232,19 @@ YAW_V2_OPPOSITE_REARM_AFTER_CENTER_VELOCITY = 0.10
 YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S = 0.16
 YAW_V2_OPPOSITE_REARM_OUTPUT_GUARD_S = 0.28
 YAW_V2_OPPOSITE_REARM_GUARD_MAX_ANGLE = 0.65
+# A return that crosses the centre is still the same action until the new side
+# has first settled.  Only outward movement after that settled boundary may
+# create a new opposite action.
+YAW_V2_RETURN_OPPOSITE_SETTLE_S = 0.10
+YAW_V2_RETURN_OPPOSITE_NEW_MOTION_S = 0.08
+YAW_V2_RETURN_OPPOSITE_NEW_STEP = 0.012
+YAW_V2_RETURN_OPPOSITE_PROGRESS_EPS = 0.0020
+# Stop confirmation uses a short recent window and a small frame bound.  The
+# longer trend windows remain available for turn classification and return
+# detection, but do not lease mouse output during a stationary hold.
+YAW_V2_STOP_RECENT_WINDOW_S = 0.10
+YAW_V2_STOP_PROGRESS_EPS = 0.0020
+YAW_V2_STOP_CONFIRM_FRAMES = 1
 
 # v202 output-only safety layers.  They never feed back into the ratchet, PnP,
 # filters, or slew state.
@@ -1519,20 +1532,34 @@ class _RelativeYawAxisV153:
         self._active_direction=0; self._active_age_s=0.0; self._committed=False
         self._return_latched=False; self._return_from_direction=0; self._return_center_seen=False; self._return_evidence=0.0
         self._opposite_rearm_guard_until=0.0
+        self._return_opposite_seen=False; self._return_opposite_settled=False
+        self._return_opposite_stable_s=0.0; self._return_opposite_new_motion_s=0.0
+        self._return_opposite_anchor=0.0; self._return_opposite_settled_at=0.0
         self._resume_s=0.0; self._cross_evidence=0.0; self._center_zone=YAW_V2_CENTER_ZONE
         self._history=[]; self._peak_norm=abs(norm); self._turn_baseline=0.0; self._baseline_ready_s=0.0
         self._stop_s=0.0; self._turn_mode=''; self._center_stable_s=0.0; self._active_center_s=0.0; self._return_confirm_s=0.0
         self._hold_anchor=norm; self._held_from_turn=False; self._jump_pending_dir=0; self._jump_pending_s=0.0; self._jump_quarantine_until=0.0; self._startup_guard=False
-        self._early_return_confirm_s=0.0
+        self._early_return_confirm_s=0.0; self._no_outward_frames=0
 
     def _clear_motion_evidence(self) -> None:
         self._motion_evidence=0.0; self._evidence_direction=0; self._evidence_age_s=0.0
+
+    def _reset_return_opposite_boundary(self) -> None:
+        self._return_opposite_seen=False; self._return_opposite_settled=False
+        self._return_opposite_stable_s=0.0; self._return_opposite_new_motion_s=0.0
+        self._return_opposite_anchor=0.0; self._return_opposite_settled_at=0.0
+
+    def _enter_return(self, direction: int, *, center_seen: bool=False) -> float:
+        self._return_latched=True; self._return_from_direction=direction
+        self._return_center_seen=bool(center_seen); self._center_stable_s=0.0; self._cross_evidence=0.0
+        self._reset_return_opposite_boundary(); self._clear_active(); self._clear_motion_evidence()
+        self.state='RETURNING'; self.output=0.0; return 0.0
 
     def _clear_active(self) -> None:
         self._early_return_confirm_s=0.0
         self._active_direction=0; self._active_age_s=0.0; self._committed=False
         self._return_evidence=0.0; self._turn_baseline=0.0; self._baseline_ready_s=0.0
-        self._stop_s=0.0; self._turn_mode=''; self._active_center_s=0.0; self._return_confirm_s=0.0; self._startup_guard=False
+        self._stop_s=0.0; self._no_outward_frames=0; self._turn_mode=''; self._active_center_s=0.0; self._return_confirm_s=0.0; self._startup_guard=False
 
     @property
     def motion_evidence(self): return self._motion_evidence
@@ -1567,6 +1594,14 @@ class _RelativeYawAxisV153:
         eff=abs(net)/path if path>1e-9 else 0.0
         return float(slope),float(r2),float(net),float(eff)
 
+    def _recent_outward_delta(self, now: float, direction: int, window: float) -> tuple[float|None,float|None]:
+        pts=[p for p in self._history if now-p[0]<=window+1e-9]
+        if len(pts)<2: return None,None
+        return (
+            float(direction*(pts[-1][1]-pts[0][1])),
+            float(direction*(pts[-1][2]-pts[0][2])),
+        )
+
     def _classify_mode(self, direction: int, now: float) -> str:
         s18,_,d18,_=self._trend(now,direction,.18); r18,_,rd18,_=self._trend(now,direction,.18,raw=True)
         s45,_,d45,_=self._trend(now,direction,.45); r45,_,rd45,_=self._trend(now,direction,.45,raw=True)
@@ -1585,8 +1620,9 @@ class _RelativeYawAxisV153:
         self._early_return_confirm_s=0.0
         self._active_direction=direction; self._active_age_s=0.0; self._committed=False; self._active_center_s=0.0; self._held_from_turn=False
         self._return_center_seen=False
+        self._reset_return_opposite_boundary()
         self._peak_norm=direction*norm; self._turn_baseline=0.0; self._baseline_ready_s=0.0
-        self._stop_s=0.0; self._return_confirm_s=0.0; self._turn_mode=self._classify_mode(direction,now)
+        self._stop_s=0.0; self._no_outward_frames=0; self._return_confirm_s=0.0; self._turn_mode=self._classify_mode(direction,now)
         # Targeted uncertainty guard: a strong medium filtered trend combined
         # with almost no raw short-window net progress is a signature of the
         # high-noise short-flick wrong-direction cases.  Do not generalize this
@@ -1642,7 +1678,7 @@ class _RelativeYawAxisV153:
                 if quiet_center:self._center_stable_s+=dt
                 else:self._center_stable_s=0.0
                 if self._center_stable_s>=YAW_V2_RETURN_CENTER_STABLE_S:
-                    self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='CENTER';self._history=[(now,norm,raw)]
+                    self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False;self._cross_evidence=0;self._reset_return_opposite_boundary();self._clear_active();self._clear_motion_evidence();self.state='CENTER';self._history=[(now,norm,raw)]
                 return 0.0
             self._center_stable_s=0.0
             # Do not resume the original side before the calibrated centre has
@@ -1672,56 +1708,55 @@ class _RelativeYawAxisV153:
                 self._cross_evidence=0.0
                 return 0.0
 
-            # v5.3: after a real centre crossing, allow a *deliberate* new turn
-            # on the opposite side to re-arm without requiring the user to stop
-            # dead in the narrow centre corridor first.  This fixes the old
-            # RETURNING deadlock while keeping ordinary return overshoot silent:
-            # the opposite pose must be far enough from centre, keep moving
-            # outward, and remain coherent for a sustained interval.
+            # A centre crossing is not a new action boundary.  Keep the output
+            # muted while the opposite-side movement is still carrying the
+            # original return through its peak.  Only after that side settles,
+            # followed by fresh coherent outward movement, may the opposite
+            # direction re-arm.
             if opp and signal_dir==opp:
-                s18,_,d18,e18=self._trend(now,opp,.18)
-                rs18,_,rd18,re18=self._trend(now,opp,.18,raw=True)
-                opposite_speed=opp*self.velocity
-                deliberate_pos=amount>=max(YAW_V2_OPPOSITE_REARM_AFTER_CENTER, center*2.4)
-                deliberate_motion=(
-                    opposite_speed>=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_VELOCITY
-                    and d18>=.020 and rd18>=.012
-                    and s18>=.080 and rs18>=.045
-                    and (e18>=.18 or re18>=.14)
+                outward=opp*norm
+                if not self._return_opposite_seen:
+                    self._return_opposite_seen=True
+                recent_filtered, recent_raw=self._recent_outward_delta(
+                    now, opp, YAW_V2_STOP_RECENT_WINDOW_S,
                 )
-                if deliberate_pos and deliberate_motion:
-                    self._cross_evidence+=dt
+                recent_stationary=(
+                    recent_filtered is not None and recent_raw is not None
+                    and abs(recent_filtered)<=YAW_V2_RETURN_OPPOSITE_PROGRESS_EPS
+                    and abs(recent_raw)<=YAW_V2_RETURN_OPPOSITE_PROGRESS_EPS
+                )
+                if not self._return_opposite_settled:
+                    if recent_stationary:
+                        self._return_opposite_stable_s+=dt
+                    else:
+                        self._return_opposite_stable_s=0.0
+                    if self._return_opposite_stable_s>=YAW_V2_RETURN_OPPOSITE_SETTLE_S:
+                        self._return_opposite_settled=True
+                        self._return_opposite_anchor=outward
+                        self._return_opposite_settled_at=now
+                        self._return_opposite_new_motion_s=0.0
                 else:
-                    self._cross_evidence=max(0.0,self._cross_evidence-dt*1.5)
-
-                # v5.3 adaptive confirmation: do not shorten the safety dwell
-                # near the centre.  Only once the new-side turn is clearly past
-                # ordinary return overshoot (>= 0.25 normalized deflection) may
-                # strong outward speed/trend reduce the required dwell.
-                opposite_rearm_s=YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S
-                if amount>=.25 and deliberate_motion:
-                    speed_score=_clamp((opposite_speed-.30)/.90,0.0,1.0)
-                    trend_score=_clamp((min(s18,rs18)-.15)/.70,0.0,1.0)
-                    confidence=.65*speed_score+.35*trend_score
-                    opposite_rearm_s=_clamp(
-                        YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S-.070*confidence,
-                        .090,YAW_V2_OPPOSITE_REARM_AFTER_CENTER_S,
+                    outward_from_anchor=outward-self._return_opposite_anchor
+                    outward_step=opp*fd
+                    raw_outward_step=opp*rd
+                    new_outward=(
+                        outward_from_anchor>=YAW_V2_RETURN_OPPOSITE_NEW_STEP
+                        and outward_step>=YAW_V2_MIN_DELTA
+                        and raw_outward_step>=YAW_V2_MIN_DELTA
                     )
-                if self._cross_evidence>=opposite_rearm_s:
-                    self._return_latched=False
-                    self._return_from_direction=0
-                    self._return_center_seen=False
-                    self._center_stable_s=0.0
-                    self._cross_evidence=0.0
-                    self._resume_s=0.0
-                    self._clear_active()
-                    self._clear_motion_evidence()
-                    # Keep only the recent opposite-side history so the new
-                    # action is classified from the new gesture, not from the
-                    # preceding return from the old side.
-                    cutoff=now-.30
-                    self._history=[h for h in self._history if h[0]>=cutoff]
-                    return self._begin(opp,now,norm)
+                    if new_outward:
+                        self._return_opposite_new_motion_s+=dt
+                    else:
+                        self._return_opposite_new_motion_s=max(
+                            0.0, self._return_opposite_new_motion_s-dt*1.5,
+                        )
+                    if self._return_opposite_new_motion_s>=YAW_V2_RETURN_OPPOSITE_NEW_MOTION_S:
+                        settled_at=self._return_opposite_settled_at
+                        self._return_latched=False; self._return_from_direction=0
+                        self._return_center_seen=False; self._center_stable_s=0.0; self._cross_evidence=0.0; self._resume_s=0.0
+                        self._reset_return_opposite_boundary(); self._clear_active(); self._clear_motion_evidence()
+                        self._history=[h for h in self._history if h[0]>=settled_at]
+                        return self._begin(opp,now,norm)
             else:
                 self._cross_evidence=max(0.0,self._cross_evidence-dt*2.0)
             return 0.0
@@ -1763,7 +1798,7 @@ class _RelativeYawAxisV153:
             if signal_dir==-d or d*raw < -center:
                 if self._committed:
                     center_seen=self._return_center_seen
-                    self._return_latched=True;self._return_from_direction=d;self._return_center_seen=center_seen;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0.0;return 0.0
+                    return self._enter_return(d,center_seen=center_seen)
                 self._clear_active();self._clear_motion_evidence();self.state='STABLE_OFFSET';self.output=0.0;return 0.0
             if self._startup_guard:
                 self._startup_guard=False
@@ -1805,7 +1840,7 @@ class _RelativeYawAxisV153:
                 )
             )
             if early_return_confirmed:
-                self._return_latched=True;self._return_from_direction=d;self._return_center_seen=False;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0.0;return 0.0
+                return self._enter_return(d)
             # commit is position/time plus coherent trend; no single derivative ticket
             if not self._committed and (proj>=YAW_V2_COMMIT_ANGLE or (self._active_age_s>=.16 and proj>=center*1.35)):
                 self._committed=True; self._turn_mode=self._classify_mode(d,now)
@@ -1826,24 +1861,24 @@ class _RelativeYawAxisV153:
             if self._committed and (huge or ret): self._return_confirm_s+=dt
             else:self._return_confirm_s=max(0,self._return_confirm_s-dt*.6)
             if self._committed and (huge or self._return_confirm_s>=need):
-                self._return_latched=True;self._return_from_direction=d;self._return_center_seen=False;self._center_stable_s=0;self._cross_evidence=0;self._clear_active();self._clear_motion_evidence();self.state='RETURNING';self.output=0;return 0.0
-            # A stationary raw source must not inherit a long-window speed
-            # lease. Keep the hold anchor so later outward motion can resume.
-            if self._committed and abs(rd18) < .004 and abs(rs18) < .025 and abs(d18) < .008:
-                self._hold_anchor=norm; self._held_from_turn=True
-                self._clear_active(); self._clear_motion_evidence()
-                self.state='STABLE_OFFSET'; self.output=0.0
-                self._history=[(now,norm,raw)]
-                return 0.0
-            # Continue/stop relative to this action's own learned speed. Freeze mode for the whole turn.
-            base=max(.012,self._turn_baseline)
-            if self._turn_mode=='FAST': cur_speed=max(s18,s45*.7); ratio=.24; floor=.035; stop_need=.16
-            elif self._turn_mode=='NORMAL': cur_speed=max(s45,s18*.35,s90*0.60); ratio=.25; floor=.018; stop_need=0.40
-            else: cur_speed=max(s90,s45*.45); ratio=.20; floor=.006; stop_need=.68
-            moving=cur_speed>max(floor,base*ratio) or (self._baseline_ready_s<.35 and cur_speed>floor*.7)
-            if moving:self._stop_s=max(0,self._stop_s-dt*.8)
-            else:self._stop_s+=dt
-            if self._committed and self._stop_s>=stop_need:
+                return self._enter_return(d)
+            # A committed turn stops from a short recent hold confirmation.
+            # The old 0.45/0.90 s trend lease could keep dragging the cursor
+            # after the head had already stopped.  An inward correction is not
+            # called a hold here; return detection above owns that case.
+            recent_filtered, recent_raw=self._recent_outward_delta(
+                now, d, YAW_V2_STOP_RECENT_WINDOW_S,
+            )
+            recent_stationary=(
+                recent_filtered is not None and recent_raw is not None
+                and abs(recent_filtered)<=YAW_V2_STOP_PROGRESS_EPS
+                and abs(recent_raw)<=YAW_V2_STOP_PROGRESS_EPS
+            )
+            if self._committed and recent_stationary:
+                self._no_outward_frames+=1
+            else:
+                self._no_outward_frames=0
+            if self._committed and self._no_outward_frames>=YAW_V2_STOP_CONFIRM_FRAMES:
                 self._hold_anchor=norm;self._held_from_turn=True;self._clear_active();self._clear_motion_evidence();self.state='STABLE_OFFSET';self.output=0;self._history=[(now,norm,raw)];return 0.0
             full=self._drive(d,norm)
             if now<self._opposite_rearm_guard_until:
@@ -1860,7 +1895,7 @@ class _RelativeYawAxisV153:
             if side and side*norm < side*self._hold_anchor-max(.04,center*.8):
                 sm,_,dm,_=self._trend(now,side,.30);rsm,_,rdm,_=self._trend(now,side,.30,raw=True)
                 if sm<-.04 and (rsm<-.025 or dm<-.018):
-                    self._return_latched=True;self._return_from_direction=side;self._return_center_seen=False;self._center_stable_s=0;self._cross_evidence=0;self.state='RETURNING';self.output=0;return 0.0
+                    return self._enter_return(side)
             if side and signal_dir==side and side*(norm-self._hold_anchor)>=max(.035,center*.65):
                 sm,_,dm,em=self._trend(now,side,.35);rsm,_,rdm,_=self._trend(now,side,.35,raw=True)
                 if sm>.045 and rsm>.025 and dm>.014:return self._begin(side,now,norm)
