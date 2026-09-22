@@ -66,11 +66,17 @@ def pose(offset=0.0):
     return result
 
 
+def _enabled_guard_kernel(output):
+    """显式打开保护，避免算法测试依赖新的默认关闭值。"""
+    kernel = ControlKernel(output)
+    kernel.configure_head(body_motion_guard=True)
+    return kernel
+
+
 def test_strong_body_motion_pauses_horizontal_until_body_and_head_settle(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     output = Output()
-    kernel = ControlKernel(output)
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(output)
     kernel.head_controller = Head(.7)
     try:
         now = 10.0
@@ -105,7 +111,6 @@ def test_body_motion_guard_can_be_disabled(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     output = Output()
     kernel = ControlKernel(output)
-    kernel.configure_head(body_motion_guard=True)
     kernel.head_controller = Head(.7)
     try:
         kernel.configure_head(body_motion_guard=False)
@@ -117,8 +122,7 @@ def test_body_motion_guard_can_be_disabled(tmp_path, monkeypatch):
 
 def test_raw_fast_path_starts_before_ema_reaches_threshold(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -133,8 +137,7 @@ def test_raw_fast_path_starts_before_ema_reaches_threshold(tmp_path, monkeypatch
 
 def test_raw_fast_path_ignores_low_raw_motion(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -148,8 +151,7 @@ def test_raw_fast_path_ignores_low_raw_motion(tmp_path, monkeypatch):
 
 def test_raw_fast_path_requires_eight_common_velocity_points(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -170,8 +172,7 @@ def test_raw_fast_path_requires_eight_common_velocity_points(tmp_path, monkeypat
 
 def test_body_motion_action_risk_starts_guard_without_raw_fast_path(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -186,8 +187,7 @@ def test_body_motion_action_risk_starts_guard_without_raw_fast_path(tmp_path, mo
 
 def test_motion_active_alone_no_longer_starts_body_guard(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -203,8 +203,7 @@ def test_motion_active_alone_no_longer_starts_body_guard(tmp_path, monkeypatch):
 
 def test_raw_fast_path_does_not_keep_renewing_hold_while_already_active(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -235,8 +234,7 @@ def shifted_pose(dx=0.0, dy=0.0):
 
 def test_early_limb_pair_suppresses_current_frame_without_latching_guard(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         base = pose()
@@ -256,8 +254,7 @@ def test_early_limb_pair_suppresses_current_frame_without_latching_guard(tmp_pat
 
 def test_single_joint_spike_does_not_use_early_limb_pair_path(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         base = pose()
@@ -276,8 +273,7 @@ def test_single_joint_spike_does_not_use_early_limb_pair_path(tmp_path, monkeypa
 
 def test_coherent_vertical_body_translation_suppresses_current_frame_without_latching_guard(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(shifted_pose(), now)
@@ -293,8 +289,7 @@ def test_coherent_vertical_body_translation_suppresses_current_frame_without_lat
 
 def test_coherent_horizontal_body_translation_does_not_use_vertical_path(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(shifted_pose(), now)
@@ -308,8 +303,7 @@ def test_coherent_horizontal_body_translation_does_not_use_vertical_path(tmp_pat
 
 def test_early_evidence_bridges_short_output_lag_without_persistent_guard(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -338,8 +332,7 @@ def test_early_evidence_bridges_short_output_lag_without_persistent_guard(tmp_pa
 
 def test_early_limb_threshold_keeps_return_like_noise_below_trigger(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         base = pose()
@@ -360,8 +353,7 @@ def test_early_limb_threshold_keeps_return_like_noise_below_trigger(tmp_path, mo
 
 def test_coherent_vertical_threshold_promotes_body_translation_only(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         base = pose()
@@ -387,8 +379,7 @@ def test_coherent_vertical_threshold_promotes_body_translation_only(tmp_path, mo
 
 def test_strong_early_burst_arms_only_two_postburst_veto_frames(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         current = pose()
@@ -430,8 +421,7 @@ def test_strong_early_burst_arms_only_two_postburst_veto_frames(tmp_path, monkey
 
 def test_short_early_burst_does_not_arm_postburst_veto(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         current = pose()
@@ -454,8 +444,7 @@ def test_short_early_burst_does_not_arm_postburst_veto(tmp_path, monkeypatch):
 
 def test_distal_chain_requires_two_consecutive_supported_frames(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         base = pose()
@@ -485,8 +474,7 @@ def test_distal_chain_requires_two_consecutive_supported_frames(tmp_path, monkey
 
 def test_segment_articulation_can_cover_motion_below_distal_threshold(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -511,8 +499,7 @@ def test_segment_articulation_can_cover_motion_below_distal_threshold(tmp_path, 
 
 def test_distal_chain_requires_proximal_support(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -530,8 +517,7 @@ def test_distal_chain_requires_proximal_support(tmp_path, monkeypatch):
 
 def test_rigid_limb_translation_does_not_use_segment_articulation_path(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         now = 10.0
         kernel._update_body_motion_guard_locked(pose(), now)
@@ -580,8 +566,7 @@ def test_distal_confirmation_uses_time_not_frame_count_across_fps(tmp_path, monk
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     delays = {}
     for fps in (20, 30, 45, 60):
-        kernel = ControlKernel(Output())
-        kernel.configure_head(body_motion_guard=True)
+        kernel = _enabled_guard_kernel(Output())
         try:
             delays[fps] = _distal_confirmation_delay_at_fps(kernel, fps)
         finally:
@@ -617,8 +602,7 @@ def test_strong_burst_confirmation_is_time_based_across_fps(tmp_path, monkeypatc
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     import math
     for fps in (20, 30, 45, 60):
-        kernel = ControlKernel(Output())
-        kernel.configure_head(body_motion_guard=True)
+        kernel = _enabled_guard_kernel(Output())
         try:
             # ceil(0.13*fps) yields a sampled burst whose first-to-last evidence
             # duration is >=~95 ms at every target FPS.
@@ -631,8 +615,7 @@ def test_strong_burst_confirmation_is_time_based_across_fps(tmp_path, monkeypatc
 
 def test_four_frame_burst_at_60fps_is_not_mistaken_for_100ms_burst(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         _drive_early_pair_for_frames(kernel, 60, 4)
         # Four 60 FPS evidence frames span only 50 ms from first to last. The
@@ -646,8 +629,7 @@ def test_four_frame_burst_at_60fps_is_not_mistaken_for_100ms_burst(tmp_path, mon
 def test_guard_recovery_settle_uses_time_not_three_frames(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     for fps in (20, 30, 45, 60):
-        kernel = ControlKernel(Output())
-        kernel.configure_head(body_motion_guard=True)
+        kernel = _enabled_guard_kernel(Output())
         try:
             kernel.body_motion_guard_active = True
             kernel.body_motion_guard_hold_until = 0.0
@@ -698,8 +680,8 @@ def test_action_risk_preserves_30fps_motion_debounce_semantics(tmp_path, monkeyp
         ("cross_knee_elbow", 2, 3, 0.030, 0.060),
     )
     for ident, on_frames, off_frames, on_s, off_s in cases:
-        old = ControlKernel(Output())
-        timed = ControlKernel(Output())
+        old = _enabled_guard_kernel(Output())
+        timed = _enabled_guard_kernel(Output())
         try:
             start = 30.0
             old_on = timed_on = None
@@ -731,8 +713,7 @@ def test_action_risk_preserves_30fps_motion_debounce_semantics(tmp_path, monkeyp
 def test_action_risk_time_semantics_do_not_shrink_at_high_fps(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     for fps in (20, 30, 45, 60):
-        kernel = ControlKernel(Output())
-        kernel.configure_head(body_motion_guard=True)
+        kernel = _enabled_guard_kernel(Output())
         try:
             on_delay = _sample_action_risk_transition(
                 kernel, "squat", fps, 0.060, 0.095, activating=True
@@ -741,8 +722,7 @@ def test_action_risk_time_semantics_do_not_shrink_at_high_fps(tmp_path, monkeypa
         finally:
             kernel.close()
 
-        kernel = ControlKernel(Output())
-        kernel.configure_head(body_motion_guard=True)
+        kernel = _enabled_guard_kernel(Output())
         try:
             off_delay = _sample_action_risk_transition(
                 kernel, "squat", fps, 0.060, 0.095, activating=False
@@ -754,8 +734,7 @@ def test_action_risk_time_semantics_do_not_shrink_at_high_fps(tmp_path, monkeypa
 
 def test_clear_body_resets_action_risk_state(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         kernel.body_motion_action_risk.add("squat")
         kernel.body_motion_action_risk_debounce["squat"].update(
@@ -772,8 +751,7 @@ def test_clear_body_resets_action_risk_state(tmp_path, monkeypatch):
 
 def test_status_exposes_body_motion_guard_version(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         state = kernel.status()
         assert state["body_motion_guard_version"] == "C2.10"
@@ -784,8 +762,7 @@ def test_status_exposes_body_motion_guard_version(tmp_path, monkeypatch):
 
 def test_output_veto_reports_only_frames_that_actually_block_x(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         kernel.body_motion_guard_early_until = 10.2
         assert kernel._guard_horizontal_output_locked(0.5, 10.0) == 0.0
@@ -814,8 +791,7 @@ def test_output_veto_reports_only_frames_that_actually_block_x(tmp_path, monkeyp
 
 def test_guard_survives_brief_core_quality_drop_then_resets(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = ControlKernel(Output())
-    kernel.configure_head(body_motion_guard=True)
+    kernel = _enabled_guard_kernel(Output())
     try:
         kernel._update_body_motion_guard_locked(pose(), 10.0)
         kernel.body_motion_guard_active = True

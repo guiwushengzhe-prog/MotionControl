@@ -302,6 +302,12 @@ class SceneLayoutManager:
                 return
             data = copy.deepcopy(data)
             data["zones"] = _canonicalize_zones(data.get("zones"))
+            vertical = data.get("vertical_look")
+            if isinstance(vertical, dict):
+                # Old scene files predate this switch. Keep an explicit true
+                # value intact, but make an omitted field a concrete disabled
+                # value as soon as the file is loaded.
+                vertical.setdefault("body_motion_guard", False)
             self.reference = data
             # On every program start, use the original reference coordinates.
             # Nothing adapts until the user explicitly requests a rematch.

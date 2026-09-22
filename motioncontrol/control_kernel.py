@@ -781,7 +781,7 @@ class ControlKernel:
                     "source": source,
                     "verticalLookSource": source,
                     "exclusive_axes": bool(vertical.get("exclusive_axes", self.vertical_look.get("exclusive_axes", False))),
-                    "body_motion_guard": bool(vertical.get("body_motion_guard", self.body_motion_guard_enabled)),
+                    "body_motion_guard": bool(vertical.get("body_motion_guard", False)),
                     "center_x": _clamp(vertical.get("center_x", 0.5), 0.0, 1.0),
                     "center_y": _clamp(vertical.get("center_y", 0.5), 0.0, 1.0),
                     "range_y": _clamp(vertical.get("range_y", 0.18), 0.05, 0.45),
