@@ -27,7 +27,7 @@ const busy = ref(false);
 const error = ref("");
 const done = ref(false);
 
-const QQ_GROUP = "755359297";
+const QQ_GROUP = "1101605483";
 const copied = ref(false);
 
 async function copyGroup() {

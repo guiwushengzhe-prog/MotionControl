@@ -36,6 +36,15 @@ function actionKeyText(action){
   if(type==='gamepad_axis')return target.endsWith('UP')?'摇杆↑':target.endsWith('DOWN')?'摇杆↓':target.endsWith('LEFT')?'摇杆←':target.endsWith('RIGHT')?'摇杆→':target;
   return target;
 }
+// 语音按住的键要单独说出来。它和姿势按住不是一回事：姿势按住是看得见的——手还
+// 交叉着、腿还抬着，人自己知道；语音按住是隐形的，三十秒前说了一句「保持左肩键」，
+// 之后忘了，游戏开始不对劲，人只会以为是误触或者软件坏了，想不到去说「松开」。
+function voiceLatchText(status){
+  const list=status?.voice_latches||[];
+  if(!list.length)return null;
+  const keys=list.map((item)=>actionKeyText(item)||item.target).filter(Boolean);
+  return keys.length?`语音按住 ${keys.join('、')}`:null;
+}
 // 手部一块圈里有上下两个绑定，所以它的标注天然是两个键，写成 "Y / X"。
 function zoneKeyLabel(id,def){
   const all=kernelState?.control_bindings||{};
@@ -1004,7 +1013,7 @@ function renderOutput(s=output.server){
   $('#strengthValue').textContent=$('#strength').value+'%';
   $('#outputPill').textContent=output.enabled?'游戏控制已开启':'游戏控制已暂停';
   $('#outputPill').className='pill '+(output.enabled?'ok':'');
-  $('#outputStatus').textContent=`${s.mouse_available?'鼠标可用':'鼠标不可用'} · ${s.gamepad_connected?'虚拟手柄已连接':'虚拟手柄未连接'}`+(s.last_error?' · '+s.last_error:'');
+  $('#outputStatus').textContent=(voiceLatchText(s)?voiceLatchText(s)+' · 说松开才会放 · ':'')+`${s.mouse_available?'鼠标可用':'鼠标不可用'} · ${s.gamepad_connected?'虚拟手柄已连接':'虚拟手柄未连接'}`+(s.last_error?' · '+s.last_error:'');
   if(s.xinput_merge_enabled!==undefined){
     output.xinputEnabled=!!s.xinput_merge_enabled;output.xinputUser=s.xinput_selected_user??null;
     output.xinputMotionLeft=!!s.xinput_motion_left_enabled;renderXinputMotionLeft();
@@ -1134,7 +1143,7 @@ function drawOverlayZones(octx,w,h,zones={}){
 function renderOverlay(map=currentPoseMap){
   if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx,w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);
   draw(map,octx,w,h,true);
-  drawOverlayZones(octx,w,h,kernelState?.zones||{});const buttons=kernelState?.buttons||[],motions=kernelState?.motions||[];const gate=!!kernelState?.vertical_gate_active;const text=gate?'上下视角已开启':(buttons.length?`区域 ${buttons.join('+')}`:(motions.length?`动作 ${motions.join('+')}`:(map?'未触发':'未识别人体')));octx.fillStyle='rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle='#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.textAlign='left';octx.textBaseline='alphabetic';octx.fillText(`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))
+  drawOverlayZones(octx,w,h,kernelState?.zones||{});const buttons=kernelState?.buttons||[],motions=kernelState?.motions||[];const gate=!!kernelState?.vertical_gate_active;const latch=voiceLatchText(output);const text=gate?'上下视角已开启':(buttons.length?`区域 ${buttons.join('+')}`:(motions.length?`动作 ${motions.join('+')}`:(map?'未触发':'未识别人体')));octx.fillStyle=latch?'rgba(70,32,0,.78)':'rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle=latch?'#ffc46b':'#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.textAlign='left';octx.textBaseline='alphabetic';octx.fillText(latch?`${latch} · 说松开才会放`:`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))
 }
 
 async function toggleOverlay(){if(overlay.win&&!overlay.win.closed){try{overlay.win.close()}catch{}overlay.win=null;overlay.canvas=null;overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗';return}if(!window.documentPictureInPicture?.requestWindow){notice('当前浏览器不支持置顶游戏悬浮窗。');return}try{const pip=await window.documentPictureInPicture.requestWindow({width:420,height:315});pip.document.title='MotionControl';pip.document.body.style.cssText='margin:0;overflow:hidden;background:#050608;width:100vw;height:100vh';const c=pip.document.createElement('canvas');c.width=640;c.height=480;c.style.cssText='display:block;width:100vw;height:100vh;object-fit:contain;background:#050608';pip.document.body.appendChild(c);overlay.win=pip;overlay.canvas=c;overlay.ctx=c.getContext('2d');pip.addEventListener('pagehide',()=>{overlay.win=overlay.canvas=overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗'},{once:true});$('#overlayBtn').textContent='关闭悬浮';renderOverlay(currentPoseMap)}catch(e){notice('悬浮窗启动失败：'+(e?.message||e))}}

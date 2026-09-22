@@ -1578,8 +1578,33 @@ class OutputManager:
             "mouse_button_holds": sorted(set().union(*self._mouse_button_sources.values())) if self._mouse_button_sources else [],
             "left_stick_holds": list(self._left_stick_sources.keys()),
             "trigger_holds": list(self._trigger_sources.keys()),
+            "voice_latches": self._voice_latches_locked(),
             "last_error": self.last_error,
         }
+
+    def _voice_latches_locked(self) -> list[dict]:
+        """现在被语音按住、还没松开的那些。
+
+        单独报出来是因为它和姿势按住有一点根本不同：姿势按住是看得见的——手还交叉
+        着、腿还抬着，人自己知道。语音按住是隐形的：三十秒前说了一句「保持左肩键」，
+        之后忘了，游戏开始不对劲，人只会以为是误触或者软件坏了，根本想不到去说
+        「松开」。
+
+        源的键名形如 "<谁>|voice-hold:<类型>:<目标>"，按它筛就够了；别的来源
+        （区域、姿势、物理手柄）一概不在这里报，报了反而把这条信息稀释掉。
+        """
+        found: dict[str, dict] = {}
+        for holder in (self._button_sources, self._keyboard_sources,
+                       self._mouse_button_sources, self._left_stick_sources,
+                       self._trigger_sources):
+            for source in holder:
+                marker = "|voice-hold:"
+                if marker not in source:
+                    continue
+                owner, rest = source.split(marker, 1)
+                kind, _, target = rest.partition(":")
+                found[rest] = {"owner": owner, "type": kind, "target": target}
+        return [found[key] for key in sorted(found)]
 
     def close(self) -> None:
         self._stop.set()
