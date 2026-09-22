@@ -83,6 +83,20 @@ def test_single_axis_choice_survives_restart():
         second.close()
 
 
+def test_first_head_calibration_save_does_not_restore_two_hand_defaults():
+    first = ControlKernel(_Output())
+    try:
+        first.head_controller._save_profile()
+    finally:
+        first.close()
+    second = ControlKernel(_Output())
+    try:
+        assert second.hand_mouse_controller.config['horizontal_hand'] == 'off'
+        assert second.hand_mouse_controller.config['vertical_hand'] == 'left'
+    finally:
+        second.close()
+
+
 @pytest.mark.parametrize('policy', ['gesture_v188', 'gesture_v153', 'frozen22', 'roll_tilt', None])
 def test_existing_settings_are_preserved(policy):
     params = {'enabled': False}

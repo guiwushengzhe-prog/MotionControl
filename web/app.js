@@ -1,3 +1,5 @@
+import {VIEW_CONTROL_CONTENT} from './view-control-guide.js';
+
 const $ = s => document.querySelector(s);
 const canvas = $('#canvas');
 const ctx = canvas.getContext('2d');
@@ -24,7 +26,8 @@ const BODY_ZONES = {leftHand:{label:'X',body:'左手',button:'X'},rightHand:{lab
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
-const head={algorithm:'pnp',horizontalAlgorithm:'gesture_v188',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:true,verticalExclusive:false,bodyMotionGuard:true};
+const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
+let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false,guideReturnFocus=null;
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
@@ -128,6 +131,7 @@ function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
 function renderKernelZones(zones={}){
   for(const[id,def]of Object.entries(BODY_ZONES)){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
+    if(def.gate&&!kernelState?.vertical_look?.enabled){el.style.display='none';continue}
     const active=!zoneEditMode&&!!state?.pressed;
     el.classList.toggle('active',active);
     const editCircle=zoneEditMode?scene.zones?.[id]:null;
@@ -196,7 +200,8 @@ function setupConflicts(){
     items.push(['手机正在传画面，但来源选的是电脑摄像头——手机传来的都被丢掉了。','改用手机',()=>setSource('phone',true)]);
   if(mergeOwnsSticks()&&hand.enabled)
     items.push(['物理手柄合流占着两个摇杆，手控鼠标不会动。','关掉合流',async()=>{$('#xinputMerge').value='';await setXinputMerge()}]);
-  if(hand.enabled&&head.verticalLookEnabled&&head.verticalLookSource==='hand')
+  const verticalHand=hand.config?.vertical_hand??hand.vertical_hand;
+  if((hand.config?.enabled??hand.enabled)&&verticalHand!=='off'&&head.verticalLookEnabled&&head.verticalLookSource==='hand')
     items.push(['手控鼠标握拳时会接管视角，与单独的上下视角控制同时开启可能相互干扰。','关掉上下视角',
       async()=>{const s=$('#verticalLookSource');if(s){s.value='off';s.dispatchEvent(new Event('change',{bubbles:true}))}}]);
   if(hand.enabled&&hand.grip_source==='pose')
@@ -218,7 +223,7 @@ function renderConflicts(){
     return row;
   }));
 }
-function renderKernelState(runtime){
+function renderKernelState(runtime,force=false){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
   currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
@@ -246,9 +251,10 @@ function renderKernelState(runtime){
     guardStatus.classList.toggle('active',guardBlocked&&guardEnabled!==false);
   }
   if(Number.isFinite(hs.output_x)){
-    const algo=hs.algorithm==='ratio'?'比例':'PnP';
-    const horizontalCalibrated=hs.horizontal_calibrated??hs.calibrated;
-    $('#headStatus').textContent=horizontalCalibrated?(guardBlocked?'身体动作中 · 左右视角已稳定':`头控 ${algo} · 水平 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说“体感开始校准”';
+    const usesHand=hs.hand_mouse?.enabled&&['left','right'].includes(hs.hand_mouse?.config?.horizontal_hand);
+    const method=usesHand?'握拳':hs.horizontal_algorithm==='roll_tilt'?'侧倾':'转头';
+    const horizontalCalibrated=usesHand||(hs.horizontal_calibrated??hs.calibrated);
+    $('#headStatus').textContent=!usesHand&&hs.enabled===false?'左右视角已关闭':horizontalCalibrated?(!usesHand&&guardBlocked?'身体动作中 · 左右视角已稳定':`${method} · 左右 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说“体感开始校准”';
   }
   if(hs.calibrated!==undefined){
     $('#calBtn').textContent=hs.calibrating?'取消校准':'站好并校准';
@@ -257,14 +263,16 @@ function renderKernelState(runtime){
     $('#calStatus').title=[hs.estimate_error,missingPoints&&'缺少关键点：'+missingPoints].filter(Boolean).join(' · ');
     renderCalibrationOverlay(hs);
   }
-  if(hs.algorithm&&!headDirty&&!document.activeElement?.closest('#headSettings,#advancedSettings')){
+  if(hs.algorithm&&(force||(!headDirty&&!document.activeElement?.closest('#headSettings,#advancedSettings')))){
     $('#headAlgorithm').value=hs.algorithm;
-    const horizontalAlgorithm=String(hs.horizontal_algorithm||'gesture_v188');
+    const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
     head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
+    if(head.horizontalAlgorithm!=='roll_tilt')lastTurnAlgorithm=head.horizontalAlgorithm;
     if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
     if($('#rollTiltHint'))$('#rollTiltHint').hidden=head.horizontalAlgorithm!=='roll_tilt';
-    head.verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'head':'hand';
-    head.verticalLookEnabled=k.vertical_look?.enabled!==false;
+    const verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'off');
+    head.verticalLookSource=verticalLookSource==='head'?'head':'hand';
+    head.verticalLookEnabled=verticalLookSource!=='off'&&(k.vertical_look?.enabled??hs.vertical_look_enabled??true)!==false;
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
     head.bodyMotionGuard=k.vertical_look?.body_motion_guard!==false;
     if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookEnabled?head.verticalLookSource:'off';
@@ -273,7 +281,7 @@ function renderKernelState(runtime){
     document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));
     $('#deadzone').value=Math.round(Number(hs.deadzone||.10)*100);
     $('#speedX').value=Number(hs.sensitivity_x||58);$('#speedY').value=Number(hs.sensitivity_y||46);
-    $('#headEnable').checked=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();
+    $('#headEnable').checked=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();renderViewControl();
   }
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;
@@ -290,7 +298,7 @@ function renderKernelState(runtime){
   }
   $('#cameraPill').textContent=(sourceMode==='phone'?inputStatus.mobile_pose_connected:cameraRunning)?'摄像头 ✓':'摄像头';$('#cameraPill').className='pill '+(sourceMode==='phone'||cameraRunning?'ok':'bad');
   // phonePill is owned by renderInputStatus (/api/input/status); kernel status has no transport state.
-  $('#posePill').textContent=currentPoseMap?'人体 ✓':'人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){const paused=!!hs.horizontal_paused_by_vertical_gate;gateStatus.textContent=head.verticalLookEnabled?(gateActive?`上下视角已开启 · ${verticalSource}控制上下${paused?' · 左右暂停':''}`:'上下视角待机 · 左手放入绿色区域开启'):'上下视角已关闭';gateStatus.className='look-gate-status '+(gateActive?'active':'')}renderOverlay(currentPoseMap);renderMainStatus();
+  $('#posePill').textContent=currentPoseMap?'人体 ✓':'人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){gateStatus.hidden=!k.vertical_look?.enabled;const paused=!!hs.horizontal_paused_by_vertical_gate;gateStatus.textContent=head.verticalLookEnabled?(gateActive?`上下视角已开启 · ${verticalSource}控制上下${paused?' · 左右暂停':''}`:'上下视角待机 · 左手放入绿色区域开启'):'上下视角已关闭';gateStatus.className='look-gate-status '+(gateActive?'active':'')}renderOverlay(currentPoseMap);renderMainStatus();
 
 }
 function renderInputStatus(status){
@@ -740,15 +748,51 @@ function syncCameraDeviceRow(){
 // reach past their knuckles; without them it is the coarse fingertip spread.
 // Showing both pairs at once would leave the player tuning whichever one
 // happens to do nothing.
+function fillViewControlOptions(){
+  for(const [id,items] of [['viewHorizontalSource',VIEW_CONTROL_CONTENT.horizontal],['viewVerticalSource',VIEW_CONTROL_CONTENT.vertical]]){
+    const select=$('#'+id);select.replaceChildren(...items.map(item=>new Option(item.label,item.value)));
+  }
+}
+function viewChoice(items,value){return items.find(item=>item.value===value)||items.at(-1)}
+function renderViewControl(force=false){
+  if(viewControlSaving||(!force&&document.activeElement?.matches('#viewHorizontalSource,#viewVerticalSource')))return;
+  const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
+  const verticalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:null;
+  const horizontal=horizontalHand||(head.enabled?(head.horizontalAlgorithm==='roll_tilt'?'roll_tilt':'head_turn'):'off');
+  const vertical=verticalHand||(head.verticalLookEnabled?'legacy':'off');
+  $('#viewVerticalSource option[value="legacy"]').hidden=!head.verticalLookEnabled;
+  $('#viewHorizontalSource').value=horizontal;$('#viewVerticalSource').value=vertical;
+  const horizontalInfo=viewChoice(VIEW_CONTROL_CONTENT.horizontal,horizontal),verticalInfo=viewChoice(VIEW_CONTROL_CONTENT.vertical,vertical);
+  const rows=[['左右：'+horizontalInfo.label,horizontalInfo.description],['上下：'+verticalInfo.label,verticalInfo.description]];
+  if(head.verticalLookEnabled)rows.push(['更多设置',VIEW_CONTROL_CONTENT.legacyVerticalNote]);
+  $('#viewControlDescription').replaceChildren(...rows.map(([title,text])=>{const p=document.createElement('p');const b=document.createElement('b');b.textContent=title+' ';p.append(b,text);return p}));
+  const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='当前设置已读取';
+}
+function renderViewGuide(){
+  $('#viewGuideTitle').textContent=VIEW_CONTROL_CONTENT.guide.title;
+  $('#viewGuideIntro').textContent=VIEW_CONTROL_CONTENT.guide.intro;
+  $('#viewGuideSteps').replaceChildren(...VIEW_CONTROL_CONTENT.guide.steps.map(step=>{const li=document.createElement('li'),title=document.createElement('b');title.textContent=step.title;li.append(title,step.text);return li}));
+}
+function openViewGuide(source){guideReturnFocus=source||$('#viewGuideBtn');$('#viewGuideMask').showModal()}
+function closeViewGuide(remember=false){
+  if(remember){try{localStorage.setItem('motioncontrol_view_guide_done','1')}catch{}}
+  $('#viewGuideMask').close();
+}
+function initViewGuide(){
+  fillViewControlOptions();renderViewGuide();renderViewControl();
+  let seen=false;try{seen=localStorage.getItem('motioncontrol_view_guide_done')==='1'}catch{}
+  if(!seen)openViewGuide(null);
+}
 function renderHandMouse(state){
   if(!state)return;
   const c=state.config||{};
+  handMouseConfig={...handMouseConfig,...c};
   // 合流模式下摇杆归物理手柄，手控鼠标接不上任何东西——勾着不起作用比灰着更糟。
   const blocked=mergeOwnsSticks();
-  $('#handMouseEnabled').disabled=blocked;
+  $('#handMouseEnabled').disabled=blocked||viewControlSaving;
   $('#handMouseEnabled').checked=Boolean(c.enabled);
   renderOutputMix();
-  $('#handMouseHorizontalHand').value=c.horizontal_hand||'right';
+  $('#handMouseHorizontalHand').value=c.horizontal_hand||'off';
   $('#handMouseVerticalHand').value=c.vertical_hand||'left';
   for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open],['handMouseCurlClose',c.curl_close],['handMouseCurlOpen',c.curl_open]]){
     if(value!==undefined)$('#'+id).value=value;
@@ -766,11 +810,12 @@ function renderHandMouse(state){
   const reading=byHand
     ?(state.curl==null?'看不到手':`手指伸展 ${Number(state.curl).toFixed(2)}`)
     :(state.spread==null?'看不到手':`张开度 ${Number(state.spread).toFixed(3)}`);
-  const axisLabel=(axis,name)=>{const s=state.axes?.[axis];if(!s)return '';const hand=s.hand==='left'?'左手':'右手';const phase=({disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'})[s.state]||s.state;const measure=s.grip_source==='hand'?`手指伸展 ${Number(s.curl).toFixed(2)}`:s.spread==null?'看不到手':`张开度 ${Number(s.spread).toFixed(3)}`;return `${name}：${hand} · ${phase} · ${measure}`;};
+  const axisLabel=(axis,name)=>{const s=state.axes?.[axis];if(!s)return '';const hand={left:'左手',right:'右手',off:'关闭'}[s.hand]||'关闭';const phase=({disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'})[s.state]||s.state;const measure=s.grip_source==='hand'?`手指伸展 ${Number(s.curl).toFixed(2)}`:s.spread==null?'看不到手':`张开度 ${Number(s.spread).toFixed(3)}`;return `${name}：${hand} · ${phase} · ${measure}`;};
   const label={disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'}[state.state]||state.state;
   $('#handMouseStatus').textContent=blocked?'物理手柄合流占着摇杆，手控鼠标用不了':(c.enabled
     ?(state.axes?`${axisLabel('horizontal','水平')}；${axisLabel('vertical','垂直')}`:`${label} · ${reading} · 输出 ${Number(state.output_x||0).toFixed(2)} / ${Number(state.output_y||0).toFixed(2)}`)
     :'未启用');
+  renderViewControl();
 }
 // --- skeleton recording ---------------------------------------------------
 // Polls only while something is actually happening, so an idle settings page
@@ -808,26 +853,104 @@ async function cancelPoseRecord(){
   }catch(error){$('#poseRecordStatus').textContent=error.message||'取消失败'}
 }
 async function refreshHandMouse(){try{const data=await api('/api/hand-mouse/config');renderHandMouse(data.hand_mouse)}catch{}}
-async function saveHandMouse(){
-  const payload={
-    enabled:$('#handMouseEnabled').checked,
-    horizontal_hand:$('#handMouseHorizontalHand').value,
-    vertical_hand:$('#handMouseVerticalHand').value,
-    sensitivity:Number($('#handMouseSensitivity').value),
-    deadzone:Number($('#handMouseDeadzone').value),
-    fist_close:Number($('#handMouseClose').value),
-    fist_open:Number($('#handMouseOpen').value),
-    curl_close:Number($('#handMouseCurlClose').value),
-    curl_open:Number($('#handMouseCurlOpen').value),
-  };
+async function reloadViewControlState(){
+  const [runtime,handData]=await Promise.all([api('/api/kernel/status'),api('/api/hand-mouse/config')]);
+  renderKernelState(runtime,true);renderHandMouse(handData.hand_mouse);viewControlReady=true;
+}
+function setViewControlBusy(busy){
+  viewControlSaving=busy;
+  document.querySelectorAll('#headSettings input,#headSettings select,#headHorizontalAlgorithm').forEach(el=>el.disabled=busy);
+  for(const id of ['viewHorizontalSource','viewVerticalSource'])$('#'+id).disabled=busy||!viewControlReady;
+  $('#handMouseEnabled').disabled=busy||mergeOwnsSticks();
+}
+async function postViewHead(payload){
+  const runtime=await post('/api/head/config',payload);
+  if(payload.vertical_look_source!==undefined&&sceneConfigured){
+    const vertical={...scene.status.vertical_look,...runtime.kernel?.vertical_look};
+    scene.status=await post('/api/scene/layout',{vertical_look:vertical});
+  }
+  return runtime;
+}
+async function saveHandMouseFields(payload){
+  if(viewControlSaving)return;
+  setViewControlBusy(true);
   $('#handMouseSaveStatus').textContent='正在保存…';
   try{
     const data=await post('/api/hand-mouse/config',payload);
     renderHandMouse(data.hand_mouse);
     $('#handMouseSaveStatus').textContent='已保存';
   }catch(error){
-    $('#handMouseSaveStatus').textContent=error.message||'保存失败';
+    let refreshed=true;try{await reloadViewControlState()}catch{refreshed=false}
+    $('#handMouseSaveStatus').textContent='保存失败，'+(refreshed?'已读取当前设置：':'暂时无法读取当前设置：')+(error.message||'请重试');
+  }finally{setViewControlBusy(false);renderViewControl(true)}
+}
+async function saveViewControlAxis(axis){
+  if(viewControlSaving||!viewControlReady)return;
+  if(headSaver.pending()){notice('请等当前设置保存完成');renderViewControl(true);return}
+  const desiredHorizontal=$('#viewHorizontalSource').value,desiredVertical=$('#viewVerticalSource').value;
+  const currentHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:'off';
+  const currentVertical=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:'off';
+  setViewControlBusy(true);headDirty=true;$('#viewControlStatus').textContent='正在保存…';
+  try{
+    if(axis==='horizontal'){
+      if(desiredHorizontal==='roll_tilt'||desiredHorizontal==='head_turn'){
+        if(currentHorizontal!=='off')await post('/api/hand-mouse/config',{horizontal_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentVertical!=='off')});
+        await post('/api/head/config',{enabled:true,horizontal_algorithm:desiredHorizontal==='roll_tilt'?'roll_tilt':lastTurnAlgorithm});
+      }else if(desiredHorizontal==='left'||desiredHorizontal==='right'){
+        if(head.enabled)await post('/api/head/config',{enabled:false});
+        await post('/api/hand-mouse/config',{enabled:true,horizontal_hand:desiredHorizontal,vertical_hand:currentVertical});
+      }else{
+        if(currentHorizontal!=='off')await post('/api/hand-mouse/config',{horizontal_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentVertical!=='off')});
+        if(head.enabled)await post('/api/head/config',{enabled:false});
+      }
+    }else if(desiredVertical==='legacy'){
+      $('#headSettings .view-control-more').open=true;
+      $('#verticalLookSource').focus();
+    }else if(desiredVertical==='left'||desiredVertical==='right'){
+      if(head.verticalLookEnabled)await postViewHead({vertical_look_source:'off'});
+      await post('/api/hand-mouse/config',{enabled:true,vertical_hand:desiredVertical,horizontal_hand:currentHorizontal});
+    }else{
+      if(currentVertical!=='off')await post('/api/hand-mouse/config',{vertical_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentHorizontal!=='off')});
+      if(head.verticalLookEnabled)await postViewHead({vertical_look_source:'off'});
+    }
+    await reloadViewControlState();$('#viewControlStatus').textContent='已保存';
+  }catch(error){
+    let refreshed=true;try{await reloadViewControlState()}catch{refreshed=false}
+    $('#viewControlStatus').textContent=`保存失败，${refreshed?'已恢复服务器当前设置':'当前设置无法重新读取'}：${error.message||'请重试'}`;
+  }finally{setViewControlBusy(false);headDirty=false;renderViewControl(true)}
+}
+async function saveLegacyVertical(){
+  if(viewControlSaving)return;
+  const source=$('#verticalLookSource').value,currentVertical=['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:'off';
+  setViewControlBusy(true);headDirty=true;$('#viewControlStatus').textContent='正在保存…';
+  try{
+    if(source!=='off'&&currentVertical!=='off')await post('/api/hand-mouse/config',{vertical_hand:'off',enabled:Boolean(handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand))});
+    await postViewHead({vertical_look_source:source});
+    await reloadViewControlState();$('#viewControlStatus').textContent='已保存';
+  }catch(error){
+    let refreshed=true;try{await reloadViewControlState()}catch{refreshed=false}
+    $('#viewControlStatus').textContent=`保存失败，${refreshed?'已恢复服务器当前设置':'当前设置无法重新读取'}：${error.message||'请重试'}`;
+  }finally{setViewControlBusy(false);headDirty=false;renderViewControl(true)}
+}
+async function saveAdvancedHandAxis(axis){
+  const field=axis==='horizontal'?'horizontal_hand':'vertical_hand',value=$('#handMouse'+(axis==='horizontal'?'Horizontal':'Vertical')+'Hand').value;
+  if(value!=='off'){
+    $('#'+(axis==='horizontal'?'viewHorizontalSource':'viewVerticalSource')).value=value;
+    await saveViewControlAxis(axis);return;
   }
+  const other=axis==='horizontal'?handMouseConfig.vertical_hand:handMouseConfig.horizontal_hand;
+  await saveHandMouseFields({[field]:'off',enabled:Boolean(handMouseConfig.enabled&&['left','right'].includes(other))});
+}
+async function saveHeadEnabled(){
+  if(viewControlSaving)return;
+  setViewControlBusy(true);headDirty=true;$('#headSaveStatus').textContent='正在保存…';
+  try{
+    await post('/api/head/config',{enabled:$('#headEnable').checked});
+    await reloadViewControlState();$('#headSaveStatus').textContent='已保存';
+  }catch(error){
+    try{await reloadViewControlState()}catch{}
+    $('#headSaveStatus').textContent='保存失败，已重新读取当前设置：'+(error.message||'请重试');
+  }finally{setViewControlBusy(false);headDirty=false;renderViewControl(true)}
 }
 async function refreshPreview(){
   if(!cameraPreview||perfUi.previewBusy||sourceMode!=='computer'||!cameraRunning||currentView!=='play'||document.visibilityState!=='visible')return;
@@ -1177,10 +1300,11 @@ function poll(task,delay,enabled=()=>true){
   void next();
 }
 async function init(){
-  syncControlLabels();
+  initViewGuide();setViewControlBusy(false);syncControlLabels();
   await refreshKernel();await refreshOutput();
   const results=await Promise.allSettled([
     refreshInput(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshScene(),
+    reloadViewControlState().then(()=>{setViewControlBusy(false);renderViewControl(true)}),
     api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
       $('#modelStatus').textContent=modelAvailable?'电脑人体模型可用':'电脑人体模型不可用；手机输入、实体手柄不受此项影响';
@@ -1210,10 +1334,19 @@ bind('mainActionBtn',handleMainAction);
 bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
 bind('sourceStopBtn',()=>setSource(sourceMode,false));
 bind('overlayBtn',toggleOverlay);
-for(const id of ['handMouseEnabled','handMouseHorizontalHand','handMouseVerticalHand','handMouseSensitivity','handMouseDeadzone','handMouseClose','handMouseOpen','handMouseCurlClose','handMouseCurlOpen']){
-  const el=$('#'+id);
-  if(el)el.addEventListener('change',()=>void saveHandMouse());
+for(const [id,key] of [['handMouseEnabled','enabled'],['handMouseSensitivity','sensitivity'],['handMouseDeadzone','deadzone'],['handMouseClose','fist_close'],['handMouseOpen','fist_open'],['handMouseCurlClose','curl_close'],['handMouseCurlOpen','curl_open']]){
+  $('#'+id).addEventListener('change',e=>void saveHandMouseFields({[key]:key==='enabled'?e.target.checked:Number(e.target.value)}));
 }
+for(const axis of ['horizontal','vertical']){
+  $('#view'+(axis==='horizontal'?'Horizontal':'Vertical')+'Source').addEventListener('change',()=>void saveViewControlAxis(axis));
+  $('#handMouse'+(axis==='horizontal'?'Horizontal':'Vertical')+'Hand').addEventListener('change',()=>void saveAdvancedHandAxis(axis));
+}
+$('#verticalLookSource').addEventListener('change',()=>void saveLegacyVertical());
+$('#headEnable').addEventListener('change',()=>void saveHeadEnabled());
+for(const id of ['viewGuideBtn','viewGuideSettingsBtn'])$('#'+id).addEventListener('click',e=>openViewGuide(e.currentTarget));
+for(const id of ['closeViewGuideBtn','skipViewGuideBtn','finishViewGuideBtn'])$('#'+id).addEventListener('click',()=>closeViewGuide(true));
+$('#viewGuideMask').addEventListener('cancel',e=>{e.preventDefault();closeViewGuide(true)});
+$('#viewGuideMask').addEventListener('close',()=>guideReturnFocus?.focus());
 bind('poseRecordBtn',startPoseRecord);
 bind('poseRecordCancelBtn',cancelPoseRecord);
 bind('profileSearchBtn',searchProfiles);
@@ -1291,7 +1424,7 @@ $('#strength').addEventListener('change',()=>runAction(async()=>{
   const gain=Number($('#strength').value)/100;++outputEpoch;
   renderOutput(await post('/api/output/config',{mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain}));
 }));
-for(const id of ['headAlgorithm','headHorizontalAlgorithm','verticalLookSource','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','headEnable','invertY']){
+for(const id of ['headAlgorithm','headHorizontalAlgorithm','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','invertY']){
   $('#'+id).addEventListener('input',()=>{headSaver.dirty();syncControlLabels()});
   $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels()});
 }

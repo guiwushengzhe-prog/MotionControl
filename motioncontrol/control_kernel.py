@@ -428,8 +428,10 @@ class ControlKernel:
         self.head_controller = HeadController(self._head_profile_path())
         self._general_raw: dict = {}
         self._load_general_settings()
-        # 新玩家使用侧倾左右配左手握拳上下；已有头控档案或手控设置照旧。
-        if not self._head_profile_path().exists() and not isinstance(self._general_raw.get("hand_mouse"), dict):
+        # 新玩家使用侧倾左右配左手上下；初次校准只保存头控档案时，重启仍保留该组合。
+        if not isinstance(self._general_raw.get("hand_mouse"), dict) and (
+            not self._head_profile_path().exists() or self.head_controller.config["horizontal_algorithm"] == "roll_tilt"
+        ):
             self.hand_mouse_controller.configure({"horizontal_hand": "off", "vertical_hand": "left"})
         self.head = self.head_controller.status(time.monotonic())
         self.sensor_sources: dict[str, dict] = {}

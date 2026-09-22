@@ -52,7 +52,9 @@ label select { display: block; width: 100%; margin-top: 5px; }
 main { padding-top: 20px; }
 .layout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
 .card, .settings-section { padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
-.viewer-heading, .viewer-foot, .health-strip, .settings-actions, .profile-actions, .quick-tools, .dialog-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.viewer-heading, .viewer-foot, .health-strip, .settings-actions, .profile-actions, .quick-tools, .dialog-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.view-control-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.view-control-heading .title { margin: 0; }
 .viewer-heading { justify-content: space-between; margin-bottom: 12px; }
 .viewer-heading h2 { margin: 0; }
 .eyebrow { color: var(--accent); font-size: 12px; }
@@ -108,7 +110,16 @@ main { padding-top: 20px; }
   border: 1px solid #7a5a2a; border-radius: 8px; background: #241c10; font-size: 12.5px; }
 .conflict span { flex: 1; }
 .section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
-.settings-grid, .controls, .advgrid, .scene-zone-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.settings-grid, .controls, .advgrid, .scene-zone-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.view-control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0 10px; }
+.view-control-description { display: grid; gap: 5px; margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.view-control-description b { color: #dce8f2; }
+.view-control-more { margin-top: 12px; border-top: 1px solid var(--line); }
+.view-control-subsection { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.view-control-subsection:first-of-type { border-top: 0; }
+.guide-steps { margin: 16px 0; padding-left: 24px; }
+.guide-steps li { margin-bottom: 14px; padding-left: 5px; }
+.guide-steps b { display: block; margin-bottom: 3px; }
 .settings-grid { align-items: start; }
 .group-head { grid-column: 1 / -1; margin: 6px 0 0; padding-bottom: 6px;
   border-bottom: 1px solid var(--line); font-size: 13px; letter-spacing: 2px; color: var(--muted); }
@@ -162,7 +173,7 @@ dialog::backdrop { background: #030812dc; }
   .top { gap: 8px; flex-wrap: wrap; padding: 10px 0; }
   #serviceStatus { order: 3; width: 100%; }
   .session-bar { grid-template-columns: 1fr 1fr; }
-  .layout, .settings-grid { grid-template-columns: 1fr; }
+  .layout, .settings-grid, .view-control-grid { grid-template-columns: 1fr; }
   .control-card { order: -1; }
   .binding-row, .voice-command-grid { grid-template-columns: 1fr 1fr; }
   .voice-row { grid-template-columns: 1fr 1fr; }
