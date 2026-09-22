@@ -24,6 +24,12 @@ from pathlib import Path
 from typing import Any
 
 
+# 校准参考不能追随动作；仅在明确的安静事件后采纳一次运行参考，默认值待真人验证。
+RUNTIME_NEUTRAL_QUIET_S = 0.50
+RUNTIME_NEUTRAL_MAX_GAP_S = 0.15
+RUNTIME_NEUTRAL_MAX_SPAN_DEG = 0.80
+RUNTIME_NEUTRAL_MAX_SLOPE_DEG_S = 0.40
+
 HEAD_SIGNAL_VERSION = "head-control-v5.1-calibration-compat"
 HEAD_PROFILE_COMPATIBLE_VERSIONS = {
     HEAD_SIGNAL_VERSION,
@@ -1626,6 +1632,7 @@ class _RelativeYawAxisV153:
         self._return_latched=False;self._return_from_direction=0;self._return_center_seen=False
         self._center_stable_s=0.0;self._cross_evidence=0.0;self._resume_s=0.0
         self._reset_return_opposite_boundary();self._clear_active();self._clear_motion_evidence()
+        self._neutral_settle_serial = getattr(self, "_neutral_settle_serial", 0) + 1
         self._hold_anchor=norm
         # A pose adopted after RETURNING is a new neutral boundary.  Marking
         # it as an active-turn hold makes the next movement through centre
@@ -2456,6 +2463,14 @@ class HeadController:
         self.notice_until = 0.0
         self._last_intent_drive = 0.0
         self._last_evidence_scale = 0.0
+        self._runtime_neutral = None
+        self._runtime_neutral_pending = False
+        self._runtime_neutral_samples = []
+        self._runtime_neutral_epoch = 0
+        self._runtime_neutral_at = None
+        self._runtime_raw_x = 0.0
+        self._runtime_intent_raw_x = 0.0
+        self._runtime_span_x = None
         self._last_target_x = 0.0
         self._load_profile()
 
@@ -2496,6 +2511,7 @@ class HeadController:
         self._cue_last_at = 0.0
 
     def _reset_filters(self) -> None:
+        self._runtime_neutral_samples = []
         self._yaw_filter.reset()
         self._pitch_filter.reset()
         self._head_point_filter.reset()
@@ -3223,6 +3239,80 @@ class HeadController:
         self.notice_until = time.monotonic() + 3.0
         self._reset_filters()
 
+        if success and self.calibrated and self.config["horizontal_algorithm"] == "gesture_v188":
+            # Calibration has already collected a neutral window. Start with
+            # those references instead of imposing a second, stricter gate
+            # that can leave a successfully calibrated controller silent.
+            self._runtime_neutral = dict(
+                main=self.center_yaw, frozen=0.0, world=0.0,
+                proxy=self.center_yaw_proxy, multi=self.center_multi2d_proxy,
+            )
+            self._arm_runtime_neutral()
+
+    def _arm_runtime_neutral(self):
+        self._runtime_neutral_pending = True
+        self._runtime_neutral_samples = []
+
+    def _runtime_reference(self, key, fallback):
+        if self.config["horizontal_algorithm"] == "gesture_v188" and self._runtime_neutral is not None:
+            return self._runtime_neutral[key]
+        return fallback
+
+    def _capture_runtime_neutral(self, now):
+        if not self._runtime_neutral_pending:
+            return False
+        scale = 1.0 if self._effective_estimator_algorithm() == "pnp" else PNP_YAW_SPAN_DEG / RATIO_YAW_SPAN
+        pitch_scale = 1.0 if self._effective_estimator_algorithm() == "pnp" else PNP_PITCH_SPAN_DEG / RATIO_PITCH_SPAN
+        sample = dict(main=self.control_yaw, frozen=self.frozen22_yaw_median,
+                      world=self.current_world_rigid_yaw, proxy=self.raw.yaw_proxy,
+                      multi=tuple(self.current_multi2d_proxy) if self.current_multi2d_proxy is not None else None)
+        values = [self.control_yaw * scale, self.raw.pitch * pitch_scale,
+                  self.frozen22_yaw_median, self.current_world_rigid_yaw,
+                  self.raw.yaw_proxy * PNP_YAW_SPAN_DEG / RATIO_YAW_SPAN]
+        if sample["multi"] is not None:
+            values += [sample["multi"][i]/sc for i, sc in zip(MULTI2D_USE, MULTI2D_SCALE)]
+        if not self.raw.valid or not all(math.isfinite(v) for v in values[:2]):
+            self._runtime_neutral_samples = []
+            return False
+        hist = self._runtime_neutral_samples
+        if hist and (now <= hist[-1][0] or now-hist[-1][0] > RUNTIME_NEUTRAL_MAX_GAP_S
+                     or len(values) != len(hist[-1][1])):
+            hist.clear()
+        hist.append((now, values, sample))
+        while len(hist)>2 and now-hist[1][0] >= RUNTIME_NEUTRAL_QUIET_S:
+            hist.pop(0)
+        if len(hist)<4 or now-hist[0][0] < RUNTIME_NEUTRAL_QUIET_S:
+            return False
+        xs = [h[0]-hist[0][0] for h in hist]; xm = statistics.mean(xs)
+        den = sum((x-xm)**2 for x in xs)
+        for j in range(len(values)):
+            ys = [h[1][j] for h in hist]
+            if not all(math.isfinite(y) for y in ys):
+                # 缺失辅助通道不拿旧中心凑票；恢复后要等下一次完整快照。
+                if any(math.isfinite(y) for y in ys): return False
+                continue
+            ym = statistics.mean(ys)
+            slope = sum((x-xm)*(y-ym) for x,y in zip(xs,ys))/den
+            if max(ys)-min(ys)>RUNTIME_NEUTRAL_MAX_SPAN_DEG or abs(slope)>RUNTIME_NEUTRAL_MAX_SLOPE_DEG_S:
+                return False
+        # 同一时刻安装所有通道的窗口中位数，原校准字段始终不变。
+        snapshot = {}
+        for key in ("main", "frozen", "world", "proxy"):
+            vs = [h[2][key] for h in hist]
+            snapshot[key] = statistics.median(vs) if all(math.isfinite(v) for v in vs) else math.nan
+        snapshot["multi"] = (tuple(statistics.median(h[2]["multi"][i] for h in hist)
+                                   for i in range(len(sample["multi"]))) if sample["multi"] is not None else None)
+        self._runtime_neutral = snapshot
+        self._runtime_neutral_epoch += 1
+        self._runtime_neutral_at = now
+        self._runtime_neutral_pending = False
+        self._runtime_neutral_samples = []
+        self._x_intent_v153.reset()
+        self._yaw_filter.reset()
+        self._reset_frozen22_gate()
+        self.output_x = 0.0
+        return True
+
     def _reset_frozen22_gate(self) -> None:
         self._base_output_x = 0.0
         self._frozen22_gate_history = []
@@ -3275,7 +3365,7 @@ class HeadController:
         is_pnp = self._effective_estimator_algorithm() == "pnp"
         degree_scale = 1.0 if is_pnp else PNP_YAW_SPAN_DEG / RATIO_YAW_SPAN
         pitch_scale = 1.0 if is_pnp else PNP_PITCH_SPAN_DEG / RATIO_PITCH_SPAN
-        main = sign * (self.control_yaw - self.center_yaw) * degree_scale
+        main = sign * (self.control_yaw - self._runtime_reference("main", self.center_yaw)) * degree_scale
         pitch = (self.raw.pitch - self.center_pitch) * pitch_scale
         dt = now - self._cue_last_at if self._cue_last_at else 0.0
         pitch_velocity = (
@@ -3309,7 +3399,7 @@ class HeadController:
             self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
             and math.isfinite(self.frozen22_cal_sigma_deg)
         )
-        f22 = sign * self.frozen22_yaw_median if f22_valid else math.nan
+        f22 = sign * (self.frozen22_yaw_median - self._runtime_reference("frozen", 0.0)) if f22_valid else math.nan
         f22_threshold = max(0.60, 2.0 * self.frozen22_cal_sigma_deg) if f22_valid else math.inf
         f22_ok = f22_valid and direction * f22 >= f22_threshold
         world_valid = bool(
@@ -3317,20 +3407,21 @@ class HeadController:
             and math.isfinite(self.noise_world_rigid_yaw)
             and self.noise_world_rigid_yaw <= 2.5
         )
-        world = sign * self.current_world_rigid_yaw if world_valid else math.nan
+        world = sign * (self.current_world_rigid_yaw - self._runtime_reference("world", 0.0)) if world_valid else math.nan
         world_threshold = max(0.75, 2.0 * self.noise_world_rigid_yaw) if world_valid else math.inf
         world_ok = world_valid and direction * world >= world_threshold
         world_opposite = world_valid and direction * world <= -world_threshold
 
         votes = 0
+        proxy_center = self._runtime_reference("multi", self.center_multi2d_proxy)
         proxy_valid = bool(
-            self.current_multi2d_proxy is not None and self.center_multi2d_proxy is not None
+            self.current_multi2d_proxy is not None and proxy_center is not None
             and self.noise_multi2d_proxy is not None
-            and min(len(self.current_multi2d_proxy), len(self.center_multi2d_proxy), len(self.noise_multi2d_proxy)) >= 7
+            and min(len(self.current_multi2d_proxy), len(proxy_center), len(self.noise_multi2d_proxy)) >= 7
         )
         if proxy_valid:
             for index, scale in zip(MULTI2D_USE, MULTI2D_SCALE):
-                delta = sign * (self.current_multi2d_proxy[index] - self.center_multi2d_proxy[index]) / scale
+                delta = sign * (self.current_multi2d_proxy[index] - proxy_center[index]) / scale
                 sigma = self.noise_multi2d_proxy[index] / scale
                 if math.isfinite(delta) and math.isfinite(sigma) and direction * delta >= max(0.65, 2.0 * sigma):
                     votes += 1
@@ -3438,7 +3529,7 @@ class HeadController:
         ):
             return estimate.yaw
 
-        proxy_delta = estimate.yaw_proxy - self.center_yaw_proxy
+        proxy_delta = estimate.yaw_proxy - self._runtime_reference("proxy", self.center_yaw_proxy)
         self.yaw_proxy_delta = proxy_delta
         # This diagnostic threshold classifies whether the independent proxy
         # also sees motion.  It never changes the value returned to control.
@@ -3654,6 +3745,12 @@ class HeadController:
             self.norm_x = self.norm_y = 0.0
             return 0.0, 0.0
 
+        runtime_muted = False
+        if policy == "gesture_v188":
+            # Refreshing an existing reference is optional: noisy auxiliary
+            # channels must not disable an already calibrated controller.
+            runtime_muted = self._runtime_neutral_pending and self._runtime_neutral is None
+            self._capture_runtime_neutral(now)
         yaw_gain = (
             PERSONAL_PNP_YAW_GAIN
             if (policy in V153_POLICIES and self.config["algorithm"] == "pnp" and self.personal_pnp_active)
@@ -3667,8 +3764,8 @@ class HeadController:
             raw_x = sign * self.frozen22_yaw_median / span_x if frozen22_ready else 0.0
             intent_raw_x = raw_x
         else:
-            raw_x = sign * yaw_gain * (self.signal_yaw - self.center_yaw) / span_x
-            intent_raw_x = sign * yaw_gain * (control_yaw - self.center_yaw) / span_x
+            raw_x = sign * yaw_gain * (self.signal_yaw - self._runtime_reference("main", self.center_yaw)) / span_x
+            intent_raw_x = sign * yaw_gain * (control_yaw - self._runtime_reference("main", self.center_yaw)) / span_x
         raw_x = _clamp(raw_x, -4.0, 4.0)
         intent_raw_x = _clamp(intent_raw_x, -4.0, 4.0)
         raw_y = (
@@ -3691,17 +3788,33 @@ class HeadController:
             )
             start_x *= self.personal_pnp_far_depth_ratio ** PERSONAL_PNP_FAR_START_POWER
 
-        if policy in FROZEN22_POLICIES and not frozen22_ready:
+        self._runtime_raw_x, self._runtime_intent_raw_x, self._runtime_span_x = raw_x, intent_raw_x, span_x
+        if runtime_muted:
+            self._x_intent_v153.reset()
+            vx = 0.0
+        elif policy in FROZEN22_POLICIES and not frozen22_ready:
             self._x_intent_v153.reset()
             vx = 0.0
             self.frozen22_gate_source = "FIXED22_NOT_READY"
             self.frozen22_gate_scale = 0.0
         else:
+            settle_before = getattr(self._x_intent_v153, "_neutral_settle_serial", 0)
             vx = self._x_intent_v153.update(
                 raw_x, now, raw_norm=intent_raw_x, start_angle=start_x,
                 start_velocity=0.12, keep_velocity=0.045, return_velocity=0.060,
                 stop_grace_s=0.075, acceleration_stop=1.15, curve_gamma=1.30,
             )
+            if policy == "gesture_v188" and getattr(self._x_intent_v153, "_neutral_settle_serial", 0) != settle_before:
+                self._arm_runtime_neutral()
+                vx = 0.0
+            elif policy == "gesture_v188" and self._runtime_neutral_pending and (
+                self._x_intent_v153.state in {"TURN_LEFT", "TURN_RIGHT"}
+                or self._x_intent_v153.return_latched
+            ):
+                # A new action cancels the deferred refresh. Keeping it armed
+                # would adopt the next off-centre hold as a neutral pose.
+                self._runtime_neutral_pending = False
+                self._runtime_neutral_samples = []
             self._last_intent_drive = vx
             self._last_evidence_scale = self._horizontal_evidence_scale(vx, now, policy)
             vx *= self._last_evidence_scale
@@ -3762,6 +3875,8 @@ class HeadController:
         elif not frame_valid:
             code = "FIXED22_MISSING_POINTS" if fixed else "ESTIMATE_INVALID"
             message = "固定特征所需关键点不完整" if fixed else (self.raw.error or "当前姿态无效")
+        elif policy == "gesture_v188" and self._runtime_neutral_pending and self._runtime_neutral is None:
+            code, message = "RUNTIME_NEUTRAL_WAIT", "请自然正视屏幕并静止，正在确认运行中心"
         elif abs(self.output_x) > 1e-12:
             code, message = "OUTPUT_ACTIVE", "头控模块已有横向输出；若鼠标不动，请检查上层输出链路"
         elif self._x_intent_v153.return_latched:
@@ -3784,6 +3899,15 @@ class HeadController:
         yaw_unit = "degrees" if self.config["algorithm"] == "pnp" else "ratio"
         active_value = self.frozen22_yaw_median if fixed else self.control_yaw
         return {
+            "runtime_neutral_pending": self._runtime_neutral_pending,
+            "runtime_neutral_epoch": self._runtime_neutral_epoch,
+            "runtime_neutral_at": self._runtime_neutral_at,
+            "runtime_neutral": ({k: ([v if math.isfinite(v) else None for v in val] if isinstance(val, tuple) else val if val is None or math.isfinite(val) else None)
+                                  for k, val in self._runtime_neutral.items()} if self._runtime_neutral is not None else None),
+            "raw_x": self._runtime_raw_x,
+            "intent_raw_x": self._runtime_intent_raw_x,
+            "span_x": self._runtime_span_x,
+            "sign_x": -1 if self.config["invert_x"] else 1,
             "horizontal_frame_valid": frame_valid,
             "horizontal_control_ready": bool(ready and self.config["enabled"] and not self.calibrating),
             "horizontal_block_reason": code,
