@@ -36,6 +36,7 @@ HOST=aliyun
 APP_DIR=/opt/motioncontrol
 SKIP_WEB=0
 PHONE_WEB=""
+BUNDLE_FRESH=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -76,6 +77,7 @@ if [ -d "$PC_DIR/app" ]; then
     }
     rm -rf cloud/app_bundle
     cp -r build/app_bundle cloud/app_bundle
+    BUNDLE_FRESH=1
 else
     echo "    没有发布包，这次不带更新包（已经在服务器上的那份保持不变）"
 fi
@@ -102,7 +104,7 @@ echo "==> 在服务器上安装"
 # 远端用退出码 90 表示"还没初始化"，那不是失败。set -e 会在非 0 时立刻结束整个
 # 脚本，所以这里要显式关掉它来拿到退出码，否则下面的判断永远执行不到。
 set +e
-ssh "$HOST" "APP_DIR='$APP_DIR' bash -s" <<'REMOTE'
+ssh "$HOST" "APP_DIR='$APP_DIR' BUNDLE_FRESH='$BUNDLE_FRESH' bash -s" <<'REMOTE'
 set -euo pipefail
 
 # 第一次跑的时候这个目录还不存在，bootstrap.sh 也还没上来——它就在这个包里。
@@ -110,7 +112,20 @@ mkdir -p "$APP_DIR"
 cd "$APP_DIR"
 
 echo "    解包"
-# --overwrite 而不是先删：删掉再解压之间服务是半坏的，覆盖则是逐文件替换。
+# 更新包这个目录必须先清空再解，不能只靠 --overwrite。
+#
+# --overwrite 只替换同名文件，从来不删除已经不在包里的那些，于是上一次构建的产物
+# 会永远留在这里。而服务端的清单是**按目录里的实际内容**现算 digest 的，本地签名
+# 却是按打包时那一份签的——多出一个残留文件，两个 digest 就对不上，电脑端当场
+# 拒绝整份更新包，而且是静默的：没有一台机器会说自己更新失败了。
+# 2026-09-22 真踩过，两个旧的 js 残留让线上的自更新通道整个停摆。
+#
+# 只清这一个目录，而且只在这次确实带了新包时清。不带新包的部署要保住服务器上
+# 现有的那份——清了就等于把还在服务的更新包删掉，换来一个空目录。
+if [ "${BUNDLE_FRESH:-0}" = "1" ]; then
+    rm -rf "$APP_DIR/cloud/app_bundle"
+fi
+# 其余部分用 --overwrite 而不是先删：删掉再解压之间服务是半坏的，覆盖是逐文件替换。
 tar xzf /tmp/motioncontrol-cloud.tar.gz -C "$APP_DIR" --overwrite
 rm -f /tmp/motioncontrol-cloud.tar.gz
 chown -R root:root "$APP_DIR/cloud" "$APP_DIR/motioncontrol_shared" "$APP_DIR/game_profiles"
