@@ -9,6 +9,19 @@ from motioncontrol.scene_layout import SceneLayoutManager
 from motioncontrol.voice_backend import VoiceService
 
 
+def test_capture_keeps_view_preferences_and_new_capture_defaults_off(tmp_path):
+    manager = SceneLayoutManager(tmp_path)
+    first = manager.capture_reference(textured_frame(), pose(), {})
+    assert not first['vertical_look']['enabled']
+    assert not first['vertical_look']['body_motion_guard']
+    preferences = {'enabled': True, 'source': 'head', 'body_motion_guard': True}
+    manager.capture_reference(textured_frame(), pose(), {}, vertical_preferences=preferences)
+    again = manager.capture_reference(textured_frame(), pose(), {})
+    assert again['vertical_look']['enabled']
+    assert again['vertical_look']['source'] == 'head'
+    assert again['vertical_look']['body_motion_guard']
+
+
 class FakeOutput:
     def __init__(self):
         self.enabled = True

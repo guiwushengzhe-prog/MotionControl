@@ -62,6 +62,10 @@ def _gate_pose(*, yaw=0.0, pitch=0.0, left_x=0.2):
 
 def _ready_controller(tmp_path):
     c = HeadController(tmp_path / "head.json")
+    # 这一组测的是 v097/v5.1 那条管线自己的行为（意图状态机、俯仰对横向的闸门），
+    # 不是"当前默认算法的行为"。所以算法要钉死在这里——默认值换成侧倾实验模式那天
+    # 这几条会全红，而它们其实一个字都没过时，只是被换了被测对象。
+    c.configure(horizontal_algorithm="gesture_v153")
     c.estimator = NumericEstimator()
     c.center_pending = False
     c.calibrated = True
@@ -211,8 +215,8 @@ def test_pitch_gates_horizontal_and_returning_to_centre_restores_it(tmp_path):
             time.sleep(.04)
             kernel.handle_pose_map("camera", _gate_pose(yaw=6.0 * index),
                                    width=640, height=480)
-        # 水平方向整体翻转过（原始画面的左右跟玩家相反）；这里看的是通不通，不是朝哪边。
-        assert output.axes[-1][0] < 0.0
+        # 默认跟随玩家转头方向；这里同时确认门控放行后的方向。
+        assert output.axes[-1][0] > 0.0
         assert kernel.head["horizontal_block_reason"] == "OUTPUT_ACTIVE"
 
         # Same turn while also pitching: horizontal is withheld, vertical is not.
@@ -236,8 +240,7 @@ def test_pitch_gates_horizontal_and_returning_to_centre_restores_it(tmp_path):
             time.sleep(.04)
             kernel.handle_pose_map("camera", _gate_pose(yaw=yaw, pitch=pitch),
                                    width=640, height=480)
-        assert output.axes[-1][0] < 0.0
+        assert output.axes[-1][0] > 0.0
         assert kernel.head["horizontal_block_reason"] == "OUTPUT_ACTIVE"
     finally:
         kernel.close()
-

@@ -26,4 +26,17 @@ if ($adb) {
     }
 }
 
+# Reuse a healthy existing instance instead of starting a second process that
+# would fail while binding 8765/8766.
+try {
+    $running = Invoke-WebRequest -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2
+} catch {
+    $running = $null
+}
+if ($running -and $running.StatusCode -eq 200) {
+    Write-Host 'MotionControl 已在运行，正在打开控制页面。'
+    Start-Process 'http://127.0.0.1:8766/'
+    exit 0
+}
+
 python -X utf8 server.py

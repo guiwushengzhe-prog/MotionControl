@@ -29,7 +29,8 @@ from motioncontrol.head_control import (
 )
 from motioncontrol_shared.profile_schema import flatten_bindings
 from motioncontrol_shared.motion_conflicts import validate_motion_config
-from motioncontrol.hand_mouse_control import HANDS, HandMouseController
+from motioncontrol.hand_mouse_control import HANDS
+from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseController
 from motioncontrol.pose_recorder import PoseRecorder
 
 
@@ -311,7 +312,7 @@ class ControlKernel:
             # Optional axis exclusivity: entering the left-hand gate may pause
             # horizontal head output while vertical view control is active.
             "exclusive_axes": False,
-            "body_motion_guard": True,
+            "body_motion_guard": False,
             "center_x": 0.5, "center_y": 0.5, "range_y": 0.18, "deadzone": 0.10,
         }
         self.vertical_gate_active = False
@@ -372,7 +373,7 @@ class ControlKernel:
         # Head estimation keeps observing frames, but strong exercise motion
         # must not move the in-game camera. This guard uses body-normalized
         # limb velocity because action labels can be intermittent or absent.
-        self.body_motion_guard_enabled = True
+        self.body_motion_guard_enabled = False
         self.body_motion_guard_active = False
         self.body_motion_guard_raw = 0.0
         self.body_motion_guard_score = 0.0
@@ -427,6 +428,11 @@ class ControlKernel:
         self.head_controller = HeadController(self._head_profile_path())
         self._general_raw: dict = {}
         self._load_general_settings()
+        # 新玩家使用侧倾左右配左手上下；初次校准只保存头控档案时，重启仍保留该组合。
+        if not isinstance(self._general_raw.get("hand_mouse"), dict) and (
+            not self._head_profile_path().exists() or self.head_controller.config["horizontal_algorithm"] == "roll_tilt"
+        ):
+            self.hand_mouse_controller.configure({"horizontal_hand": "off", "vertical_hand": "left"})
         self.head = self.head_controller.status(time.monotonic())
         self.sensor_sources: dict[str, dict] = {}
         self._thread.start()
@@ -911,7 +917,8 @@ class ControlKernel:
                 pose_map, now, width=self.width, height=self.height,
                 source=str(self.active_body_source or ""),
                 extra={"hand_spread": hand["spread"], "fist": hand["engaged"],
-                       "hand": hand["hand"]},
+                       "hand": hand["hand"], "hands": hand["hands"],
+                       "axes": hand["axes"]},
             )
         self._update_zones_locked(pose_map, now)
         self._update_motion_locked(pose_map, now)
@@ -1379,21 +1386,17 @@ class ControlKernel:
                 return True
         return False
 
-    def _hand_points_for_mouse_locked(self) -> list[dict] | None:
-        """The 21 points for whichever hand is steering, if the device sent them."""
-        if not self.latest_hands:
-            return None
-        return self.latest_hands.get(str(self.hand_mouse_controller.config.get("hand", "right")))
+    def _hand_points_for_mouse_locked(self) -> dict | None:
+        """两只手各自使用自己的关节点，缺失时分别退回人体指尖判断。"""
+        return self.latest_hands
 
     def configure_hand_mouse(self, updates: dict | None) -> dict:
         """Apply a settings change under the kernel lock and report the result."""
         with self._lock:
             status = self.hand_mouse_controller.configure(updates)
             self._save_general_settings()
-            if not status["enabled"]:
-                # Leaving the pointer mid-drift after a disable would keep the
-                # last velocity applied until head control next writes.
-                self._safe_output(self.output.apply, 0.0, 0.0)
+            # 换手或调参都废弃旧起点，立即清掉上一帧速度。
+            self._safe_output(self.output.apply, 0.0, 0.0)
             return status
 
     def _hand_mouse_owns_zone(self, name: str) -> bool:
@@ -1402,14 +1405,10 @@ class ControlKernel:
         lookGate is tied to the left wrist, so it belongs to the left hand here
         even though its name does not say so.
         """
-        if not self.hand_mouse_controller.engaged:
-            return False
-        hand = str(self.hand_mouse_controller.config.get("hand", "right"))
         if name == "lookGate":
-            return hand == "left"
-        # Only that hand's own zones.  A bare startswith(hand) would also catch
-        # leftFoot/rightFoot, and the feet are still free to act.
-        return name.startswith(f"{hand}Hand")
+            return self.hand_mouse_controller.owns_hand("left")
+        return any(name.startswith(f"{hand}Hand") and
+                   self.hand_mouse_controller.owns_hand(hand) for hand in HANDS)
 
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
         previous_gate = bool(self.vertical_gate_active)
@@ -2062,14 +2061,8 @@ class ControlKernel:
             if self.vertical_wrist_anchor_rel_y is not None else None
         )
         self.head["vertical_anchor_samples"] = len(self.vertical_anchor_samples)
-        # Hand steering takes both axes while the fist is closed, and hands them
-        # straight back when it opens.  Blending the two would mean the pointer
-        # drifts with the head while the player is trying to aim, so this is a
-        # takeover rather than a sum.
-        hand_mouse = self.hand_mouse_controller.status()
-        if hand_mouse["engaged"]:
-            x = float(hand_mouse["output_x"])
-            y = float(hand_mouse["output_y"])
+        # 每个方向只由一个来源输出；垂直握拳不阻断头部左右转向。
+        x, y = self.hand_mouse_controller.compose_output(x, y)
         # Reporting belongs in status_locked, not here: that function rebuilds
         # self.head from head_controller.status(), so anything written to the
         # dict at this point is discarded before a client ever sees it.
@@ -2079,6 +2072,7 @@ class ControlKernel:
     # ---------- safety/status ----------
 
     def _clear_body_outputs_locked(self) -> None:
+        self.hand_mouse_controller.reset()
         for state in self.zone_state.values():
             state.update({"inside": 0, "outside": 0, "pressed": False})
         self.zone_rects = {}
@@ -2208,14 +2202,9 @@ class ControlKernel:
         self.head["output_y"] = round(
             float(vertical_output) if self.vertical_gate_active else 0.0, 3
         )
-        # Last word on both axes, because that is what actually reached the
-        # mouse: everything above derives from head control, which the hand
-        # takes over from while the fist is closed.  Placed after the vertical
-        # block rather than beside hand_mouse above, where output_y would be
-        # overwritten a few lines later.
-        if self.head["hand_mouse"]["engaged"]:
-            self.head["output_x"] = self.head["hand_mouse"]["output_x"]
-            self.head["output_y"] = self.head["hand_mouse"]["output_y"]
+        # 状态与实际输出共用方向归属，不能把头部左右误报成手部的零值。
+        self.head["output_x"], self.head["output_y"] = self.hand_mouse_controller.compose_output(
+            self.head["output_x"], self.head["output_y"], self.head["hand_mouse"])
         sensors = {
             source: {key: copy.deepcopy(value) for key, value in state.items() if key != "received_at"}
             | {"age_ms": round(max(0.0, (now - state["received_at"]) * 1000.0))}

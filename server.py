@@ -108,7 +108,8 @@ def _scene_capture_with_frame(frame, purpose: str) -> dict:
     # the wrong location.  Gameplay itself still uses the newest frame.
     pose = KERNEL.stable_pose_snapshot(window_s=0.90, min_samples=6) or KERNEL.latest_pose
     if purpose == "capture":
-        SCENE.capture_reference(frame, pose, KERNEL.zone_rects)
+        SCENE.capture_reference(frame, pose, KERNEL.zone_rects,
+                                vertical_preferences=KERNEL.vertical_look)
     elif purpose == "rematch":
         result = SCENE.rematch(frame, pose)
         if not result.get("last_result", {}).get("ok"):
@@ -312,8 +313,7 @@ def _phone_control_payload() -> dict:
 
 
 def _hand_tracking_request() -> dict:
-    status = KERNEL.hand_mouse_controller.status()
-    return {"enabled": bool(status["enabled"]), "hand": str(status["hand"])}
+    return KERNEL.hand_mouse_controller.tracking_request()
 
 provider = getattr(INPUT_BRIDGE, "configure_control_config_provider", None)
 if provider is not None:

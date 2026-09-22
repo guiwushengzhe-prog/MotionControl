@@ -5,7 +5,7 @@
 <body><div class="wrap">
 <div class="command-dock">
 <header class="top"><div class="brand"><h1>MotionControl <small>2.0</small></h1><span class="tagline">让身体成为游戏手柄</span></div>
-<span id="serviceStatus" role="status">正在连接服务…</span><button class="btn danger" id="stopBtn">紧急停止 · F9</button></header>
+<span id="serviceStatus" role="status">正在连接服务…</span><button class="btn" id="viewGuideBtn">操作指导</button><button class="btn danger" id="stopBtn">紧急停止 · F9</button></header>
 <!-- 分页的轴：开始 = 现在要玩；本游戏 = 换游戏就会变的；通用 = 换游戏不用动的。 -->
 <nav aria-label="主要页面"><button aria-current="page" class="btn" data-view="play" data-view-hint="看画面、校准、开始控制">开始</button><button class="btn" data-view="games" data-view-hint="只影响当前游戏：按键映射、自定义动作、云端配置">本游戏</button><button class="btn" data-view="devices" data-view-hint="所有游戏共用：设备、手感、语音口令、诊断">通用设置</button><span class="view-hint" id="viewHint">看画面、校准、开始控制</span></nav>
 <section class="session-bar"><div><span class="muted">当前游戏</span><div id="currentGameName">正在读取…</div></div><div><button class="btn primary main-action-btn" disabled="" id="mainActionBtn">连接设备</button><div id="mainActionStatus" role="status">等待服务状态</div></div></section>
@@ -139,13 +139,43 @@
 </div>
 
 <h2 class="group-head">手感</h2>
-<div class="settings-section" id="handMouseSettings">
-<div class="title">手控鼠标</div>
-<p class="lede">握拳移动手掌控制鼠标，松开就停。握拳期间这只手的区域按键暂停。</p>
-<p class="fineprint">开启后手机多跑一次手部识别，帧率约降一成。需要手机端 33 点传输。</p>
-<label><input checked="" id="handMouseEnabled" type="checkbox"><span>启用手控鼠标</span></label>
+<div class="settings-section wide" id="headSettings">
+<div class="view-control-heading"><div class="title">视角控制</div><button class="btn" id="viewGuideSettingsBtn">操作指导</button></div>
+<p class="lede">左右与上下分别选择。头部方案只控制左右，默认由左手握拳后移动手控制上下。</p>
+<div class="view-control-grid">
+<label>左右控制<select id="viewHorizontalSource"><option value="roll_tilt">头部侧倾</option></select></label>
+<label>上下控制<select id="viewVerticalSource"><option value="left">左手握拳</option></select></label>
+</div>
+<div class="view-control-description" id="viewControlDescription"></div>
+<p class="statusline" id="viewControlStatus" role="status">正在读取当前设置…</p>
+<details class="view-control-more"><summary>更多设置</summary>
+<section class="view-control-subsection">
+<h3>绿色区域与抬低头</h3>
+<p class="fineprint">这是原有的上下视角方案，与握拳后移动手不同。</p>
+<label>原有上下方案<select id="verticalLookSource"><option value="off">关闭</option><option value="hand">右手配合绿色区域</option><option value="head">抬低头</option></select></label>
+</section>
+<section class="view-control-subsection">
+<h3>头部控制细调</h3>
 <div class="advgrid">
-<label>使用哪只手<select id="handMouseHand"><option value="right">右手</option><option value="left">左手</option></select></label>
+<div class="tiny">中心稳定区 <b id="deadzoneValue">10%</b><input aria-label="设置选项" id="deadzone" max="25" min="3" type="range" value="10"/></div>
+<div class="tiny">左右视角速度 <b id="speedXValue">58%</b><input aria-label="设置选项" id="speedX" max="120" min="20" step="2" type="range" value="58"/></div>
+<div class="tiny head-vertical-setting">头部上下速度 <b id="speedYValue">46%</b><input aria-label="设置选项" id="speedY" max="100" min="15" step="2" type="range" value="46"/></div>
+</div>
+<div class="checkrow">
+<label><input checked="" id="headEnable" type="checkbox"/> 启用头部控制</label>
+<label><input id="bodyMotionGuard" type="checkbox"/> 身体动作时稳定视角</label>
+<label><input id="verticalExclusive" type="checkbox"/> 原有上下方案启用时暂停左右</label>
+<label class="head-vertical-setting"><input id="invertY" type="checkbox"/> 抬低头方向反转</label>
+</div>
+<span id="headSaveStatus" role="status"></span><button class="btn" hidden="" id="retryHeadBtn">重试保存设置</button>
+</section>
+<section class="view-control-subsection" id="handMouseSettings">
+<h3>握拳控制细调</h3>
+<p class="fineprint">握拳期间只暂停所选手的区域按键；同一只手可同时控制左右和上下，也可左右手分轴。</p>
+<label><input checked="" id="handMouseEnabled" type="checkbox"><span>启用握拳视角控制</span></label>
+<div class="advgrid">
+<label>握拳左右<select id="handMouseHorizontalHand"><option value="off">关闭</option><option value="right">右手</option><option value="left">左手</option></select></label>
+<label>握拳上下<select id="handMouseVerticalHand"><option value="left">左手</option><option value="right">右手</option><option value="off">关闭</option></select></label>
 <label>灵敏度 <span id="handMouseSensitivityValue">—</span><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"></label>
 <label>中心死区 <span id="handMouseDeadzoneValue">—</span><input id="handMouseDeadzone" max="0.6" min="0" step="0.02" type="range"></label>
 </div>
@@ -167,24 +197,8 @@
 <p class="statusline" id="poseRecordStatus">未录制</p>
 </details>
 <span id="handMouseSaveStatus" role="status"></span>
-</div>
-
-<div class="settings-section" id="headSettings">
-<div class="title">视角</div>
-<p class="lede">头部控制左右视角；左手进入绿色区域后才允许上下。用手控鼠标转视角的话，把上下视角设成「关闭」，绿色区域就不出现了。</p>
-<div class="advgrid">
-<label>上下视角控制<select id="verticalLookSource"><option value="off">关闭</option><option value="hand">右手</option><option value="head">头部</option></select></label>
-<div class="tiny">中心稳定区 <b id="deadzoneValue">10%</b><input aria-label="设置选项" id="deadzone" max="25" min="3" type="range" value="10"/></div>
-<div class="tiny">左右视角速度 <b id="speedXValue">58%</b><input aria-label="设置选项" id="speedX" max="120" min="20" step="2" type="range" value="58"/></div>
-<div class="tiny head-vertical-setting">头部上下速度 <b id="speedYValue">46%</b><input aria-label="设置选项" id="speedY" max="100" min="15" step="2" type="range" value="46"/></div>
-</div>
-<div class="checkrow">
-<label><input checked="" id="headEnable" type="checkbox"/> 头控</label>
-<label><input checked="" id="bodyMotionGuard" type="checkbox"/> 身体动作时稳定视角</label>
-<label><input id="verticalExclusive" type="checkbox"/> 上下控制时暂停左右</label>
-<label class="head-vertical-setting"><input id="invertY" type="checkbox"/> 上下反转</label>
-</div>
-<span id="headSaveStatus" role="status"></span><button class="btn" hidden="" id="retryHeadBtn">重试保存设置</button>
+</section>
+</details>
 </div>
 
 <h2 class="group-head">语音</h2>
@@ -202,7 +216,8 @@
 <details id="advancedSettings"><summary>高级设置与诊断</summary>
 <div class="advgrid">
 <label>算法<select id="headAlgorithm"><option value="pnp">三维头姿（推荐）</option><option value="ratio">脸部比例（实验）</option></select></label>
-<label>横向头控<select id="headHorizontalAlgorithm"><option value="gesture_v188">多信号融合（原稳健版）</option><option value="gesture_v153">个性化 PnP（原 v153）</option><option value="frozen22">固定特征 2D</option></select></label>
+<label>横向头控<select id="headHorizontalAlgorithm"><option value="gesture_v188">多信号融合（原稳健版）</option><option value="gesture_v153">个性化 PnP（原 v153）</option><option value="frozen22">固定特征 2D</option><option selected="" value="roll_tilt">侧倾转向（实验）</option></select></label>
+<div class="fineprint" hidden="" id="rollTiltHint">脸朝屏幕，头向左肩或右肩倾斜时持续转向，回正立即停止。</div>
 <label>采集兼容模式<select id="cameraBackend"><option selected="" value="auto">自动</option><option value="msmf">系统媒体采集</option><option value="dshow">传统兼容采集</option></select></label>
 </div>
 <details class="perf-panel" id="performancePanel"><summary>高级诊断</summary>
@@ -216,5 +231,6 @@
 
 <dialog aria-labelledby="fixedZonesTitle" id="fixedZonesMask"><div class="dialog-head"><h2 id="fixedZonesTitle">这会切换成固定区域</h2></div><p>现在的六个区域跟随你的身体，换个站位也对得上。记录参考场景后它们会<strong>固定在画面坐标上，不再跟随身体</strong>；你挪动位置就要重新匹配一次。</p><p>头顶跳跃区也会改用固定判定，起跳手感和现在不同。</p><div class="settings-actions"><button class="btn safe primary" id="fixedZonesCancel">取消，继续用跟随区域</button><button class="btn danger" id="fixedZonesConfirm">仍要切换成固定区域</button></div></dialog>
 <dialog aria-labelledby="voiceTitle" id="voiceCommandsMask"><div class="dialog-head"><h2 id="voiceTitle">语音指令</h2><button class="btn" id="closeVoiceCommandsBtn">关闭</button></div><div id="voiceCommandGrid"></div></dialog>
+<dialog aria-labelledby="viewGuideTitle" id="viewGuideMask"><div class="dialog-head"><h2 id="viewGuideTitle">操作指导</h2><button class="btn" id="closeViewGuideBtn">关闭</button></div><p class="lede" id="viewGuideIntro"></p><ol class="guide-steps" id="viewGuideSteps"></ol><div class="settings-actions"><button class="btn" id="skipViewGuideBtn">跳过，以后可随时打开</button><button class="btn primary" id="finishViewGuideBtn">完成</button></div></dialog>
 <dialog aria-labelledby="calibrationStage" class="calibration-overlay" id="calibrationOverlay"><div class="calibration-card"><div class="calibration-kicker">头控中心</div><div class="calibration-stage" id="calibrationStage">准备校准</div><div class="calibration-prompt" id="calibrationPrompt">请看向游戏屏幕中心</div><div class="calibration-countdown" id="calibrationCountdown">8.0</div><div class="calibration-progress"><div id="calibrationProgressBar"></div></div><div class="calibration-detail" id="calibrationDetail"></div><button class="calibration-cancel" id="calibrationCancel">取消校准</button></div></dialog>
 </div><script src="/app.js" type="module"></script></body></html>

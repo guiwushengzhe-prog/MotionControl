@@ -46,7 +46,9 @@ def test_hand_mouse_survives_a_restart(home):
     second = ControlKernel(Output())
     config = second.hand_mouse_controller.config
     assert config["enabled"] is True
-    assert config["hand"] == "left"
+    assert config["horizontal_hand"] == "left"
+    assert config["vertical_hand"] == "right"
+    assert config["sensitivity"] == 55
 
 
 def test_vertical_look_off_survives_a_restart(home):
