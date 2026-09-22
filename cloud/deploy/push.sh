@@ -89,15 +89,35 @@ echo "==> 打包并上传"
 #
 # 打进去的东西：服务本身、共享校验器、200 个游戏配置（种子要用）。
 # 挡在外面的：node_modules(65 MB)、字节码、任何数据库文件。
-tar czf - \
-    --exclude='__pycache__' \
-    --exclude='node_modules' \
-    --exclude='*.pyc' \
-    --exclude='*.db' \
-    --exclude='*.db-journal' \
-    --exclude='.vite' \
-    cloud motioncontrol_shared game_profiles \
-  | ssh "$HOST" 'cat > /tmp/motioncontrol-cloud.tar.gz'
+#
+# 重试三次：这条链路会间歇被重置（Connection reset by ... port 22），而包只有
+# 2 MB，不是传太大超时。重置发生在这一步是安全的——服务还没动，线上原样，但对
+# 跑它的人来说就是白跑一趟，还得自己判断"这次是不是真坏了"。
+upload() {
+    tar czf - \
+        --exclude='__pycache__' \
+        --exclude='node_modules' \
+        --exclude='*.pyc' \
+        --exclude='*.db' \
+        --exclude='*.db-journal' \
+        --exclude='.vite' \
+        cloud motioncontrol_shared game_profiles \
+      | ssh -o ServerAliveInterval=15 -o ConnectTimeout=20 "$HOST" \
+            'cat > /tmp/motioncontrol-cloud.tar.gz'
+}
+
+for attempt in 1 2 3; do
+    if upload; then
+        break
+    fi
+    if [ "$attempt" = 3 ]; then
+        echo "    上传三次都被重置。线上没动过，现在还是旧那份。" >&2
+        echo "    先确认服务器连得上：ssh $HOST 'uptime'" >&2
+        exit 1
+    fi
+    echo "    第 $attempt 次被重置，等一下重试…"
+    sleep $((attempt * 5))
+done
 ssh "$HOST" 'echo "    $(du -h /tmp/motioncontrol-cloud.tar.gz | cut -f1)"'
 
 echo "==> 在服务器上安装"
