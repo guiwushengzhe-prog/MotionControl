@@ -24,8 +24,13 @@ sys.path.insert(0, str(ROOT))
 from motioncontrol.version import VERSION  # noqa: E402
 
 # 只扫会被人改的地方。build/ 是产物，.git 是历史，node_modules 不是我们的。
+#
+# test_results/ 是跑完就封存的实验数据，留着写文章用。它的 manifest 自带一个
+# version 字段，记的是那次实验当时的版本——它**不该**跟着发版走，而这条测试的意思
+# 恰恰是"该跟着走却会被漏改的地方"。2026-09-22 撞上过：版本号升到 2.1.1 的那一刻，
+# 一份碰巧也叫 2.1.1 的旧实验数据就把测试弄红了，而那份数据一个字都不用改。
 SKIP_DIRS = {"build", ".git", "node_modules", "__pycache__", "dist",
-             "app_bundle", "models", "venv", ".venv", "output"}
+             "app_bundle", "models", "venv", ".venv", "output", "test_results"}
 # 这些文件里出现版本号是它本来的工作。
 ALLOWED = {
     "motioncontrol/version.py",          # 唯一那一处
