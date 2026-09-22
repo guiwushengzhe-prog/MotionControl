@@ -1947,6 +1947,27 @@ class ControlKernel:
                     self.pose_debounce.pop(ident, None)
             self._dispatch_controls_locked(time.monotonic())
 
+    def _effective_bindings_locked(self) -> dict[str, dict]:
+        """每个触发器**真正会按下去的**那一份，界面照这个显示。
+
+        为什么不能直接给 control_bindings：区域和动作有一层内置的兜底。配置里没有
+        zone.headJump 这一条时，它照样按 A——兜底在 _effective_binding_locked 里。
+        于是界面读配置读出个空，写「未映射」，而人在游戏里明明被按了一个键。
+
+        这种不一致最难查：界面说没绑，实际有反应，两边都"没报错"。所以真正会生效的
+        那份必须由内核算好报出来，不能让界面自己再猜一遍——猜就一定会有第二套规则。
+        """
+        triggers = set(self.control_bindings)
+        triggers.update(f"zone.{name}" for name in RUNTIME_BODY_ZONES)
+        triggers.update(f"motion.{item.get('id')}" for item in self.motion_config
+                        if item.get("id"))
+        out: dict[str, dict] = {}
+        for trigger in triggers:
+            binding = self._effective_binding_locked(trigger)
+            if binding:
+                out[trigger] = copy.deepcopy(binding)
+        return out
+
     def _effective_binding_locked(self, trigger: str) -> dict | None:
         binding = self.control_bindings.get(trigger)
         if binding is not None:
@@ -2345,6 +2366,8 @@ class ControlKernel:
             "custom_pose_scores": dict(self.custom_pose_scores),
             "pose_confidence": copy.deepcopy(self.pose_confidence),
             "control_bindings": copy.deepcopy(self.control_bindings),
+            # 界面要显示"按的是哪个键"时用这一份，见 _effective_bindings_locked。
+            "effective_bindings": self._effective_bindings_locked(),
             "recent_triggers": list(self.recent_triggers),
             # 界面要靠它把 at 换算成"几秒前"。用服务端自己的钟，省得和浏览器对时。
             "now": round(now, 3),

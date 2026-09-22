@@ -573,3 +573,58 @@ dialog::backdrop { background: #030812dc; }
   to{box-shadow:0 0 0 2px rgba(57,192,122,0) inset}}
 
 .voice-trigger-phrase { display: block; width: 100%; margin-top: 6px; box-sizing: border-box; }
+
+/* 靶场：站到镜头前试，打中了什么用大字写出来。
+   字号是这一页的全部意义——人在几米外，小字等于没有。 */
+.range{display:flex;flex-direction:column;gap:1rem;max-width:64rem;margin:0 auto}
+.range-intro .title{font-size:1.2em;font-weight:600}
+.range-warn{margin-top:.5rem;padding:.45rem .7rem;border-radius:6px;
+  background:rgba(224,100,95,.14);border:1px solid #8a3b38;color:#f0a6a3;font-size:.9em}
+
+/* 大字命中。min-height 写死是为了它别在"有内容/没内容"之间跳，
+   那一跳会把下面整面靶子墙顶上顶下。 */
+.range-hit{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:.3rem;min-height:7.5rem;padding:1rem;border-radius:12px;
+  border:2px solid var(--line,#2a2e35);background:rgba(127,127,127,.06);
+  transition:border-color .12s,background .12s}
+.range-hit.on{border-color:#39c07a;background:rgba(57,192,122,.10)}
+.range-hit-what{font-size:2.6em;line-height:1.25;text-align:center;font-weight:700;
+  word-break:break-word}
+.range-hit.on .range-hit-what{color:#4ae08d}
+.range-hit-when{font-size:.95em;color:var(--muted,#9aa3af);font-variant-numeric:tabular-nums}
+
+/* 靶子墙 */
+.range-targets{display:flex;flex-direction:column;gap:.9rem}
+.range-group-title{font-size:.85em;color:var(--muted,#9aa3af);margin-bottom:.4rem}
+.range-grid{display:grid;gap:.5rem;
+  grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))}
+.range-target{display:flex;flex-direction:column;align-items:flex-start;gap:.15rem;
+  padding:.55rem .7rem;border-radius:8px;text-align:left;
+  border:1px solid var(--line,#2a2e35);background:rgba(127,127,127,.06);cursor:pointer;
+  transition:border-color .1s,background .1s,transform .1s}
+.range-target:hover{border-color:#4c8dff}
+.range-target-name{font-size:.88em;color:var(--muted,#9aa3af)}
+.range-target-key{font-size:1.35em;line-height:1.2;font-variant-numeric:tabular-nums}
+.range-target.unmapped .range-target-key{font-size:1em;color:var(--muted,#9aa3af);opacity:.7}
+/* 打中：绿的、鼓一下。按着不放就一直鼓着。 */
+.range-target.on{border-color:#39c07a;background:rgba(57,192,122,.16);transform:scale(1.04)}
+.range-target.on .range-target-key{color:#4ae08d}
+.range-target.flash{border-color:#39c07a;background:rgba(57,192,122,.16);
+  animation:range-flash .8s ease-out}
+@keyframes range-flash{
+  from{background:rgba(57,192,122,.30);border-color:#39c07a;transform:scale(1.06)}
+  to{background:rgba(127,127,127,.06);border-color:var(--line,#2a2e35);transform:scale(1)}}
+
+/* 命中记录 */
+.range-log-title{font-size:.85em;color:var(--muted,#9aa3af);margin-bottom:.4rem}
+.range-log{display:flex;flex-wrap:wrap;gap:.35rem}
+.range-log-item{padding:.2rem .6rem;font-size:.86em;line-height:1.7;
+  border:1px solid var(--line,#2a2e35);border-radius:999px;background:transparent;
+  color:var(--muted,#9aa3af);cursor:pointer;font-variant-numeric:tabular-nums}
+.range-log-item:hover{color:inherit;border-color:#4c8dff}
+
+@media (max-width:700px){
+  .range-hit{min-height:6rem}
+  .range-hit-what{font-size:1.8em}
+  .range-grid{grid-template-columns:repeat(auto-fill,minmax(7.5rem,1fr))}
+}

@@ -23,9 +23,11 @@ const EDGES = [
   ['right_ankle','right_foot_index'],
 ];
 const BODY_ZONES = {leftHand:{body:'左手',button:'X',parts:['leftHandUpper','leftHandLower']},rightHand:{body:'右手',button:'B',parts:['rightHandUpper','rightHandLower']},leftFoot:{body:'左脚',button:'LB'},rightFoot:{body:'右脚',button:'RB'},headJump:{body:'头顶'},lookGate:{label:'上下视角',body:'左手放这里',button:null,gate:true}};
-// 圈上写的那个字以前是写死的，于是它和真实映射会悄悄对不上——headJump 一直显示
-// 'A'，而 'A' 早就是右手下那个区的键了，头顶这块在当前配置里压根没绑东西。
-// 现在一律从运行时的 control_bindings 里取。取不到就说"未映射"，而不是编一个。
+// 圈上写的那个字以前是写死的，和真实映射悄悄对不上——头顶那块一直显示 'A'。
+// 后来改成读配置，结果错到了另一边：配置里没 zone.headJump 这一条时它写「未映射」，
+// 可内核有一层内置兜底，它照样按 A。于是界面说没绑、游戏里却有反应。
+//
+// 现在读内核算好的 effective_bindings（见 bindingsForDisplay）——真会按下去的那份。
 function actionKeyText(action){
   if(!action)return null;
   const type=String(action.type||''),target=String(action.target||'').toUpperCase();
@@ -47,14 +49,25 @@ function voiceLatchText(status){
   const keys=list.map((item)=>actionKeyText(item)||item.target).filter(Boolean);
   return keys.length?`语音按住 ${keys.join('、')}`:null;
 }
-// 一个触发器现在绑的是什么。圈上、姿势卡片上都用它，写法才会是一致的。
+// 界面上显示"按的是哪个键"时，读的必须是内核算好的那份。
+//
+// control_bindings 是配置，而区域和动作还有一层内置兜底：配置里没有
+// zone.headJump 时它照样按 A。直接读配置会写成「未映射」，而人在游戏里
+// 明明被按了一个键——这种"界面说没绑、实际有反应"最难查，两边都不报错。
+function bindingsForDisplay(){
+  return kernelState?.effective_bindings||kernelState?.control_bindings||{};
+}
+// 一个触发器现在绑的是什么。圈上、姿势卡片上、靶场里都用它，写法才一致。
 function triggerKeyLabel(triggerKey){
-  const binding=(kernelState?.control_bindings||{})[triggerKey];
+  const binding=bindingsForDisplay()[triggerKey];
   const text=binding&&!binding.disabled?actionKeyText(binding.action):null;
   return text||'未映射';
 }
 // 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
 function revealBindingRow(triggerKey){
+  // 从「开始」页点过来的话，映射表所在的页签还藏着——藏着的东西滚不过去，
+  // 也高亮不出来。先切过去再找。
+  if(currentView!=='games')showView('games');
   const row=document.querySelector(`.binding-row[data-trigger="${triggerKey}"]`);
   if(!row){notice('这个动作还没出现在映射表里，刷新一下页面再试');return}
   row.closest('details')?.setAttribute('open','');
@@ -65,7 +78,7 @@ function revealBindingRow(triggerKey){
 }
 // 手部一块圈里有上下两个绑定，所以它的标注天然是两个键，写成 "Y / X"。
 function zoneKeyLabel(id,def){
-  const all=kernelState?.control_bindings||{};
+  const all=bindingsForDisplay();
   const ids=def.parts||[id];
   const texts=ids.map((one)=>{const b=all['zone.'+one];return b&&!b.disabled?actionKeyText(b.action):null;}).filter(Boolean);
   return texts.length?texts.join(' / '):'未映射';
@@ -278,6 +291,7 @@ function renderKernelState(runtime,force=false){
   // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
   paintPoseCountdown(runtime?.pose_capture);
   renderTriggerLive();
+  renderRange();
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
   currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
@@ -2386,25 +2400,29 @@ function agoText(seconds) {
 const TRIGGER_FLASH_S = 1.2;
 
 function renderTriggerLive() {
-  const box = document.getElementById('triggerLive');
-  if (!box || box.hidden) return;
+  // 页上可能有两块：「开始」那页一块，映射表上方一块。两块写同一份东西。
+  //
+  // 为什么要两块：你站在摄像头前做动作时人在「开始」页，而改键在「本游戏」页。
+  // 只放映射表旁边的话，等你切过去，刚才那一下已经过去了。
+  const boxes = [...document.querySelectorAll('.trigger-live')].filter(box => !box.hidden);
   const names = new Map(profileTriggers().map(item => [item.key, item.name]));
-  const bindings = kernelState?.control_bindings || {};
+  const bindings = bindingsForDisplay();
   const now = Number(kernelState?.now) || 0;
   const events = kernelState?.recent_triggers || [];
-
   const active = [...activeTriggerKeys()].filter(key => names.has(key));
-  const nowEl = document.getElementById('triggerLiveNow');
-  if (nowEl) {
-    // 现在按着的写大字：这时候人站在几米外，小字看不见。
-    nowEl.textContent = active.length
-      ? active.map(key => `${names.get(key)} → ${actionKeyText(bindings[key]?.action) || '未映射'}`).join('　')
-      : '还没有触发';
-    nowEl.classList.toggle('idle', !active.length);
-  }
 
-  const log = document.getElementById('triggerLiveLog');
-  if (log) {
+  for (const box of boxes) {
+    const nowEl = box.querySelector('.trigger-live-now');
+    if (nowEl) {
+      // 现在按着的写大字：这时候人站在几米外，小字看不见。
+      nowEl.textContent = active.length
+        ? active.map(key => `${names.get(key)} → ${actionKeyText(bindings[key]?.action) || '未映射'}`).join('　')
+        : '还没有触发';
+      nowEl.classList.toggle('idle', !active.length);
+    }
+
+    const log = box.querySelector('.trigger-live-log');
+    if (!log) continue;
     log.replaceChildren();
     for (const event of events.slice(-6).reverse()) {
       const key = String(event.trigger || '');
@@ -2437,3 +2455,162 @@ function renderTriggerLive() {
   }
 }
 
+/* --- 靶场 ---------------------------------------------------------------
+ * 站到镜头前做个动作，看打中了什么、按的是哪个键。
+ *
+ * 它单独一个页签，不挤在映射表旁边。两个原因：
+ *
+ * 一是你做动作的时候人在几米外，字必须大。挤在编辑器旁边的那种一行小字，走近了
+ * 才看得清，而走近了就做不成动作了。
+ * 二是"试"和"改"是两回事。试的时候要看的是"这一下到底认出来没有"，改的时候要看的
+ * 是一整张表。混在一起两边都憋屈。
+ *
+ * 靶子墙上把没映射的也列出来，这是整个页面最有用的一条信息：动作亮了、键位写着
+ * 「未映射」，说明识别是好的，只是没绑——而这两种情况在游戏里的表现完全一样，
+ * 都是"我做了但没反应"。
+ */
+
+/** 打中之后大字停留多久。太短了人还没把视线从镜头挪回屏幕就已经没了。 */
+const RANGE_HIT_HOLD_S = 3.0;
+/** 靶子亮多久。比大字短，因为连着做动作时它要跟得上。 */
+const RANGE_FLASH_S = 0.8;
+
+const RANGE_GROUPS = [
+  { key: 'zones', name: '身体区域' },
+  { key: 'motions', name: '身体动作' },
+  { key: 'poses', name: '自定义动作' },
+  { key: 'voice', name: '语音口令' },
+];
+
+let rangeTargetKeys = '';
+
+function rangeTriggers() {
+  const bindings = bindingsForDisplay();
+  return profileTriggers().filter(item => {
+    // 身体那三类全列出来——"动作认出来了但没绑键"正是这一页要让人看见的。
+    if (item.group !== 'voice') return true;
+    // 语音有二十多条，全铺上去就成了一面墙。只列绑了键的。
+    const binding = bindings[item.key];
+    return !!(binding && !binding.disabled && binding.action);
+  });
+}
+
+function buildRangeTargets(triggers) {
+  const wall = document.getElementById('rangeTargets');
+  if (!wall) return;
+  wall.replaceChildren();
+  for (const group of RANGE_GROUPS) {
+    const items = triggers.filter(item => item.group === group.key);
+    if (!items.length) continue;
+    const block = document.createElement('div');
+    block.className = 'range-group';
+    const title = document.createElement('div');
+    title.className = 'range-group-title';
+    title.textContent = group.name;
+    const grid = document.createElement('div');
+    grid.className = 'range-grid';
+    for (const item of items) {
+      const target = document.createElement('button');
+      target.type = 'button';
+      target.className = 'range-target';
+      target.dataset.trigger = item.key;
+      target.title = '点一下去改它的键';
+      const name = document.createElement('span');
+      name.className = 'range-target-name';
+      name.textContent = item.name;
+      const key = document.createElement('b');
+      key.className = 'range-target-key';
+      target.append(name, key);
+      target.addEventListener('click', () => revealBindingRow(item.key));
+      grid.appendChild(target);
+    }
+    block.append(title, grid);
+    wall.appendChild(block);
+  }
+}
+
+function renderRange() {
+  const panel = document.getElementById('rangePanel');
+  if (!panel || panel.hidden) return;
+
+  const triggers = rangeTriggers();
+  // 只在靶子本身变了的时候重建。每 250ms 重建一次的话，鼠标压根点不中。
+  const signature = triggers.map(item => item.key).join('|');
+  if (signature !== rangeTargetKeys) {
+    rangeTargetKeys = signature;
+    buildRangeTargets(triggers);
+  }
+
+  const names = new Map(triggers.map(item => [item.key, item.name]));
+  const bindings = bindingsForDisplay();
+  const now = Number(kernelState?.now) || 0;
+  const events = kernelState?.recent_triggers || [];
+  const held = activeTriggerKeys();
+
+  const warn = document.getElementById('rangeOutputWarn');
+  // 输出关着的时候这一页照样亮——这正是人要排查的那种情况，所以说清楚。
+  if (warn) warn.hidden = !!output.enabled;
+
+  // 大字：正按着的优先，其次是刚打中的那一下。
+  const holding = [...held].filter(key => names.has(key));
+  const latest = events.length ? events[events.length - 1] : null;
+  const since = latest ? Math.max(0, now - Number(latest.at || 0)) : Infinity;
+  const what = document.getElementById('rangeHitWhat');
+  const when = document.getElementById('rangeHitWhen');
+  const hit = document.getElementById('rangeHit');
+  if (holding.length) {
+    what.textContent = holding
+      .map(key => `${names.get(key)} → ${actionKeyText(bindings[key]?.action) || '未映射'}`)
+      .join('　');
+    when.textContent = '正按着';
+    hit.className = 'range-hit on';
+  } else if (latest && since <= RANGE_HIT_HOLD_S) {
+    const key = String(latest.trigger || '');
+    what.textContent = `${names.get(key) || key} → ${actionKeyText(latest.action) || '未映射'}`;
+    when.textContent = agoText(since);
+    hit.className = 'range-hit on';
+  } else if (latest) {
+    const key = String(latest.trigger || '');
+    what.textContent = `${names.get(key) || key} → ${actionKeyText(latest.action) || '未映射'}`;
+    when.textContent = agoText(since);
+    hit.className = 'range-hit';
+  } else {
+    what.textContent = '站到镜头前，做个动作试试';
+    when.textContent = '';
+    hit.className = 'range-hit';
+  }
+
+  // 靶子：按着的常亮，刚打中的闪一下。没绑键的写「未映射」并且压暗。
+  const fresh = new Set(events.filter(event => now - Number(event.at || 0) <= RANGE_FLASH_S)
+                              .map(event => String(event.trigger || '')));
+  for (const target of document.querySelectorAll('.range-target')) {
+    const key = target.dataset.trigger;
+    const text = actionKeyText(bindings[key]?.action);
+    target.querySelector('.range-target-key').textContent = text || '未映射';
+    target.classList.toggle('unmapped', !text);
+    target.classList.toggle('on', held.has(key));
+    target.classList.toggle('flash', !held.has(key) && fresh.has(key));
+  }
+
+  const log = document.getElementById('rangeLog');
+  if (!log) return;
+  log.replaceChildren();
+  if (!events.length) {
+    const empty = document.createElement('span');
+    empty.className = 'fineprint';
+    empty.textContent = '还没打中过。';
+    log.appendChild(empty);
+    return;
+  }
+  for (const event of events.slice(-8).reverse()) {
+    const key = String(event.trigger || '');
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'range-log-item';
+    row.textContent = `${agoText(Math.max(0, now - Number(event.at || 0)))} · `
+      + `${names.get(key) || key} → ${actionKeyText(event.action) || '未映射'}`;
+    row.title = '点一下去改它的键';
+    row.addEventListener('click', () => revealBindingRow(key));
+    log.appendChild(row);
+  }
+}
