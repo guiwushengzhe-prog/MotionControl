@@ -405,6 +405,7 @@ def test_center_timeout_is_finite_and_safe(tmp_path):
 
 def _ready_controller(tmp_path, *, yaw=0.0, pitch=0.0):
     c = HeadController(tmp_path / "head.json")
+    c.configure(horizontal_algorithm="gesture_v153")  # 本组验证转头，侧倾另有专项测试。
     c.estimator = NumericEstimator()
     c.center_pending = False
     c.calibrated = True

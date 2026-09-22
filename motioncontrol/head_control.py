@@ -87,9 +87,8 @@ DEFAULT_CONFIG = {
     # 常开，不再是一个开关。理由同手控鼠标：这不是偏好，是默认值本来就错了。
     "invert_x": False,
     "invert_y": False,
-    # Horizontal (yaw) output policy; see HORIZONTAL_ALGORITHMS below.
-    # Default to the responsive PnP route; classic is a compatibility alias.
-    "horizontal_algorithm": "gesture_v153",
+    # 新用户默认侧倾；已有档案继续使用保存的左右转向方案。
+    "horizontal_algorithm": "roll_tilt",
     # One user-facing stability zone shared by both axes.  Automatic center
     # noise can only enlarge it, never make it smaller than this value.
     "deadzone": 0.10,
@@ -4213,7 +4212,7 @@ class HeadController:
             if algorithm not in HEAD_ALGORITHMS:
                 return
             horizontal_algorithm = str(
-                params.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"])
+                params.get("horizontal_algorithm", "gesture_v153")
             ).lower().strip()
             # Profiles written before the v153 policy used a few transient
             # names (for example ``gesture``).  Do not let those silently

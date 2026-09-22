@@ -441,13 +441,13 @@ class SceneLayoutManager:
             "rightHandLower": right_ear_circle,
         }
         vertical = {
-            "enabled": True,
+            "enabled": False,
             "gate_zone_id": "lookGate",
             "point": "right_wrist",
             "source": "hand",
             "verticalLookSource": "hand",
             "exclusive_axes": False,
-            "body_motion_guard": True,
+            "body_motion_guard": False,
             "center_x": _clamp(rw["x"], 0.0, 1.0),
             "center_y": _clamp(rw["y"], 0.0, 1.0),
             "range_y": _clamp(torso * 0.75, 0.10, 0.28),
@@ -455,7 +455,8 @@ class SceneLayoutManager:
         }
         return zones, vertical
 
-    def capture_reference(self, frame, pose: dict[str, dict] | None, dynamic_rects: dict[str, dict] | None = None) -> dict:
+    def capture_reference(self, frame, pose: dict[str, dict] | None, dynamic_rects: dict[str, dict] | None = None,
+                          *, vertical_preferences: dict | None = None) -> dict:
         ready, reason = _pose_ready(pose, require_placement=False)
         if not ready:
             raise ValueError(reason)
@@ -470,6 +471,11 @@ class SceneLayoutManager:
         if _best_point(pose or {}, ("right_wrist",), 0.03) is None:
             fallback.append("right_wrist")
         zones, vertical = self._initial_layout(placement_pose, dynamic_rects)
+        # 重新定位只更新位置，不重新开启上下绿区或身体保护。
+        preferences = vertical_preferences if vertical_preferences is not None else (self.reference or {}).get("vertical_look", {})
+        for key in ("enabled", "source", "verticalLookSource", "exclusive_axes", "body_motion_guard"):
+            if key in preferences:
+                vertical[key] = preferences[key]
         self.config_dir.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(self.reference_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), 94]):
             raise RuntimeError("参考截图保存失败")
@@ -531,7 +537,7 @@ class SceneLayoutManager:
                 "source": "head" if str(vertical.get("source", vertical.get("verticalLookSource", old.get("source", "hand")))).lower() in {"head", "头部"} else "hand",
                 "verticalLookSource": "head" if str(vertical.get("verticalLookSource", vertical.get("source", old.get("source", "hand")))).lower() in {"head", "头部"} else "hand",
                 "exclusive_axes": bool(vertical.get("exclusive_axes", old.get("exclusive_axes", False))),
-                "body_motion_guard": bool(vertical.get("body_motion_guard", old.get("body_motion_guard", True))),
+                "body_motion_guard": bool(vertical.get("body_motion_guard", old.get("body_motion_guard", False))),
                 "center_x": _clamp(vertical.get("center_x", old.get("center_x", 0.5)), 0.0, 1.0),
                 "center_y": _clamp(vertical.get("center_y", old.get("center_y", 0.5)), 0.0, 1.0),
                 "range_y": _clamp(vertical.get("range_y", old.get("range_y", 0.18)), 0.06, 0.40),

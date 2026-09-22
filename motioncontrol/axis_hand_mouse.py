@@ -27,8 +27,8 @@ def normalize_config(current: dict | None, updates: dict | None) -> dict:
             raise ValueError(f"未知手控设置：{key}")
     config.update(changes)
     for axis in AXES:
-        if config[f"{axis}_hand"] not in HANDS:
-            raise ValueError("控制手只能选择左手或右手")
+        if config[f"{axis}_hand"] not in (*HANDS, "off"):
+            raise ValueError("控制手只能选择左手、右手或关闭")
     # 握拳阈值等共用原有校验，不复制识别规则。
     scalar = {key: value for key, value in config.items() if key in HAND_DEFAULTS}
     validated = merge_config(None, scalar)
@@ -69,15 +69,33 @@ class AxisHandMouseController:
     def owns_hand(self, hand):
         return self.hands[hand].engaged
 
+    def tracking_request(self):
+        hands = list(dict.fromkeys(self.config[f"{axis}_hand"] for axis in AXES
+                                   if self.config[f"{axis}_hand"] in HANDS))
+        return {"enabled": bool(self.config["enabled"] and hands),
+                "hand": hands[0] if hands else "right", "hands": hands}
+
+    def compose_output(self, x, y, state=None):
+        """只接管分配给手的方向；例如握拳上下时保留头部左右。"""
+        state = self.status() if state is None else state
+        if state["engaged"]:
+            if self.config["horizontal_hand"] != "off":
+                x = float(state["output_x"])
+            if self.config["vertical_hand"] != "off":
+                y = float(state["output_y"])
+        return x, y
+
     def status(self):
         hands = {hand: controller.status() for hand, controller in self.hands.items()}
         axes = {}
         for axis, coordinate in AXES.items():
             hand = self.config[f"{axis}_hand"]
-            state = hands[hand]
-            axes[axis] = {**state, "output": state[f"output_{coordinate}"]}
+            if hand == "off":
+                axes[axis] = {"hand": "off", "enabled": False, "engaged": False, "state": "disabled", "output": 0.0}
+            else:
+                axes[axis] = {**hands[hand], "output": hands[hand][f"output_{coordinate}"]}
         # 保留既有诊断字段；完整读数按手上报，不能把两只手的握拳读数混在一起。
-        primary = hands[self.config["horizontal_hand"]]
+        primary = hands[self.tracking_request()["hand"]]
         return {**primary, "enabled": bool(self.config["enabled"]),
                 "engaged": self.engaged, "config": dict(self.config),
                 "output_x": axes["horizontal"]["output"],

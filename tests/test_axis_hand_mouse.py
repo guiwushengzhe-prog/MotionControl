@@ -80,7 +80,7 @@ def test_old_config_migrates_without_losing_tuning():
 def test_kernel_split_output_zones_loss_and_reconnect():
     output = _Output()
     kernel = ControlKernel(output)
-    kernel.configure_hand_mouse({'deadzone':0})
+    kernel.configure_hand_mouse({'horizontal_hand':'right', 'vertical_hand':'left', 'deadzone':0})
     initial = {**body(), **both()}
     feed(kernel, initial)
     feed(kernel, {**body(), **both(right=(0.7,0.5),left=(0.3,0.6))})
