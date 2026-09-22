@@ -35,11 +35,16 @@ export PYTHONIOENCODING=utf-8
 HOST=aliyun
 APP_DIR=/opt/motioncontrol
 SKIP_WEB=0
+PHONE_WEB=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --host) HOST="$2"; shift 2 ;;
         --skip-web) SKIP_WEB=1; shift ;;
+        # 同一个仓库开多个工作树之后，stage_release 那个 ../switch/mobile/dist 默认值
+        # 指向的是别人那份构建产物。打出来的包能签名、能安装，只是手机上跑的是别人
+        # 分支的网页，而没有任何地方会报错。所以这里必须能显式指定。
+        --phone-web) PHONE_WEB="$2"; shift 2 ;;
         *) echo "不认识的参数：$1" >&2; exit 1 ;;
     esac
 done
@@ -66,7 +71,7 @@ echo "==> 电脑端更新包"
 # 的包，所以这一步失败就该停下，而不是发一份装不上的东西上去。
 PC_DIR=$(python tools/release_paths.py pc_dir)
 if [ -d "$PC_DIR/app" ]; then
-    python tools/build_app_bundle.py || {
+    python tools/build_app_bundle.py ${PHONE_WEB:+--phone-web "$PHONE_WEB"} || {
         echo "更新包没做成，不部署" >&2; exit 1
     }
     rm -rf cloud/app_bundle

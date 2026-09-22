@@ -111,7 +111,7 @@ def test_the_bundle_builder_checks_the_signature_after_restaging():
     # 匹配调用而不是完整字面量：restage 后来多了个参数，写死 "restage(target)"
     # 会让这条测试因为一个无关的签名改动就红，而它想钉的顺序一点没变。
     restage = text.index("        restage(target")
-    check = text.index("check_phone_web_signature(target")
+    check = text.index("check_phone_web_signature(")
     packing = text.index("build(target / \"app\")")
     assert restage < check < packing, (
         "验签没夹在 restage 和打包之间：签名可能已经被 restage 丢掉，或者检查得太晚")
