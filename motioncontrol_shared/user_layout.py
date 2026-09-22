@@ -41,6 +41,9 @@ USER_DATA_FILES = {
     # 玩家自己添加的游戏。内置目录只有两百个，搜不到的游戏以前只能占用别人的
     # 坑位，界面上还一直显示着错的名字。
     "custom_games": "custom_games.json",
+    # 这台电脑在手机自动发现里的标识，随机生成一次后一直用。双网卡的电脑会从两个
+    # 接口各回一份应答，手机靠它认出那是同一台——不然界面上会冒出两台电脑让人选。
+    "discovery_instance": "discovery_instance.txt",
 }
 
 # Where 2.0 and earlier wrote them, relative to the program directory.  Only

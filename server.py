@@ -4,6 +4,7 @@ import argparse
 import json
 import mimetypes
 import os
+import socket
 import sys
 import threading
 import webbrowser
@@ -30,6 +31,7 @@ from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_B
 from motioncontrol_shared.model_share import ModelShare
 from motioncontrol.voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
 from motioncontrol.scene_layout import SceneLayoutManager
+from motioncontrol.discovery import DiscoveryResponder
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
 
 # 版本号只有一处，在 motioncontrol/version.py。这里不再写数字：写了就会有第二个
@@ -227,6 +229,34 @@ def _build_pairing_service():
 
 
 PAIRING = _build_pairing_service()
+# main() 里装上。放在这里只是为了让收尾那段能无条件 close 它。
+DISCOVERY: DiscoveryResponder | None = None
+
+
+def _instance_id() -> str:
+    """这台电脑的标识，随机生成一次后存下来。
+
+    双网卡的电脑会从两个接口各回一份应答，手机拿这个把它们认成同一台——不然
+    界面上会冒出两台电脑让人选，而它们其实是一台。
+    """
+    import uuid
+
+    path = user_path("discovery_instance")
+    try:
+        saved = path.read_text(encoding="utf-8").strip()
+        if len(saved) == 12 and all(c in "0123456789abcdef" for c in saved):
+            return saved
+    except OSError:
+        pass
+    made = uuid.uuid4().hex[:12]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(made, encoding="utf-8")
+    except OSError:
+        pass   # 存不下就每次换一个，去重退化但不影响连接
+    return made
+
+
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE, pairing=PAIRING)
 INPUT_BRIDGE.configure_scene_snapshot_handler(_scene_snapshot_from_phone)
 
@@ -1453,6 +1483,19 @@ def main():
     # CORS is involved anywhere.
     device_server = _listen(args.host, args.port, DeviceHandler, "设备接入面")
     admin_server = _listen("127.0.0.1", args.admin_port, AdminHandler, "本机管理面")
+
+    # 第三个面，UDP，同一个端口号。手机往自己所在链路的广播地址喊一声，这里单播
+    # 回一份地址表——不用它的话手机只能挨个敲网段，而共享网络的网段会整个变。
+    # 和上面两个不同：绑不上只记一条原因继续跑。发现是让连接省事，不是产品本身。
+    global DISCOVERY
+    DISCOVERY = DiscoveryResponder(
+        args.host, args.port,
+        candidates=INPUT_BRIDGE.server_candidates,
+        name=socket.gethostname(), version=VERSION, instance=_instance_id(),
+        pairing_required=lambda: bool(PAIRING and PAIRING.require_paired_devices))
+    if not DISCOVERY.start():
+        print(f"手机自动发现未启用：{DISCOVERY.last_error}；手机仍可用地址连接。")
+
     HOTKEYS.start()
     url = f"http://127.0.0.1:{args.admin_port}/"
     print("Open:", url)
@@ -1487,6 +1530,8 @@ def main():
         device_thread.join(timeout=2.0)
         device_server.server_close()
         admin_server.server_close()
+        if DISCOVERY is not None:
+            DISCOVERY.close()
 
 
 if __name__ == "__main__":

@@ -77,6 +77,10 @@ CLASSIFICATION = {
     # 暂时不进白名单：云端还不认识这些 id，收到一个引用了 custom-xxx 的配置
     # 会当成引用了一个不存在的游戏。要一起做，不是加一行能完的事。
     "custom_games": USER_CONFIGURATION,
+    # 这台电脑在手机自动发现里的标识。它的全部意义就是"和别的机器不一样"，
+    # 同步过去等于让两台电脑自称同一台，手机会把第二台当成第一台的另一个网卡，
+    # 于是永远只能看见其中一台。属于绝对不能跨机器走的那一类。
+    "discovery_instance": DEVICE_CONFIGURATION,
     "scene_layout": SPATIAL_CALIBRATION,
     "scene_reference": SPATIAL_CALIBRATION,
 }
