@@ -259,8 +259,24 @@ def _describe_voice_mappings(data: dict) -> dict:
     }
 
 
+def _describe_game_bundle(data: dict) -> dict:
+    """一个游戏的全部配置。按键和身体动作一起看，因为它们本来就是一件事。"""
+    bindings = _describe_overrides(data.get("overrides", {}))
+    motions = _describe_motion_mappings({"motions": data.get("motions", [])})
+    enabled = sum(1 for item in motions["items"] if item["enabled"])
+    return {
+        "kind": "game_bundle",
+        "headline": f"{bindings['total']} 条按键绑定，{enabled} 个身体动作",
+        "game_id": data.get("game_id", ""),
+        "groups": bindings["groups"],
+        "total": bindings["total"],
+        "motions": motions["items"],
+    }
+
+
 _DESCRIBERS = {
     "profile_selection": _describe_profile_selection,
+    "game_bundle": _describe_game_bundle,
     "motion_mappings": _describe_motion_mappings,
     "voice_mappings": _describe_voice_mappings,
 }

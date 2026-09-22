@@ -25,6 +25,9 @@ SELECTION_SCHEMA_V1 = "motioncontrol.profile_selection.v1"
 # has been through the cloud still loads on an older build.
 MOTION_MAPPINGS_SCHEMA = "motioncontrol.motion_mappings.v1"
 VOICE_MAPPINGS_SCHEMA = "motioncontrol.voice_mappings.v1"
+# 一个游戏的全部配置，合成一份。以前一份「我的 GTA5 配置」要分成两个包传，
+# 别人也要分两次装，而它们本来就是同一件事。
+GAME_BUNDLE_SCHEMA = "motioncontrol.game_bundle.v1"
 
 
 def is_selection_v1(data) -> bool:

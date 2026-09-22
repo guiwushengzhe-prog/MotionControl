@@ -15,7 +15,9 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from .security import MIN_PASSWORD_CHARS
 
-DocType = Literal["profile_selection", "motion_mappings", "voice_mappings"]
+# game_bundle 是"一个游戏的全部配置"：按键映射加身体动作，一份。前三种留着是
+# 因为已经传上去的那些还得能下载和安装——改成开不了的废文件是最坏的一种升级。
+DocType = Literal["profile_selection", "motion_mappings", "voice_mappings", "game_bundle"]
 Visibility = Literal["private", "unlisted", "public"]
 
 

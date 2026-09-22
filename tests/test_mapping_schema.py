@@ -34,8 +34,22 @@ windows_only = pytest.mark.skipif(
 
 
 def test_every_syncable_file_has_a_canonical_form():
-    """A new file on the whitelist with no normaliser would reach the hash raw."""
-    assert set(_NORMALIZERS) == CLOUD_SYNC_ALLOWLIST
+    """A new file on the whitelist with no normaliser would reach the hash raw.
+
+    只要求包含，不要求相等。两者曾经是一一对应的，直到 game_bundle 出现：它是
+    一种**文档**，不是一个文件——一个游戏的按键绑定加身体动作，由两个文件拼出来。
+    危险的只有一个方向：白名单上有文件、而没有对应的规范化函数。
+    """
+    assert CLOUD_SYNC_ALLOWLIST <= set(_NORMALIZERS)
+
+
+def test_every_document_type_the_cloud_accepts_has_a_normaliser():
+    """云端收下一种它不会规范化的文档，等于把未校验的内容直接拿去算哈希。"""
+    import typing
+
+    from cloud.app.schemas import DocType
+
+    assert set(typing.get_args(DocType)) == set(_NORMALIZERS)
 
 
 @windows_only

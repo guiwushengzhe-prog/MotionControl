@@ -75,7 +75,9 @@ export interface Version {
   created_at: string;
 }
 
-export type DocType = "profile_selection" | "motion_mappings" | "voice_mappings";
+// game_bundle 是"一个游戏的全部配置"：按键绑定加身体动作，一份。前三种留着，
+// 否则已经传上去的那些就变成开不了的废文件。
+export type DocType = "profile_selection" | "motion_mappings" | "voice_mappings" | "game_bundle";
 export type Visibility = "private" | "unlisted" | "public";
 
 export interface Profile {
@@ -130,6 +132,12 @@ export interface Summary {
   items?: SummaryItem[];
   wake_word?: string;
   emergency_stop_phrases?: string[];
+  // 游戏方案（game_bundle）只讲一个游戏，所以绑定直接摊在这一层，
+  // 不像 profile_selection 那样外套一层 games。
+  game_id?: string;
+  total?: number;
+  groups?: SummaryGroup[];
+  motions?: { name: string; enabled: boolean; action: string }[];
 }
 
 export type FeedbackKind = "bug" | "idea" | "question" | "other";
@@ -182,6 +190,7 @@ export const api = {
 };
 
 export const DOC_TYPE_NAMES: Record<DocType, string> = {
+  game_bundle: "游戏方案",
   profile_selection: "游戏映射",
   motion_mappings: "动作映射",
   voice_mappings: "语音映射",

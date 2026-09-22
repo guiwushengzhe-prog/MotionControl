@@ -36,6 +36,7 @@ from .mapping_schema import (
 from .motion_conflicts import validate_motion_config
 from .profile_schema import normalize_overrides
 from .profile_versions import (
+    GAME_BUNDLE_SCHEMA,
     MOTION_MAPPINGS_SCHEMA,
     SELECTION_SCHEMA,
     VOICE_MAPPINGS_SCHEMA,
@@ -134,6 +135,40 @@ def _normalize_voice_mappings(raw) -> dict:
     }
 
 
+def _normalize_game_bundle(raw) -> dict:
+    """一个游戏的全部配置，合成一份。
+
+    以前一份「我的 GTA5 配置」要分成两个包发出去，别人也要分两次装——而按键映射和
+    身体动作本来就是同一件事：都是"在这个游戏里，我这么玩"。
+
+    里面没有唤醒词、没有急停口令，也没有任何跟机器走的东西。那些是发布者个人
+    的，装到别人机器上只会把人家原来的换掉（见 _normalize_voice_mappings）。
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("游戏方案格式无法读取")
+    _require_schema(raw, GAME_BUNDLE_SCHEMA, "game bundle")
+    game_id = raw.get("game_id")
+    if not isinstance(game_id, str) or not game_id.strip():
+        raise ValueError("游戏方案必须说清楚是哪个游戏：game_id")
+    motions_raw = raw.get("motions", [])
+    if not isinstance(motions_raw, list):
+        raise ValueError("游戏方案数据无效：motions")
+    motions = [normalize_motion_item(item) for item in motions_raw]
+    seen = set()
+    for motion in motions:
+        if motion["id"] in seen:
+            raise ValueError(f"动作 id 重复：{motion['id']}")
+        seen.add(motion["id"])
+    motions.sort(key=lambda motion: motion["id"])
+    validate_motion_config(motions)
+    return {
+        "schema": GAME_BUNDLE_SCHEMA,
+        "game_id": game_id.strip(),
+        "overrides": normalize_overrides(raw.get("overrides", {})),
+        "motions": motions,
+    }
+
+
 # Every document type the canonical form knows about.  An unknown type is an
 # error, not a pass-through: that is what keeps un-normalised data from ever
 # reaching the hash.
@@ -141,6 +176,7 @@ _NORMALIZERS = {
     "profile_selection": _normalize_profile_selection,
     "motion_mappings": _normalize_motion_mappings,
     "voice_mappings": _normalize_voice_mappings,
+    "game_bundle": _normalize_game_bundle,
 }
 
 

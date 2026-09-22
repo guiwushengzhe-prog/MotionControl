@@ -175,6 +175,41 @@ onMounted(load);
           </section>
         </template>
 
+        <!-- 游戏方案：按键绑定和身体动作一起看，因为它们本来就是一件事。 -->
+        <template v-else-if="summary.kind === 'game_bundle'">
+          <section class="game">
+            <h3>
+              <span class="game-id">{{ summary.game_id }}</span>
+              <span class="count">{{ summary.total }} 条</span>
+            </h3>
+            <div v-for="group in summary.groups" :key="group.key" class="group">
+              <h4>{{ group.name }}<span class="count">{{ group.items.length }}</span></h4>
+              <div class="items" :class="{ split: group.items.length > 8 }">
+                <div v-for="item in group.items" :key="item.trigger" class="item"
+                     :class="{ shadowed: item.shadowed_matters }">
+                  <span class="what">{{ item.name }}</span>
+                  <span class="does" :class="{ off: item.disabled || item.shadowed_matters }">
+                    {{ item.action }}
+                    <em v-if="item.shadowed_matters" class="warn">
+                      不生效 · 被「{{ item.shadowed_by }}」覆盖
+                    </em>
+                    <em v-else-if="item.runtime_zone" class="alt">{{ item.runtime_zone }}</em>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="group" v-if="summary.motions?.length">
+              <h4>身体动作<span class="count">{{ summary.motions.length }}</span></h4>
+              <div class="items" :class="{ split: summary.motions.length > 8 }">
+                <div v-for="item in summary.motions" :key="item.name" class="item">
+                  <span class="what" :class="{ off: !item.enabled }">{{ item.name }}</span>
+                  <span class="does" :class="{ off: !item.enabled }">{{ item.action }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </template>
+
         <template v-else-if="summary.kind === 'voice_mappings'">
           <p class="hint" v-if="summary.emergency_stop_phrases?.length">
             紧急停止口令：{{ summary.emergency_stop_phrases.join("、") }}

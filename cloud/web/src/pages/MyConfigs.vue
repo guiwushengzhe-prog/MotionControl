@@ -8,7 +8,7 @@
  * inside the file, because the three filenames are easy to confuse and the
  * server would reject a mismatch with an error that reads like a bug.
  */
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { api, DOC_TYPE_NAMES, formatTime, type DocType, type Profile, type Visibility } from "../api";
 
 const profiles = ref<Profile[]>([]);
@@ -75,6 +75,52 @@ interface Pending {
 
 const pending = ref<Pending[]>([]);
 
+/* --- 合成一份游戏方案 ---------------------------------------------------
+ *
+ * 一份「我的 GTA5 配置」以前要分成两个包传，别人也要分两次装——而按键映射和
+ * 身体动作本来就是同一件事：都是"在这个游戏里，我这么玩"。
+ *
+ * 为什么要选一个游戏：game_profile_selection.json 里是你所有游戏的映射，
+ * 而分享给别人的是其中一个。整份发出去对接收的人没意义，而且把你玩过什么
+ * 游戏也一并告诉了他。
+ */
+const bundleGame = ref("");
+
+const selectionPending = computed(() =>
+  pending.value.find(item => item.docType === "profile_selection"));
+
+const bundleGames = computed<string[]>(() => {
+  const document = selectionPending.value?.document as any;
+  const byProfile = document?.overrides_by_profile;
+  return byProfile && typeof byProfile === "object" ? Object.keys(byProfile).sort() : [];
+});
+
+function combineIntoBundle() {
+  const selection = selectionPending.value?.document as any;
+  const game = bundleGame.value;
+  if (!selection || !game) return;
+  const motionEntry = pending.value.find(item => item.docType === "motion_mappings");
+  const motions = (motionEntry?.document as any)?.motions;
+  pending.value = [
+    ...pending.value.filter(item =>
+      item.docType !== "profile_selection" && item.docType !== "motion_mappings"),
+    {
+      fileName: `${game}的游戏方案`,
+      docType: "game_bundle",
+      document: {
+        schema: "motioncontrol.game_bundle.v1",
+        game_id: game,
+        overrides: selection.overrides_by_profile?.[game] ?? {},
+        // 没拖动作映射那份也能合，只是方案里没有身体动作。
+        motions: Array.isArray(motions) ? motions : [],
+      },
+      title: `我的${game}方案`,
+      gameId: game,
+    },
+  ];
+  bundleGame.value = "";
+}
+
 async function acceptFiles(files: FileList | undefined | null) {
   formError.value = "";
   if (!files || !files.length) return;
@@ -126,6 +172,7 @@ function removePending(index: number) {
 
 function resetForm() {
   pending.value = [];
+  bundleGame.value = "";
   formError.value = "";
   // 可见性也要归位。不归位的话它会跨次沿用：上一份选了公开，下一份就默认公开
   // 而且没有任何提示——用户以为自己传的是私有的。其他字段忘了重置只是麻烦，
@@ -215,6 +262,21 @@ onMounted(load);
             <li v-for="name in CONFIG_FILES" :key="name"><code>{{ name }}</code></li>
           </ul>
           <span class="muted">三个可以一次选完。</span>
+        </div>
+      </div>
+
+      <div class="bundle-hint" v-if="bundleGames.length">
+        <strong>合成一份「游戏方案」</strong>
+        <p class="muted">
+          按键映射和身体动作本来就是同一件事。合成一份之后，别人点一下就全装好了，
+          不用先装一个再找另一个。
+        </p>
+        <div class="bundle-pick">
+          <select v-model="bundleGame" aria-label="选一个游戏">
+            <option value="">选一个游戏…</option>
+            <option v-for="game in bundleGames" :key="game" :value="game">{{ game }}</option>
+          </select>
+          <button type="button" :disabled="!bundleGame" @click="combineIntoBundle">合成方案</button>
         </div>
       </div>
 

@@ -491,6 +491,28 @@ def _install_profile_selection(document: dict, game_id: str | None) -> dict:
     return {"applied_games": applied, "profile": profile}
 
 
+def _install_game_bundle(document: dict) -> dict:
+    """装一份「游戏方案」：那个游戏的按键绑定，加上身体动作。
+
+    走的是和分开那两种完全一样的入口（PROFILES.set_overrides / save_motion_config），
+    所以校验、冲突检查、写盘都是现成的一份，不存在"包里的走了另一条路"。
+    """
+    global MOTION_CONFIG
+    game_id = str(document.get("game_id", "")).strip()
+    if not game_id:
+        raise ValueError("这份方案没说是哪个游戏")
+    PROFILES.select(game_id)
+    PROFILES.set_overrides(document.get("overrides", {}), profile_id=game_id)
+    MOTION_CONFIG = save_motion_config(document.get("motions", []))
+    KERNEL.configure_motions(MOTION_CONFIG)
+    OUTPUT.set_holds([], source_group="motions")
+    profile = PROFILES.effective_profile()
+    with VOICE._lock:
+        VOICE._release_locked(VOICE.source_id)
+        KERNEL.configure_bindings(profile.get("bindings", {}))
+    return {"applied_games": [game_id], "profile": profile, "motions": MOTION_CONFIG}
+
+
 def _install_cloud_config(remote, game_id: str | None) -> dict:
     """Back up, stop output, apply. In that order, and under the profile lock."""
     with PROFILE_UPDATE_LOCK:
@@ -508,6 +530,10 @@ def _install_cloud_config(remote, game_id: str | None) -> dict:
             KERNEL.configure_motions(MOTION_CONFIG)
             OUTPUT.set_holds([], source_group="motions")
             result = {"motions": MOTION_CONFIG}
+        elif remote.doc_type == "game_bundle":
+            # 一份包里就是一个游戏的全部：按键绑定加身体动作。两样一起装，
+            # 不用让人先装一个再找另一个。
+            result = _install_game_bundle(remote.document)
         elif remote.doc_type == "voice_mappings":
             # 只装口令映射。唤醒词和急停口令是装的人自己的，旧文档里带了
             # 也不能拿——拿了就是把他的唤醒词换成发布者的，他只会觉得软件坏了。
@@ -1200,7 +1226,9 @@ class AdminHandler(_BaseHandler):
                         "doc_type": remote.doc_type, "revision_no": remote.revision_no,
                         "sha256": remote.sha256, "game_id": remote.game_id,
                         "games": sorted(remote.document.get("overrides_by_profile", {}))
-                                 if remote.doc_type == "profile_selection" else [],
+                                 if remote.doc_type == "profile_selection"
+                                 else ([remote.document.get("game_id", "")]
+                                       if remote.doc_type == "game_bundle" else []),
                     }})
                 elif route == "/api/cloud/install":
                     remote = CloudClient(cloud_endpoint()).fetch(
