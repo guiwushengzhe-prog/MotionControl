@@ -108,7 +108,9 @@ def test_the_bundle_builder_checks_the_signature_after_restaging():
     安静拒绝，而电脑端这边一切正常，没有一处会说话。
     """
     text = (ROOT / "tools" / "build_app_bundle.py").read_text(encoding="utf-8")
-    restage = text.index("restage(target)")
+    # 匹配调用而不是完整字面量：restage 后来多了个参数，写死 "restage(target)"
+    # 会让这条测试因为一个无关的签名改动就红，而它想钉的顺序一点没变。
+    restage = text.index("        restage(target")
     check = text.index("check_phone_web_signature(target")
     packing = text.index("build(target / \"app\")")
     assert restage < check < packing, (
