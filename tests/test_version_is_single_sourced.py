@@ -55,6 +55,22 @@ def sources():
         yield relative, path
 
 
+def _dependency_line(relative: str, line: str) -> bool:
+    """别人的包碰巧也叫这个版本号。
+
+    package.json 里的 ``"vue-tsc": "^2.2.0"`` 记的是依赖的版本，和我们发的版
+    毫无关系，也不该跟着发版走。2026-09-22 升 2.2.0 时真撞上了——和
+    test_results 那次是同一类误报：一个碰巧相同的数字，一个字都不用改。
+
+    只放过依赖行，不放过整个文件：package.json 自己那个 ``"version"``
+    字段是真的要跟着发版走的，漏改它就是这条测试要拓的那种错。
+    """
+    if not relative.endswith("package.json"):
+        return False
+    key = line.strip().split(":", 1)[0].strip().strip('"')
+    return key not in {"version"}
+
+
 def test_the_current_version_is_not_written_down_anywhere_else():
     """写死当前版本号的地方，就是下次发版会漏改的地方。"""
     offenders = []
@@ -64,7 +80,7 @@ def test_the_current_version_is_not_written_down_anywhere_else():
         except (UnicodeDecodeError, OSError):
             continue
         for number, line in enumerate(text.splitlines(), 1):
-            if VERSION in line:
+            if VERSION in line and not _dependency_line(relative, line):
                 offenders.append(f"{relative}:{number}: {line.strip()[:70]}")
     assert not offenders, (
         "这些地方写死了当前版本号，发下一版时会漏掉：\n  " + "\n  ".join(offenders))
