@@ -837,6 +837,9 @@ class AdminHandler(_BaseHandler):
         if route == "/api/kernel/status":
             self._send_json({"version": VERSION, **RUNTIME.status()})
             return
+        if route == "/api/action-chain/config":
+            self._send_json({"version": VERSION, **KERNEL.status()["action_chain"]})
+            return
         if route == "/api/performance":
             data = performance_snapshot()
             data["version"] = VERSION
@@ -1257,6 +1260,16 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": True, **RUNTIME.status()})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+            return
+        if route == "/api/action-chain/config":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "action chain config is loopback-only"}, 403)
+                return
+            try:
+                data = KERNEL.configure_action_chain(body.get("action_chain", body))
+                self._send_json({"ok": True, "action_chain": data["action_chain"]})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), "action_chain": KERNEL.status()["action_chain"]}, 400)
             return
         if route == "/api/motion/state":
             if not self._is_loopback():
