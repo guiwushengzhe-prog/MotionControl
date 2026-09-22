@@ -81,6 +81,7 @@ KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
 def _apply_effective_profile() -> dict:
     profile = PROFILES.effective_profile()
     KERNEL.configure_bindings(profile.get("bindings", {}))
+    VOICE.configure_profile_bindings(profile.get("bindings", {}))
     return profile
 
 
@@ -206,6 +207,7 @@ VOICE = VoiceService(
     emergency_stop=emergency_stop_all,
     clear_source=OUTPUT.clear_source,
 )
+VOICE.configure_profile_bindings(PROFILES.effective_profile().get("bindings", {}))
 def _build_pairing_service():
     """Device pairing for /ws/input, or None if it cannot run here.
 
@@ -385,6 +387,7 @@ def _install_profile_selection(document: dict, game_id: str | None) -> dict:
     with VOICE._lock:
         VOICE._release_locked(VOICE.source_id)
         KERNEL.configure_bindings(profile.get("bindings", {}))
+        VOICE.configure_profile_bindings(profile.get("bindings", {}))
     return {"applied_games": applied, "profile": profile}
 
 
@@ -471,8 +474,10 @@ def voice_command_catalog() -> dict:
             "id": str(item.get("id", "")),
             "label": str(item.get("label", item.get("phrase", ""))),
             "phrase": str(item.get("phrase", "")),
+            "synonyms": list(item.get("synonyms", []) or []),
             "kind": kind,
             "system_fixed": kind == "system",
+            "editable_phrase": str(item.get("id", "")).startswith("game.profile_slot_"),
             "default_action": {
                 "type": kind,
                 "target": str(item.get("default_target", "")),
@@ -1106,6 +1111,7 @@ class AdminHandler(_BaseHandler):
                     with VOICE._lock:
                         VOICE._release_locked(VOICE.source_id)
                         KERNEL.configure_bindings(profile.get("bindings", {}))
+                        VOICE.configure_profile_bindings(profile.get("bindings", {}))
                     broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
                     if broadcaster is not None:
                         broadcaster(_phone_control_payload())
@@ -1129,6 +1135,7 @@ class AdminHandler(_BaseHandler):
                     with VOICE._lock:
                         VOICE._release_locked(VOICE.source_id)
                         KERNEL.configure_bindings(profile.get("bindings", {}))
+                        VOICE.configure_profile_bindings(profile.get("bindings", {}))
                     broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
                     if broadcaster is not None:
                         broadcaster(_phone_control_payload())

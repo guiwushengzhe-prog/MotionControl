@@ -68,15 +68,14 @@ const SCENE_EDIT_ZONE_IDS=Object.keys(BODY_ZONES);
 let voiceCatalog=[];
 
 function profileTriggers(){
-  // The spare slots stay in the 'voice' group: that name selects the
-  // tap/hold/release control and addresses the saved bindings.  Only the
-  // display splits them out, through a flag the group filters read.
+  // The stable slots are the one editable voice group. Their command IDs stay
+  // unchanged for older phones while the spoken phrase lives in the profile.
   const voiceTriggers=voiceCatalog
-    .filter(item=>!item.system_fixed)
+    .filter(item=>!item.system_fixed&&String(item.id||'').startsWith('game.profile_slot_'))
     .map(item=>({
       key:`voice.${item.id}`,group:'voice',id:item.id,
       slot:String(item.id||'').startsWith('game.profile_slot_'),
-      name:`语音 · ${item.phrase}`,tapOnly:false,
+      name:`口令槽 ${String(item.id||'').replace('game.profile_slot_','')}`,phrase:item.phrase,tapOnly:false,
       defaultBinding:item.default_action?{label:item.label,action:item.default_action}:null,
     }));
   // 用户自己录的姿势并进同一份触发器列表，于是它们自动出现在映射界面里，
@@ -602,8 +601,7 @@ function renderProfileBindingRows(){
   const groups=[
     {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
     {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手过头顶不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
-    {id:'voice',title:'语音',help:'说出完整口令后触发一次；系统安全口令不可改',filter:t=>t.group==='voice'&&!t.slot,open:false},
-    {id:'voiceSlots',title:'语音 · 备用口令',help:'口令固定但动作随你指派，手机麦克风也认得；下方“自定义口令”可自己起名，但只有电脑麦克风能识别',filter:t=>t.group==='voice'&&t.slot,open:false},
+    {id:'voice',title:'语音口令',help:'每个口令槽都可以改“说什么”和执行动作；修改后电脑、手机共用同一份词库。紧急停止始终保留安全兜底。',filter:t=>t.group==='voice',open:false},
   ];
   for(const group of groups){
     const items=triggers.filter(group.filter);if(!items.length)continue;
@@ -615,6 +613,9 @@ function renderProfileBindingRows(){
       const binding=bindingFor(trigger),action=binding?.disabled?null:binding?.action;
       const row=document.createElement('div');row.className='binding-row';row.dataset.trigger=trigger.key;
       const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
+      if(trigger.group==='voice'){
+        const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=binding?.phrase||trigger.phrase||'';phrase.placeholder='例如：体感地图';phrase.title='说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);
+      }
       const type=makeTypeSelect(binding);
       const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
       const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'));
@@ -638,7 +639,13 @@ function readProfileOverrides(){
     const target=String(row.querySelector('.binding-target')?.value||'').trim().toUpperCase();
     if(!target)throw new Error(`${trigger.name} 还没有选择具体键位`);
     const behavior=trigger.tapOnly||type==='mouse_wheel'?'tap':(row.querySelector('select.binding-behavior')?.value||'hold');
-    overrides[trigger.key]={action:{type,target,behavior}};
+    const override={action:{type,target,behavior}};
+    if(trigger.group==='voice'){
+      const phrase=row.querySelector('.voice-trigger-phrase')?.value.trim();
+      if(!phrase)throw new Error(`${trigger.name} 还没有填写触发词`);
+      override.phrase=phrase;
+    }
+    overrides[trigger.key]=override;
   }
   const conflicts=motionConflictsForSelection(selectedMotionIdsFromRows());
   if(conflicts.length)throw new Error(`动作冲突：${motionConflictText(conflicts)}。开合跳与双手过头顶只能选择一个`);
@@ -1019,7 +1026,7 @@ function renderVoiceCommandCard(command){const card=document.createElement('div'
 function renderVoiceCommandCatalog(commands){
   voiceCatalog=Array.isArray(commands)?commands:[];
   const full=$('#voiceCommandGrid');full.replaceChildren();
-  const visible=voiceCatalog.filter(item=>!String(item.id||'').startsWith('game.profile_slot_')||item.effective_action);
+  const visible=voiceCatalog.filter(item=>item.id==='system.emergency_stop'||(String(item.id||'').startsWith('game.profile_slot_')&&item.effective_action));
   for(const [name,items] of [
     ['系统口令 · 所有游戏通用',visible.filter(item=>item.system_fixed)],
     ['当前游戏口令',visible.filter(item=>!item.system_fixed)],

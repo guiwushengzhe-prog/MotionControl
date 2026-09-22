@@ -133,7 +133,8 @@ summary { cursor: pointer; padding: 8px 0; font-weight: 700; }
 .motion-conflict-blocked { opacity: .65; }
 .motion-conflict-error { border-color: #d48389; }
 .voice-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr auto; gap: 10px; margin: 10px 0; }
-.voice-row input, .voice-row select { width: 100%; min-width: 0; }
+.voice-row input, .voice-row select { width: 100%; min-width: 0; }
+.voice-trigger-phrase { display: block; width: 100%; margin-top: 6px; box-sizing: border-box; }
 /* The gamepad picker adds a second control for combos; it stays hidden until
    the combo option is chosen, so the cell normally holds one row. */
 .voice-target-cell { display: grid; gap: 6px; min-width: 0; align-content: start; }
