@@ -186,8 +186,12 @@ def test_motion_and_voice_documents_are_described():
         {"phrase": "开始", "type": "keyboard", "target": "ENTER", "synonyms": ["启动"]},
     ]}).data
     result = describe("voice_mappings", voice)
-    assert "唤醒词「体感」" in result["headline"]
+    assert result["headline"] == "1 条口令"
     assert result["items"][0]["synonyms"] == ["启动"]
+    # 唤醒词不在可分享的配置里，预览里也不该出现——说了反而像在告诉人
+    # "装了就会变成这个"。
+    assert "唤醒词" not in result["headline"]
+    assert "wake_word" not in result
 
 
 def test_an_unknown_document_type_is_refused():

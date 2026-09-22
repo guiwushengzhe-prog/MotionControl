@@ -551,3 +551,23 @@ dialog::backdrop { background: #030812dc; }
   .macro-step-type{flex:1 1 7rem}
   .macro-step-target{flex:1 1 100%}
 }
+
+/* 触发实况：就放在映射表正上方。看到哪一条不对，往下一眼就是改它的那一行。 */
+.trigger-live{margin:.6rem 0 .8rem;padding:.6rem .75rem;border-radius:8px;
+  border:1px solid var(--line,#2a2e35);background:rgba(127,127,127,.07)}
+/* 现在按着的写大字——这时候人站在几米外，小字看不见。 */
+.trigger-live-now{font-size:1.25em;font-weight:600;line-height:1.5;min-height:1.5em}
+.trigger-live-now.idle{font-size:1em;font-weight:400;color:var(--muted,#9aa3af)}
+.trigger-live-log{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.5rem}
+.trigger-live-item{padding:.15rem .55rem;font-size:.82em;line-height:1.6;
+  border:1px solid var(--line,#2a2e35);border-radius:999px;background:transparent;
+  color:var(--muted,#9aa3af);cursor:pointer;font-variant-numeric:tabular-nums}
+.trigger-live-item:hover{color:inherit;border-color:#4c8dff}
+
+/* 正在按着的那一行常亮；点一下就过的闪一下——后者不闪的话，250ms 的轮询根本
+   抓不到，人会以为没触发。 */
+.binding-row.firing{box-shadow:0 0 0 2px #39c07a inset;border-radius:6px}
+.binding-row.just-fired{box-shadow:0 0 0 2px #39c07a inset;border-radius:6px;
+  animation:trigger-fade 1.2s ease-out}
+@keyframes trigger-fade{from{box-shadow:0 0 0 2px #39c07a inset}
+  to{box-shadow:0 0 0 2px rgba(57,192,122,0) inset}}

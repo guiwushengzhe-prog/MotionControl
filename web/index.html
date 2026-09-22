@@ -75,6 +75,11 @@
 <div class="title">按键映射</div>
 <p class="lede">身体区域、身体动作、自定义动作和语音，都在这一张表里绑键。</p>
 <p class="fineprint">改完自动保存。「恢复默认」只影响当前游戏。</p>
+<div class="trigger-live" id="triggerLive">
+<div class="trigger-live-now" id="triggerLiveNow">还没有触发</div>
+<div class="trigger-live-log" id="triggerLiveLog"></div>
+<p class="fineprint">刚才触发过什么都在这儿。点一条就跳到下面它对应的那一行，当场改键。</p>
+</div>
 <fieldset id="mappingFields"><div class="binding-list" id="profileBindingRows"></div></fieldset>
 <div class="profile-actions"><span class="statusline" id="profileSaveStatus" role="status">修改后自动保存</span><button class="btn" hidden="" id="retryProfileSaveBtn">重试保存映射</button><button class="btn" id="resetProfileBindingsBtn">恢复当前游戏默认</button></div>
 </div>
@@ -219,6 +224,18 @@
 </div>
 
 <h2 class="group-head">语音</h2>
+<div class="settings-section wide" id="personalVoicePanel">
+<div class="title">个人语音 · 不分享</div>
+<p class="lede">唤醒词和急停口令是<b>你的</b>，不跟游戏走，也不会跟着配置分享出去。装别人分享的语音配置时，这两项不会被换掉。</p>
+<div class="profile-bar">
+<label>唤醒词<input id="wakeWord" maxlength="12" type="text"/></label>
+<label>急停口令<input id="emergencyPhrases" placeholder="多句用顿号隔开" type="text"/></label>
+<button class="btn" id="personalVoiceSaveBtn">保存</button>
+<span class="statusline" id="personalVoiceStatus" role="status"></span>
+</div>
+<p class="fineprint">内置的那句急停删不掉——输出卡住时它是唯一的出口，所以总会被加回来。</p>
+</div>
+
 <div class="settings-section wide">
 <div class="title">自定义口令</div>
 <p class="lede">这里的口令在所有游戏里都生效，电脑和手机的麦克风都认得。跟着游戏走的语音映射在「本游戏」那一页。</p>

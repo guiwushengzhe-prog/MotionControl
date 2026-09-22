@@ -337,6 +337,30 @@
       "profile": "normal",
       "kind": "keyboard",
       "default_target": "F12"
+    },
+    {
+      "id": "pose.record",
+      "label": "录一个新姿势",
+      "phrase": "体感录姿势",
+      "profile": "safe_system",
+      "kind": "system",
+      "default_target": "POSE.RECORD"
+    },
+    {
+      "id": "pose.add_frame",
+      "label": "给刚录的动作再加一个姿势",
+      "phrase": "体感加姿势",
+      "profile": "safe_system",
+      "kind": "system",
+      "default_target": "POSE.ADD_FRAME"
+    },
+    {
+      "id": "pose.cancel",
+      "label": "取消录制倒计时",
+      "phrase": "体感取消录制",
+      "profile": "safe_system",
+      "kind": "system",
+      "default_target": "POSE.CANCEL"
     }
   ]
 }

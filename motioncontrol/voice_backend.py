@@ -131,6 +131,8 @@ class VoiceService:
         # User data: kept out of the program folder so an upgrade does not
         # discard custom phrases.
         self.config_path = user_path("voice_mappings")
+        # 唤醒词和急停口令单独一份。见 _load_personal 的说明。
+        self.personal_path = user_path("personal_voice")
         self.execute_action = execute_action
         self.emergency_stop = emergency_stop or (lambda: {"executed": True})
         self.clear_source = clear_source or (lambda _source: {})
@@ -183,16 +185,47 @@ class VoiceService:
             if previous is not None:
                 source = previous
             else:
+                self._load_personal({})
                 return
+        legacy: dict = {}
         try:
-            data = json.loads(source.read_text(encoding="utf-8"))
-            self.wake_word = self._validate_wake_word(data.get("wake_word", DEFAULT_WAKE_WORD))
-            self.emergency_stop_phrases = self._validate_emergency_phrases(data.get("emergency_stop_phrases", []))
-            self.mappings = self._validate_mappings(data.get("mappings", []))
-            if source != self.config_path:
-                self._write_config()
+            legacy = json.loads(source.read_text(encoding="utf-8"))
+            self.mappings = self._validate_mappings(legacy.get("mappings", []))
         except Exception as exc:
             self.last_error = f"语音配置读取失败：{exc}"
+        self._load_personal(legacy)
+        if source != self.config_path:
+            self._write_config()
+
+    def _load_personal(self, legacy) -> None:
+        """读唤醒词和急停口令。它们存在自己那一份里，不和口令映射放一起。
+
+        这两项是**你的**，不是某个游戏的：换游戏不变，而且别人下载你分享的语音
+        配置时，不该把他的唤醒词换成你的。以前它们和口令映射挤在同一个文件里，
+        于是装一份别人分享的配置就会顺手把唤醒词覆盖掉——那台机器的主人只会
+        发现"我的唤醒词自己变了"，根本想不到是装配置装的。
+
+        老安装里这两项还在旧文件里，所以读不到新文件时从旧的那份搬过来并落盘。
+        搬家对用户是无感的：唤醒词还是那个唤醒词。
+        """
+        migrating = not self.personal_path.is_file()
+        if migrating:
+            data = legacy if isinstance(legacy, dict) else {}
+        else:
+            try:
+                data = json.loads(self.personal_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.last_error = f"个人语音设置读取失败：{exc}"
+                return
+        try:
+            self.wake_word = self._validate_wake_word(data.get("wake_word", DEFAULT_WAKE_WORD))
+            self.emergency_stop_phrases = self._validate_emergency_phrases(
+                data.get("emergency_stop_phrases", []))
+        except Exception as exc:
+            self.last_error = f"个人语音设置读取失败：{exc}"
+            return
+        if migrating:
+            self._write_personal()
 
     # The rules live in motioncontrol_shared.mapping_schema so the cloud applies
     # exactly the same ones; these stay as the desktop's entry points.
@@ -201,12 +234,19 @@ class VoiceService:
     _validate_mappings = staticmethod(normalize_voice_mappings)
 
     def _write_config(self) -> None:
+        """只写口令映射。唤醒词和急停口令在 _write_personal 那一份里。"""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text(
+            json.dumps({"mappings": self.mappings}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _write_personal(self) -> None:
+        self.personal_path.parent.mkdir(parents=True, exist_ok=True)
+        self.personal_path.write_text(
             json.dumps({
                 "wake_word": self.wake_word,
                 "emergency_stop_phrases": self.emergency_stop_phrases,
-                "mappings": self.mappings,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -221,10 +261,20 @@ class VoiceService:
             if emergency_stop_phrases is not None:
                 self.emergency_stop_phrases = self._validate_emergency_phrases(emergency_stop_phrases)
             self._write_config()
+            self._write_personal()
+            # 内置口令里写着唤醒词，改了唤醒词就要重建一遍，否则它们还卡在旧的那个上。
+            self._load_command_registry()
             self._rebuild_recognizer()
             return self.status()
 
     def _load_command_registry(self) -> None:
+        """读内置口令表，并把里面的唤醒词换成用户自己那个。
+
+        表里存的是完整句子（"体感截图"），写死了默认唤醒词。用户把唤醒词改成
+        别的之后，自己写的口令会跟着变（那些是拼出来的），内置的这几十条却还卡在
+        "体感"上——于是改完唤醒词，截图、校准、开关输出全都叫不动了，而界面上还好
+        端端地列着它们。换一下前缀就没这回事。
+        """
         self.command_registry = {}
         if not self.action_map_file.is_file():
             return
@@ -235,10 +285,25 @@ class VoiceService:
                     if not isinstance(raw, dict):
                         continue
                     command = dict(raw)
-                    command["phrase"] = str(phrase)
-                    self.command_registry[compact_text(phrase)] = command
+                    spoken = self._with_wake_word(str(phrase))
+                    command["phrase"] = spoken
+                    self.command_registry[compact_text(spoken)] = command
         except Exception as exc:
             self.last_error = f"语音命令注册表读取失败：{exc}"
+
+    def _with_wake_word(self, phrase: str) -> str:
+        if self.wake_word == DEFAULT_WAKE_WORD or not phrase.startswith(DEFAULT_WAKE_WORD):
+            return phrase
+        return self.wake_word + phrase[len(DEFAULT_WAKE_WORD):]
+
+    def spoken_emergency_phrases(self) -> list[str]:
+        """急停口令实际要说出口的样子。
+
+        内置的那句是"体感紧急停止"，里面写死了默认唤醒词。存盘的时候保持原样，
+        用的时候才换前缀——存换过的那个的话，唤醒词再改一次就认不出来了，
+        而急停是输出卡住时唯一的出口，它不能有这种“改几次就坏了”的毛病。
+        """
+        return [self._with_wake_word(item) for item in self.emergency_stop_phrases]
 
     def grammar_phrases(self) -> list[str]:
         """Every phrase the constrained grammar must accept.
@@ -248,7 +313,7 @@ class VoiceService:
         used to hold a hard-coded copy, which silently drifted: a phrase added
         here was recognised by the computer microphone and by nothing else.
         """
-        phrases = [self.wake_word, *self.emergency_stop_phrases]
+        phrases = [self.wake_word, *self.spoken_emergency_phrases()]
         for mapping in self.mappings:
             commands = [mapping["phrase"], *mapping.get("synonyms", [])]
             phrases.extend(f"{self.wake_word}{command}" for command in commands)
@@ -474,7 +539,7 @@ class VoiceService:
     def _match_and_execute(self, recognized: str, *, source_id: str | None = None, enforce_wake: bool = False) -> dict | None:
         got = compact_text(recognized)
         wake = compact_text(self.wake_word)
-        if got in {compact_text(item) for item in self.emergency_stop_phrases}:
+        if got in {compact_text(item) for item in self.spoken_emergency_phrases()}:
             if enforce_wake and (not wake or not got.startswith(wake)):
                 return {"matched": False, "reason": "wake_word_required"}
             self.last_command = DEFAULT_EMERGENCY_STOP
@@ -683,7 +748,8 @@ class VoiceService:
             "unsupported": list(self.unsupported),
             "mappings": list(self.mappings),
             "wake_word": self.wake_word,
-            "emergency_stop_phrases": list(self.emergency_stop_phrases),
+            # 界面上要显示的是"要怎么说"，不是盘上存的那个写法。
+            "emergency_stop_phrases": self.spoken_emergency_phrases(),
             "connected": self.connected,
             "source": self.source_id,
             "source_id": self.source_id,

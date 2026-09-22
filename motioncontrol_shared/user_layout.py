@@ -47,6 +47,11 @@ USER_DATA_FILES = {
     # 用户自己建的键盘宏。不分游戏——建一次，哪个游戏、哪个动作都能直接选，这是
     # 它存在的全部理由；跟着游戏走的话就退化成"多写几个键"了。
     "key_macros": "key_macros.json",
+    # 唤醒词和急停口令。它们是**你的**，不是某个游戏的：换游戏不变，而且别人下载
+    # 你分享的语音配置时，不该把他的唤醒词换成你的。以前这两项和口令映射挤在
+    # voice_mappings.json 里，于是装一份别人的配置就会顺手把唤醒词覆盖掉——那台
+    # 机器的主人只会发现"我的唤醒词自己变了"，根本想不到是装配置装的。
+    "personal_voice": "personal_voice.json",
 }
 
 # Where 2.0 and earlier wrote them, relative to the program directory.  Only

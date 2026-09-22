@@ -422,6 +422,13 @@ class ControlKernel:
         self.custom_pose_scores: dict[str, float] = {}
         # 用户自己建的键盘宏。和上面一样，文件不归内核管，由 server.py 装进来。
         self.macro_store = None
+        # 最近触发过什么。做一个动作、摆一个姿势、说一句口令，到底有没有生效、按的
+        # 是哪个键——这些都是"发生一下就没了"的事，靠轮询状态根本看不见：区域按下
+        # 十几毫秒就松开，姿势是边沿触发，语音更是说完就完。没有这份记录，人只能
+        # 反复做动作然后盯着游戏猜。
+        #
+        # 只留最近这些条，按时间顺序。它是给人看的，不是日志。
+        self.recent_triggers: deque = deque(maxlen=24)
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -1940,6 +1947,24 @@ class ControlKernel:
                     return {"action": {"type": item.get("type", "gamepad"), "target": item.get("target"), "behavior": "hold"}}
         return None
 
+    def note_trigger(self, trigger: str, action: dict | None) -> None:
+        """记一次触发。语音走的不是内核这条路，所以由 server 调进来。
+
+        一份记录、一个时钟。分两份存的话，界面上要把两串时间戳对齐，而它们来自
+        不同的地方，早晚差开。
+        """
+        with self._lock:
+            self._note_trigger_locked(trigger, action, time.monotonic())
+
+    def _note_trigger_locked(self, trigger: str, action: dict | None, now: float) -> None:
+        self.recent_triggers.append({
+            "at": round(now, 3),
+            "trigger": str(trigger),
+            # 动作原样带上，不在这里翻译成"Y 键"。名字和写法归界面管，内核翻一遍
+            # 就成了第二套说法，和映射表那边迟早不一致。
+            "action": copy.deepcopy(action) if isinstance(action, dict) else None,
+        })
+
     def _dispatch_controls_locked(self, now: float) -> None:
         active = {f"zone.{name}" for name, state in self.zone_state.items() if name in RUNTIME_BODY_ZONES and state.get("pressed")}
         active.update(f"motion.{name}" for name in self.motion_active)
@@ -1965,6 +1990,12 @@ class ControlKernel:
                         self._safe_output(executor, action)
             else:
                 holds.append({"id": trigger, "action": action})
+
+        # 新按下的那些记一笔。只记上升沿：一直按着的话每帧记一条，几秒就把这份
+        # 记录冲光了，真正有用的那几条反而看不见。
+        for trigger in sorted(active - self.trigger_previous):
+            binding = self._effective_binding_locked(trigger)
+            self._note_trigger_locked(trigger, (binding or {}).get("action"), now)
 
         setter = getattr(self.output, "set_action_holds", None)
         if setter is not None:
@@ -2266,6 +2297,9 @@ class ControlKernel:
             "custom_pose_scores": dict(self.custom_pose_scores),
             "pose_confidence": copy.deepcopy(self.pose_confidence),
             "control_bindings": copy.deepcopy(self.control_bindings),
+            "recent_triggers": list(self.recent_triggers),
+            # 界面要靠它把 at 换算成"几秒前"。用服务端自己的钟，省得和浏览器对时。
+            "now": round(now, 3),
             "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_provisional",
             "vertical_look": copy.deepcopy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),

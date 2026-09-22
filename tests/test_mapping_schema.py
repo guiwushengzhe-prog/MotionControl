@@ -16,6 +16,7 @@ import pytest
 from motioncontrol_shared.canonical import _NORMALIZERS, canonicalize
 from motioncontrol_shared.mapping_schema import (
     DEFAULT_EMERGENCY_STOP,
+    normalize_emergency_phrases,
     normalize_key_combo,
     normalize_motion_item,
     normalize_voice_mappings,
@@ -87,8 +88,29 @@ def test_voice_mapping_order_is_preserved():
 
 
 def test_voice_reinstates_the_emergency_stop_phrase():
-    result = canonicalize("voice_mappings", _voice(emergency_stop_phrases=["随便"])).data
-    assert DEFAULT_EMERGENCY_STOP in result["emergency_stop_phrases"]
+    """内置的那句急停不是可选项：输出卡住时它是唯一的出口。"""
+    assert DEFAULT_EMERGENCY_STOP in normalize_emergency_phrases(["随便"])
+
+
+def test_a_shared_voice_config_carries_neither_the_wake_word_nor_the_stop_phrases():
+    """分享语音配置分的是"说什么话按什么键"，不是把自己的唤醒词装到别人机器上。
+
+    以前它们跟着一起走，于是装一份别人的配置会把自己的唤醒词换掉——装的人
+    只会发现"我的唤醒词自己变了"，想不到是装配置装的。
+    """
+    result = canonicalize("voice_mappings", _voice(
+        wake_word="别人的唤醒词", emergency_stop_phrases=["随便"])).data
+    assert "wake_word" not in result
+    assert "emergency_stop_phrases" not in result
+
+
+def test_an_old_document_that_still_carries_them_is_accepted():
+    """已经传上去的配置里还带着这两项。报错会把它们变成无法重传的废文件，
+    所以是收下但丢掉，不是拒绝。"""
+    result = canonicalize("voice_mappings", _voice(
+        wake_word="体感", emergency_stop_phrases=["紧急停止"],
+        mappings=[{"phrase": "开始", "type": "keyboard", "target": "A"}])).data
+    assert [item["phrase"] for item in result["mappings"]] == ["开始"]
 
 
 def test_voice_rejects_a_duplicate_phrase_under_punctuation_folding():

@@ -7,6 +7,7 @@ import os
 import socket
 import sys
 import threading
+import time
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +24,7 @@ _APP_DIR = Path(__file__).resolve().parent
 from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
 from motioncontrol.key_macros import MacroError, MacroStore
+from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
@@ -149,6 +151,18 @@ def emergency_stop_all() -> dict:
 HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
 
 
+def _note_voice_trigger(action: dict) -> None:
+    command_id = str(action.get("command_id", "")).strip()
+    trigger = f"voice.{command_id}" if command_id else "voice." + str(action.get("target", "")).strip()
+    binding = KERNEL.control_bindings.get(trigger) if command_id else None
+    if isinstance(binding, dict) and not binding.get("disabled") and isinstance(binding.get("action"), dict):
+        noted = binding["action"]
+    else:
+        noted = {"type": str(action.get("type", "")), "target": action.get("target", ""),
+                 "behavior": str(action.get("behavior", "tap"))}
+    KERNEL.note_trigger(trigger, noted)
+
+
 def execute_voice_action(action: dict) -> dict:
     """Keep system voice commands at the local control-kernel boundary.
 
@@ -156,6 +170,9 @@ def execute_voice_action(action: dict) -> dict:
     recognizer and command vocabulary remain unchanged; only the final action
     is selected at this boundary.
     """
+    # 语音不走内核那条分发路，所以在这里补一笔"刚才触发了什么"。界面上的触发实况
+    # 靠它才看得见语音——口令说完就完，轮询状态是抓不到的。
+    _note_voice_trigger(action)
     if str(action.get("type", "")).lower() != "system":
         command_id = str(action.get("command_id", "")).strip()
         if command_id:
@@ -194,6 +211,18 @@ def execute_voice_action(action: dict) -> dict:
             return {"executed": False, "reason": "当前没有可用身体源，未执行头控校准"}
         RUNTIME.start_calibration()
         return {"executed": True, "system_action": target}
+    # 录自定义姿势。这个按钮天生该能用嘴按：人站在镜头前几米外摆姿势，够不着鼠标。
+    if target in {"POSE.RECORD", "POSE.ADD_FRAME"}:
+        delay = KERNEL.general_setting("pose_capture_delay_s", DEFAULT_POSE_DELAY_S)
+        if target == "POSE.RECORD":
+            return {"executed": True, "pose_capture": POSE_TIMER.arm(purpose="capture", delay_s=delay)}
+        pose_id = _newest_pose_id()
+        if not pose_id:
+            return {"executed": False, "reason": "还没有录过动作，先说一次「录姿势」"}
+        return {"executed": True,
+                "pose_capture": POSE_TIMER.arm(purpose="frame", delay_s=delay, pose_id=pose_id)}
+    if target == "POSE.CANCEL":
+        return {"executed": True, "pose_capture": POSE_TIMER.cancel()}
     # Scene capture/rematch
     if target in {"SCENE.CAPTURE_REFERENCE", "SCENE.REMATCH"}:
         purpose = "capture" if target.endswith("CAPTURE_REFERENCE") else "rematch"
@@ -334,6 +363,40 @@ KERNEL.configure_macros(MACROS)
 if MACROS.last_error:
     print(MACROS.last_error)
 
+
+def _capture_custom_pose(purpose: str, pose_id: str, name: str) -> dict:
+    """倒计时到点时真正拍的那一步。计时本身在 motioncontrol.pose_capture 里。"""
+    with PROFILE_UPDATE_LOCK:
+        # 取一小段时间的中位数而不是单帧：单帧的关键点会抖，抖出来的模板会让之后
+        # 每一次比对都偏一点。和按钮那条路用的是同一个取样。
+        snapshot = KERNEL.stable_pose_snapshot(window_s=0.40, min_samples=3)
+        if not snapshot:
+            raise ValueError("还没有看到人。先让摄像头拍到你，再录姿势。")
+        if purpose == "capture":
+            entry = CUSTOM_POSES.capture(snapshot, name)
+        else:
+            entry = CUSTOM_POSES.append_frame(pose_id, snapshot)
+        KERNEL.configure_custom_poses(CUSTOM_POSES)
+    broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+    if broadcaster is not None:
+        try:
+            broadcaster(_phone_control_payload())
+        except Exception:
+            pass
+    return _custom_pose_out(entry)
+
+
+def _newest_pose_id() -> str:
+    """语音说「再加一个姿势」时加到哪一条：最近动过的那条。
+
+    没有别的合理答案——人刚录完一个动作，接着说"再加一个"，说的一定是它。
+    """
+    poses = CUSTOM_POSES.status()
+    return str(poses[-1]["id"]) if poses else ""
+
+
+POSE_TIMER = PoseCaptureTimer(_capture_custom_pose)
+
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
 # 电脑自己的识别器加载的就是这个目录，手机要的是同一份。找不到也不报错：这台
@@ -446,10 +509,9 @@ def _install_cloud_config(remote, game_id: str | None) -> dict:
             OUTPUT.set_holds([], source_group="motions")
             result = {"motions": MOTION_CONFIG}
         elif remote.doc_type == "voice_mappings":
-            result = {"voice": VOICE.configure(
-                remote.document.get("mappings", []),
-                wake_word=remote.document.get("wake_word"),
-                emergency_stop_phrases=remote.document.get("emergency_stop_phrases"))}
+            # 只装口令映射。唤醒词和急停口令是装的人自己的，旧文档里带了
+            # 也不能拿——拿了就是把他的唤醒词换成发布者的，他只会觉得软件坏了。
+            result = {"voice": VOICE.configure(remote.document.get("mappings", []))}
         else:
             raise ValueError(f"不支持的配置类型：{remote.doc_type}")
 
@@ -875,7 +937,10 @@ class AdminHandler(_BaseHandler):
             self._send_json(data)
             return
         if route == "/api/kernel/status":
-            self._send_json({"version": VERSION, **RUNTIME.status()})
+            # 录姿势的倒计时挂在这里，因为这是 250ms 轮询的那一份——人站在几米外
+            # 盯着屏幕等数字，一秒刷一次都嫌慢。
+            self._send_json({"version": VERSION, "pose_capture": POSE_TIMER.status(),
+                             **RUNTIME.status()})
             return
         if route == "/api/performance":
             data = performance_snapshot()
@@ -927,6 +992,10 @@ class AdminHandler(_BaseHandler):
                 # 用户调阈值只能靠猜。
                 "scores": dict(KERNEL.custom_pose_scores),
                 "active": sorted(KERNEL.pose_active),
+                # 上次选的准备时间。不带回去的话，界面每次打开都回到默认值，而下一
+                # 次点按钮又会把这个默认值存回来——记住等于没记。
+                "delay_s": KERNEL.general_setting("pose_capture_delay_s", DEFAULT_POSE_DELAY_S),
+                "capture": POSE_TIMER.status(),
                 "limits": {"max": 24, "name_chars": 20},
             })
             return
@@ -1041,6 +1110,19 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "custom poses are loopback-only"}, 403)
                 return
             try:
+                if route == "/api/pose/custom/schedule":
+                    # 按钮和口令走同一条路：都只是把倒计时设上，到点了服务端自己拍。
+                    # 准备时间顺手记住——语音触发时没人能替它去读界面上那个下拉框。
+                    delay = body.get("delay_s", DEFAULT_POSE_DELAY_S)
+                    KERNEL.remember_general_setting("pose_capture_delay_s", float(delay))
+                    purpose = str(body.get("purpose", "capture"))
+                    self._send_json({"ok": True, "pose_capture": POSE_TIMER.arm(
+                        purpose=purpose, delay_s=delay,
+                        name=str(body.get("name", "")), pose_id=str(body.get("id", "")))})
+                    return
+                if route == "/api/pose/custom/cancel":
+                    self._send_json({"ok": True, "pose_capture": POSE_TIMER.cancel()})
+                    return
                 with PROFILE_UPDATE_LOCK:
                     if route == "/api/pose/custom/capture":
                         # 取一小段时间的中位数而不是单帧：单帧的关键点会抖，

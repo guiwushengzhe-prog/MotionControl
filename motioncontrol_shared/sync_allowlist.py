@@ -89,6 +89,10 @@ CLASSIFICATION = {
     # 要么宏跟着配置一起走，要么都别走；只让宏单独走是更坏的一种——两边编号
     # 撞上就会张冠李戴。以后一起做，是纯加法。
     "key_macros": USER_CONFIGURATION,
+    # 唤醒词和急停口令。是"你的"没错，但**绝不能进可分享的那一类**：分享一份语音
+    # 配置是在分享"说什么话按什么键"，不是在把自己的唤醒词装到别人机器上。
+    # 所以它单独一个文件、全局一份，而且永远不在 CLOUD_SYNC_ALLOWLIST 里。
+    "personal_voice": USER_CONFIGURATION,
     "scene_layout": SPATIAL_CALIBRATION,
     "scene_reference": SPATIAL_CALIBRATION,
 }

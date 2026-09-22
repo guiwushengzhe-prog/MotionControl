@@ -87,6 +87,10 @@ VOICE_COMMAND_NAMES = {
     "game.skill": "技能",
     "game.use_item": "使用物品",
     "ui.menu": "打开菜单",
+    # 录自定义动作。人站在镜头前几米外摆姿势，够不着鼠标——这三个按钮天生就该能用嘴按。
+    "pose.record": "录一个新姿势",
+    "pose.add_frame": "给刚录的动作再加一个姿势",
+    "pose.cancel": "取消录制倒计时",
     **{f"game.profile_slot_{index:02d}": f"当前游戏功能{index}" for index in range(1, 13)},
 }
 
@@ -109,6 +113,9 @@ VOICE_SYSTEM_NAMES = {
     "OUTPUT.STOP": "停止输出",
     "SCENE.CAPTURE_REFERENCE": "记录场景参考图",
     "SCENE.REMATCH": "重新匹配场景",
+    "POSE.RECORD": "录一个新姿势",
+    "POSE.ADD_FRAME": "给刚录的动作再加一个姿势",
+    "POSE.CANCEL": "取消录制倒计时",
 }
 
 _AXIS_NAMES = {"LS_UP": "向上", "LS_DOWN": "向下", "LS_LEFT": "向左", "LS_RIGHT": "向右"}
@@ -238,12 +245,12 @@ def _describe_motion_mappings(data: dict) -> dict:
 
 
 def _describe_voice_mappings(data: dict) -> dict:
+    # 唤醒词不在可分享的配置里了（见 canonical._normalize_voice_mappings），
+    # 所以也不在预览里说——说了反而像在告诉人"装了就会变成这个"。
     mappings = data.get("mappings", [])
     return {
         "kind": "voice_mappings",
-        "headline": f"唤醒词「{data.get('wake_word', '')}」，{len(mappings)} 条口令",
-        "wake_word": data.get("wake_word", ""),
-        "emergency_stop_phrases": list(data.get("emergency_stop_phrases", [])),
+        "headline": f"{len(mappings)} 条口令",
         "items": [{
             "phrase": m.get("phrase", ""),
             "synonyms": list(m.get("synonyms", [])),

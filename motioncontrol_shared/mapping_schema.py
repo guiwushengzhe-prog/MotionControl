@@ -54,6 +54,11 @@ VOICE_SYSTEM_TARGETS = {
     "OUTPUT.STOP",
     "SCENE.CAPTURE_REFERENCE",
     "SCENE.REMATCH",
+    # 录自定义动作。人站在镜头前几米外摆姿势，够不着鼠标——这三个按钮天生
+    # 就该能用嘴按。不列在这里的话，界面上选得到、保存时却被校验器退回来。
+    "POSE.RECORD",
+    "POSE.ADD_FRAME",
+    "POSE.CANCEL",
 }
 
 # Motions drive one output each, so the richer action vocabulary that game

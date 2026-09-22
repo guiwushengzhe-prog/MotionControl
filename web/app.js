@@ -109,7 +109,7 @@ const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',
 // The dispatcher rejects anything outside this set, so offer the list instead
 // of a free text field whose typos can only surface as a silent no-op in game.
 const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
-const VOICE_SYSTEM_TARGETS=[['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景']];
+const VOICE_SYSTEM_TARGETS=[['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
 const voice={status:null};
 let customPoses=[];
 let customPoseScores={};
@@ -276,6 +276,9 @@ function renderConflicts(){
 }
 function renderKernelState(runtime,force=false){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
+  // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
+  paintPoseCountdown(runtime?.pose_capture);
+  renderTriggerLive();
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
   currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
@@ -1226,10 +1229,32 @@ function renderVoiceStatus(s=voice.status){
   $('#voicePill').textContent=ready?'语音 ✓':(connected?'语音准备中':'语音');$('#voicePill').className='pill '+(ready?'ok':(connected?'warn':'optional'));
   const phrase=String(s.last_command||s.final||'').trim();$('#voiceStatus').textContent=phrase?`已识别：${phrase}`:(ready?'直接说完整口令，例如“体感截图”':'语音尚未准备好');
   const modelPath=s.model_path||s.command_model_path||'—';const mp=$('#voiceModelPath');if(mp){mp.textContent='模型：'+modelPath;mp.title=modelPath}
+  renderPersonalVoice(s);
   const diag=$('#voiceDiagnostic');if(diag){diag.textContent=[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`最后命令：${phrase||'—'}`,`错误：${s.last_error||'—'}`].join('\n')}
 }
 
 async function saveVoiceMappings(){const s=await post('/api/voice/config',{mappings:readVoiceMappings()});voice.status=s;renderVoiceStatus(s);return s}
+// 唤醒词和急停口令存在自己那一份里，不跟游戏走、也不跟配置分享出去。
+// 界面上也得分开放，否则人会以为它们跟旁边那些口令一起发出去了。
+function renderPersonalVoice(status){
+  const wake=$('#wakeWord'),stop=$('#emergencyPhrases');
+  if(!wake||!stop)return;
+  // 正在输入就不覆盖。语音状态 0.9 秒刷一次，不让开就会把手里打一半的字抹掉。
+  if(document.activeElement===wake||document.activeElement===stop)return;
+  wake.value=status?.wake_word||'';
+  stop.value=(status?.emergency_stop_phrases||[]).join('、');
+}
+async function savePersonalVoice(){
+  const say=(text,kind='')=>{const el=$('#personalVoiceStatus');if(el){el.textContent=text;el.className=kind==='error'?'statusline error':'statusline'}};
+  try{
+    const phrases=String($('#emergencyPhrases').value||'').split(/[、,，;；\s]+/).map(x=>x.trim()).filter(Boolean);
+    // mappings 要原样带上：configure 是整份替换，不带等于把口令全删了。
+    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],
+      wake_word:String($('#wakeWord').value||'').trim(),emergency_stop_phrases:phrases});
+    voice.status=s;renderVoiceStatus(s);renderPersonalVoice(s);say('已保存');
+  }catch(error){say(error.message,'error')}
+}
+document.getElementById('personalVoiceSaveBtn')?.addEventListener('click',savePersonalVoice);
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
 function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?`${command.label||''} · 系统固定`:`${command.label||''} · ${voiceActionLabel(command.effective_action)}`;card.append(phrase,label);return card}
@@ -1703,6 +1728,12 @@ async function refreshCustomPoses({ rebuild = true } = {}) {
     const data = await api('/api/pose/custom');
     customPoses = data.poses || [];
     customPoseScores = data.scores || {};
+    // 上次选的准备时间。不放回去的话，每次打开都回到默认值，下一次点按钮又把默认
+    // 值存回服务端——记住就等于没记。
+    const delay = document.getElementById('customPoseDelay');
+    if (delay && data.delay_s && [...delay.options].some(option => option.value === String(data.delay_s))) {
+      delay.value = String(data.delay_s);
+    }
     renderCustomPoses();
     // 触发器列表变了，映射界面要重建才能看到新姿势。轮询刷新分数时不重建，
     // 否则用户正在编辑的那一行会被冲掉。
@@ -1713,57 +1744,31 @@ async function refreshCustomPoses({ rebuild = true } = {}) {
 }
 
 /** 倒计时期间可以取消——按错了不用等它数完。 */
-let customPoseCountdown = null;
-
 /**
- * 倒数几秒再执行。人要从电脑前走到镜头前摆好姿势，点完立刻拍等于拍到一个走路的
- * 背影。数字在按钮上放大显示：这时候人站在几米外，小字看不见。
+ * 倒计时现在归服务端。这里只负责"把倒计时设上"和"把剩几秒画出来"。
  *
- * 返回 false 表示被取消了。
+ * 为什么挪走：这个按钮天生该能用嘴按——人站在镜头前几米外摆姿势，够不着鼠标。而
+ * 语音是电脑那边处理的。倒计时留在这里的话，口令触发的那一次就得让服务端反过来
+ * 指挥页面，于是同一件事两套倒计时，迟早对不上。
+ *
+ * 结果：不管是点按钮还是说口令，走的都是同一条路，页面上看到的也是同一个数字。
  */
-async function withCountdown(button, label, action) {
-  if (customPoseCountdown) {  // 再点一次 = 取消
-    clearTimeout(customPoseCountdown);
-    customPoseCountdown = null;
-    document.querySelectorAll('.counting').forEach(el => {
-      el.classList.remove('counting');
-      el.textContent = el.dataset.label || el.textContent;
-    });
-    customPoseSay('已取消');
-    return false;
-  }
-
-  const seconds = Number(document.getElementById('customPoseDelay')?.value || 3);
-  button.dataset.label = label;
-  button.classList.add('counting');
-
-  const finished = await new Promise(resolve => {
-    let left = seconds;
-    const tick = () => {
-      if (!button.classList.contains('counting')) { resolve(false); return; }
-      if (left <= 0) { customPoseCountdown = null; resolve(true); return; }
-      button.textContent = String(left);
-      customPoseSay(`${left} 秒后拍下当前姿势，摆好别动（再点一次取消）`);
-      left -= 1;
-      customPoseCountdown = setTimeout(tick, 1000);
-    };
-    tick();
-  });
-
-  button.classList.remove('counting');
-  button.textContent = label;
-  if (!finished) return false;
-
-  button.disabled = true;
-  customPoseSay('正在读取当前姿势…');
+async function scheduleCapture(purpose, extra = {}) {
+  const delay = Number(document.getElementById('customPoseDelay')?.value || 5);
   try {
-    await action();
+    const data = await post('/api/pose/custom/schedule', { purpose, delay_s: delay, ...extra });
+    paintPoseCountdown(data.pose_capture);
   } catch (error) {
     customPoseSay(error.message, 'error');
-  } finally {
-    button.disabled = false;
   }
-  return true;
+}
+
+async function cancelCapture() {
+  try {
+    paintPoseCountdown((await post('/api/pose/custom/cancel', {})).pose_capture);
+  } catch (error) {
+    customPoseSay(error.message, 'error');
+  }
 }
 
 function applyPoses(data) {
@@ -1773,24 +1778,68 @@ function applyPoses(data) {
 }
 
 async function captureCustomPose() {
-  const button = document.getElementById('customPoseCaptureBtn');
+  if (poseCountdownActive) { await cancelCapture(); return; }
   const nameInput = document.getElementById('customPoseName');
-  await withCountdown(button, '录下当前姿势', async () => {
-    const data = await post('/api/pose/custom/capture', { name: nameInput.value || '' });
-    nameInput.value = '';
-    applyPoses(data);
-    customPoseSay('已录「' + data.pose.name + '」。下面是拍到的骨架，不对就删掉重录。'
-      + '想做成连续动作，摆好下一个姿势再点「再加一个姿势」。');
-  });
+  await scheduleCapture('capture', { name: nameInput?.value || '' });
+  if (nameInput) nameInput.value = '';
 }
 
-async function appendCustomPoseFrame(item, button) {
-  await withCountdown(button, '再加一个姿势', async () => {
-    const data = await post('/api/pose/custom/frame', { id: item.id });
-    applyPoses(data);
-    customPoseSay(`「${data.pose.name}」现在有 ${data.pose.frames} 个姿势，`
-      + '要按顺序依次做出来才会触发。');
-  });
+async function appendCustomPoseFrame(item) {
+  if (poseCountdownActive) { await cancelCapture(); return; }
+  await scheduleCapture('frame', { id: item.id });
+}
+
+let poseCountdownActive = false;
+let poseCaptureMessage = '';
+
+/**
+ * 把服务端那份倒计时画出来。数字放大显示在按钮上：这时候人站在几米外，小字看不见。
+ *
+ * 只认状态、不自己计时——自己再数一遍就是第二套倒计时，和服务端那套迟早差开。
+ */
+function paintPoseCountdown(state) {
+  const button = document.getElementById('customPoseCaptureBtn');
+  if (!button) return;
+  const counting = !!state?.counting;
+  const purpose = String(state?.purpose || 'capture');
+  const wasActive = poseCountdownActive;
+  poseCountdownActive = counting;
+
+  if (counting) {
+    const left = Math.max(1, Math.ceil(Number(state.remaining_s) || 0));
+    if (purpose === 'capture') {
+      button.classList.add('counting');
+      button.textContent = String(left);
+    } else {
+      button.classList.remove('counting');
+      button.textContent = '录下当前姿势';
+    }
+    // 给哪一条加姿势，就让那一条的按钮自己数，不然人不知道拍的是哪个动作。
+    for (const row of document.querySelectorAll('.custom-pose')) {
+      const add = row.querySelector('.pose-add');
+      if (!add) continue;
+      const mine = purpose === 'frame' && row.dataset.id === String(state.pose_id || '');
+      add.classList.toggle('counting', mine);
+      add.textContent = mine ? String(left) : '再加一个姿势';
+    }
+    customPoseSay(`${left} 秒后拍下当前姿势，摆好别动（再点一次或说「取消」都能停）`);
+    return;
+  }
+
+  button.classList.remove('counting');
+  button.textContent = '录下当前姿势';
+  for (const add of document.querySelectorAll('.pose-add')) {
+    add.classList.remove('counting');
+    add.textContent = '再加一个姿势';
+  }
+  // 拍完了（或者被取消了）才去取新的姿势列表。轮询每 250ms 一次，不加这个判断
+  // 就是每秒四次白跑一趟。
+  const message = String(state?.message || '');
+  if (wasActive || (message && message !== poseCaptureMessage)) {
+    poseCaptureMessage = message;
+    if (message) customPoseSay(message, message.includes('没') || message.includes('失败') ? 'error' : '');
+    void refreshCustomPoses();
+  }
 }
 
 async function removeCustomPoseFrame(item, index) {
@@ -1952,7 +2001,7 @@ function renderCustomPoses() {
     addFrame.type = 'button';
     addFrame.textContent = '再加一个姿势';
     addFrame.title = '摆好下一个姿势再点。做完的动作要按顺序依次做出来才触发';
-    addFrame.addEventListener('click', () => appendCustomPoseFrame(item, addFrame));
+    addFrame.addEventListener('click', () => appendCustomPoseFrame(item));
     strip.appendChild(addFrame);
 
     // 绑的是哪个键。只显示，不在这里改——同一个东西两处能改，就一定会有一处
@@ -2304,3 +2353,83 @@ document.getElementById('macroAddBtn')?.addEventListener('click', addMacro);
 document.getElementById('macroName')?.addEventListener('keydown', event => {
   if (event.key === 'Enter') addMacro();
 });
+
+/* --- 触发实况 -----------------------------------------------------------
+ * 「我刚才那个动作到底有没有生效、按的是哪个键」——这件事以前没地方看。
+ *
+ * 光靠轮询状态是看不见的：区域按下去十几毫秒就松开，姿势是边沿触发，语音更是说完
+ * 就完。所以服务端记一份最近触发过什么（control_kernel.recent_triggers），这里
+ * 只负责把它画出来。
+ *
+ * 它就放在映射表正上方，不另开一页：看到「左手区 → Y」不对，往下一眼就是改它的
+ * 那一行。点一条还能直接跳过去。两件事本来就是同一件事，分两个地方只会让人来回找。
+ */
+function activeTriggerKeys() {
+  const k = kernelState || {};
+  const out = new Set();
+  for (const [id, zone] of Object.entries(k.zones || {})) if (zone?.pressed) out.add('zone.' + id);
+  for (const id of k.motions || []) out.add('motion.' + id);
+  for (const id of k.poses_active || []) out.add('pose.' + id);
+  return out;
+}
+
+function agoText(seconds) {
+  if (seconds < 0.8) return '刚刚';
+  if (seconds < 60) return `${Math.round(seconds)} 秒前`;
+  return `${Math.round(seconds / 60)} 分钟前`;
+}
+
+/** 触发之后高亮多久。太短了人还没把视线从镜头挪回屏幕就已经灭了。 */
+const TRIGGER_FLASH_S = 1.2;
+
+function renderTriggerLive() {
+  const box = document.getElementById('triggerLive');
+  if (!box || box.hidden) return;
+  const names = new Map(profileTriggers().map(item => [item.key, item.name]));
+  const bindings = kernelState?.control_bindings || {};
+  const now = Number(kernelState?.now) || 0;
+  const events = kernelState?.recent_triggers || [];
+
+  const active = [...activeTriggerKeys()].filter(key => names.has(key));
+  const nowEl = document.getElementById('triggerLiveNow');
+  if (nowEl) {
+    // 现在按着的写大字：这时候人站在几米外，小字看不见。
+    nowEl.textContent = active.length
+      ? active.map(key => `${names.get(key)} → ${actionKeyText(bindings[key]?.action) || '未映射'}`).join('　')
+      : '还没有触发';
+    nowEl.classList.toggle('idle', !active.length);
+  }
+
+  const log = document.getElementById('triggerLiveLog');
+  if (log) {
+    log.replaceChildren();
+    for (const event of events.slice(-6).reverse()) {
+      const key = String(event.trigger || '');
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'trigger-live-item';
+      row.textContent = `${agoText(Math.max(0, now - Number(event.at || 0)))} · `
+        + `${names.get(key) || key} → ${actionKeyText(event.action) || '未映射'}`;
+      row.title = '点一下跳到它的映射那一行';
+      row.addEventListener('click', () => revealBindingRow(key));
+      log.appendChild(row);
+    }
+    if (!events.length) {
+      const empty = document.createElement('span');
+      empty.className = 'fineprint';
+      empty.textContent = '做个动作或者说句口令，这里会记下来。';
+      log.appendChild(empty);
+    }
+  }
+
+  // 每一行自己亮。一直按着的那些常亮，点一下就过的那些闪一下——后者没有这个
+  // 闪，在 250ms 的轮询里根本抓不到。
+  const fresh = new Set(events.filter(event => now - Number(event.at || 0) <= TRIGGER_FLASH_S)
+                              .map(event => String(event.trigger || '')));
+  const held = activeTriggerKeys();
+  for (const row of document.querySelectorAll('.binding-row')) {
+    const key = row.dataset.trigger;
+    row.classList.toggle('firing', held.has(key));
+    row.classList.toggle('just-fired', !held.has(key) && fresh.has(key));
+  }
+}

@@ -30,10 +30,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from .mapping_schema import (
-    normalize_emergency_phrases,
     normalize_motion_item,
     normalize_voice_mappings,
-    normalize_wake_word,
 )
 from .motion_conflicts import validate_motion_config
 from .profile_schema import normalize_overrides
@@ -117,14 +115,20 @@ def _normalize_motion_mappings(raw) -> dict:
 
 
 def _normalize_voice_mappings(raw) -> dict:
+    """只留"说什么话按什么键"。唤醒词和急停口令不进可分享的配置。
+
+    分享一份语音配置，分的是口令和它对应的键；唤醒词是发布者个人的习惯。
+    以前它跟着一起走，于是下载安装一份别人的配置会把自己的唤醒词换掉——装的
+    人只会发现"我的唤醒词自己变了"，想不到是装配置装的。
+
+    旧文档里还带着这两项。这里**收下但丢掉**，不报错：报错会让每一份已经
+    传上去的配置变成无法重传的废文件。
+    """
     if not isinstance(raw, dict):
         raise ValueError("语音映射格式无法读取")
     _require_schema(raw, VOICE_MAPPINGS_SCHEMA, "voice mappings")
     return {
         "schema": VOICE_MAPPINGS_SCHEMA,
-        "wake_word": normalize_wake_word(raw.get("wake_word")),
-        "emergency_stop_phrases": normalize_emergency_phrases(
-            raw.get("emergency_stop_phrases", [])),
         # Order preserved: first match wins at recognition time.
         "mappings": normalize_voice_mappings(raw.get("mappings", [])),
     }
