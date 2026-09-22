@@ -203,7 +203,8 @@
 <details id="advancedSettings"><summary>高级设置与诊断</summary>
 <div class="advgrid">
 <label>算法<select id="headAlgorithm"><option value="pnp">三维头姿（推荐）</option><option value="ratio">脸部比例（实验）</option></select></label>
-<label>横向头控<select id="headHorizontalAlgorithm"><option value="gesture_v188">多信号融合（原稳健版）</option><option value="gesture_v153">个性化 PnP（原 v153）</option><option value="frozen22">固定特征 2D</option></select></label>
+<label>横向头控<select id="headHorizontalAlgorithm"><option value="gesture_v188">多信号融合（原稳健版）</option><option value="gesture_v153">个性化 PnP（原 v153）</option><option value="frozen22">固定特征 2D</option><option value="roll_tilt">侧倾转向（实验）</option></select></label>
+<div class="fineprint" hidden="" id="rollTiltHint">脸朝屏幕，头向左肩或右肩倾斜时持续转向，回正立即停止。</div>
 <label>采集兼容模式<select id="cameraBackend"><option selected="" value="auto">自动</option><option value="msmf">系统媒体采集</option><option value="dshow">传统兼容采集</option></select></label>
 </div>
 <details class="perf-panel" id="performancePanel"><summary>高级诊断</summary>

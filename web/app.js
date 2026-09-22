@@ -260,8 +260,9 @@ function renderKernelState(runtime){
   if(hs.algorithm&&!headDirty&&!document.activeElement?.closest('#headSettings,#advancedSettings')){
     $('#headAlgorithm').value=hs.algorithm;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'gesture_v188');
-    head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
+    head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
     if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
+    if($('#rollTiltHint'))$('#rollTiltHint').hidden=head.horizontalAlgorithm!=='roll_tilt';
     head.verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'head':'hand';
     head.verticalLookEnabled=k.vertical_look?.enabled!==false;
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
@@ -1037,7 +1038,7 @@ function renderVoiceCommandCatalog(commands){
 }
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';if($('#rollTiltHint'))$('#rollTiltHint').hidden=head.horizontalAlgorithm!=='roll_tilt';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=$('#bodyMotionGuard')?.checked!==false;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){
   syncControlLabels();
   renderKernelState(await post('/api/head/config',{

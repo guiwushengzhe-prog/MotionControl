@@ -1,8 +1,9 @@
-"""Head-control v5: three comparable horizontal signal routes.
+"""Head-control v5: comparable yaw routes plus an independent roll mode.
 
 - gesture_v153: personal (or generic) PnP yaw with a pitch-aware evidence guard.
 - frozen22: fixed 22-D image-feature yaw with explicitly selected pitch units.
 - gesture_v188: PnP yaw corroborated by calibrated 2D/world cues.
+- roll_tilt: eye-line tilt drives a sustained turn until the head is upright.
 
 All three use the same relative gesture: outward turn moves, a held pose stops,
 and returning to a quiet neutral center rearms without reverse mouse output.
@@ -22,6 +23,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .roll_tilt_control import RollTiltControl, TILT_SPAN_DEG, eye_line_tilt
 
 
 # 校准参考不能追随动作；仅在明确的安静事件后采纳一次运行参考，默认值待真人验证。
@@ -124,18 +127,20 @@ PITCH_INTENT_STOP_VELOCITY = 0.026
 # Their v5 versions below share the same movement/return semantics, but use
 # distinct signal evidence. The removed classic mode aliases to gesture_v153.
 
-HORIZONTAL_ALGORITHMS = ("gesture_v153", "frozen22", "gesture_v188")
+HORIZONTAL_ALGORITHMS = ("gesture_v153", "frozen22", "gesture_v188", "roll_tilt")
 V153_POLICIES = frozenset(("gesture_v153", "gesture_v188"))
 FROZEN22_POLICIES = frozenset(("frozen22",))
 HORIZONTAL_ALGORITHM_VERSIONS = {
     "gesture_v153": "v5.1-pnp-optional-personal",
     "frozen22": "v5.1-fixed22-stable-units",
     "gesture_v188": "v5.1-consensus-shared-calibration",
+    "roll_tilt": "roll-tilt-v1",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
     "gesture_v153": "个性化 PnP（灵敏）",
     "frozen22": "固定特征 2D（独立）",
     "gesture_v188": "多信号融合（稳健）",
+    "roll_tilt": "侧倾转向（实验）",
 }
 
 
@@ -2302,6 +2307,7 @@ class HeadController:
     # Immutable calibration values that must stay paired with the restored
     # PnP model and Frozen22 center when a replacement calibration fails.
     _CALIBRATION_AUX_FIELDS = (
+        "center_tilt", "noise_tilt",
         "_calibration_algorithm", "_personal_policy_store",
         "center_multi2d_proxy", "noise_multi2d_proxy",
         "center_world_face_template", "center_world_rigid_yaw", "noise_world_rigid_yaw",
@@ -2317,6 +2323,11 @@ class HeadController:
         self.estimator = HeadPoseEstimator()
         self.profile_path = profile_path
         self.config = dict(DEFAULT_CONFIG)
+        self._tilt_control = RollTiltControl()
+        self.tilt_angle = math.nan
+        self.center_tilt = math.nan
+        self.noise_tilt = 0.0
+        self._tilt_samples = []
         self.center_yaw = 0.0
         self.center_pitch = 0.0
         self.center_yaw_proxy = math.nan
@@ -2511,6 +2522,7 @@ class HeadController:
         self._cue_last_at = 0.0
 
     def _reset_filters(self) -> None:
+        self._tilt_control.reset()
         self._runtime_neutral_samples = []
         self._yaw_filter.reset()
         self._pitch_filter.reset()
@@ -2806,12 +2818,15 @@ class HeadController:
                 self._apply_policy_model()
                 self.calibrated = reusable
                 fixed_needs_center = value in FROZEN22_POLICIES and not self.frozen22_calibration_valid
-                self.center_pending = not reusable or fixed_needs_center
+                tilt_needs_center = value == "roll_tilt" and not math.isfinite(self.center_tilt)
+                self.center_pending = not reusable or fixed_needs_center or tilt_needs_center
                 if not reusable:
                     self.center_quality = "未校准"
                     self.notice = "当前没有兼容的中心，请先校准"
                 elif fixed_needs_center:
                     self.notice = "固定特征校准样本不足，请重新校准；其他模式的中心仍保留"
+                elif tilt_needs_center:
+                    self.notice = "侧倾中心尚未采集，请自然正视屏幕并校准"
                 else:
                     self.notice = "模式已切换，沿用本次校准；转头即可测试"
                 self.notice_until = time.monotonic() + 4.0
@@ -2852,6 +2867,7 @@ class HeadController:
         self._save_profile()
 
     def start_center(self, now: float | None = None, kind: str = "manual") -> None:
+        self._tilt_samples = []
         now = time.monotonic() if now is None else now
         if self.calibrating:
             # A repeated start must not replace the original rollback state
@@ -3186,6 +3202,10 @@ class HeadController:
                     self._calibration_restore_aux_state = None
                     self._calibration_restore_frozen22 = None
                 self.calibrated = True
+                if len(self._tilt_samples) >= CENTER_MIN_SAMPLES:
+                    self.center_tilt, self.noise_tilt = _robust_center_and_sigma(self._tilt_samples)
+                else:
+                    self.center_tilt, self.noise_tilt = math.nan, 0.0
                 self.center_pending = False
                 ratio_y = self.noise_yaw / max(ref_yaw_sigma, 1e-9)
                 ratio_p = self.noise_pitch / max(ref_pitch_sigma, 1e-9)
@@ -3562,6 +3582,7 @@ class HeadController:
     ) -> tuple[float, float]:
         now = time.monotonic() if now is None else now
         self._last_intent_drive = 0.0
+        self.tilt_angle = eye_line_tilt(pose, width, height)
         self._last_evidence_scale = 0.0
         self._last_target_x = 0.0
         # ``world_pose`` is optional for strict backward compatibility.  It may
@@ -3623,7 +3644,9 @@ class HeadController:
             policy in FROZEN22_POLICIES and self.calibrated and not self.calibrating
             and self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
         )
-        if not estimate.valid and not fixed_yaw_available:
+        tilt_available = bool(policy == "roll_tilt" and self.calibrated and not self.calibrating
+                              and math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt))
+        if not estimate.valid and not fixed_yaw_available and not tilt_available:
             self.last_error = estimate.error
             self._reset_filters()
             if self.calibrating:
@@ -3705,6 +3728,8 @@ class HeadController:
                 return 0.0, 0.0
 
             self.center_yaw_samples.append(estimate.yaw)
+            if math.isfinite(self.tilt_angle):
+                self._tilt_samples.append(self.tilt_angle)
             self.center_pitch_samples.append(estimate.pitch)
             if math.isfinite(estimate.yaw_proxy):
                 self.center_yaw_proxy_samples.append(estimate.yaw_proxy)
@@ -3760,7 +3785,11 @@ class HeadController:
             self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
         )
         sign = -1.0 if self.config["invert_x"] else 1.0
-        if policy in FROZEN22_POLICIES:
+        if policy == "roll_tilt":
+            raw_x = sign * (self.tilt_angle - self.center_tilt) / TILT_SPAN_DEG if (
+                math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt)) else 0.0
+            intent_raw_x = raw_x
+        elif policy in FROZEN22_POLICIES:
             raw_x = sign * self.frozen22_yaw_median / span_x if frozen22_ready else 0.0
             intent_raw_x = raw_x
         else:
@@ -3789,7 +3818,14 @@ class HeadController:
             start_x *= self.personal_pnp_far_depth_ratio ** PERSONAL_PNP_FAR_START_POWER
 
         self._runtime_raw_x, self._runtime_intent_raw_x, self._runtime_span_x = raw_x, intent_raw_x, span_x
-        if runtime_muted:
+        if policy == "roll_tilt":
+            vx = sign * self._tilt_control.update(
+                self.tilt_angle, now, center=self.center_tilt, noise=self.noise_tilt,
+                deadzone=float(self.config["deadzone"]),
+            )
+            self._last_intent_drive = vx
+            self._last_evidence_scale = 1.0 if math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt) else 0.0
+        elif runtime_muted:
             self._x_intent_v153.reset()
             vx = 0.0
         elif policy in FROZEN22_POLICIES and not frozen22_ready:
@@ -3819,6 +3855,8 @@ class HeadController:
             self._last_evidence_scale = self._horizontal_evidence_scale(vx, now, policy)
             vx *= self._last_evidence_scale
         self.yaw_intent_state = self._x_intent_v153.state
+        if policy == "roll_tilt":
+            self.yaw_intent_state = self._tilt_control.state
         self.yaw_velocity = float(self._x_intent_v153.velocity)
         self.yaw_acceleration = float(self._x_intent_v153.acceleration)
         if estimate.valid:
@@ -3860,10 +3898,14 @@ class HeadController:
         """Describe the controller stage, not whether the OS received a mouse event."""
         policy = self.config["horizontal_algorithm"]
         fixed = policy in FROZEN22_POLICIES
+        tilt = policy == "roll_tilt"
         frame_valid = bool(
             self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
         ) if fixed else bool(self.raw.valid)
-        ready = bool(self.calibrated and (not fixed or self.frozen22_calibration_valid))
+        if tilt:
+            frame_valid = math.isfinite(self.tilt_angle)
+        ready = bool(self.calibrated and (not fixed or self.frozen22_calibration_valid)
+                     and (not tilt or math.isfinite(self.center_tilt)))
         if not self.config["enabled"]:
             code, message = "DISABLED", "头控已关闭"
         elif self.calibrating:
@@ -3872,6 +3914,10 @@ class HeadController:
             code, message = "NEEDS_CALIBRATION", "尚未校准中心；原始角度有值也不会输出，请先校准"
         elif fixed and not self.frozen22_calibration_valid:
             code, message = "FIXED22_NEEDS_CALIBRATION", "固定特征校准未通过或样本不足，请重新校准"
+        elif tilt and not math.isfinite(self.center_tilt):
+            code, message = "TILT_NEEDS_CALIBRATION", "请自然正视屏幕，校准侧倾中心"
+        elif tilt and not frame_valid:
+            code, message = "TILT_MISSING_EYES", "看不清双眼，请正对摄像头"
         elif not frame_valid:
             code = "FIXED22_MISSING_POINTS" if fixed else "ESTIMATE_INVALID"
             message = "固定特征所需关键点不完整" if fixed else (self.raw.error or "当前姿态无效")
@@ -3879,7 +3925,7 @@ class HeadController:
             code, message = "RUNTIME_NEUTRAL_WAIT", "请自然正视屏幕并静止，正在确认运行中心"
         elif abs(self.output_x) > 1e-12:
             code, message = "OUTPUT_ACTIVE", "头控模块已有横向输出；若鼠标不动，请检查上层输出链路"
-        elif self._x_intent_v153.return_latched:
+        elif not tilt and self._x_intent_v153.return_latched:
             code, message = "RETURNING", "正在回正；回到中心短暂停稳后重新触发"
         elif abs(self._last_intent_drive) <= 1e-12:
             if self.yaw_intent_state in {"CENTER", "IDLE"}:
@@ -3898,7 +3944,14 @@ class HeadController:
             code, message = "OUTPUT_TRANSITION", "正在等待有效帧间隔或完成方向切换"
         yaw_unit = "degrees" if self.config["algorithm"] == "pnp" else "ratio"
         active_value = self.frozen22_yaw_median if fixed else self.control_yaw
+        if tilt:
+            active_value = self.tilt_angle
         return {
+            "raw_tilt_deg": self.tilt_angle if math.isfinite(self.tilt_angle) else None,
+            "center_tilt_deg": self.center_tilt if math.isfinite(self.center_tilt) else None,
+            "noise_tilt_deg": self.noise_tilt,
+            "tilt_state": self._tilt_control.state,
+            "tilt_deadzone_deg": self._tilt_control.threshold,
             "runtime_neutral_pending": self._runtime_neutral_pending,
             "runtime_neutral_epoch": self._runtime_neutral_epoch,
             "runtime_neutral_at": self._runtime_neutral_at,
@@ -3914,9 +3967,9 @@ class HeadController:
             "horizontal_block_message": message,
             "raw_yaw_units": yaw_unit,
             "raw_pitch_units": yaw_unit,
-            "horizontal_signal_source": "frozen22" if fixed else self.config["algorithm"],
+            "horizontal_signal_source": "eye_line" if tilt else "frozen22" if fixed else self.config["algorithm"],
             "horizontal_signal_value": active_value if math.isfinite(active_value) else None,
-            "horizontal_signal_units": "degree_like" if fixed else yaw_unit,
+            "horizontal_signal_units": "degrees" if tilt else "degree_like" if fixed else yaw_unit,
             "intent_drive_x": round(float(self._last_intent_drive), 6),
             "evidence_scale_x": round(float(self._last_evidence_scale), 6),
             "target_output_x": round(float(self._last_target_x), 6),
@@ -3953,8 +4006,9 @@ class HeadController:
         horizontal_calibrated = bool(
             self.calibrated
             and (policy_name not in FROZEN22_POLICIES or self.frozen22_calibration_valid)
+            and (policy_name != "roll_tilt" or math.isfinite(self.center_tilt))
         )
-        yaw_latched = bool(getattr(self._x_intent_v153, "return_latched", False))
+        yaw_latched = policy_name != "roll_tilt" and bool(getattr(self._x_intent_v153, "return_latched", False))
         horizontal_version = HORIZONTAL_ALGORITHM_VERSIONS[policy_name]
         return {
             **self._horizontal_diagnostics(),
@@ -3964,7 +4018,8 @@ class HeadController:
             "available_horizontal_algorithms": list(HORIZONTAL_ALGORITHMS),
             "horizontal_algorithm_labels": dict(HORIZONTAL_ALGORITHM_LABELS),
             "horizontal_algorithm_label": HORIZONTAL_ALGORITHM_LABELS[policy_name],
-            "horizontal_behavior": "转动时移动，偏头停住时停止，回到中心短暂停稳后重新触发",
+            "horizontal_behavior": ("向左肩或右肩倾斜时持续转向，头回正立即停止" if policy_name == "roll_tilt"
+                                    else "转动时移动，偏头停住时停止，回到中心短暂停稳后重新触发"),
             "active_pitch_estimator": self._effective_estimator_algorithm(),
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
             "frozen22_controls_mouse": bool(policy_name in FROZEN22_POLICIES),
