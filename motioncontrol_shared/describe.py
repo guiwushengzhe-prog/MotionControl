@@ -29,7 +29,7 @@ ZONE_NAMES = {
     "rightHandLower": "右手下区",
     "leftFoot": "左脚区",
     "rightFoot": "右脚区",
-    "headJump": "头顶跳跃区",
+    "headJump": "头顶区",
 }
 
 # 四个历史手部 id 在运行时落到哪块物理区域。

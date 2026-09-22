@@ -22,7 +22,27 @@ const EDGES = [
   ['right_hip','right_knee'],['right_knee','right_ankle'],['right_ankle','right_heel'],['right_heel','right_foot_index'],
   ['right_ankle','right_foot_index'],
 ];
-const BODY_ZONES = {leftHand:{label:'X',body:'左手',button:'X'},rightHand:{label:'B',body:'右手',button:'B'},leftFoot:{label:'LB',body:'左脚',button:'LB'},rightFoot:{label:'RB',body:'右脚',button:'RB'},headJump:{label:'A',body:'头顶跳跃',button:'A'},lookGate:{label:'上下视角',body:'左手放这里',button:null,gate:true}};
+const BODY_ZONES = {leftHand:{body:'左手',button:'X',parts:['leftHandUpper','leftHandLower']},rightHand:{body:'右手',button:'B',parts:['rightHandUpper','rightHandLower']},leftFoot:{body:'左脚',button:'LB'},rightFoot:{body:'右脚',button:'RB'},headJump:{body:'头顶'},lookGate:{label:'上下视角',body:'左手放这里',button:null,gate:true}};
+// 圈上写的那个字以前是写死的，于是它和真实映射会悄悄对不上——headJump 一直显示
+// 'A'，而 'A' 早就是右手下那个区的键了，头顶这块在当前配置里压根没绑东西。
+// 现在一律从运行时的 control_bindings 里取。取不到就说"未映射"，而不是编一个。
+function actionKeyText(action){
+  if(!action)return null;
+  const type=String(action.type||''),target=String(action.target||'').toUpperCase();
+  if(!type||!target)return null;
+  if(type==='keyboard')return target;
+  if(type==='mouse_button')return({LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键1',X2:'侧键2'}[target]||target);
+  if(type==='mouse_wheel')return target.includes('UP')?'滚轮↑':target.includes('DOWN')?'滚轮↓':target;
+  if(type==='gamepad_axis')return target.endsWith('UP')?'摇杆↑':target.endsWith('DOWN')?'摇杆↓':target.endsWith('LEFT')?'摇杆←':target.endsWith('RIGHT')?'摇杆→':target;
+  return target;
+}
+// 手部一块圈里有上下两个绑定，所以它的标注天然是两个键，写成 "Y / X"。
+function zoneKeyLabel(id,def){
+  const all=kernelState?.control_bindings||{};
+  const ids=def.parts||[id];
+  const texts=ids.map((one)=>{const b=all['zone.'+one];return b&&!b.disabled?actionKeyText(b.action):null;}).filter(Boolean);
+  return texts.length?texts.join(' / '):'未映射';
+}
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
@@ -39,7 +59,7 @@ const BASE_PROFILE_TRIGGERS=[
   {key:'zone.rightHand',group:'zones',id:'rightHand',name:'右手区'},
   {key:'zone.leftFoot',group:'zones',id:'leftFoot',name:'左脚区'},
   {key:'zone.rightFoot',group:'zones',id:'rightFoot',name:'右脚区'},
-  {key:'zone.headJump',group:'zones',id:'headJump',name:'头顶跳跃区'},
+  {key:'zone.headJump',group:'zones',id:'headJump',name:'头顶区'},
   {key:'motion.march',group:'motions',id:'march',name:'原地踏步'},
   {key:'motion.calf_back',group:'motions',id:'calf_back',name:'小腿向后'},
   {key:'motion.squat',group:'motions',id:'squat',name:'下蹲'},
@@ -137,7 +157,7 @@ function renderKernelZones(zones={}){
     const editCircle=zoneEditMode?scene.zones?.[id]:null;
     const circle=editCircle||state?.circle;
     el.classList.toggle('circle-shape',!!circle&&!def.gate);
-    el.querySelector('strong').textContent=def.gate?'上下视角':def.label;
+    el.querySelector('strong').textContent=def.gate?'上下视角':zoneKeyLabel(id,def);
     el.querySelector('small').textContent=def.gate?(active?'已开启':'左手放这里'):def.body;
     el.tabIndex=zoneEditMode?0:-1;
     el.setAttribute('aria-label',def.body+'区域，方向键移动');
@@ -1108,7 +1128,7 @@ function drawOverlayZones(octx,w,h,zones={}){
     let x=0,y=0,ww=0,hh=0;const c=state.circle,r=state.rect;
     if(c){const radius=Number(c.r)||0;ww=2*radius*w;hh=2*radius*h;x=(1-Number(c.cx)-radius)*w;y=(Number(c.cy)-radius)*h}
     else if(r){x=(1-Number(r.x2))*w;y=Number(r.y1)*h;ww=(Number(r.x2)-Number(r.x1))*w;hh=(Number(r.y2)-Number(r.y1))*h}
-    if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else if(c)octx.ellipse(x+ww/2,y+hh/2,ww/2,hh/2,0,0,Math.PI*2);else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.34,w/9)))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):def.label,x+ww/2,y+hh/2);octx.restore();
+    if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else if(c)octx.ellipse(x+ww/2,y+hh/2,ww/2,hh/2,0,0,Math.PI*2);else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.34,w/9)))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):zoneKeyLabel(id,def),x+ww/2,y+hh/2);octx.restore();
   }
 }
 function renderOverlay(map=currentPoseMap){
