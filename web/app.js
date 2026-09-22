@@ -1,4 +1,5 @@
 import {VIEW_CONTROL_CONTENT} from './view-control-guide.js';
+import {createTutorial} from './tutorial.js';
 
 const $ = s => document.querySelector(s);
 const canvas = $('#canvas');
@@ -74,7 +75,7 @@ function zoneKeyLabel(id,def){
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
 const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
-let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false,guideReturnFocus=null;
+let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false;
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
@@ -394,7 +395,7 @@ async function refreshKernel(){
   try{
     const runtime=await api('/api/kernel/status');
     kernelConnected=true;
-    if(epoch===kernelEpoch)renderKernelState(runtime);
+    if(epoch===kernelEpoch){renderKernelState(runtime);if(tutorial.isOpen())tutorial.update(tutorialState())}
     if(!profileReady&&!profileLoading)void loadProfiles();
   }catch{kernelConnected=false;renderMainStatus()}
 }
@@ -863,20 +864,25 @@ function renderViewControl(force=false){
   $('#viewControlDescription').replaceChildren(...rows.map(([title,text])=>{const p=document.createElement('p');const b=document.createElement('b');b.textContent=title+' ';p.append(b,text);return p}));
   const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='当前设置已读取';
 }
-function renderViewGuide(){
-  $('#viewGuideTitle').textContent=VIEW_CONTROL_CONTENT.guide.title;
-  $('#viewGuideIntro').textContent=VIEW_CONTROL_CONTENT.guide.intro;
-  $('#viewGuideSteps').replaceChildren(...VIEW_CONTROL_CONTENT.guide.steps.map(step=>{const li=document.createElement('li'),title=document.createElement('b');title.textContent=step.title;li.append(title,step.text);return li}));
+// 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
+// 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
+function tutorialState(){
+  const hs=kernelState?.head||{};
+  const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
+  return {
+    cameraReady:sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning,
+    sourceMode,posed:!!currentPoseMap,
+    // 握拳控左右不需要头部中心，这一点和「视角控制」那块的判断保持一致。
+    calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
+    calibrating:!!hs.calibrating,
+    horizontal:horizontalHand||(head.enabled?(head.horizontalAlgorithm==='roll_tilt'?'roll_tilt':'head_turn'):'off'),
+    outputX:Number.isFinite(hs.output_x)?Number(hs.output_x):null,
+  };
 }
-function openViewGuide(source){guideReturnFocus=source||$('#viewGuideBtn');$('#viewGuideMask').showModal()}
-function closeViewGuide(remember=false){
-  if(remember){try{localStorage.setItem('motioncontrol_view_guide_done','1')}catch{}}
-  $('#viewGuideMask').close();
-}
-function initViewGuide(){
-  fillViewControlOptions();renderViewGuide();renderViewControl();
-  let seen=false;try{seen=localStorage.getItem('motioncontrol_view_guide_done')==='1'}catch{}
-  if(!seen)openViewGuide(null);
+function initViewControl(){
+  fillViewControlOptions();renderViewControl();
+  // 第一次打开页面自动弹一次教学。关掉、跳过、学完都算看过，之后只在按钮上等着。
+  if(!tutorial.seen())tutorial.open(null);
 }
 function renderHandMouse(state){
   if(!state)return;
@@ -1417,7 +1423,7 @@ function poll(task,delay,enabled=()=>true){
   void next();
 }
 async function init(){
-  initViewGuide();setViewControlBusy(false);syncControlLabels();
+  initViewControl();setViewControlBusy(false);syncControlLabels();
   // 自定义姿势和宏库要排在最前面，比 refreshKernel 还早。
   //
   // 原因不显眼：refreshKernel 里有一句 void loadProfiles()，它不被 await，会自己跑去
@@ -1465,10 +1471,12 @@ for(const axis of ['horizontal','vertical']){
 }
 $('#verticalLookSource').addEventListener('change',()=>void saveLegacyVertical());
 $('#headEnable').addEventListener('change',()=>void saveHeadEnabled());
-for(const id of ['viewGuideBtn','viewGuideSettingsBtn'])$('#'+id).addEventListener('click',e=>openViewGuide(e.currentTarget));
-for(const id of ['closeViewGuideBtn','skipViewGuideBtn','finishViewGuideBtn'])$('#'+id).addEventListener('click',()=>closeViewGuide(true));
-$('#viewGuideMask').addEventListener('cancel',e=>{e.preventDefault();closeViewGuide(true)});
-$('#viewGuideMask').addEventListener('close',()=>guideReturnFocus?.focus());
+// 教学里要动手的那几步不另开一份实现：校准还是走主界面这条路径，连提示都一样。
+const tutorial=createTutorial({
+  state:tutorialState,
+  calibrate:()=>runAction(async()=>{await setOutput(false);await startCalibration()}),
+});
+for(const id of ['tutorialBtn','tutorialSettingsBtn'])$('#'+id).addEventListener('click',e=>tutorial.open(e.currentTarget));
 bind('poseRecordBtn',startPoseRecord);
 bind('poseRecordCancelBtn',cancelPoseRecord);
 bind('profileSearchBtn',searchProfiles);
