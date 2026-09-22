@@ -3259,6 +3259,8 @@ class HeadController:
         return fallback
 
     def _capture_runtime_neutral(self, now):
+        if not self._runtime_neutral_pending:
+            return False
         scale = 1.0 if self._effective_estimator_algorithm() == "pnp" else PNP_YAW_SPAN_DEG / RATIO_YAW_SPAN
         pitch_scale = 1.0 if self._effective_estimator_algorithm() == "pnp" else PNP_PITCH_SPAN_DEG / RATIO_PITCH_SPAN
         sample = dict(main=self.control_yaw, frozen=self.frozen22_yaw_median,
@@ -3279,8 +3281,6 @@ class HeadController:
         hist.append((now, values, sample))
         while len(hist)>2 and now-hist[1][0] >= RUNTIME_NEUTRAL_QUIET_S:
             hist.pop(0)
-        if not self._runtime_neutral_pending:
-            return False
         if len(hist)<4 or now-hist[0][0] < RUNTIME_NEUTRAL_QUIET_S:
             return False
         xs = [h[0]-hist[0][0] for h in hist]; xm = statistics.mean(xs)
@@ -3295,21 +3295,7 @@ class HeadController:
             slope = sum((x-xm)*(y-ym) for x,y in zip(xs,ys))/den
             if max(ys)-min(ys)>RUNTIME_NEUTRAL_MAX_SPAN_DEG or abs(slope)>RUNTIME_NEUTRAL_MAX_SLOPE_DEG_S:
                 return False
-        return self._install_runtime_neutral(hist, now)
-
-    def _rebase_runtime_neutral_after_return(self, now):
-        # The intent axis has already confirmed an idle return. Use the same
-        # short window for every reference; a second, incompatible quiet gate
-        # would leave the next action measured from the old absolute centre.
-        hist = [h for h in self._runtime_neutral_samples
-                if now - h[0] <= YAW_V2_RETURN_IDLE_WINDOW_S + 1e-9]
-        if len(hist) < 4 or now - hist[0][0] < YAW_V2_RETURN_IDLE_MIN_COVERAGE_S:
-            return False
-        return self._install_runtime_neutral(hist, now)
-
-    def _install_runtime_neutral(self, hist, now):
         # 同一时刻安装所有通道的窗口中位数，原校准字段始终不变。
-        sample = hist[-1][2]
         snapshot = {}
         for key in ("main", "frozen", "world", "proxy"):
             vs = [h[2][key] for h in hist]
@@ -3819,8 +3805,7 @@ class HeadController:
                 stop_grace_s=0.075, acceleration_stop=1.15, curve_gamma=1.30,
             )
             if policy == "gesture_v188" and getattr(self._x_intent_v153, "_neutral_settle_serial", 0) != settle_before:
-                if not self._rebase_runtime_neutral_after_return(now):
-                    self._arm_runtime_neutral()
+                self._arm_runtime_neutral()
                 vx = 0.0
             elif policy == "gesture_v188" and self._runtime_neutral_pending and (
                 self._x_intent_v153.state in {"TURN_LEFT", "TURN_RIGHT"}
