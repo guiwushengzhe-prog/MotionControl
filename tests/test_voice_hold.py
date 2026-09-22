@@ -1,3 +1,4 @@
+import json
 import time
 
 import pytest
@@ -105,3 +106,27 @@ def test_grammar_phrases_cover_every_recognisable_phrase(tmp_path):
 def test_phone_payload_carries_the_phrase_list():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert '"voice_phrases": VOICE.grammar_phrases()' in server
+
+
+def test_profile_voice_phrase_updates_one_registry_for_phone_and_desktop(tmp_path):
+    generated = tmp_path / 'config' / 'generated_voice'
+    generated.mkdir(parents=True)
+    (generated / 'voice_action_map.json').write_text(json.dumps({
+        '体感功能一': {
+            'id': 'game.profile_slot_01', 'label': '当前游戏功能1',
+            'kind': 'keyboard', 'default_target': 'F1',
+        },
+    }, ensure_ascii=False), encoding='utf-8')
+    calls = []
+    service = VoiceService(tmp_path, lambda action: calls.append(action) or {'executed': True})
+    service.configure_profile_bindings({'voice': {
+        'game.profile_slot_01': {
+            'phrase': '跳跃',
+            'action': {'type': 'keyboard', 'target': 'SPACE', 'behavior': 'tap'},
+        },
+    }})
+    assert '体感跳跃' in service.grammar_phrases()
+    assert '体感功能一' not in service.grammar_phrases()
+    result = service._match_and_execute('体感跳跃', enforce_wake=True)
+    assert result['matched'] is True
+    assert calls[0]['command_id'] == 'game.profile_slot_01'

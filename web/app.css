@@ -571,3 +571,5 @@ dialog::backdrop { background: #030812dc; }
   animation:trigger-fade 1.2s ease-out}
 @keyframes trigger-fade{from{box-shadow:0 0 0 2px #39c07a inset}
   to{box-shadow:0 0 0 2px rgba(57,192,122,0) inset}}
+
+.voice-trigger-phrase { display: block; width: 100%; margin-top: 6px; box-sizing: border-box; }

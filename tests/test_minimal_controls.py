@@ -734,18 +734,12 @@ def test_start_script_detects_wireless_adb_devices_too():
 
 
 def test_spare_voice_slots_are_editable_not_only_displayable():
-    """The twelve spare phrases must be assignable from the editor.
-
-    They were filtered out of the trigger list, so nothing could give them an
-    action -- yet the voice help only lists them once they have one, and the
-    phone recognises them while it cannot recognise a custom alias.  They keep
-    group 'voice' because that name selects the tap/hold/release control and
-    addresses the saved bindings; only the display splits them out.
-    """
+    """The spare slots are the single editable voice-command editor."""
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     assert "filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_'))" not in app
     assert "slot:String(item.id||'').startsWith('game.profile_slot_')" in app
-    assert "t.group==='voice'&&!t.slot" in app and "t.group==='voice'&&t.slot" in app
+    assert "title:'语音口令'" in app
+    assert "className='voice-trigger-phrase'" in app
 
 
 def test_gamepad_combo_is_picked_not_typed_and_poses_can_hold():

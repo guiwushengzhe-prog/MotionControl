@@ -126,6 +126,24 @@ def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
     label = str(binding.get("label", "")).strip()
     if label:
         out["label"] = label
+    # Voice trigger text belongs to the binding, not to the shipped command
+    # catalog.  Keep it in the shared schema so cloud validation and desktop
+    # validation preserve the same player setting.
+    if default_behavior == "tap":
+        phrase = str(binding.get("phrase", "")).strip()
+        if phrase:
+            if len(phrase) > 24:
+                raise ValueError("语音触发词过长")
+            out["phrase"] = phrase
+        synonyms = binding.get("synonyms", [])
+        if isinstance(synonyms, list):
+            aliases = []
+            for item in synonyms[:8]:
+                alias = str(item).strip()
+                if alias and len(alias) <= 24 and alias not in aliases and alias != phrase:
+                    aliases.append(alias)
+            if aliases:
+                out["synonyms"] = aliases
     return out
 
 

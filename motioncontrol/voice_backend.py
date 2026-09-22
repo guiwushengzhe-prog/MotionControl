@@ -7,6 +7,7 @@ import queue
 import sys
 import threading
 import time
+import copy
 from array import array
 from pathlib import Path
 from typing import Callable
@@ -143,6 +144,8 @@ class VoiceService:
         self.model_path = find_vosk_model(root)
         self.action_map_file = root / "config" / "generated_voice" / "voice_action_map.json"
         self.command_registry: dict[str, dict] = {}
+        self._base_command_registry: dict[str, dict] = {}
+        self._phrase_index: dict[str, dict] = {}
         self.recognizer: VoskCommandRecognizer | None = None
         self.recognizer_mode = "vosk_constrained_grammar"
         self.supported_count = 0
@@ -268,42 +271,70 @@ class VoiceService:
             return self.status()
 
     def _load_command_registry(self) -> None:
-        """读内置口令表，并把里面的唤醒词换成用户自己那个。
-
-        表里存的是完整句子（"体感截图"），写死了默认唤醒词。用户把唤醒词改成
-        别的之后，自己写的口令会跟着变（那些是拼出来的），内置的这几十条却还卡在
-        "体感"上——于是改完唤醒词，截图、校准、开关输出全都叫不动了，而界面上还好
-        端端地列着它们。换一下前缀就没这回事。
-        """
+        """Load built-in commands and build the wake-word-aware phrase index."""
         self.command_registry = {}
-        if not self.action_map_file.is_file():
-            return
+        self._base_command_registry = {}
+        if not self.action_map_file.is_file(): return
         try:
             data = json.loads(self.action_map_file.read_text(encoding="utf-8-sig"))
             if isinstance(data, dict):
                 for phrase, raw in data.items():
-                    if not isinstance(raw, dict):
-                        continue
-                    command = dict(raw)
-                    spoken = self._with_wake_word(str(phrase))
-                    command["phrase"] = spoken
-                    self.command_registry[compact_text(spoken)] = command
+                    if not isinstance(raw, dict): continue
+                    command = dict(raw); command["phrase"] = str(phrase)
+                    command["synonyms"] = list(command.get("synonyms", []) or [])
+                    self._base_command_registry[compact_text(str(phrase))] = command
+            self._apply_wake_word_to_registry()
         except Exception as exc:
             self.last_error = f"语音命令注册表读取失败：{exc}"
 
+    def _apply_wake_word_to_registry(self) -> None:
+        registry = {}
+        for command in self._base_command_registry.values():
+            item = copy.deepcopy(command)
+            item["phrase"] = self._with_wake_word(str(item.get("phrase", "")))
+            item["synonyms"] = [self._with_wake_word(str(alias)) for alias in item.get("synonyms", []) or []]
+            registry[compact_text(item["phrase"])] = item
+        self.command_registry = registry
+        self._rebuild_phrase_index()
+
+    def _rebuild_phrase_index(self) -> None:
+        self._phrase_index = {}
+        for command in self.command_registry.values():
+            phrase = compact_text(command.get("phrase", ""))
+            if phrase: self._phrase_index[phrase] = command
+            for alias in command.get("synonyms", []) or []:
+                alias = compact_text(alias)
+                if alias: self._phrase_index[alias] = command
+
     def _with_wake_word(self, phrase: str) -> str:
-        if self.wake_word == DEFAULT_WAKE_WORD or not phrase.startswith(DEFAULT_WAKE_WORD):
-            return phrase
+        if self.wake_word == DEFAULT_WAKE_WORD or not phrase.startswith(DEFAULT_WAKE_WORD): return phrase
         return self.wake_word + phrase[len(DEFAULT_WAKE_WORD):]
 
     def spoken_emergency_phrases(self) -> list[str]:
-        """急停口令实际要说出口的样子。
-
-        内置的那句是"体感紧急停止"，里面写死了默认唤醒词。存盘的时候保持原样，
-        用的时候才换前缀——存换过的那个的话，唤醒词再改一次就认不出来了，
-        而急停是输出卡住时唯一的出口，它不能有这种“改几次就坏了”的毛病。
-        """
         return [self._with_wake_word(item) for item in self.emergency_stop_phrases]
+
+    def configure_profile_bindings(self, bindings: dict | None) -> None:
+        """Overlay editable per-game trigger words on shipped command IDs."""
+        with self._lock:
+            registry = copy.deepcopy(self._base_command_registry)
+            voice_bindings = bindings.get("voice", {}) if isinstance(bindings, dict) else {}
+            by_id = {str(item.get("id")): item for item in registry.values() if isinstance(item, dict)}
+            for command_id, binding in (voice_bindings.items() if isinstance(voice_bindings, dict) else []):
+                command = by_id.get(str(command_id))
+                if command is None or not isinstance(binding, dict): continue
+                phrase = str(binding.get("phrase", "")).strip()
+                if phrase:
+                    if not compact_text(phrase).startswith(compact_text(self.wake_word)): phrase = f"{self.wake_word}{phrase}"
+                    command["phrase"] = phrase
+                aliases = binding.get("synonyms", []); command["synonyms"] = []
+                for item in aliases if isinstance(aliases, list) else []:
+                    alias = str(item).strip()
+                    if alias:
+                        if not compact_text(alias).startswith(compact_text(self.wake_word)): alias = f"{self.wake_word}{alias}"
+                        command["synonyms"].append(alias)
+            self._base_command_registry = registry
+            self._apply_wake_word_to_registry()
+            self._rebuild_recognizer()
 
     def grammar_phrases(self) -> list[str]:
         """Every phrase the constrained grammar must accept.
@@ -319,7 +350,9 @@ class VoiceService:
             phrases.extend(f"{self.wake_word}{command}" for command in commands)
         # The user-facing command catalog is canonical. Legacy mappings
         # remain aliases, but they are no longer a separate behavior path.
-        phrases.extend(command.get("phrase", "") for command in self.command_registry.values())
+        for command in self.command_registry.values():
+            phrases.append(command.get("phrase", ""))
+            phrases.extend(command.get("synonyms", []) or [])
         return [phrase for phrase in dict.fromkeys(phrases) if compact_text(phrase)]
 
     def _rebuild_recognizer(self) -> None:
@@ -575,9 +608,9 @@ class VoiceService:
                 return {"matched": False, "reason": "wake_word_required"}
         # Resolve the canonical catalog first so the current Game Profile is
         # honored for both computer audio and phone voice_text.
-        registry_command = self.command_registry.get(got)
+        registry_command = self._phrase_index.get(got)
         if registry_command is None and wake:
-            registry_command = self.command_registry.get(compact_text(f"{self.wake_word}{command}"))
+            registry_command = self._phrase_index.get(compact_text(f"{self.wake_word}{command}"))
         if registry_command is not None:
             return self._execute_command_action(registry_command, source_id=source_id)
 
