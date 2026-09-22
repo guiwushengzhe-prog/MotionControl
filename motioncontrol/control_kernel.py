@@ -32,6 +32,7 @@ from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
 from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseController
 from motioncontrol.pose_recorder import PoseRecorder
+from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 
 
 def _user_recordings_dir():
@@ -435,6 +436,9 @@ class ControlKernel:
         # profile.  Legacy five-stage/head-face state is no longer part of the
         # runtime path.
         self.head_controller = HeadController(self._head_profile_path())
+        # Experimental action chains are opt-in.  With no user setting the
+        # legacy headJump binding remains the only behavior.
+        self.action_chain = HoldChain(DEFAULT_ACTION_CHAIN)
         self._general_raw: dict = {}
         self._load_general_settings()
         # 新玩家使用侧倾左右配左手上下；初次校准只保存头控档案时，重启仍保留该组合。
@@ -442,6 +446,7 @@ class ControlKernel:
             not self._head_profile_path().exists() or self.head_controller.config["horizontal_algorithm"] == "roll_tilt"
         ):
             self.hand_mouse_controller.configure({"horizontal_hand": "off", "vertical_hand": "left"})
+        self.action_chain_result = self.action_chain.result()
         self.head = self.head_controller.status(time.monotonic())
         self.sensor_sources: dict[str, dict] = {}
         self._thread.start()
@@ -498,6 +503,10 @@ class ControlKernel:
                 self.vertical_look["source"] = source
                 self.vertical_look["verticalLookSource"] = source
 
+        # Invalid or absent action-chain settings safely retain the disabled
+        # default; user data is never written into the program directory.
+        self.action_chain.configure(data.get("action_chain", DEFAULT_ACTION_CHAIN))
+
     def general_setting(self, key: str, default=None):
         """读一项不归内核管、但和它存在同一份文件里的设置。
 
@@ -524,6 +533,7 @@ class ControlKernel:
                 "enabled": bool(self.vertical_look.get("enabled", True)),
                 "source": str(self.vertical_look.get("source", "hand")),
             },
+            "action_chain": self.action_chain.config,
         }
         temp = path.with_suffix(path.suffix + ".tmp")
         try:
@@ -701,6 +711,8 @@ class ControlKernel:
         with self._lock:
             self.control_bindings = self._apply_macro_behavior_locked(flatten_bindings(bindings))
             self.trigger_previous.clear()
+            self.action_chain.reset()
+            self.action_chain_result = self.action_chain.result()
             # A profile switch can disable a motion while its guard-risk debounce
             # is still active. Drop only now-unmapped action-derived evidence;
             # raw/EMA body-motion evidence continues to own the safety guard.
@@ -709,6 +721,17 @@ class ControlKernel:
             setter = getattr(self.output, "set_action_holds", None)
             if setter is not None:
                 self._safe_output(setter, [], source_group="controls")
+
+    def configure_action_chain(self, config: dict | None) -> dict:
+        """Apply and persist the opt-in declarative action-chain experiment."""
+        with self._lock:
+            result = self.action_chain.configure(config)
+            self.action_chain_result = self.action_chain.result()
+            self._save_general_settings()
+            # Re-dispatch immediately so a running chain cannot leave a stale
+            # hold after configuration changes.
+            self._dispatch_controls_locked(time.monotonic())
+            return self.status_locked(time.monotonic())
 
     def configure_head(self, *, algorithm=None, deadzone=None, sensitivity_x=None,
                        sensitivity_y=None, enabled=None, invert_x=None, invert_y=None,
@@ -966,6 +989,7 @@ class ControlKernel:
         self._update_zones_locked(pose_map, now)
         self._update_motion_locked(pose_map, now)
         self._update_cross_poses_locked(pose_map, now)
+        self._update_action_chain_locked(now)
         self._dispatch_controls_locked(now)
         self._update_body_motion_guard_locked(pose_map, now)
         self._update_head_locked(pose_map, now, world_pose)
@@ -1965,10 +1989,28 @@ class ControlKernel:
             "action": copy.deepcopy(action) if isinstance(action, dict) else None,
         })
 
+    def _update_action_chain_locked(self, now: float) -> None:
+        squat = "squat" in self.motion_active
+        signals = {
+            "zone.headJump": bool(self.zone_state.get("headJump", {}).get("pressed")),
+            "motion.squat": squat,
+            "motion.stand": not squat,
+        }
+        self.action_chain_result = self.action_chain.update(now, signals)
+
     def _dispatch_controls_locked(self, now: float) -> None:
-        active = {f"zone.{name}" for name, state in self.zone_state.items() if name in RUNTIME_BODY_ZONES and state.get("pressed")}
+        managed = self.action_chain.managed_triggers if self.action_chain.enabled else set()
+        active = {
+            f"zone.{name}" for name, state in self.zone_state.items()
+            if name in RUNTIME_BODY_ZONES and state.get("pressed")
+            and f"zone.{name}" not in managed
+        }
         active.update(f"motion.{name}" for name in self.motion_active)
         active.update(f"pose.{name}" for name in self.pose_active)
+
+        chain_hold = self.action_chain_result if hasattr(self, "action_chain_result") else self.action_chain.result()
+        if chain_hold.hold and chain_hold.hold_action:
+            active.add(chain_hold.hold_action)
 
         holds = []
         for trigger in sorted(active):
@@ -1976,6 +2018,10 @@ class ControlKernel:
             if not binding:
                 continue
             action = copy.deepcopy(binding.get("action", {}))
+            if trigger == chain_hold.hold_action and chain_hold.hold:
+                # A chain is a hold lifecycle even if the profile's ordinary
+                # headJump binding was saved as a tap.
+                action["behavior"] = "hold"
             # A pose defaults to a single edge trigger but may ask to be held,
             # exactly like a motion: the recognizer drops it the same way, so a
             # held output is released when the pose ends.  Rewriting it here
@@ -2172,6 +2218,8 @@ class ControlKernel:
         if setter is not None:
             self._safe_output(setter, [], source_group="controls")
         self._safe_output(self.output.apply, 0.0, 0.0)
+        self.action_chain.reset()
+        self.action_chain_result = self.action_chain.result()
 
     def _clear_body_locked(self) -> None:
         if self.head_controller.calibrating:
@@ -2300,6 +2348,7 @@ class ControlKernel:
             "recent_triggers": list(self.recent_triggers),
             # 界面要靠它把 at 换算成"几秒前"。用服务端自己的钟，省得和浏览器对时。
             "now": round(now, 3),
+            "action_chain": self.action_chain.status(),
             "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_provisional",
             "vertical_look": copy.deepcopy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),
