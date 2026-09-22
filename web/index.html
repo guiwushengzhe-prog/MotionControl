@@ -201,10 +201,27 @@
 </details>
 </div>
 
+<h2 class="group-head">键盘宏</h2>
+<div class="settings-section wide" id="macroPanel">
+<div class="title">键盘宏</div>
+<p class="lede">一串有先后的按键，存成一条，起个名字。「本游戏」那页的按键映射里，凡是能绑键的地方都能直接选它。所有游戏共用，建一次就够。</p>
+<ul class="lede-list">
+<li>一步里能放键盘、鼠标、手柄，也能直接放<b>另一条已经建好的宏</b>。</li>
+<li>打开「循环」就是按住时反复跑，关着就是触发一次跑一遍。</li>
+</ul>
+<div class="profile-bar">
+<input id="macroName" maxlength="20" placeholder="给这条宏起个名字" type="text"/>
+<button class="btn primary" id="macroAddBtn">新建一条宏</button>
+<span class="statusline" id="macroStatus"></span>
+</div>
+<div id="macroList"></div>
+<p class="fineprint" id="macroHint" hidden="">「按住」是这一步按下去多久，「间隔」是松开之后等多久再走下一步。一条宏最多 12 步，跑完不超过 10 秒。</p>
+</div>
+
 <h2 class="group-head">语音</h2>
 <div class="settings-section wide">
 <div class="title">自定义口令</div>
-<p class="lede">这里的口令在所有游戏里都生效。跟着游戏走的语音映射在「本游戏」那一页。</p>
+<p class="lede">这里的口令在所有游戏里都生效，电脑和手机的麦克风都认得。跟着游戏走的语音映射在「本游戏」那一页。</p>
 <div id="voiceRows"></div>
 <div class="settings-actions"><button class="btn" id="addVoiceBtn">＋别名</button></div>
 <details><summary>怎么做「按住不放」</summary><p class="fineprint">新增「保持右肩键」，选手柄键、填 RB、选「持续按住」；再新增「松开右肩键」，同样填 RB、选「松开」。说「体感保持右肩键」就一直按住，说「体感松开右肩键」才放开。</p></details>

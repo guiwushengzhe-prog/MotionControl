@@ -591,6 +591,78 @@ class VX360Gamepad:
             self._dll.vigem_free(client)
 
 
+class _MacroRun:
+    """一条正在跑的键盘宏。
+
+    为什么单开一个线程：宏是"按下、等一会、松开、再下一个"，中间那些等待加起来可能
+    有几秒。相机和控制在同一个线程上，让它睡一秒等于丢掉三十帧，人会看到画面卡住。
+    所以宏自己跑，通过和别的来源一样的 ``_*_sources`` 把键按下去——于是它和区域、
+    语音、手柄按同一个键时的共存规则完全一样（取并集），不会互相抢。
+
+    停：只 set 一个事件，永远不 join。要停它的那几方（急停、松开、看门狗）都在锁
+    里，join 会等一个正要拿这把锁的线程，那就是死锁。
+    """
+
+    __slots__ = ("output", "source", "macro_id", "steps", "repeat", "managed",
+                 "key", "started_at", "finished", "_stop", "_thread")
+
+    def __init__(self, output, source: str, macro_id: str, steps: list[dict],
+                 repeat: bool, *, managed: bool) -> None:
+        self.output = output
+        self.source = str(source)
+        self.macro_id = str(macro_id)
+        self.steps = steps
+        self.repeat = bool(repeat)
+        # managed = 由 set_action_holds 维持的：跑完不销毁，留着当"这一轮已经跑过"
+        # 的记号，等触发真的松开时才去掉。不留这个记号，下一帧就会看见"该跑但没在
+        # 跑"，于是按帧率反复重启，一秒三十遍。
+        self.managed = bool(managed)
+        self.key = f"{self.source}|macro"
+        self.started_at = time.monotonic()
+        self.finished = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"macro-{macro_id}", daemon=True)
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop.is_set()
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def join(self, timeout: float | None = None) -> None:
+        self._thread.join(timeout)
+
+    def _run(self) -> None:
+        try:
+            while not self._stop.is_set():
+                for step in self.steps:
+                    if self._stop.is_set():
+                        break
+                    self.output._macro_press(self, step)
+                    hold_ms = int(step.get("hold_ms", 0))
+                    if hold_ms:
+                        self._stop.wait(hold_ms / 1000.0)
+                    self.output._macro_release(self)
+                    gap_ms = int(step.get("gap_ms", 0))
+                    if gap_ms:
+                        self._stop.wait(gap_ms / 1000.0)
+                if not self.repeat:
+                    break
+        finally:
+            # finally 而不是循环末尾：线程里任何一步抛异常都不能留下一个按住不放
+            # 的键。这是整个类里唯一绝对不能省的一段。
+            self.finished = True
+            try:
+                self.output._macro_release(self)
+            except Exception:
+                pass
+            self.output._macro_retire(self)
+
+
 class OutputManager:
     """Head-view output manager with watchdog zeroing for virtual sticks."""
 
@@ -627,6 +699,10 @@ class OutputManager:
         self._mouse_button_sources: dict[str, set[str]] = {}
         self._left_stick_sources: dict[str, tuple[float, float]] = {}
         self._trigger_sources: dict[str, tuple[float, float]] = {}
+        # 正在跑的键盘宏，按触发它的 source 存。宏库本身在别处（key_macros.MacroStore），
+        # 这里只拿着它问两件事：这条宏展开之后按哪些键、它是不是循环的。
+        self._macro_runs: dict[str, _MacroRun] = {}
+        self._macro_store = None
         # Physical XInput is sampled and merged into this same virtual report.
         # It is deliberately opt-in so the ordinary mouse/virtual-pad paths do
         # not change for existing users.
@@ -1047,6 +1123,153 @@ class OutputManager:
             raise ValueError("不支持的 Xbox 按键：" + ", ".join(sorted(set(invalid))))
         return set(parts)
 
+    # ---------- 键盘宏 ----------
+
+    def configure_macros(self, store) -> None:
+        """装上宏库。鸭子类型：只用到 ``expanded(id)`` 和 ``repeats(id)`` 两个方法。
+
+        不直接 import MacroStore 是为了不让输出后端依赖存盘那一层——测试里塞一个
+        只有这两个方法的假对象就能把宏整条路跑通，不需要真文件。
+        """
+        with self._lock:
+            self._macro_store = store
+
+    def _macro_plan(self, macro_id: str) -> tuple[list[dict], bool]:
+        """这条宏要按哪些键、是不是循环。查不到就是空表——引用丢了就什么都不按。"""
+        store = self._macro_store
+        if store is None:
+            return [], False
+        try:
+            return list(store.expanded(macro_id)), bool(store.repeats(macro_id))
+        except Exception as exc:  # noqa: BLE001 - 宏库出问题不该让按键这条路崩掉
+            self.last_error = str(exc)
+            return [], False
+
+    def _macro_press(self, run, step) -> None:
+        step_type = str(step.get("type", "")).strip().lower()
+        target = step.get("target", "")
+        if not isinstance(target, (list, tuple, set)):
+            target = str(target).strip().upper()
+        with self._lock:
+            # 拿到锁之后再查一遍状态。停止和急停都发生在这把锁里面，所以这里查过
+            # 之后不可能有人在我们按下去的同一瞬间把输出关掉。少了这一道，急停之后
+            # 还会多按一下——短是短，但那是一次谁也解释不了的按键。
+            if run.stopped or not self.enabled or self._macro_runs.get(run.source) is not run:
+                return
+            merge = self._xinput_merge_active_locked()
+            if merge and step_type != "gamepad":
+                return
+            try:
+                if step_type == "keyboard":
+                    self._keyboard_sources[run.key] = self._combo_keys(target)
+                    self._refresh_keyboard_locked()
+                elif step_type == "mouse_button":
+                    if target not in {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}:
+                        return
+                    self._mouse_button_sources[run.key] = {target}
+                    self._refresh_mouse_buttons_locked()
+                elif step_type == "mouse_wheel":
+                    # 滚轮是一下就完的事，没有"按住"，所以也没有对应的松开。
+                    if target in {"SCROLL_UP", "SCROLL_DOWN"}:
+                        self.mouse.wheel(target, 1)
+                elif step_type == "gamepad":
+                    buttons, stick = self._gamepad_parts(target)
+                    self._button_sources[run.key] = buttons
+                    if stick is not None and (not merge or self._xinput_motion_left_enabled):
+                        self._left_stick_sources[run.key] = stick
+                    self._refresh_buttons_locked()
+                    self._refresh_left_stick_locked()
+                elif step_type == "gamepad_axis":
+                    if merge and not self._xinput_motion_left_enabled:
+                        return
+                    if target in GAMEPAD_AXES:
+                        self._left_stick_sources[run.key] = GAMEPAD_AXES[target]
+                        self._refresh_left_stick_locked()
+                elif step_type == "gamepad_trigger":
+                    if target == "LT":
+                        self._trigger_sources[run.key] = (1.0, 0.0)
+                    elif target == "RT":
+                        self._trigger_sources[run.key] = (0.0, 1.0)
+                    else:
+                        return
+                    self._refresh_triggers_locked()
+                self.last_error = None
+            except Exception as exc:  # noqa: BLE001 - 宏线程里抛出去没人接
+                self.last_error = str(exc)
+
+    def _macro_release(self, run) -> None:
+        with self._lock:
+            touched = False
+            for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources,
+                          self._left_stick_sources, self._trigger_sources):
+                if store.pop(run.key, None) is not None:
+                    touched = True
+            if not touched:
+                return
+            try:
+                self._refresh_buttons_locked()
+                self._refresh_keyboard_locked()
+                self._refresh_mouse_buttons_locked()
+                self._refresh_left_stick_locked()
+                self._refresh_triggers_locked()
+            except Exception as exc:  # noqa: BLE001 - 同上
+                self.last_error = str(exc)
+
+    def _macro_retire(self, run) -> None:
+        with self._lock:
+            if self._macro_runs.get(run.source) is not run:
+                return
+            # 被维持的那种跑完了要留下来当记号，否则下一帧就会当成"该跑还没跑"再启
+            # 一遍。被停掉的、以及一次性的，直接销毁。
+            if not run.managed or run.stopped:
+                self._macro_runs.pop(run.source, None)
+
+    def _start_macro_locked(self, source: str, macro_id: str, *, managed: bool):
+        steps, repeat = self._macro_plan(macro_id)
+        if not steps:
+            return None
+        run = _MacroRun(self, source, macro_id, steps, repeat, managed=managed)
+        self._macro_runs[source] = run
+        run.start()
+        return run
+
+    def _stop_macros_locked(self, predicate) -> int:
+        """停掉符合条件的宏，并抹掉它们按着的键。刷新交给调用方，它本来就要刷。"""
+        stopped = 0
+        for source, run in list(self._macro_runs.items()):
+            if not predicate(source):
+                continue
+            run.stop()
+            self._macro_runs.pop(source, None)
+            for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources,
+                          self._left_stick_sources, self._trigger_sources):
+                store.pop(run.key, None)
+            stopped += 1
+        return stopped
+
+    def _sync_macros_locked(self, prefix: str, desired: dict[str, str]) -> None:
+        """让这一组正在跑的宏对上这一帧该跑的宏。
+
+        这里必须是"对差异"，不能像别的输出那样清空重建：``set_action_holds`` 每帧
+        都调，清空重建等于每秒把宏从头启动三十次，人听到的是一串乱按。
+        """
+        stale = {source for source, run in self._macro_runs.items()
+                 if source.startswith(prefix) and desired.get(source) != run.macro_id}
+        self._stop_macros_locked(stale.__contains__)
+        for source, macro_id in desired.items():
+            # 已经在跑、或者跑完留着记号的，都不重启。重启要等触发先松开。
+            if source in self._macro_runs:
+                continue
+            self._start_macro_locked(source, macro_id, managed=True)
+
+    def _macro_status_locked(self) -> list[dict]:
+        out = []
+        for source, run in sorted(self._macro_runs.items()):
+            if run.finished:
+                continue  # 跑完留下的记号不是"正在跑"，报出去界面上会一直亮着
+            out.append({"source": source, "macro": run.macro_id, "repeat": run.repeat})
+        return out
+
     def set_holds(self, holds, source_group: str = "motions") -> dict:
         """Replace one group's continuous keyboard/gamepad/left-stick holds."""
         prefix = str(source_group) + ":"
@@ -1119,8 +1342,12 @@ class OutputManager:
         prefix = str(source_group) + ":"
         with self._lock:
             for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
-                for key in [k for k in store if k.startswith(prefix)]:
+                # 宏自己按下的键不在这次清空的范围里。这个函数每帧都调，清掉的话
+                # 宏刚按下的键会在几毫秒后被抹掉，下一步又按回来——游戏里听到的是
+                # 一串乱按。宏什么时候松手由它自己那条线程说了算。
+                for key in [k for k in store if k.startswith(prefix) and not k.endswith("|macro")]:
                     store.pop(key, None)
+            desired_macros: dict[str, str] = {}
             for item in holds or []:
                 if not isinstance(item, dict):
                     continue
@@ -1167,8 +1394,13 @@ class OutputManager:
                     if self._xinput_merge_active_locked():
                         continue
                     raise ValueError("鼠标滚轮只能使用 tap，不能作为持续 hold")
+                elif action_type == "macro":
+                    # 宏不在这里按键，只登记"这一帧它该在跑"。真正的按下/松开在它
+                    # 自己的线程里，节奏由宏的步骤决定，不是每帧一次。
+                    desired_macros[source] = str(action.get("target", "")).strip().lower()
                 else:
                     raise ValueError(f"不支持的持续输出类型：{action_type}")
+            self._sync_macros_locked(prefix, desired_macros)
             # A trigger that ended while its stick was still pending must not
             # have it land afterwards.  This runs every frame, so cancelling
             # before the rebuild would keep postponing a timer that never fires.
@@ -1274,6 +1506,8 @@ class OutputManager:
         source = str(source)
         with self._lock:
             self._cancel_combo_timers_locked(lambda key: key == source or key.startswith(source + "|voice-"))
+            # 说"松开"要能停住一条正在循环的宏。不停它，键会被下面清掉又被宏按回来。
+            self._stop_macros_locked(lambda key: key == source or key.startswith(source + "|voice-"))
             for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
                 for key in list(store):
                     if key == source or key.startswith(source + "|voice-"):
@@ -1392,6 +1626,16 @@ class OutputManager:
             merge_allowed = action_type == "gamepad" or (action_type == "gamepad_axis" and self._xinput_motion_left_enabled)
         if merge_active and not merge_allowed:
             return {"executed": False, "reason": "合流仅允许手柄按键和已开启的体感左摇杆"}
+        if action_type == "macro":
+            # 宏天生要花时间，所以永远走自己的线程，不看 nonblocking。同一个来源
+            # 再触发一次就是重来一遍：先停掉上一轮，免得两轮叠在一起乱按。
+            macro_id = str(action.get("target", "")).strip().lower()
+            with self._lock:
+                self._stop_macros_locked(lambda key: key == source)
+                run = self._start_macro_locked(source, macro_id, managed=persistent)
+            if run is None:
+                return {"executed": False, "reason": f"找不到这条宏：{macro_id}"}
+            return {"executed": True, "action": f"macro:{macro_id}"}
         if action_type in {"gamepad_button", "xinput_button"}:
             action_type = "gamepad"
         if not nonblocking and action_type == "gamepad":
@@ -1454,6 +1698,9 @@ class OutputManager:
         physical = {}
         if self._xinput_merge_active_locked() and self._xinput_source:
             physical[self._xinput_source] = set(self._xinput_state.get("buttons", set()) if self._xinput_state else set())
+        # 停宏要排在重建那几个字典之前。字典换新的只是让它按着的键不再生效，线程
+        # 还在跑，下一步又会把键塞进新字典里。
+        self._stop_macros_locked(lambda key: True)
         self._button_sources = physical or {"zones": set()}
         self._keyboard_sources = {}
         self._mouse_button_sources = {}
@@ -1478,6 +1725,7 @@ class OutputManager:
         self.last_x = 0.0
         self.last_y = 0.0
         self.last_buttons = ()
+        self._stop_macros_locked(lambda key: True)
         self._button_sources = {"zones": set()}
         self._keyboard_sources = {}
         self._mouse_button_sources = {}
@@ -1521,7 +1769,9 @@ class OutputManager:
                         self.last_error = str(exc)
                 if self.last_hold_update and now - self.last_hold_update > 0.45:
                     prefixes = ("motions:", "controls:")
-                    changed = False
+                    # 宏也要一起停。控制这一路不再刷新，说明触发它的东西已经没了；
+                    # 而宏是自己在按键的线程，不停它就会一直按下去，直到整条跑完。
+                    changed = bool(self._stop_macros_locked(lambda key: key.startswith(prefixes)))
                     for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
                         for key in [k for k in store if k.startswith(prefixes)]:
                             store.pop(key, None); changed = True
@@ -1579,6 +1829,7 @@ class OutputManager:
             "left_stick_holds": list(self._left_stick_sources.keys()),
             "trigger_holds": list(self._trigger_sources.keys()),
             "voice_latches": self._voice_latches_locked(),
+            "macros_running": self._macro_status_locked(),
             "last_error": self.last_error,
         }
 
@@ -1601,9 +1852,20 @@ class OutputManager:
                 marker = "|voice-hold:"
                 if marker not in source:
                     continue
+                # 宏按下的那些键在这里跳过，改由下面按"正在跑的宏"来报。宏的键只在
+                # 某一步按住的那几十毫秒里存在，步与步之间是空的——照着键报，提示会
+                # 一闪一闪，那比不报还糟。
+                if source.endswith("|macro"):
+                    continue
                 owner, rest = source.split(marker, 1)
                 kind, _, target = rest.partition(":")
                 found[rest] = {"owner": owner, "type": kind, "target": target}
+        for source, run in self._macro_runs.items():
+            marker = "|voice-hold:"
+            if marker not in source or run.finished:
+                continue
+            owner, rest = source.split(marker, 1)
+            found[rest] = {"owner": owner, "type": "macro", "target": run.macro_id}
         return [found[key] for key in sorted(found)]
 
     def close(self) -> None:

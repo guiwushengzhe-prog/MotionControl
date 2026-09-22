@@ -420,6 +420,8 @@ class ControlKernel:
         # 文件，这样测试里可以直接塞一个假的。
         self.custom_pose_store = None
         self.custom_pose_scores: dict[str, float] = {}
+        # 用户自己建的键盘宏。和上面一样，文件不归内核管，由 server.py 装进来。
+        self.macro_store = None
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -653,10 +655,44 @@ class ControlKernel:
             # Recognition/debounce state is intentionally preserved.
             self._dispatch_controls_locked(time.monotonic())
 
+    def _apply_macro_behavior_locked(self, bindings: dict) -> dict:
+        """让指向宏的绑定，"跑一遍还是循环"跟着那条宏自己的设定走。
+
+        这件事是宏的属性，不是每条绑定各选一次的东西——用户在宏库里选一次，所有用
+        到它的地方都照办。绑定里存着的那个 behavior 只是一份副本，宏改了它就旧了，
+        所以每次装配置都按宏库重算一遍。不重算的话，界面上写着"循环"而实际只跑一
+        遍，那种不一致查起来最费劲。
+        """
+        store = self.macro_store
+        if store is None:
+            return bindings
+        for binding in bindings.values():
+            action = binding.get("action")
+            if not isinstance(action, dict) or action.get("type") != "macro":
+                continue
+            # 语音的"松开"是一条停止指令，和宏本身循环不循环无关，不能被改掉。
+            if action.get("behavior") == "release":
+                continue
+            try:
+                action["behavior"] = "hold" if store.repeats(action.get("target", "")) else "tap"
+            except Exception:  # noqa: BLE001 - 宏库出问题时保持原样，不影响别的绑定
+                continue
+        return bindings
+
+    def configure_macros(self, store) -> None:
+        """装上（或换掉）键盘宏库。"""
+        with self._lock:
+            self.macro_store = store
+            setter = getattr(self.output, "configure_macros", None)
+            if setter is not None:
+                self._safe_output(setter, store)
+            self.control_bindings = self._apply_macro_behavior_locked(self.control_bindings)
+            self._dispatch_controls_locked(time.monotonic())
+
     def configure_bindings(self, bindings: dict | None) -> None:
         """Install one effective Game Profile without touching recognition thresholds."""
         with self._lock:
-            self.control_bindings = flatten_bindings(bindings)
+            self.control_bindings = self._apply_macro_behavior_locked(flatten_bindings(bindings))
             self.trigger_previous.clear()
             # A profile switch can disable a motion while its guard-risk debounce
             # is still active. Drop only now-unmapped action-derived evidence;

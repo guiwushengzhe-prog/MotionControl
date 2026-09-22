@@ -30,6 +30,8 @@ function actionKeyText(action){
   if(!action)return null;
   const type=String(action.type||''),target=String(action.target||'').toUpperCase();
   if(!type||!target)return null;
+  // 宏的编号对人没有意义，圈上和卡片上要写它的名字。
+  if(type==='macro')return macroName(action.target);
   if(type==='keyboard')return target;
   if(type==='mouse_button')return({LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键1',X2:'侧键2'}[target]||target);
   if(type==='mouse_wheel')return target.includes('UP')?'滚轮↑':target.includes('DOWN')?'滚轮↓':target;
@@ -44,6 +46,22 @@ function voiceLatchText(status){
   if(!list.length)return null;
   const keys=list.map((item)=>actionKeyText(item)||item.target).filter(Boolean);
   return keys.length?`语音按住 ${keys.join('、')}`:null;
+}
+// 一个触发器现在绑的是什么。圈上、姿势卡片上都用它，写法才会是一致的。
+function triggerKeyLabel(triggerKey){
+  const binding=(kernelState?.control_bindings||{})[triggerKey];
+  const text=binding&&!binding.disabled?actionKeyText(binding.action):null;
+  return text||'未映射';
+}
+// 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
+function revealBindingRow(triggerKey){
+  const row=document.querySelector(`.binding-row[data-trigger="${triggerKey}"]`);
+  if(!row){notice('这个动作还没出现在映射表里，刷新一下页面再试');return}
+  row.closest('details')?.setAttribute('open','');
+  row.scrollIntoView({behavior:'smooth',block:'center'});
+  row.classList.add('just-found');
+  setTimeout(()=>row.classList.remove('just-found'),1600);
+  row.querySelector('select')?.focus();
 }
 // 手部一块圈里有上下两个绑定，所以它的标注天然是两个键，写成 "Y / X"。
 function zoneKeyLabel(id,def){
@@ -82,7 +100,11 @@ const MOTION_CONFLICT_GROUPS=[
   {ids:['jumping_jack','hands_up'],label:'开合跳与双手过头'},
 ];
 const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后',squat:'下蹲',hands_up:'双手过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
-const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆'};
+const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆',macro:'键盘宏'};
+// 宏库。每一处映射的下拉都从这里取，所以只在增删改之后刷一次，不跟着状态轮询走。
+const macroLibrary={items:[],limits:null};
+function macroById(id){return macroLibrary.items.find(item=>item.id===String(id||'').toLowerCase())||null}
+function macroName(id){const found=macroById(id);return found?found.name:'宏已丢失'}
 const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',X2:'侧键 2',SCROLL_UP:'向上滚',SCROLL_DOWN:'向下滚',LT:'LT',RT:'RT',L3:'L3',R3:'R3',DPAD_UP:'十字键上',DPAD_DOWN:'十字键下',DPAD_LEFT:'十字键左',DPAD_RIGHT:'十字键右',START:'Start',BACK:'Back',LS_UP:'左摇杆上',LS_DOWN:'左摇杆下',LS_LEFT:'左摇杆左',LS_RIGHT:'左摇杆右'};
 // The dispatcher rejects anything outside this set, so offer the list instead
 // of a free text field whose typos can only surface as a silent no-op in game.
@@ -432,6 +454,7 @@ function syncMotionConflictChoices(){
 }
 function targetLabel(action){
   if(!action)return '未映射';
+  if(action.type==='macro')return macroName(action.target);
   const t=String(action.target||'').toUpperCase();
   if(action.type==='keyboard')return t;
   if(action.type==='gamepad'){const values=Array.isArray(action.target)?action.target: String(action.target||'').split('+');return values.map(v=>TARGET_LABELS[String(v).toUpperCase()]||String(v).toUpperCase()).join('+')}
@@ -617,13 +640,41 @@ function fillTargetControl(container,type,value=''){
     select.value=[...select.options].some(o=>o.value===raw)?raw:'__combo__';
     select.addEventListener('change',update);update();container.append(select,picker,combo);return;
   }
+  if(type==='macro'){
+    const select=document.createElement('select');select.className='binding-target';
+    if(!macroLibrary.items.length){
+      const o=document.createElement('option');o.value='';o.textContent='还没有宏——到「通用设置 · 键盘宏」里建一条';
+      select.appendChild(o);select.disabled=true;container.appendChild(select);return;
+    }
+    for(const macro of macroLibrary.items){const o=document.createElement('option');o.value=macro.id;o.textContent=macro.repeat?`${macro.name}（循环）`:macro.name;select.appendChild(o)}
+    const want=String(value||'').toLowerCase();
+    // 指向一条已经删掉的宏时，照实说。默默换成第一条会让人以为自己记错了。
+    if(want&&![...select.options].some(o=>o.value===want)){const o=document.createElement('option');o.value=want;o.textContent='宏已丢失';select.appendChild(o)}
+    select.value=want||macroLibrary.items[0].id;
+    container.appendChild(select);return;
+  }
   if(meta.free_text){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder=meta.placeholder||'例如 W / SPACE / CTRL+W';input.value=Array.isArray(value)?value.join('+'):(value||'');container.appendChild(input);return}
   const select=document.createElement('select');select.className='binding-target';
   for(const target of meta.targets||[]){const o=document.createElement('option');o.value=target;o.textContent=TARGET_LABELS[target]||target;select.appendChild(o)}
   if(value&&[...select.options].some(o=>o.value===value))select.value=value;container.appendChild(select);
 }
-function fillBehaviorControl(container,trigger,type,value){
+function fillBehaviorControl(container,trigger,type,value,macroId){
   container.replaceChildren();
+  if(type==='macro'){
+    // 「跑一遍还是按住时循环」是宏自己的设定，在宏库那边改。同一个东西两处能改，
+    // 就一定会有一处是旧的，所以这里只显示结果。
+    const macro=macroById(macroId);
+    const mode=macro?.repeat?'hold':'tap';
+    const text=!macro?'—':macro.repeat?'按住时循环':'触发时跑一遍';
+    if(trigger.group!=='voice'){
+      const span=document.createElement('span');span.className='binding-behavior';
+      span.dataset.value=mode;span.textContent=text;container.appendChild(span);return;
+    }
+    // 语音多一项：循环的宏要靠另一句口令停住，那句得能选「松开」。
+    const sel=document.createElement('select');sel.className='binding-behavior';
+    for(const[v,t]of[[mode,text],['release','松开（停住这条宏）']]){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
+    sel.value=value==='release'?'release':mode;container.appendChild(sel);return;
+  }
   if(trigger.tapOnly||type==='mouse_wheel'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='进入时触发一次';span.dataset.value='tap';container.appendChild(span);return}
   if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='—';span.dataset.value='hold';container.appendChild(span);return}
   const sel=document.createElement('select');sel.className='binding-behavior';
@@ -641,7 +692,7 @@ function renderProfileBindingRows(){
     {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
     {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手过头顶不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
     {id:'voice',title:'语音',help:'说出完整口令后触发一次；系统安全口令不可改',filter:t=>t.group==='voice'&&!t.slot,open:false},
-    {id:'voiceSlots',title:'语音 · 备用口令',help:'口令固定但动作随你指派，手机麦克风也认得；下方“自定义口令”可自己起名，但只有电脑麦克风能识别',filter:t=>t.group==='voice'&&t.slot,open:false},
+    {id:'voiceSlots',title:'语音 · 备用口令',help:'口令固定但动作随你指派；下方「自定义口令」可以自己起名。两种电脑和手机的麦克风都认得——整张口令表跟着配置一起发给手机，手机自己按那份重建识别器',filter:t=>t.group==='voice'&&t.slot,open:false},
   ];
   for(const group of groups){
     const items=triggers.filter(group.filter);if(!items.length)continue;
@@ -655,8 +706,12 @@ function renderProfileBindingRows(){
       const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
       const type=makeTypeSelect(binding);
       const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
-      const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'));
-      type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold');syncMotionConflictChoices()});
+      const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
+      const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'),action?.target||'');
+      type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
+      // 换了另一条宏，「跑一遍还是循环」要跟着那条宏重算——那一格写的必须是现在
+      // 选中这条的，否则界面说一套、实际跑另一套。
+      target.addEventListener('change',()=>{if(type.value==='macro')fillBehaviorControl(behavior,trigger,'macro',behavior.querySelector('.binding-behavior')?.value,pickedMacro())});
       row.append(name,type,target,behavior);
       row.querySelectorAll('input,select').forEach(control=>control.setAttribute('aria-label',trigger.name+' '+(control.className.includes('type')?'输出类型':'键位或触发方式')));
       if(trigger.group==='motions'){const note=document.createElement('div');note.className='motion-conflict-note';note.hidden=true;row.appendChild(note)}
@@ -673,9 +728,14 @@ function readProfileOverrides(){
     const row=document.querySelector(`.binding-row[data-trigger="${trigger.key}"]`);if(!row)continue;
     const type=row.querySelector('.binding-type')?.value||'';
     if(!type){overrides[trigger.key]=null;continue}
-    const target=String(row.querySelector('.binding-target')?.value||'').trim().toUpperCase();
-    if(!target)throw new Error(`${trigger.name} 还没有选择具体键位`);
-    const behavior=trigger.tapOnly||type==='mouse_wheel'?'tap':(row.querySelector('select.binding-behavior')?.value||'hold');
+    const raw=String(row.querySelector('.binding-target')?.value||'').trim();
+    // 宏的编号是小写的。跟着别的类型一起转大写就再也认不出是哪条宏了。
+    const target=type==='macro'?raw.toLowerCase():raw.toUpperCase();
+    if(!target)throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:`${trigger.name} 还没有选择具体键位`);
+    // 只读的那一格把值放在 dataset 里（宏、滚轮、没绑的都是这种），有下拉时以下拉为准。
+    const behavior=trigger.tapOnly||type==='mouse_wheel'?'tap':(
+      row.querySelector('select.binding-behavior')?.value
+      ||row.querySelector('.binding-behavior')?.dataset.value||'hold');
     overrides[trigger.key]={action:{type,target,behavior}};
   }
   const conflicts=motionConflictsForSelection(selectedMotionIdsFromRows());
@@ -1330,6 +1390,14 @@ function poll(task,delay,enabled=()=>true){
 }
 async function init(){
   initViewGuide();setViewControlBusy(false);syncControlLabels();
+  // 自定义姿势和宏库要排在最前面，比 refreshKernel 还早。
+  //
+  // 原因不显眼：refreshKernel 里有一句 void loadProfiles()，它不被 await，会自己跑去
+  // 建映射行。那一刻这两份要是还没到，建出来的表就是缺的：录过的姿势没有对应的
+  // 行，每个「键盘宏」下拉都写着“还没有宏”。东西明明在，页面上却说没有。
+  //
+  // 这是个旧毛病，只是之前靠时机碰对的次数多——中间多一次 await 就会碰错。
+  await Promise.all([refreshCustomPoses({rebuild:false}), refreshMacros({rebuild:false})]);
   await refreshKernel();await refreshOutput();
   const results=await Promise.allSettled([
     refreshInput(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshScene(),
@@ -1340,9 +1408,6 @@ async function init(){
     }),
   ]);
   if(results.some(result=>result.status==='rejected'))notice('部分设备信息尚未读取，可继续使用已连接的输入');
-  // 先拿姿势列表再建映射行：触发器列表要包含自定义姿势，否则录过的姿势
-  // 在映射界面里没有对应的一行。
-  await refreshCustomPoses({rebuild:false});
   await loadProfiles();renderVoiceRows(voice.status?.mappings||[]);
   poll(refreshKernel,250);poll(async()=>{await refreshInput();await refreshOutput();await refreshVoice()},900);
   poll(refreshXinput,1500,()=>currentView==='devices');
@@ -1890,9 +1955,18 @@ function renderCustomPoses() {
     addFrame.addEventListener('click', () => appendCustomPoseFrame(item, addFrame));
     strip.appendChild(addFrame);
 
+    // 绑的是哪个键。只显示，不在这里改——同一个东西两处能改，就一定会有一处
+    // 是旧的。点它跳到上面那张表里对应的一行，改在那边。
+    const bound = document.createElement('button');
+    bound.type = 'button';
+    bound.className = 'custom-pose-key';
+    bound.textContent = triggerKeyLabel('pose.' + item.id);
+    bound.title = '点一下跳到上面的按键映射';
+    bound.addEventListener('click', () => revealBindingRow('pose.' + item.id));
+
     const head = document.createElement('div');
     head.className = 'custom-pose-head';
-    head.append(name, meter);
+    head.append(name, meter, bound);
 
     const tools = document.createElement('div');
     tools.className = 'custom-pose-tools';
@@ -1932,6 +2006,9 @@ function paintCustomPoseScores() {
     if (readout) readout.textContent = Math.round(score * 100) + '%';
     row.classList.toggle('hit', !!(item && score >= item.threshold));
     row.classList.toggle('firing', active.has(id));
+    // 键位标签跟着一起刷。上面改了绑定，这里得马上跟上，不然就是两处各说各的。
+    const bound = row.querySelector('.custom-pose-key');
+    if (bound) bound.textContent = triggerKeyLabel('pose.' + id);
   }
 }
 
@@ -1946,3 +2023,284 @@ document.getElementById('customPoseScoresBtn')?.addEventListener('click', event 
 document.getElementById('customPoseCaptureBtn')?.addEventListener('click', captureCustomPose);
 
 document.getElementById('cloudSiteBtn')?.addEventListener('click', () => openOnSite('/'));
+
+/* --- 键盘宏 -------------------------------------------------------------
+ * 一串有先后的按键，存成一条，起个名字，到处都能选。
+ *
+ * 宏库是全局的，不跟游戏走——要的就是"建一次，其他地方直接选用"。跟着游戏存的话，
+ * 换个游戏就得重建一遍，那和多写几个键没区别。
+ *
+ * 校验全在电脑那边（motioncontrol_shared/macro_schema.py），这里不自己再判一遍：
+ * 判两遍就是两套规则，早晚对不上。这边只负责把服务端说的话原样显示出来。
+ */
+const macroListEl = document.getElementById('macroList');
+const macroStatusEl = document.getElementById('macroStatus');
+const MACRO_STEP_TYPES = [
+  ['keyboard', '键盘'], ['mouse_button', '鼠标按键'], ['mouse_wheel', '鼠标滚轮'],
+  ['gamepad', 'Xbox 按键'], ['gamepad_trigger', 'Xbox 扳机'], ['gamepad_axis', 'Xbox 左摇杆'],
+  ['macro', '跑另一条宏'],
+];
+const MACRO_STEP_TARGETS = {
+  mouse_button: ['LEFT', 'RIGHT', 'MIDDLE', 'X1', 'X2'],
+  mouse_wheel: ['SCROLL_UP', 'SCROLL_DOWN'],
+  gamepad_trigger: ['LT', 'RT'],
+  gamepad_axis: ['LS_UP', 'LS_DOWN', 'LS_LEFT', 'LS_RIGHT'],
+  gamepad: ['A', 'B', 'X', 'Y', 'LB', 'RB', 'L3', 'R3', 'START', 'BACK',
+            'DPAD_UP', 'DPAD_DOWN', 'DPAD_LEFT', 'DPAD_RIGHT'],
+};
+
+function macroSay(text, kind = '') {
+  if (!macroStatusEl) return;
+  macroStatusEl.textContent = text;
+  macroStatusEl.className = kind === 'error' ? 'statusline error' : 'statusline';
+}
+
+async function refreshMacros({ rebuild = true } = {}) {
+  try {
+    const data = await api('/api/macros');
+    macroLibrary.items = data.macros || [];
+    macroLibrary.limits = data.limits || null;
+    if (data.error) macroSay(data.error, 'error');
+  } catch (error) {
+    macroSay(error.message, 'error');
+    return;
+  }
+  renderMacros();
+  if (rebuild) await rebuildBindingRowsAfterMacroChange();
+}
+
+/** 宏改了，上面每一行映射里的下拉、以及「跑一遍还是循环」那一格都要跟着变。
+ *  重画之前先把还没存的编辑落盘，否则会把用户手上的草稿抹掉。 */
+async function rebuildBindingRowsAfterMacroChange() {
+  try { await saveProfileBindings(); } catch { /* 存不上那边自己会报，这里不抢话 */ }
+  renderProfileBindingRows();
+}
+
+async function macroWrite(route, body) {
+  const data = await post('/api/macros/' + route, body);
+  macroLibrary.items = data.macros || [];
+  renderMacros();
+  await rebuildBindingRowsAfterMacroChange();
+  return data;
+}
+
+async function addMacro() {
+  const field = document.getElementById('macroName');
+  try {
+    await macroWrite('create', { name: field?.value || '' });
+    if (field) field.value = '';
+    macroSay('建好了。往下加步骤，然后到「本游戏 · 按键映射」里选它。');
+  } catch (error) { macroSay(error.message, 'error'); }
+}
+
+async function updateMacro(id, changes) {
+  try { await macroWrite('update', { id, ...changes }); macroSay('已保存'); }
+  catch (error) {
+    macroSay(error.message, 'error');
+    // 服务端拒绝了就是什么都没改。界面上那个已经动过的控件必须退回去，否则它显示
+    // 的是一个根本没存进去的值——下次打开又变回来，人会以为是软件丢了设置。
+    await refreshMacros({ rebuild: false });
+  }
+}
+
+async function removeMacro(macro) {
+  if (!confirm(`删掉「${macro.name}」？用到它的按键映射会变成未映射。`)) return;
+  try { await macroWrite('remove', { id: macro.id }); macroSay(`已删掉「${macro.name}」`); }
+  catch (error) { macroSay(error.message, 'error'); }
+}
+
+function macroStepTargetControl(step, others) {
+  const type = String(step.type || 'keyboard');
+  if (type === 'macro') {
+    const select = document.createElement('select');
+    select.className = 'macro-step-target';
+    if (!others.length) {
+      const empty = document.createElement('option');
+      empty.value = ''; empty.textContent = '没有别的宏可以放';
+      select.appendChild(empty); select.disabled = true; return select;
+    }
+    for (const other of others) {
+      const option = document.createElement('option');
+      option.value = other.id; option.textContent = other.name; select.appendChild(option);
+    }
+    if (others.some(other => other.id === step.target)) select.value = step.target;
+    return select;
+  }
+  if (type === 'keyboard') {
+    const input = document.createElement('input');
+    input.className = 'macro-step-target';
+    input.type = 'text';
+    input.placeholder = '例如 W / SPACE / CTRL+W';
+    input.value = step.target || '';
+    return input;
+  }
+  const select = document.createElement('select');
+  select.className = 'macro-step-target';
+  for (const key of MACRO_STEP_TARGETS[type] || []) {
+    const option = document.createElement('option');
+    option.value = key; option.textContent = TARGET_LABELS[key] || key; select.appendChild(option);
+  }
+  if (step.target && [...select.options].some(option => option.value === step.target)) select.value = step.target;
+  return select;
+}
+
+function macroNumberField(label, value, low, high, unit) {
+  const wrap = document.createElement('label');
+  wrap.className = 'macro-step-ms';
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = String(low); input.max = String(high); input.step = '10';
+  input.value = String(value);
+  wrap.append(label, input, unit);
+  return { wrap, input };
+}
+
+/** 把界面上那一排控件读回成一条宏的步骤表。整条一起提交，不做单步保存——服务端
+ *  校验的是整条（转不转圈、总共多久都得看全貌），单步存等于把校验切碎。 */
+function readMacroSteps(row) {
+  return [...row.querySelectorAll('.macro-step')].map(stepEl => {
+    const step = {
+      type: stepEl.querySelector('.macro-step-type').value,
+      target: String(stepEl.querySelector('.macro-step-target')?.value || '').trim(),
+    };
+    const hold = stepEl.querySelector('.macro-step-hold');
+    const gap = stepEl.querySelector('.macro-step-gap');
+    if (hold) step.hold_ms = Number(hold.value);
+    if (gap) step.gap_ms = Number(gap.value);
+    return step;
+  });
+}
+
+function renderMacroStepBody(stepEl, step, others) {
+  const body = stepEl.querySelector('.macro-step-body');
+  body.replaceChildren();
+  body.appendChild(macroStepTargetControl(step, others));
+  const limits = macroLibrary.limits || {};
+  const [holdLow, holdHigh] = limits.hold_ms || [10, 1000];
+  const [gapLow, gapHigh] = limits.gap_ms || [0, 1000];
+  // 引用另一条宏时没有「按住多久」——按多久由那条宏自己的步骤决定。滚轮也没有，
+  // 它是一下就完的事。留一个不起作用的输入框只会让人以为它有用。
+  if (step.type !== 'macro' && step.type !== 'mouse_wheel') {
+    const hold = macroNumberField('按住 ', step.hold_ms ?? 60, holdLow, holdHigh, '毫秒');
+    hold.input.classList.add('macro-step-hold');
+    body.appendChild(hold.wrap);
+  }
+  const gap = macroNumberField('然后等 ', step.gap_ms ?? 40, gapLow, gapHigh, '毫秒');
+  gap.input.classList.add('macro-step-gap');
+  body.appendChild(gap.wrap);
+}
+
+function renderMacros() {
+  if (!macroListEl) return;
+  const hint = document.getElementById('macroHint');
+  if (hint) hint.hidden = !macroLibrary.items.length;
+  macroListEl.replaceChildren();
+
+  for (const macro of macroLibrary.items) {
+    const row = document.createElement('div');
+    row.className = 'macro';
+    row.dataset.id = macro.id;
+
+    const name = document.createElement('input');
+    name.className = 'macro-name';
+    name.value = macro.name;
+    name.maxLength = macroLibrary.limits?.name_chars || 20;
+    name.addEventListener('change', () => updateMacro(macro.id, { name: name.value }));
+
+    const repeat = document.createElement('label');
+    repeat.className = 'macro-repeat';
+    repeat.title = '关着就是触发一次跑一遍；打开就是动作保持着（或语音按住时）反复跑，松开才停';
+    const repeatBox = document.createElement('input');
+    repeatBox.type = 'checkbox';
+    repeatBox.checked = !!macro.repeat;
+    repeatBox.addEventListener('change', () => updateMacro(macro.id, { repeat: repeatBox.checked }));
+    repeat.append(repeatBox, '按住时循环');
+
+    const summary = document.createElement('span');
+    summary.className = 'macro-summary';
+    summary.textContent = macro.error
+      ? macro.error
+      : `${macro.expanded_steps} 步 · ${(macro.duration_ms / 1000).toFixed(2)} 秒`;
+    if (macro.error) summary.classList.add('error');
+
+    const head = document.createElement('div');
+    head.className = 'macro-head';
+    head.append(name, repeat, summary);
+
+    // 自己不能引用自己，所以这一条不进可选列表。放进去只是让人建一条存不进去的宏。
+    const others = macroLibrary.items.filter(item => item.id !== macro.id);
+    const commit = () => updateMacro(macro.id, { steps: readMacroSteps(row) });
+
+    const steps = document.createElement('div');
+    steps.className = 'macro-steps';
+    (macro.steps || []).forEach((step, index) => {
+      const stepEl = document.createElement('div');
+      stepEl.className = 'macro-step';
+
+      const order = document.createElement('span');
+      order.className = 'macro-step-order';
+      order.textContent = String(index + 1);
+
+      const type = document.createElement('select');
+      type.className = 'macro-step-type';
+      for (const [value, label] of MACRO_STEP_TYPES) {
+        if (value === 'macro' && !others.length) continue;
+        const option = document.createElement('option');
+        option.value = value; option.textContent = label; type.appendChild(option);
+      }
+      type.value = step.type;
+      // 换了类型，键位那一格里原来的值就没意义了（W 不是一个鼠标键）。重建再提交。
+      type.addEventListener('change', () => {
+        renderMacroStepBody(stepEl, { type: type.value }, others);
+        commit();
+      });
+
+      const body = document.createElement('div');
+      body.className = 'macro-step-body';
+
+      const drop = document.createElement('button');
+      drop.className = 'btn macro-step-drop';
+      drop.type = 'button';
+      drop.textContent = '×';
+      drop.title = `删掉第 ${index + 1} 步`;
+      drop.addEventListener('click', () => {
+        const kept = readMacroSteps(row).filter((_, at) => at !== index);
+        if (!kept.length) { macroSay('一条宏至少要有一步。整条不要了就点「删除」。', 'error'); return; }
+        updateMacro(macro.id, { steps: kept });
+      });
+
+      stepEl.append(order, type, body, drop);
+      renderMacroStepBody(stepEl, step, others);
+      steps.appendChild(stepEl);
+    });
+
+    steps.addEventListener('change', event => {
+      // 类型那一格自己会提交，这里只管键位和毫秒数，免得同一次改动提交两遍。
+      if (!event.target.classList.contains('macro-step-type')) commit();
+    });
+
+    const addStep = document.createElement('button');
+    addStep.className = 'btn';
+    addStep.type = 'button';
+    addStep.textContent = '再加一步';
+    addStep.addEventListener('click', () =>
+      updateMacro(macro.id, { steps: [...readMacroSteps(row), { type: 'keyboard', target: 'SPACE' }] }));
+
+    const remove = document.createElement('button');
+    remove.className = 'btn';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => removeMacro(macro));
+
+    const tools = document.createElement('div');
+    tools.className = 'macro-tools';
+    tools.append(addStep, remove);
+
+    row.append(head, steps, tools);
+    macroListEl.appendChild(row);
+  }
+}
+
+document.getElementById('macroAddBtn')?.addEventListener('click', addMacro);
+document.getElementById('macroName')?.addEventListener('keydown', event => {
+  if (event.key === 'Enter') addMacro();
+});

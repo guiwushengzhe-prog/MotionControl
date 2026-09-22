@@ -24,7 +24,15 @@ MOUSE_BUTTONS = {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}
 MOUSE_WHEEL = {"SCROLL_UP", "SCROLL_DOWN"}
 ACTION_TYPES = {
     "keyboard", "mouse_button", "mouse_wheel", "gamepad", "gamepad_trigger", "gamepad_axis",
+    # 键盘宏：target 是宏库里的编号。这里**故意**不检查那条宏存不存在——本模块是
+    # 纯函数，手上没有宏库；云端校验别人上传的配置时更不可能有。引用失效交给运行
+    # 时：界面写「宏已丢失」，输出什么都不做。安静地不动，比按下一串说不清哪来的
+    # 键安全得多。
+    "macro",
 }
+# 宏编号的写法。macro_schema 里有同一条规则，那边管宏库自己，这边管绑定引用它，
+# 两个入口都得认得同一种编号。
+_MACRO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
 KEYBOARD_KEYS = (
     {chr(code) for code in range(ord("A"), ord("Z") + 1)}
     | {str(code) for code in range(10)}
@@ -50,6 +58,8 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         "wheel": "mouse_wheel",
         "trigger": "gamepad_trigger",
         "axis": "gamepad_axis",
+        "key_macro": "macro",
+        "keyboard_macro": "macro",
     }
     action_type = aliases.get(action_type, action_type)
     if action_type not in ACTION_TYPES:
@@ -72,6 +82,12 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         if len(parts) == 1 and parts[0] in GAMEPAD_AXES:
             raise ValueError("单独的摇杆方向请选择“Xbox 左摇杆”类型")
         target = parts[0] if len(parts) == 1 else parts
+    elif action_type == "macro":
+        # 宏编号是小写的。别的类型一律转大写（键名、按钮名本来就是大写），这里必须
+        # 单独走一条路，否则界面上顺手大写一下就再也认不出是哪条宏了。
+        target = str(raw_target).strip().lower()
+        if not _MACRO_ID_RE.match(target):
+            raise ValueError(f"宏编号不对：{target or '(空)'}")
     else:
         target = str(raw_target).strip().upper()
         if not target:
@@ -176,6 +192,9 @@ def action_catalog() -> dict:
         "gamepad": {"targets": sorted(GAMEPAD_BUTTONS), "allow_combo": True},
         "gamepad_trigger": {"targets": sorted(GAMEPAD_TRIGGERS)},
         "gamepad_axis": {"targets": sorted(GAMEPAD_AXES)},
+        # 目标不是固定的一组键，而是用户自己建的宏。界面要另外去宏库拿列表，
+        # 所以这里既不给 targets 也不给 free_text。
+        "macro": {"library": "macros"},
     }
 
 

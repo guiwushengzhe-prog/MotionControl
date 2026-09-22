@@ -81,6 +81,14 @@ CLASSIFICATION = {
     # 同步过去等于让两台电脑自称同一台，手机会把第二台当成第一台的另一个网卡，
     # 于是永远只能看见其中一台。属于绝对不能跨机器走的那一类。
     "discovery_instance": DEVICE_CONFIGURATION,
+    # 键盘宏就是一串键名和几个毫秒数，不含任何本机信息，换台机器一样成立——
+    # 和 custom_games 是同一类东西。
+    #
+    # 暂时不进同步白名单，理由也和它一样：绑定里是按编号引用宏的，云端收到一份
+    # 引用了 m_xxx 的配置时手上没有那条宏，只能当成引用了一个不存在的东西。
+    # 要么宏跟着配置一起走，要么都别走；只让宏单独走是更坏的一种——两边编号
+    # 撞上就会张冠李戴。以后一起做，是纯加法。
+    "key_macros": USER_CONFIGURATION,
     "scene_layout": SPATIAL_CALIBRATION,
     "scene_reference": SPATIAL_CALIBRATION,
 }

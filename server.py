@@ -22,9 +22,11 @@ _APP_DIR = Path(__file__).resolve().parent
 
 from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
+from motioncontrol.key_macros import MacroError, MacroStore
 from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
+from motioncontrol_shared import macro_schema
 from motioncontrol_shared.profile_schema import action_catalog
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
@@ -296,6 +298,9 @@ def _phone_control_payload() -> dict:
         "version": VERSION,
         "game": {"id": profile.get("id"), "name": profile.get("name"), "appid": profile.get("appid")},
         "bindings": profile.get("bindings", {}),
+        # 绑定里的宏是按编号引用的，手机手上没有宏库就只能显示一串编号。带上名字和
+        # 步数，圈上才写得出「三连击」。只在配置变化时推一次，不是实时数据。
+        "macros": MACROS.status(),
         "zones": scene.get("zones", {}),
         "vertical_look": scene.get("vertical_look", {}),
         # The phone builds its own constrained grammar from this.  Sending it
@@ -323,6 +328,11 @@ CUSTOM_POSES = CustomPoseStore(user_path("custom_poses"))
 KERNEL.configure_custom_poses(CUSTOM_POSES)
 if CUSTOM_POSES.last_error:
     print(CUSTOM_POSES.last_error)
+# 用户自己建的键盘宏。全局一份，不跟游戏走——建一次，哪个游戏、哪个动作都能直接选。
+MACROS = MacroStore(user_path("key_macros"))
+KERNEL.configure_macros(MACROS)
+if MACROS.last_error:
+    print(MACROS.last_error)
 
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
@@ -891,6 +901,24 @@ class AdminHandler(_BaseHandler):
         if route == "/api/scene/status":
             self._send_json({"version": VERSION, **SCENE.status()})
             return
+        if route == "/api/macros":
+            self._send_json({
+                "version": VERSION,
+                "macros": MACROS.detail(),
+                "limits": {
+                    "max": macro_schema.MAX_MACROS,
+                    "steps": macro_schema.MAX_STEPS,
+                    "expanded_steps": macro_schema.MAX_EXPANDED_STEPS,
+                    "depth": macro_schema.MAX_DEPTH,
+                    "total_ms": macro_schema.MAX_TOTAL_MS,
+                    "hold_ms": [macro_schema.MIN_HOLD_MS, macro_schema.MAX_HOLD_MS],
+                    "gap_ms": [macro_schema.MIN_GAP_MS, macro_schema.MAX_GAP_MS],
+                    "name_chars": macro_schema.MAX_NAME_LEN,
+                },
+                "running": [item["macro"] for item in KERNEL.output.status().get("macros_running", [])],
+                "error": MACROS.last_error,
+            })
+            return
         if route == "/api/pose/custom":
             self._send_json({
                 "version": VERSION,
@@ -972,6 +1000,41 @@ class AdminHandler(_BaseHandler):
                 })
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **VOICE.status()}, 400)
+            return
+        if route.startswith("/api/macros/"):
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "macros are loopback-only"}, 403)
+                return
+            try:
+                with PROFILE_UPDATE_LOCK:
+                    macro = None
+                    if route == "/api/macros/create":
+                        macro = MACROS.create(name=body.get("name", ""),
+                                              steps=body.get("steps"),
+                                              repeat=bool(body.get("repeat", False)))
+                    elif route == "/api/macros/update":
+                        macro = MACROS.update(str(body.get("id", "")),
+                                              name=body.get("name"),
+                                              steps=body.get("steps"),
+                                              repeat=body.get("repeat"))
+                    elif route == "/api/macros/remove":
+                        if not MACROS.remove(str(body.get("id", ""))):
+                            self._send_json({"ok": False, "error": "找不到这条宏"}, 404)
+                            return
+                    else:
+                        self._send_json({"ok": False, "error": "not found"}, 404)
+                        return
+                    # 「跑一遍还是循环」是宏自己的属性，改了它，所有指向它的绑定的
+                    # 方式都要跟着重算——这一步在内核里，所以必须重新装一次宏库。
+                    KERNEL.configure_macros(MACROS)
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
+                self._send_json({"ok": True, "macro": macro, "macros": MACROS.detail()})
+            except MacroError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
             return
         if route.startswith("/api/pose/custom/"):
             if not self._is_loopback():
