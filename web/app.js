@@ -270,8 +270,6 @@ function setupConflicts(){
   if((hand.config?.enabled??hand.enabled)&&verticalHand!=='off'&&head.verticalLookEnabled&&head.verticalLookSource==='hand')
     items.push(['手控鼠标握拳时会接管视角，与单独的上下视角控制同时开启可能相互干扰。','关掉上下视角',
       async()=>{const s=$('#verticalLookSource');if(s){s.value='off';s.dispatchEvent(new Event('change',{bubbles:true}))}}]);
-  if(hand.enabled&&hand.grip_source==='pose')
-    items.push(['手机没传手指关节，握拳只能拿三个指尖估，张开和握紧分不太开。',null,null]);
   return items;
 }
 function renderConflicts(){
