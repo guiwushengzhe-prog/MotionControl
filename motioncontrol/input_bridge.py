@@ -99,18 +99,6 @@ def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _read_exact(stream, size: int) -> bytes:
-    chunks: list[bytes] = []
-    remaining = size
-    while remaining:
-        chunk = stream.read(remaining)
-        if not chunk:
-            raise ConnectionError("websocket closed")
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
-
-
 class WebSocketPeer:
     """Small RFC 6455 text-frame peer for the local input bridge."""
 
@@ -118,6 +106,13 @@ class WebSocketPeer:
         self.handler = handler
         self.stream = handler.rfile
         self.connection = handler.connection
+        # 收到但还没拼成一帧的字节。直接从 socket 读、自己攒，不走 handler.rfile——
+        # 原因见 _read。
+        #
+        # 为什么可以不管 rfile 里可能预读的字节：RFC 6455 规定客户端必须等到服务端
+        # 的 101 回应之后才能发数据帧，浏览器（包括手机 App 里的 WebView）都照做。
+        # 所以解析完握手请求的那一刻，rfile 的缓冲里除了请求本身什么都没有。
+        self._inbox = bytearray()
         self.desktop = desktop
         self.source_ids: set[str] = set()
         self.accepted_inputs = 0
@@ -162,8 +157,49 @@ class WebSocketPeer:
             except (BrokenPipeError, ConnectionError, OSError):
                 pass
 
+    # 一帧读到一半对方停住了，给它多久。两帧之间对方可以一直不说话，那不算。
+    MID_FRAME_PATIENCE_S = 10.0
+
+    def _read(self, size: int, *, frame_start: bool = False) -> bytes:
+        """凑够 size 个字节。
+
+        ## 为什么不用 handler.rfile
+
+        这个连接设了 1 秒超时（保护发送：手机不读了，电脑最多卡 1 秒）。可 rfile
+        底下那层 socket.SocketIO 有个脾气：**超时过一次，以后每次读都直接报
+        "cannot read from timed out object"**。于是手机只要安静超过 1 秒——画面里
+        没人时它就一帧都不发——电脑这边第一次超时之后，下一次读就当成连接坏了、
+        主动断开。手机收到断开，显示「未连接电脑」，1.5 秒后重连，还是没人，又断。
+        在用户眼里就是"人一离开画面就断线"，而这两件事本来毫无关系。
+
+        裸 socket 没有这个脾气，超时之后照样能读。
+
+        ## 超时怎么算
+
+        在两帧之间（一个字节都还没收到）超时，就是对方暂时没话说：原样抛出
+        socket.timeout，外面的循环接着等。一帧读到一半超时，说明对方真卡住了，
+        等够 MID_FRAME_PATIENCE_S 才放弃，已经收到的字节一个不丢。
+        """
+        waited = 0.0
+        while len(self._inbox) < size:
+            try:
+                chunk = self.connection.recv(65536)
+            except socket.timeout:
+                if frame_start and not self._inbox:
+                    raise
+                waited += self.connection.gettimeout() or 1.0
+                if waited >= self.MID_FRAME_PATIENCE_S:
+                    raise ConnectionError("websocket frame stalled mid-way")
+                continue
+            if not chunk:
+                raise ConnectionError("websocket closed")
+            self._inbox += chunk
+        data = bytes(self._inbox[:size])
+        del self._inbox[:size]
+        return data
+
     def recv(self) -> tuple[int, bytes]:
-        header = _read_exact(self.stream, 2)
+        header = self._read(2, frame_start=True)
         first, second = header
         if not first & 0x80:
             raise WebSocketProtocolError("fragmented websocket frames are not supported")
@@ -171,15 +207,15 @@ class WebSocketPeer:
         masked = bool(second & 0x80)
         length = second & 0x7F
         if length == 126:
-            length = struct.unpack("!H", _read_exact(self.stream, 2))[0]
+            length = struct.unpack("!H", self._read(2))[0]
         elif length == 127:
-            length = struct.unpack("!Q", _read_exact(self.stream, 8))[0]
+            length = struct.unpack("!Q", self._read(8))[0]
         if length > MAX_MESSAGE_BYTES:
             raise WebSocketProtocolError("websocket message is too large")
         if not masked:
             raise WebSocketProtocolError("client websocket frame must be masked")
-        mask = _read_exact(self.stream, 4)
-        payload = bytearray(_read_exact(self.stream, length))
+        mask = self._read(4)
+        payload = bytearray(self._read(length))
         for index in range(length):
             payload[index] ^= mask[index % 4]
         return opcode, bytes(payload)
