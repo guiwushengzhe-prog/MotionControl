@@ -913,8 +913,9 @@ function tutorialState(){
   const lastTrigger=last?{key:String(last.trigger||''),at:Number(last.at),keyText:actionKeyText(last.action)||'',
     name:(profileTriggers().find(t=>t.key===String(last.trigger||''))||{}).name||String(last.trigger||'')}:null;
   const vs=voice.status||{};
-  const voiceProblem=!vs.available?'语音识别没装好':!vs.model_ready?'语音模型没装好':!vs.connected?'麦克风没接上'
-    :!vs.audio_ready?'没找到麦克风':!(vs.audio_alive||vs.stream_alive)?'麦克风没有声音进来':'等几秒再看';
+  // 语音为什么不能用，只分成人能对付的几种：模型不在、麦克风打不开、麦克风没声音；状态还没回来时算「准备中」。
+  const voiceIssue=!voice.status?'starting':!vs.available||!vs.model_ready?'model'
+    :!vs.connected||!vs.audio_ready?'mic':!(vs.audio_alive||vs.stream_alive)?'silent':'starting';
   const zones=Object.entries(BODY_ZONES).filter(([,def])=>!def.gate).map(([id,def])=>{
     const z=k.zones?.[id]||{},key=zoneKeyLabel(id,def);
     return {id,body:def.body,key:key==='未映射'?'':key,shown:!!(z.circle||z.rect),pressed:!!z.pressed};
@@ -947,7 +948,7 @@ function tutorialState(){
     gameKind:gameProfile.selected?.source==='custom'?'custom':gameProfile.selected?.source?.verified?'verified':'auto',
     // 「手忙不过来，想用嘴说」：听到几句用计数比（同一句说两遍文字不变）；老版本服务没有
     // 这个数，就退回比最后一句。
-    voiceReady:voiceInputReady,voiceProblem,voiceHeard:String(vs.commands_heard??vs.last_command??''),
+    voiceReady:voiceInputReady,voiceIssue,voiceHeard:String(vs.commands_heard??vs.last_command??''),
     stopPhrase:(vs.emergency_stop_phrases||[])[0]||'体感紧急停止',voiceListOpen:!!$('#voiceCommandsMask')?.open,
   };
 }

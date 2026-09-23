@@ -688,3 +688,8 @@ dialog::backdrop { background: #030812dc; }
   color: inherit; font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer; }
 .tour-option:hover, .tour-option:focus-visible { border-color: var(--accent); }
 .tour-option.done { border-color: #2d6b49; color: #8fe0b4; }
+/* 虚拟鼠标：画在教学层上，跟着读数走；只是显示，不是真输出，所以旁边写明。 */
+.tour-cursor { position: absolute; left: 0; top: 0; display: flex; align-items: flex-start; gap: 4px; pointer-events: none; }
+.tour-cursor svg { fill: #fff; stroke: #0b1118; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 2px 3px #000a); }
+.tour-cursor span { margin-top: 18px; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: #0b1118;
+  font-size: 11px; font-weight: 700; white-space: nowrap; }

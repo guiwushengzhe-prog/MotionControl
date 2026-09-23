@@ -114,21 +114,30 @@ const HEAD_MOVES = {
     hint: '转住别动', more: '再转大一点', done: '✓ 转头就能转视角'},
 };
 
+// 虚拟鼠标：真输出这时是关着的，人感觉不到「歪头 = 动鼠标」。所以在画面上放一个
+// 光标，照真鼠标的规矩走——读数就是速度，歪住就一直走，回正就停，不会自己弹回中间。
+// 它只是画出来的，不发任何输出；游戏控制已经打开的话真鼠标自己会动，就不再画它。
+function virtualCursor(s, axis, level) {
+  return s.outputEnabled ? null : {axis, level, within: '#viewer'};
+}
+
 // 握拳控制：握住的那一刻记下手的位置，之后输出是「离那个位置多远」，松开就归零。
 // 所以两个方向都能在一次握拳里做完，不用先松开。
 function fistGuide(s, memo, now, {hand, state, level, want, words}) {
   const who = HAND[hand] || '手';
   // 做到的那一刻手可能已经松开了，所以每条分支都带上做到时要说的那句。
   const doneSay = words.done;
-  if (state === 'lost' || state === 'disabled') return {target: '#viewer', say: `${who}举到画面里`, hint: '手腕和手肘都要拍到', doneSay};
+  // 手张着的时候虚拟鼠标也摆在那儿（不动）：人先看见它，握拳之后它一动就明白了。
+  const cursor = virtualCursor(s, words.axis, state === 'engaged' || state === 'moving' ? level : 0);
+  if (state === 'lost' || state === 'disabled') return {target: '#viewer', say: `${who}举到画面里`, hint: '手腕和手肘都要拍到', doneSay, cursor};
   if (state !== 'engaged' && state !== 'moving') {
     memo.openSince = memo.openSince || now;
-    return {target: '#viewer', say: `${who}握拳`, hint: now - memo.openSince > 5000 ? '握紧一点' : '', doneSay};
+    return {target: '#viewer', say: `${who}握拳`, hint: now - memo.openSince > 5000 ? '握紧一点' : '', doneSay, cursor};
   }
   memo.openSince = 0;
   const toward = Number.isFinite(level) ? (want === words.negative ? -level : level) : 0;
   return {
-    target: '#viewer', ready: true, say: `握着${words[want]} → ${words.effect[want]}`, doneSay,
+    target: '#viewer', ready: true, say: `握着${words[want]} → ${words.effect[want]}`, doneSay, cursor,
     hint: toward >= MORE && toward < LEVEL ? '再移远一点' : '松开就停',
   };
 }
@@ -169,7 +178,7 @@ const STEPS = [
       const want = memo.left ? 'right' : 'left';
       if (HAND[s.horizontal]) {
         return fistGuide(s, memo, now, {hand: s.horizontal, state: s.hHandState, level: s.hLevel, want,
-          words: {left: '往左移', right: '往右移', negative: 'left', effect: {left: '视角左转', right: '视角右转'}, done: '✓ 握拳就能转视角'}});
+          words: {axis: 'x', left: '往左移', right: '往右移', negative: 'left', effect: {left: '视角左转', right: '视角右转'}, done: '✓ 握拳就能转视角'}});
       }
       // 程序的校准只做一件事：记住你正视屏幕时的样子。所以这里只叫人看屏幕，
       // 左右歪头是校准完成之后的事。
@@ -181,7 +190,7 @@ const STEPS = [
       const other = want === 'left' ? 'right' : 'left';
       const toward = Number.isFinite(s.hLevel) ? (want === 'left' ? -s.hLevel : s.hLevel) : 0;
       return {
-        target: ['#viewer', '#headStatus'], focus: '#headStatus', ready: true,
+        target: ['#viewer', '#headStatus'], focus: '#headStatus', ready: true, cursor: virtualCursor(s, 'x', s.hLevel),
         say: memo[other] ? move.back(want === 'left' ? '左' : '右') : move[want], doneSay: move.done,
         hint: s.guardBlocked ? '身子别晃，只动头' : toward >= MORE && toward < LEVEL ? move.more : move.hint,
       };
@@ -206,14 +215,14 @@ const STEPS = [
       const want = memo.up ? 'down' : 'up';
       if (HAND[s.vertical]) {
         return fistGuide(s, memo, now, {hand: s.vertical, state: s.vHandState, level: s.vLevel, want,
-          words: {up: '往上移', down: '往下移', negative: 'up', effect: {up: '视角往上', down: '视角往下'}, done: '✓ 握拳就能上下看'}});
+          words: {axis: 'y', up: '往上移', down: '往下移', negative: 'up', effect: {up: '视角往上', down: '视角往下'}, done: '✓ 握拳就能上下看'}});
       }
       // 原有的上下方案：左手放进绿框才开闸，闸开着的时候右手（或者头）管上下。
       if (!s.gateActive) return {target: '#viewer', mark: '.zone[data-zone="lookGate"]', say: '左手伸进绿框'};
       const byHead = s.legacySource === 'head';
       const toward = Number.isFinite(s.vLevel) ? (want === 'up' ? -s.vLevel : s.vLevel) : 0;
       return {
-        target: '#viewer', ready: true,
+        target: '#viewer', ready: true, cursor: virtualCursor(s, 'y', s.vLevel),
         say: want === 'up' ? (byHead ? '抬头 → 视角往上' : '右手往上抬 → 视角往上') : (byHead ? '低头 → 视角往下' : '右手往下放 → 视角往下'),
         hint: toward >= MORE && toward < LEVEL ? '再大一点' : '左手留在绿框里',
       };
@@ -278,6 +287,16 @@ const NAV_RANGE = 'nav [data-view="range"]';
 // 基础之外的三课，不在第一遍里教：第一遍只管「能玩起来」。它们各自住在自己那一页，
 // 基础学完之后下次打开时让人挑。挑的时候看到的不是功能名，而是它解决的那个问题——
 // 人不会想「我要学动作测试」，只会想「我做了动作怎么没反应」。
+// 语音用不了时，人能做的只有这几件。发布包里带着语音模型，所以「模型不在」基本就是
+// 安装包没解压完整、或者被杀毒软件拿走了——重新解压一遍能好；弄不好也不要紧，语音
+// 不影响用身体玩，所以直说可以先跳过。中文路径读不了模型的问题程序自己会绕开，不用人管。
+const VOICE_FIX = {
+  model: {say: '重新解压一遍安装包', hint: '程序文件夹里少了语音模型。弄不好就点「换一个」，不影响用身体玩'},
+  mic: {say: '插上麦克风', hint: '插了还不行：Windows 设置 → 隐私 → 麦克风，允许桌面应用使用'},
+  silent: {say: '对着麦克风说句话', hint: '还是没反应：Windows 声音设置里换一个默认麦克风'},
+  starting: {say: '语音准备中，等几秒', hint: ''},
+};
+
 const EXTRAS = [
   {
     id: 'range',
@@ -298,13 +317,16 @@ const EXTRAS = [
         const before = connectGuide(s, memo, now);
         if (before) return before;
         if (!s.posed) return {target: '#rangeHit', say: '站到镜头前'};
-        return {target: '#rangeHit', say: '做个动作，打中一块', hint: '伸手进圈、踏步、下蹲都行'};
+        return {target: '#rangeHit', say: '做个动作试试', hint: '伸手进圈、踏步、下蹲都行'};
       }
+      // 下面那一排格子里有它就指它；没有（比如一句没绑键的口令），就让人随便点一个——
+      // 这一课要教的是「从这里点过去就能改键」，改哪一个不要紧。
       const tile = `.range-target[data-trigger="${hit.key}"]`;
+      const here = !!document.querySelector(tile);
       return {
-        target: document.querySelector(tile) ? tile : '#rangeTargets',
-        say: hit.keyText ? '点它，去改它的键' : '它没绑键，点它去绑',
-        hint: `刚打中：${hit.name} → ${hit.keyText || '未映射'}`,
+        target: here ? tile : '#rangeTargets',
+        say: !here ? '点下面任意一个，去改它的键' : hit.keyText ? `点「${hit.name}」，去改它的键` : `「${hit.name}」没绑键，点它去绑`,
+        hint: `刚认出：${hit.name} → ${hit.keyText || '未映射'}`,
       };
     },
     check: (s, memo) => ({ok: !!memo.hit && s.view === 'games'}),
@@ -333,7 +355,7 @@ const EXTRAS = [
       if (memo.heardBefore === undefined) memo.heardBefore = s.voiceHeard;
       if (s.voiceHeard !== memo.heardBefore) memo.heard = true;
       if (s.view !== 'play') return {target: NAV_PLAY, say: '回到「开始」页'};
-      if (!s.voiceReady) return {target: ['#voicePill', '#voiceStatus'], say: '语音还没准备好', hint: s.voiceProblem};
+      if (!s.voiceReady) return {target: ['#voicePill', '#voiceStatus'], ...(VOICE_FIX[s.voiceIssue] || VOICE_FIX.starting)};
       // 先教急停那一句：它无害，而且是最该会的——手占着按不到 F9 的时候就靠它。
       if (!memo.heard) return {target: ['#voicePill', '#voiceStatus'], say: `说「${s.stopPhrase}」`, hint: '一口气说完'};
       return {target: '#voiceCommandsBtn', ready: true, say: '点「查看语音指令」', hint: '还能说哪些，都在这'};
@@ -354,6 +376,10 @@ export function createTutorial(actions = {}) {
   let holdSince = 0, doneAt = 0, advance = 0, timer = 0, frame = 0, moveTimer = 0, nudgeTimer = 0;
   let active = false, returnFocus = null, targetKey = '', targetEls = [], focusEl = null, layoutKey = '', chipsKey = '', choice = null;
   let markEl = null, menuKey = '';
+  // 虚拟鼠标：cursorWant 是这一刻 guide 要的（哪个方向、读数多少、在哪块画面里走），
+  // cursorPos 是它在那块画面里的位置（0…1），cursorAt 是上一帧的时间。
+  const cursorEl = $('tourCursor');
+  let cursorWant = null, cursorPos = {x: .5, y: .5}, cursorAt = 0;
 
   try {
     const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
@@ -437,8 +463,25 @@ export function createTutorial(actions = {}) {
   }
 
   // 每帧跟一次位置：顶栏是吸顶的、页面会滚，亮框得贴着真元素走。只有数字变了才写样式。
+  // 读数是速度：满量程时一秒走过半块画面。每帧推一次，所以 250ms 才来一次的读数也能走得顺。
+  const CURSOR_SPEED = 0.5;
+  function moveCursor() {
+    const want = active ? cursorWant : null;
+    const box = want && document.querySelector(want.within)?.getBoundingClientRect();
+    if (!box || !box.width) { cursorEl.hidden = true; cursorAt = 0; return; }
+    const now = performance.now();
+    const dt = cursorAt ? Math.min(0.05, (now - cursorAt) / 1000) : 0;
+    cursorAt = now;
+    const speed = (Number.isFinite(want.level) ? want.level : 0) * CURSOR_SPEED * dt;
+    if (want.axis === 'x') cursorPos.x = clamp(cursorPos.x + speed, 0.04, 0.96);
+    else cursorPos.y = clamp(cursorPos.y + speed, 0.06, 0.94);
+    cursorEl.hidden = false;
+    cursorEl.style.transform = `translate(${Math.round(box.left + cursorPos.x * box.width)}px, ${Math.round(box.top + cursorPos.y * box.height)}px)`;
+  }
+
   function layout() {
     frame = requestAnimationFrame(layout);
+    moveCursor();
     const vw = innerWidth, vh = innerHeight, m = 12, gap = 16, pad = 8;
     const t = targetRect();
     const r = t && {left: t.left - pad, top: t.top - pad, right: t.right + pad, bottom: t.bottom + pad};
@@ -599,6 +642,10 @@ export function createTutorial(actions = {}) {
     }
     setTarget(guide.target, guide.focus);
     setMark(doneAt ? null : guide.mark);
+    // 换了一个方向（左右 → 上下）就从画面中间重新开始，免得上一步停在边上。
+    const cursor = doneAt ? null : guide.cursor || null;
+    if (cursor && cursorWant?.axis !== cursor.axis) cursorPos = {x: .5, y: .5};
+    cursorWant = cursor;
     const result = step.check(state, memo, !!guide.ready);
 
     // 做到了就不再往回判：一次抖动不该把刚亮起来的判定又灭掉。
@@ -619,6 +666,7 @@ export function createTutorial(actions = {}) {
   }
 
   function reset() {
+    cursorWant = null;
     clearTimeout(advance);
     advance = 0;
     holdSince = 0;
