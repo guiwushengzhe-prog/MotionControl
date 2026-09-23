@@ -86,6 +86,8 @@ function zoneKeyLabel(id,def){
 }
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
+// 摄像头的完整状态和最近一次扫描结果。新手教学要按这些判断「这台电脑现在能开什么」。
+let cameraInfo=null;const cameraScan={state:'idle',count:0,error:''};
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
 const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
 let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false;
@@ -352,7 +354,7 @@ function renderKernelState(runtime,force=false){
     $('#headEnable').checked=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();renderViewControl();
   }
   const camera=runtime?.camera||{running:cameraRunning};
-  cameraRunning=!!camera.running;
+  cameraRunning=!!camera.running;if(runtime?.camera)cameraInfo=runtime.camera;
   sessionStarted=sourceMode==='phone'?true:cameraRunning;
   if(desiredSource===null)$('#poseSource').value=sourceMode;
   syncCameraDeviceRow();
@@ -880,17 +882,31 @@ function renderViewControl(force=false){
 }
 // 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
 // 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
+// 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
+// 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
 function tutorialState(){
-  const hs=kernelState?.head||{};
+  const hs=kernelState?.head||{},pose=currentPoseMap||{};
   const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
+  // 「有画面」要真的有帧在来，不是摄像头开关打开了就算。
+  const frameAge=cameraInfo?.last_frame_age_ms;
+  const computerLive=cameraRunning&&Number(cameraInfo?.frames)>0&&frameAge!=null&&frameAge<3000;
+  const phoneLive=!!inputStatus.mobile_pose_connected;
+  const seen=name=>Number(pose[name]?.score??pose[name]?.visibility??0)>=.5;
   return {
-    cameraReady:sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning,
-    view:currentView,posed:!!currentPoseMap,
+    view:currentView,source:sourceMode,sourcePick:$('#poseSource')?.value||sourceMode,
+    cameraReady:sourceMode==='phone'?phoneLive:computerLive,
+    cameraRunning,cameraIndex:cameraInfo?.camera_index??cameraIndex,cameraError:cameraRunning?'':String(cameraInfo?.last_error||''),
+    // 模型路径随第一次状态一起来；还没来之前是「不知道」，不能当成「没装」。
+    modelOk:cameraInfo?!!cameraInfo.model_path:null,
+    scan:cameraScan.state,scanCount:cameraScan.count,
+    phoneStreaming:phoneLive||!!inputStatus.phone_ignored,usbTether:!!inputStatus.usb_tether?.present,
+    posed:!!currentPoseMap,headShoulders:seen('nose')&&seen('left_shoulder')&&seen('right_shoulder'),
     // 握拳控左右不需要头部中心，这一点和「视角控制」那块的判断保持一致。
     calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
-    calibrating:!!hs.calibrating,
+    calibrating:!!hs.calibrating,calibrationNote:String(hs.notice||''),
     horizontal:horizontalHand||(head.enabled?(head.horizontalAlgorithm==='roll_tilt'?'roll_tilt':'head_turn'):'off'),
     outputX:Number.isFinite(hs.output_x)?Number(hs.output_x):null,
+    guardBlocked:!!hs.horizontal_paused_by_body_motion,
   };
 }
 function initViewControl(){
@@ -1485,8 +1501,9 @@ for(const axis of ['horizontal','vertical']){
 }
 $('#verticalLookSource').addEventListener('change',()=>void saveLegacyVertical());
 $('#headEnable').addEventListener('change',()=>void saveHeadEnabled());
-// 教学只指路不代劳：连接、校准都由人去点真按钮，所以这里只把状态交给它。
-const tutorial=createTutorial({state:tutorialState});
+// 教学只指路不代劳：连接、校准都由人去点真按钮。它自己只会做一件事——扫一遍
+// 摄像头，好知道该建议什么。
+const tutorial=createTutorial({state:tutorialState,scanCameras});
 for(const id of ['tutorialBtn','tutorialSettingsBtn'])$('#'+id).addEventListener('click',e=>tutorial.open(e.currentTarget));
 bind('poseRecordBtn',startPoseRecord);
 bind('poseRecordCancelBtn',cancelPoseRecord);
@@ -1540,17 +1557,22 @@ $('#cameraDevice').addEventListener('change',e=>runAction(async()=>{
   cameraIndex=Number(data.camera_index??e.target.value);
   notice('已选择摄像头 '+cameraIndex+'，点“连接并开始识别”看看画面对不对');
 }));
-bind('cameraScanBtn',async()=>{
+// 按钮和新手教学用的是同一个扫描：结果记在 cameraScan 里，教学据此判断这台电脑有几个摄像头。
+async function scanCameras(){
+  if(cameraScan.state==='running')return;
+  cameraScan.state='running';
   const status=$('#cameraScanStatus');if(status)status.textContent='正在逐个尝试，可能要几秒…';
   try{
     const data=await api('/api/camera/devices',{timeoutMs:60000});
     renderCameraDevices(data.devices,data.camera_index);
-    if(!status)return;
     const n=(data.devices||[]).length;
+    Object.assign(cameraScan,{state:'done',count:n,error:''});
+    if(!status)return;
     status.textContent=n?`找到 ${n} 个。选一个，连接之后看画面里是不是你。`
       :'一个也没找到。这台电脑可能没有摄像头，或者被别的软件占着——把上面的来源改成手机摄像头也能用。';
-  }catch(e){if(status)status.textContent='扫描失败：'+(e?.message||e)}
-});
+  }catch(e){Object.assign(cameraScan,{state:'failed',error:String(e?.message||e)});if(status)status.textContent='扫描失败：'+cameraScan.error}
+}
+bind('cameraScanBtn',scanCameras);
 bind('copyPhoneUrlBtn',async()=>{await navigator.clipboard.writeText($('#phoneWsUrl').value);notice('连接地址已复制')});
 $('#cameraBackend').addEventListener('change',e=>runAction(async()=>{
   await post('/api/camera/config',{backend:e.target.value});notice('采集方式已保存，下次连接时生效');
