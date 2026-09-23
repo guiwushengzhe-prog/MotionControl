@@ -148,7 +148,19 @@ def _scene_snapshot_from_phone(jpeg: bytes, purpose: str, device_id: str) -> dic
 
 def emergency_stop_all() -> dict:
     KERNEL.cancel_calibration("紧急停止")
-    return OUTPUT.emergency_stop()
+    result = OUTPUT.emergency_stop()
+    _broadcast_game_output_state()
+    return result
+
+
+def _broadcast_game_output_state() -> None:
+    bridge = globals().get("INPUT_BRIDGE")
+    broadcaster = getattr(bridge, "broadcast_game_output_state", None)
+    if callable(broadcaster):
+        try:
+            broadcaster()
+        except Exception:
+            pass
 
 
 HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
@@ -193,9 +205,13 @@ def execute_voice_action(action: dict) -> dict:
     target = str(action.get("target", "")).strip().upper()
     # Output start/stop
     if target == "OUTPUT.START":
-        return {"executed": True, **OUTPUT.set_config(enabled=True)}
+        result = OUTPUT.set_config(enabled=True)
+        _broadcast_game_output_state()
+        return {"executed": True, **result}
     if target == "OUTPUT.STOP":
-        return {"executed": True, **OUTPUT.set_config(enabled=False)}
+        result = OUTPUT.set_config(enabled=False)
+        _broadcast_game_output_state()
+        return {"executed": True, **result}
     # Head center
     if target == "HEAD.CENTER":
         KERNEL.set_current_center()
@@ -571,6 +587,7 @@ def _install_cloud_config(remote, game_id: str | None) -> dict:
         # currently held first means a key that was down under the old mapping
         # cannot stay down forever under the new one.
         OUTPUT.emergency_stop()
+        _broadcast_game_output_state()
 
         if remote.doc_type == "profile_selection":
             result = _install_profile_selection(remote.document, game_id)
@@ -1578,6 +1595,7 @@ class AdminHandler(_BaseHandler):
                     xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
                     physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
                 )
+                _broadcast_game_output_state()
             elif route == "/api/output/xinput":
                 data = OUTPUT.configure_xinput_merge(
                     enabled=body.get("enabled") if "enabled" in body else None,
@@ -1598,6 +1616,7 @@ class AdminHandler(_BaseHandler):
             self._send_json({"ok": True, **data})
         except Exception as exc:
             OUTPUT.emergency_stop()
+            _broadcast_game_output_state()
             self._send_json({"ok": False, "error": str(exc), **OUTPUT.status()}, 400)
 
 
