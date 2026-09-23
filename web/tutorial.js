@@ -1,130 +1,117 @@
 import {VIEW_CONTROL_CONTENT} from './view-control-guide.js';
 
-/** 新手教学：把原来那页纯文字的「操作指导」换成跟着做的引导。
+/** 新手教学：直接在正式界面上带着做。
  *
- *  旧版是六条文字步骤。可是体感软件最难回答的那个问题——「我这个动作，它到底
- *  认出来没有」——文字回答不了：读完的人照样不知道自己做对没有，只能回界面接着
- *  乱试。所以这一版一次只教一个动作，配一段循环演示的动画，做到没做到直接读实时
- *  状态：动作对了，判定自己亮。人第一次确认「它看见我了」，就在这一下。
+ *  最早是一页文字；上一版改成弹窗里另画一段演示动画。两种都脱离了真界面：在弹窗
+ *  里看懂了，关掉之后照样不知道真按钮在哪、真读数看哪一行。所以这一版不画任何
+ *  替身——把正式界面压暗，只留这一步要用的那一块亮着，旁边一张小卡片说做什么。
+ *  按钮是人自己去点的真按钮，判定读的是真状态，画面里是他自己的骨架。
  *
- *  这个模块不碰网络也不碰全局状态：app.js 每 250ms 把一份状态快照喂进来，教学
- *  只负责判定和画面。真要动手的那几步（校准）走 actions 里的回调，仍旧是 app.js
- *  原来那条路径，不在这里另开一份。
+ *  指引跟着状态走：没画面就指「去连接」，到了设备页就指「连接并开始识别」，没校准
+ *  就指「站好并校准」。人被带着走一遍的，就是他以后每次都要走的那条路。
+ *
+ *  这个模块不碰网络：状态快照由 app.js 给，那些变量本来就被现有的轮询刷新着。
+ *  亮框不挡点击，人随时可以去点别处——这是带路，不是锁屏。
  */
 
 const STORE = 'motioncontrol_tutorial_v1';
+const TICK_MS = 250;
 const $ = id => document.getElementById(id);
+const clamp = (value, low, high) => Math.min(Math.max(value, low), Math.max(low, high));
 
-// 每步一段循环演示，内联 SVG + CSS 动画：不引资源、不用 canvas，而且只有当前
-// 这一步的图在 DOM 里，换步才重建——后台不会有几段动画一起空转。
-const FIGURE = '<circle cx="160" cy="62" r="13"/><path d="M160 75v34M140 88l20-6 20 6M160 109l-13 30M160 109l13 30"/>';
-// 视角那步共用这条标尺：左右各一个目标，中间一个游标。演示里游标走到哪，下面
-// 那条实时读数就该走到哪——两边对得上，人才知道自己做的是不是同一件事。
-const TRACK = '<path class="tut-track" d="M52 146h216"/>'
-  + '<path class="tut-target tut-target-l" d="M60 139l7 7-7 7-7-7z"/>'
-  + '<path class="tut-target tut-target-r" d="M260 139l7 7-7 7-7-7z"/>'
-  + '<path class="tut-reticle" d="M160 132l9 14-9 14-9-14z"/>';
-
-const SCENES = {
-  stand:
-    '<g class="tut-frame"><path d="M62 52V34h20M258 52V34h-20M62 128v18h20M258 128v18h-20"/></g>'
-    + '<g class="tut-walk tut-ink">' + FIGURE + '</g>',
-  headRoll:
-    '<g class="tut-roll tut-ink"><circle cx="160" cy="54" r="26"/>'
-    + '<path d="M134 47a7 8 0 1 0 0 15M186 47a7 8 0 1 1 0 15"/>'
-    + '<circle class="tut-fill" cx="150" cy="50" r="3"/><circle class="tut-fill" cx="170" cy="50" r="3"/>'
-    + '<path d="M151 64q9 7 18 0M160 80v18"/></g>'
-    + '<path d="M126 112q34-16 68 0"/>' + TRACK,
-  headTurn:
-    '<g class="tut-yaw tut-ink"><circle cx="160" cy="54" r="26"/>'
-    + '<path d="M134 47a7 8 0 1 0 0 15M186 47a7 8 0 1 1 0 15"/>'
-    + '<g class="tut-face"><circle class="tut-fill" cx="150" cy="50" r="3"/>'
-    + '<circle class="tut-fill" cx="170" cy="50" r="3"/><path d="M160 50v14l-7 4M151 72q9 6 18 0"/></g>'
-    + '<path d="M160 80v18"/></g>'
-    + '<path d="M126 112q34-16 68 0"/>' + TRACK,
-  handMove:
-    '<g class="tut-slide tut-ink"><rect x="134" y="64" width="52" height="44" rx="14"/>'
-    + '<path d="M140 64q6-9 12 0q6-9 12 0q6-9 12 0"/><path d="M186 78h8a9 9 0 0 1 0 18h-8"/></g>'
-    + TRACK,
-  done:
-    '<circle class="tut-ring" cx="160" cy="90" r="52"/>'
-    + '<path class="tut-tick tut-tick-big" d="M128 92l22 24 46-56"/>',
-};
-
-// 视角那步的第一句话直接取「视角控制」里的那份说明。同一件事只写一处，改了设置
-// 面板就等于改了教学，不会出现两边说法对不上的老毛病。
-function axisText(items, value) {
-  return (items.find(item => item.value === value) || {}).description || '';
+// 视角那步的说明直接取「视角控制」里的那份。同一件事只写一处，改了设置面板就
+// 等于改了教学，不会再出现两边说法对不上。
+function axisText(value) {
+  return (VIEW_CONTROL_CONTENT.horizontal.find(item => item.value === value) || {}).description || '';
 }
 
+// guide(state) 说此刻该亮哪一块、卡片上写什么。ready 表示前置条件都齐了、真正
+// 在做这一步的动作——只有这时判定才算数，否则人还在去连接的路上计时就开始走了。
 const STEPS = [
   {
     id: 'stand',
     name: '站进画面',
     goal: '先让它认出你这个人',
-    scene: () => 'stand',
-    how: () => [
-      '退到能看见头和两个肩膀的距离，通常是两米外。',
-      '要用踏步、抬腿这类动作的话，脚也得拍得到——再退一点，或者把摄像头架高。',
-      '逆光和太暗都会认不出来。认出来之后，左边画面上会画出骨架。',
-    ],
-    condition: '画面里认出人体，并且稳住 1.5 秒',
+    condition: '「开始」页的画面里认出人体，并且稳住 1.5 秒',
+    praise: '认出来了。以后画面上有骨架，就说明它看得见你。',
     hold: 1.5,
+    guide: state => {
+      if (!state.cameraReady) {
+        if (state.view !== 'devices') {
+          return {target: '.checklist [data-go="devices"]', text: '现在还没有画面。点亮着的「去连接」，到设备页把摄像头接上。'};
+        }
+        return {target: ['#poseSource', '#sourceStartBtn'], text: '摄像头来源选好（笔记本自带的就行），然后点「连接并开始识别」。'};
+      }
+      if (state.view !== 'play') {
+        return {target: '[data-view="play"]', text: '画面接上了。点「开始」回主页，看左边那块实时画面。'};
+      }
+      return {
+        target: '#viewer', ready: true,
+        text: '退到能看见头和两个肩膀的地方，通常是两米外。认出来之后，画面上会画出你的骨架。',
+      };
+    },
     check: state => ({
       ok: state.posed,
-      detail: state.posed ? '看见你了'
-        : state.cameraReady ? '画面里还没找到人'
-        : '还没有画面：到「通用设置 → 输入来源」连上摄像头',
+      detail: state.posed ? '看见你了，稳住别走开' : '画面里还没找到人：别逆光，太暗就开灯',
     }),
   },
   {
     id: 'look',
     name: '左右转视角',
     goal: '把视角推到左边，再推到右边',
-    scene: state => ({roll_tilt: 'headRoll', head_turn: 'headTurn'}[state.horizontal] || 'handMove'),
-    how: state => [
-      axisText(VIEW_CONTROL_CONTENT.horizontal, state.horizontal),
-      '下面那条标尺是实时读数：你往哪边推，游标就往哪边走。',
-      '左右各推到一次就行。推过去之后读数会停在那儿，说明它在持续转——回正才停。',
-    ].filter(Boolean),
-    condition: '左右两边各推到一次（读数超过 35%）',
-    skipWhen: state => state.horizontal === 'off'
-      ? '当前设置把左右视角关掉了。想练这一步，先到「视角控制」里把左右选上。' : null,
-    // 没校准的话读数没有基准，练也是白练。所以这一步自己把校准按钮带上，而不是
-    // 把人赶回主界面自己找。
-    action: state => state.calibrated && !state.calibrating ? null
-      : {label: state.calibrating ? '取消校准' : '先校准一下', run: 'calibrate'},
-    check: (state, memo) => {
+    condition: '画面下方那行读数，左右各推到一次 35% 以上',
+    praise: '左右都推到了。以后视角不听话，先看这行读数。',
+    guide: state => {
+      if (state.horizontal === 'off') {
+        if (state.view !== 'devices') {
+          return {target: '[data-view="devices"]', text: '左右视角现在是关着的。到「通用设置」里的「视角控制」把它打开。'};
+        }
+        return {target: '#viewHorizontalSource', text: '在「左右控制」里选一个方案，推荐「头部侧倾」。'};
+      }
+      if (state.view !== 'play') {
+        return {target: '[data-view="play"]', text: '回「开始」页练这一步。'};
+      }
+      if (state.calibrating) {
+        return {target: '#calBtn', text: '正在校准：看着屏幕中心，别动。'};
+      }
+      if (!state.calibrated) {
+        return {target: '#calBtn', text: '先让它记住哪边是正前方：站直、脸朝屏幕中心，点「站好并校准」。说「开始校准」也行。'};
+      }
+      // 画面比屏幕高时，读数那一行最要紧——这一步教的就是看它。
+      return {
+        target: ['#viewer', '#headStatus'], focus: '#headStatus', ready: true,
+        text: `${axisText(state.horizontal)}边做边看画面下方那行读数。`,
+      };
+    },
+    check: (state, memo, ready) => {
       const x = state.outputX;
-      if (state.calibrated && Number.isFinite(x)) {
+      if (ready && Number.isFinite(x)) {
         if (x <= -35) memo.left = true;
         if (x >= 35) memo.right = true;
       }
       return {
         ok: !!(memo.left && memo.right),
-        detail: state.calibrating ? '正在校准，站好别动'
-          : !state.calibrated ? '还没校准，读数没有基准'
-          : Number.isFinite(x) ? `当前 ${x < 0 ? '左' : '右'} ${Math.abs(x).toFixed(0)}%` : '还没有读数',
-        targets: [{label: '向左 35%', hit: !!memo.left}, {label: '向右 35%', hit: !!memo.right}],
-        meter: state.calibrated && Number.isFinite(x) ? Math.max(-1, Math.min(1, x / 100)) : null,
+        detail: Number.isFinite(x) ? `现在：${x < 0 ? '左' : '右'} ${Math.abs(x).toFixed(0)}%` : '还没有读数',
+        targets: [{label: '向左推到 35%', hit: !!memo.left}, {label: '向右推到 35%', hit: !!memo.right}],
       };
     },
   },
 ];
 
 export function createTutorial(actions = {}) {
-  const root = $('tutorialMask');
-  if (!root) return {open() {}, close() {}, update() {}, isOpen: () => false, seen: () => true};
+  const root = $('tour');
+  if (!root) return {open() {}, close() {}, seen: () => true};
+  const spot = $('tourSpot'), card = $('tourCard'), dock = document.querySelector('.command-dock');
 
   let index = 0, reached = 0, memos = {}, done = new Set(), skipped = new Set();
-  let holdSince = 0, doneAt = 0, advance = 0, sceneNow = '', opened = false, returnFocus = null;
-  let lastState = null;
+  let holdSince = 0, doneAt = 0, advance = 0, timer = 0, frame = 0, moveTimer = 0;
+  let active = false, returnFocus = null, targetKey = '', targetEls = [], focusEl = null, layoutKey = '', chipsKey = '';
 
   try {
     const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
     done = new Set(Array.isArray(saved.done) ? saved.done : []);
     skipped = new Set(Array.isArray(saved.skipped) ? saved.skipped : []);
-    reached = Math.min(STEPS.length - 1, Math.max(0, Number(saved.reached) || 0));
+    reached = clamp(Number(saved.reached) || 0, 0, STEPS.length - 1);
   } catch { /* 存不上就每次从头开始，不值得为此挡住教学 */ }
 
   function save() {
@@ -133,205 +120,249 @@ export function createTutorial(actions = {}) {
     } catch { /* 隐私模式下写不了，忽略 */ }
   }
 
-  function renderRail() {
-    const rail = $('tutorialRail');
-    rail.replaceChildren(...STEPS.map((step, i) => {
+  // 只在文字真的变了时才写：这张卡片每 250ms 刷一次，整段重写会让读屏软件一直念。
+  function setText(id, text) {
+    const el = $(id);
+    if (el.textContent !== text) el.textContent = text;
+  }
+
+  function setTarget(target, focus) {
+    const key = JSON.stringify([target || null, focus || null]);
+    if (key === targetKey) return;
+    targetKey = key;
+    targetEls = (target ? [].concat(target) : []).map(sel => document.querySelector(sel)).filter(Boolean);
+    focusEl = (focus && document.querySelector(focus)) || targetEls[0] || null;
+    // 换目标时亮框滑过去，眼睛才跟得上；平时不带过渡，否则滚动页面时框会拖在后面。
+    spot.classList.add('moving');
+    clearTimeout(moveTimer);
+    moveTimer = setTimeout(() => spot.classList.remove('moving'), 420);
+    reveal();
+  }
+
+  // 把亮着的那块滚进视野。顶栏是吸顶的，会盖住页面上方一截，所以「看得见」要从
+  // 顶栏下沿算起。整块放得下就整块露出来；放不下（画面比屏幕高）就保证 focus 那
+  // 一块露出来，它本身也太高时对齐它的上沿——人头和肩膀在上面。
+  function reveal() {
+    const box = targetRect();
+    if (!box || !focusEl || targetEls.every(el => el.closest('.command-dock'))) return;
+    const covered = dock ? dock.getBoundingClientRect().bottom : 0, m = 16, room = innerHeight - covered - 2 * m;
+    const f = focusEl.getBoundingClientRect();
+    let delta = 0;
+    if (box.bottom - box.top <= room) {
+      if (box.top < covered + m) delta = box.top - covered - m;
+      else if (box.bottom > innerHeight - m) delta = box.bottom - innerHeight + m;
+    } else if (f.height > room || f.top < covered + m) {
+      delta = f.top - covered - m;
+    } else if (f.bottom > innerHeight - m) {
+      delta = f.bottom - innerHeight + m;
+    }
+    if (Math.abs(delta) > 4) window.scrollBy({top: delta, behavior: 'smooth'});
+  }
+
+  function targetRect() {
+    let box = null;
+    for (const el of targetEls) {
+      const r = el.getBoundingClientRect();
+      if (!r.width && !r.height) continue; // 在另一页里藏着
+      box = box ? {left: Math.min(box.left, r.left), top: Math.min(box.top, r.top), right: Math.max(box.right, r.right), bottom: Math.max(box.bottom, r.bottom)}
+        : {left: r.left, top: r.top, right: r.right, bottom: r.bottom};
+    }
+    return box;
+  }
+
+  // 每帧跟一次位置：顶栏是吸顶的、页面会滚，亮框得贴着真元素走。只有数字变了才写样式。
+  function layout() {
+    frame = requestAnimationFrame(layout);
+    const vw = innerWidth, vh = innerHeight, m = 12, gap = 16, pad = 8;
+    const t = targetRect();
+    const r = t && {left: t.left - pad, top: t.top - pad, right: t.right + pad, bottom: t.bottom + pad};
+    const cw = card.offsetWidth, ch = card.offsetHeight;
+    let left, top, side = 'none', arrow = 0;
+    if (!r || vw < 760) {
+      left = Math.max(m, (vw - cw) / 2);
+      top = vh - ch - m;
+    } else {
+      const midY = clamp((r.top + r.bottom) / 2 - ch / 2, m, vh - ch - m), atX = clamp(r.left, m, vw - cw - m);
+      const pick = [
+        ['right', r.right + gap, midY, r.right + gap + cw <= vw - m],
+        ['left', r.left - gap - cw, midY, r.left - gap - cw >= m],
+        ['below', atX, r.bottom + gap, r.bottom + gap + ch <= vh - m],
+        ['above', atX, r.top - gap - ch, r.top - gap - ch >= m],
+      ].find(option => option[3]);
+      if (pick) [side, left, top] = pick;
+      else { left = vw - cw - m; top = vh - ch - m; }
+      arrow = side === 'right' || side === 'left'
+        ? clamp((r.top + r.bottom) / 2 - top, 22, ch - 22)
+        : clamp((r.left + r.right) / 2 - left, 22, cw - 22);
+    }
+    const key = [r ? [r.left, r.top, r.right, r.bottom].map(Math.round).join() : '-', Math.round(left), Math.round(top), side, Math.round(arrow)].join('|');
+    if (key === layoutKey) return;
+    layoutKey = key;
+    spot.hidden = !r;
+    root.classList.toggle('no-target', !r);
+    if (r) Object.assign(spot.style, {left: `${r.left}px`, top: `${r.top}px`, width: `${r.right - r.left}px`, height: `${r.bottom - r.top}px`});
+    Object.assign(card.style, {left: `${left}px`, top: `${top}px`});
+    card.dataset.side = side;
+    card.style.setProperty('--arrow', `${arrow}px`);
+  }
+
+  function renderDots() {
+    $('tourDots').replaceChildren(...STEPS.map((step, i) => {
       const li = document.createElement('li');
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'tut-rail-item';
-      const mark = document.createElement('span');
-      mark.className = 'tut-rail-mark';
-      mark.textContent = done.has(step.id) ? '✓' : skipped.has(step.id) ? '—' : String(i + 1);
-      const name = document.createElement('span');
-      name.textContent = step.name;
-      btn.append(mark, name);
-      btn.classList.toggle('done', done.has(step.id));
-      btn.classList.toggle('skipped', skipped.has(step.id) && !done.has(step.id));
+      btn.textContent = (done.has(step.id) ? '✓ ' : `${i + 1} `) + step.name;
       btn.classList.toggle('active', i === index);
+      btn.classList.toggle('done', done.has(step.id));
       btn.disabled = i > reached;
       btn.addEventListener('click', () => go(i));
       li.append(btn);
       return li;
     }));
-    const count = STEPS.filter(step => done.has(step.id)).length;
-    $('tutorialCount').textContent = `已完成 ${count} / ${STEPS.length}`;
-    $('tutorialBarFill').style.width = `${Math.round(count / STEPS.length * 100)}%`;
   }
 
-  function fillHow(lines) {
-    $('tutorialHow').replaceChildren(...lines.map(text => {
-      const li = document.createElement('li');
-      li.textContent = text;
-      return li;
+  function renderChips(targets) {
+    const box = $('tourTargets');
+    box.hidden = !targets.length;
+    const key = JSON.stringify(targets);
+    if (key === chipsKey) return;
+    chipsKey = key;
+    box.replaceChildren(...targets.map(target => {
+      const chip = document.createElement('span');
+      chip.className = 'tour-chip' + (target.hit ? ' hit' : '');
+      chip.textContent = (target.hit ? '✓ ' : '') + target.label;
+      return chip;
     }));
   }
 
-  function renderStage(state) {
-    const step = STEPS[index];
-    const scene = step.scene(state);
-    // 动画只在换步或换方案时重建；每 250ms 重塞一次 innerHTML，演示会永远停在第一帧。
-    if (scene === sceneNow) return;
-    sceneNow = scene;
-    $('tutorialArt').innerHTML =
-      `<svg class="tut-svg" viewBox="0 0 320 168" aria-hidden="true">${SCENES[scene] || ''}</svg>`;
-    $('tutorialKicker').textContent = `第 ${index + 1} 步 · 共 ${STEPS.length} 步`;
-    $('tutorialGoal').textContent = step.goal;
-    fillHow(step.how(state));
-    $('tutorialCondition').textContent = step.condition;
-  }
-
-  function renderFoot(state, result, ok, blocked) {
-    const step = STEPS[index];
-    const targets = result.targets || [];
-    const list = $('tutorialTargets');
-    list.hidden = !targets.length;
-    if (targets.length) {
-      list.replaceChildren(...targets.map(target => {
-        const chip = document.createElement('span');
-        chip.className = 'tut-target-chip' + (target.hit ? ' hit' : '');
-        chip.textContent = (target.hit ? '✓ ' : '') + target.label;
-        return chip;
-      }));
-    }
-
-    const meter = $('tutorialMeter');
-    meter.hidden = !Number.isFinite(result.meter);
-    if (!meter.hidden) $('tutorialNeedle').style.left = `${(0.5 + result.meter / 2) * 100}%`;
+  function render(step, guide, result, ok) {
+    setText('tourStep', `新手教学 · 第 ${index + 1} 步，共 ${STEPS.length} 步`);
+    setText('tourGoal', step.goal);
+    setText('tourText', ok ? step.praise : guide.text);
+    setText('tourCondition', step.condition);
+    $('tourCheck').hidden = false;
+    renderChips(result.targets || []);
 
     const need = Number(step.hold || 0);
-    const hold = $('tutorialHold');
-    hold.hidden = !need || ok;
-    if (!hold.hidden) {
+    $('tourHold').hidden = !need || !guide.ready || ok;
+    if (!$('tourHold').hidden) {
       const held = holdSince ? (performance.now() - holdSince) / 1000 : 0;
-      $('tutorialHoldFill').style.width = `${Math.min(100, held / need * 100)}%`;
+      $('tourHoldFill').style.width = `${Math.min(100, held / need * 100)}%`;
     }
+    const detail = guide.ready && !ok ? result.detail || '' : '';
+    setText('tourDetail', detail);
+    $('tourDetail').hidden = !detail;
+    $('tourDone').hidden = !ok;
+    spot.classList.toggle('done', ok);
 
-    $('tutorialDetail').textContent = blocked || result.detail || '';
-    $('tutorialDone').hidden = !ok;
-
-    const act = blocked || ok ? null : step.action?.(state);
-    const actBtn = $('tutorialActionBtn');
-    actBtn.hidden = !act;
-    if (act) {
-      actBtn.textContent = act.label;
-      actBtn.dataset.run = act.run;
-    }
-    const last = index === STEPS.length - 1;
-    const next = $('tutorialNextBtn');
-    next.textContent = last ? '学完了' : '下一步';
+    $('tourSkipBtn').hidden = ok || done.has(step.id);
+    const next = $('tourNextBtn');
+    setText('tourNextBtn', index === STEPS.length - 1 ? '学完了' : '下一步');
     next.disabled = !(ok || done.has(step.id) || skipped.has(step.id));
-    $('tutorialSkipBtn').hidden = ok || done.has(step.id);
-    $('tutorialSkipBtn').textContent = blocked ? '跳过这一步' : '先跳过，以后再练';
   }
 
   function renderFinish() {
-    sceneNow = 'done';
+    setTarget(null);
     const count = STEPS.filter(step => done.has(step.id)).length;
-    $('tutorialArt').innerHTML =
-      `<svg class="tut-svg" viewBox="0 0 320 168" aria-hidden="true">${SCENES.done}</svg>`;
-    $('tutorialKicker').textContent = '教学结束';
-    $('tutorialGoal').textContent = count === STEPS.length ? '这几步都做到了' : `做到了 ${count} / ${STEPS.length} 步`;
-    fillHow([
-      '随时能从页面顶部的「新手教学」再打开，想练哪一步点哪一步。',
-      '装驱动、手机当摄像头、连不上怎么办，在《新手指南》里——那些是打开这个页面之前的事。',
-      '玩起来之后记住一件事：F9 立刻切断所有输出。',
-    ]);
-    $('tutorialCondition').textContent = '—';
-    for (const id of ['tutorialTargets', 'tutorialMeter', 'tutorialHold', 'tutorialActionBtn', 'tutorialSkipBtn', 'tutorialDone']) $(id).hidden = true;
-    $('tutorialDetail').textContent = '';
-    $('tutorialNextBtn').textContent = '关闭';
-    $('tutorialNextBtn').disabled = false;
+    setText('tourStep', '新手教学 · 结束');
+    setText('tourGoal', count === STEPS.length ? '这几步都做到了' : `做到了 ${count} / ${STEPS.length} 步`);
+    setText('tourText', '以后随时能从页面顶部的「新手教学」再走一遍，想练哪一步点下面哪一步。装驱动、手机当摄像头这些打开页面之前的事，在《新手指南》里。');
+    for (const id of ['tourCheck', 'tourTargets', 'tourHold', 'tourDetail', 'tourDone', 'tourSkipBtn']) $(id).hidden = true;
+    spot.classList.remove('done');
+    setText('tourNextBtn', '关闭');
+    $('tourNextBtn').disabled = false;
+  }
+
+  function tick() {
+    if (!active) return;
+    if (index >= STEPS.length) { renderFinish(); return; }
+    const state = actions.state?.();
+    if (!state) return;
+    const step = STEPS[index];
+    const memo = memos[step.id] || (memos[step.id] = {});
+    const guide = step.guide(state);
+    setTarget(guide.target, guide.focus);
+    const result = step.check(state, memo, !!guide.ready);
+
+    // 做到了就不再往回判：一次抖动不该把刚亮起来的判定又灭掉。
+    let ok = !!doneAt;
+    if (!ok) {
+      const good = !!guide.ready && result.ok, need = Number(step.hold || 0), now = performance.now();
+      if (good) { if (!holdSince) holdSince = now; } else holdSince = 0;
+      ok = good && (!need || (now - holdSince) / 1000 >= need);
+      if (ok) {
+        doneAt = now;
+        done.add(step.id);
+        skipped.delete(step.id);
+        reached = clamp(index + 1, reached, STEPS.length - 1);
+        save();
+        renderDots();
+        advance = setTimeout(() => go(index + 1), 1600);
+      }
+    }
+    render(step, guide, result, ok);
   }
 
   function go(i) {
     clearTimeout(advance);
     advance = 0;
-    index = Math.max(0, Math.min(STEPS.length, i));
+    index = clamp(i, 0, STEPS.length);
     reached = Math.max(reached, Math.min(STEPS.length - 1, index));
     holdSince = 0;
     doneAt = 0;
-    sceneNow = '';
     // 重进一步就重来一次：上一轮打中的目标不能替这一轮算数。
     if (index < STEPS.length) memos[STEPS[index].id] = {};
     save();
-    renderRail();
-    if (index >= STEPS.length) { renderFinish(); return; }
-    const state = lastState || actions.state?.();
-    if (state) update(state);
+    renderDots();
+    tick();
   }
 
-  function update(state) {
-    lastState = state;
-    if (!opened || index >= STEPS.length) return;
-
-    const step = STEPS[index];
-    const memo = memos[step.id] || (memos[step.id] = {});
-    renderStage(state);
-
-    const blocked = step.skipWhen ? step.skipWhen(state) : null;
-    const result = blocked ? {ok: false, detail: blocked} : step.check(state, memo);
-
-    // 做到了就不再往回判：一次抖动不该把刚亮起来的判定又灭掉。
-    if (doneAt) { renderFoot(state, result, true, null); return; }
-
-    const need = Number(step.hold || 0);
-    const now = performance.now();
-    if (result.ok) { if (!holdSince) holdSince = now; } else holdSince = 0;
-    const ok = result.ok && (!need || (now - holdSince) / 1000 >= need);
-
-    if (ok) {
-      doneAt = now;
-      done.add(step.id);
-      skipped.delete(step.id);
-      reached = Math.max(reached, Math.min(STEPS.length - 1, index + 1));
-      save();
-      renderRail();
-      if (index < STEPS.length - 1) advance = setTimeout(() => go(index + 1), 1600);
-    }
-    renderFoot(state, result, ok, blocked);
+  function onKey(event) {
+    // 校准那种正式弹窗开着时，Esc 是它的，不能顺手把教学也关了。
+    if (event.key === 'Escape' && !document.querySelector('dialog[open]')) close();
   }
 
   function open(source) {
     returnFocus = source || null;
-    opened = true;
-    // 上次停在哪就从哪接着；已经学完了就从头再来，而不是直接弹结束页。
-    if (index >= STEPS.length) index = 0;
+    // 从第一步还没做、也没跳过的地方接着；全都过了就从头再走一遍。
+    const next = STEPS.findIndex(step => !done.has(step.id) && !skipped.has(step.id));
+    index = next === -1 ? 0 : next;
+    active = true;
+    root.hidden = false;
+    targetKey = '';
+    layoutKey = '';
     go(index);
-    if (!root.open) root.showModal();
+    clearInterval(timer);
+    timer = setInterval(tick, TICK_MS);
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(layout);
+    document.addEventListener('keydown', onKey);
   }
 
   function close() {
-    opened = false;
+    active = false;
+    clearInterval(timer);
+    cancelAnimationFrame(frame);
     clearTimeout(advance);
     advance = 0;
+    root.hidden = true;
+    document.removeEventListener('keydown', onKey);
     save();
-    if (root.open) root.close();
+    returnFocus?.focus?.();
   }
 
-  $('closeTutorialBtn').addEventListener('click', close);
-  $('tutorialNextBtn').addEventListener('click', () => {
-    if (index >= STEPS.length) { close(); return; }
-    go(index + 1);
-  });
-  $('tutorialSkipBtn').addEventListener('click', () => {
+  $('tourCloseBtn').addEventListener('click', close);
+  $('tourNextBtn').addEventListener('click', () => (index >= STEPS.length ? close() : go(index + 1)));
+  $('tourSkipBtn').addEventListener('click', () => {
     if (index >= STEPS.length) return;
     skipped.add(STEPS[index].id);
     save();
     go(index + 1);
   });
-  $('tutorialActionBtn').addEventListener('click', event => {
-    const run = event.currentTarget.dataset.run;
-    if (run && typeof actions[run] === 'function') actions[run]();
-  });
-  root.addEventListener('cancel', event => { event.preventDefault(); close(); });
-  root.addEventListener('close', () => { opened = false; returnFocus?.focus(); });
 
   return {
     open,
     close,
-    update,
-    isOpen: () => opened,
     // 从没打开过才自动弹一次。跳过、关掉、学完，都算看过了。
     seen: () => { try { return !!JSON.parse(localStorage.getItem(STORE) || '{}').seen; } catch { return true; } },
   };

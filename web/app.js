@@ -395,7 +395,7 @@ async function refreshKernel(){
   try{
     const runtime=await api('/api/kernel/status');
     kernelConnected=true;
-    if(epoch===kernelEpoch){renderKernelState(runtime);if(tutorial.isOpen())tutorial.update(tutorialState())}
+    if(epoch===kernelEpoch)renderKernelState(runtime);
     if(!profileReady&&!profileLoading)void loadProfiles();
   }catch{kernelConnected=false;renderMainStatus()}
 }
@@ -871,7 +871,7 @@ function tutorialState(){
   const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
   return {
     cameraReady:sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning,
-    sourceMode,posed:!!currentPoseMap,
+    view:currentView,posed:!!currentPoseMap,
     // 握拳控左右不需要头部中心，这一点和「视角控制」那块的判断保持一致。
     calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
     calibrating:!!hs.calibrating,
@@ -1471,11 +1471,8 @@ for(const axis of ['horizontal','vertical']){
 }
 $('#verticalLookSource').addEventListener('change',()=>void saveLegacyVertical());
 $('#headEnable').addEventListener('change',()=>void saveHeadEnabled());
-// 教学里要动手的那几步不另开一份实现：校准还是走主界面这条路径，连提示都一样。
-const tutorial=createTutorial({
-  state:tutorialState,
-  calibrate:()=>runAction(async()=>{await setOutput(false);await startCalibration()}),
-});
+// 教学只指路不代劳：连接、校准都由人去点真按钮，所以这里只把状态交给它。
+const tutorial=createTutorial({state:tutorialState});
 for(const id of ['tutorialBtn','tutorialSettingsBtn'])$('#'+id).addEventListener('click',e=>tutorial.open(e.currentTarget));
 bind('poseRecordBtn',startPoseRecord);
 bind('poseRecordCancelBtn',cancelPoseRecord);

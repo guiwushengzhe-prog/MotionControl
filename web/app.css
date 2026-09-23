@@ -574,81 +574,52 @@ dialog::backdrop { background: #030812dc; }
 
 .voice-trigger-phrase { display: block; width: 100%; margin-top: 6px; box-sizing: border-box; }
 
-
-/* 新手教学。以前这儿是一页文字，读完也不知道自己做对没有；现在每步一段演示动画
-   加一个从实时状态读出来的判定，所以样式的重点是：动画看得清，读数跟得上。 */
-#tutorialMask { display: flex; flex-direction: column; gap: 14px; width: min(1040px, 96vw); }
-.tutorial-progress { display: flex; align-items: center; gap: 10px; margin-left: auto; margin-right: 12px; color: var(--muted); font-size: 13px; }
-.tutorial-bar { width: 120px; height: 6px; border-radius: 3px; background: #263647; overflow: hidden; }
-#tutorialBarFill { height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
-.tutorial-body { display: grid; grid-template-columns: 186px 1fr; gap: 18px; overflow: auto; }
-.tutorial-rail { display: grid; align-content: start; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.tut-rail-item { display: grid; grid-template-columns: 24px 1fr; align-items: center; gap: 9px;
-  width: 100%; min-height: 40px; padding: 7px 10px; text-align: left; font: inherit;
-  border: 1px solid var(--line); border-radius: 9px; background: #1c2938; color: inherit; }
-.tut-rail-item:disabled { opacity: .45; }
-.tut-rail-item.active { border-color: var(--accent); background: #203b53; }
-.tut-rail-mark { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
-  background: #263647; color: var(--muted); font-size: 12px; font-weight: 700; }
-.tut-rail-item.done .tut-rail-mark { background: #1f5b3d; color: #8fe0b4; }
-.tut-rail-item.skipped .tut-rail-mark { color: #7d8a97; }
-.tutorial-stage { display: grid; align-content: start; gap: 14px; }
-.tutorial-art { padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: #0d151f; }
-.tut-svg { display: block; width: 100%; max-width: 460px; height: auto; max-height: 210px; margin: 0 auto;
-  fill: none; stroke: #55697e; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.tut-svg .tut-ink { stroke: var(--accent); }
-.tut-svg .tut-fill { fill: var(--accent); stroke: none; }
-.tutorial-stage h3 { margin: 0 0 8px; font-size: 19px; }
-.tutorial-how { margin: 0; padding-left: 20px; color: var(--muted); }
-.tutorial-how li { margin-bottom: 6px; }
-.tutorial-foot { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
-.tutorial-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.tutorial-check b { color: var(--accent); font-size: 12px; }
-.tut-target-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.tut-target-chip { padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px;
-  color: var(--muted); font-size: 12px; }
-.tut-target-chip.hit { border-color: #39c07a; background: #16341f; color: #8fe0b4; }
-/* 读数是双向的：中间是回正，两边是推到底。所以用一条居中带零点的尺，不是进度条。 */
-.tut-meter { position: relative; height: 12px; border: 1px solid var(--line); border-radius: 6px; background: #0d151f; }
-.tut-meter-zero { position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: var(--line); }
-#tutorialNeedle { position: absolute; top: -3px; left: 50%; width: 4px; height: 18px; margin-left: -2px;
-  border-radius: 2px; background: var(--accent); transition: left .12s linear; }
-.tut-hold { height: 8px; border-radius: 4px; background: #263647; overflow: hidden; }
-#tutorialHoldFill { display: block; height: 100%; width: 0; background: var(--accent); }
-#tutorialDetail { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-.tut-done { padding: 7px 12px; border: 1px solid #39c07a; border-radius: 9px; background: #16341f;
-  color: #8fe0b4; font-weight: 700; animation: tut-done .5s ease-out; }
-@keyframes tut-done { from { transform: scale(.9); opacity: 0 } to { transform: scale(1); opacity: 1 } }
-
-/* 演示动画。transform-box:view-box 是必须的：不写的话 transform-origin 按元素自己的
-   包围盒算，头会绕着自己的中心转，而不是绕着脖子。 */
-.tut-walk { animation: tut-walk 4.6s ease-out infinite; }
-@keyframes tut-walk { 0% { transform: translateX(-150px); opacity: 0 } 14% { opacity: 1 } 45%, 100% { transform: translateX(0); opacity: 1 } }
-.tut-frame { animation: tut-frame 4.6s ease-out infinite; }
-@keyframes tut-frame { 0%, 42% { stroke: #55697e } 56%, 100% { stroke: var(--accent) } }
-.tut-roll { animation: tut-roll 6s ease-in-out infinite; transform-box: view-box; transform-origin: 160px 98px; }
-@keyframes tut-roll { 0%, 15% { transform: rotate(0) } 30%, 45% { transform: rotate(-20deg) } 57% { transform: rotate(0) } 70%, 85% { transform: rotate(20deg) } 100% { transform: rotate(0) } }
-.tut-yaw { animation: tut-yaw 6s ease-in-out infinite; transform-box: view-box; transform-origin: 160px 80px; }
-@keyframes tut-yaw { 0%, 15% { transform: none } 30%, 45% { transform: translateX(-7px) scaleX(.88) } 57% { transform: none } 70%, 85% { transform: translateX(7px) scaleX(.88) } 100% { transform: none } }
-.tut-face { animation: tut-face 6s ease-in-out infinite; transform-box: view-box; transform-origin: 160px 54px; }
-@keyframes tut-face { 0%, 15% { transform: none } 30%, 45% { transform: translateX(-11px) } 57% { transform: none } 70%, 85% { transform: translateX(11px) } 100% { transform: none } }
-.tut-slide { animation: tut-reticle 6s ease-in-out infinite; transform-box: view-box; }
-.tut-reticle { fill: var(--accent); stroke: none; animation: tut-reticle 6s ease-in-out infinite; transform-box: view-box; }
-@keyframes tut-reticle { 0%, 15% { transform: translateX(0) } 30%, 45% { transform: translateX(-100px) } 57% { transform: translateX(0) } 70%, 85% { transform: translateX(100px) } 100% { transform: translateX(0) } }
-.tut-target { stroke: #55697e; }
-.tut-target-l { animation: tut-hit-l 6s ease-in-out infinite; }
-.tut-target-r { animation: tut-hit-r 6s ease-in-out infinite; }
-@keyframes tut-hit-l { 0%, 27% { stroke: #55697e; fill: none } 32%, 46% { stroke: #39c07a; fill: #39c07a } 52%, 100% { stroke: #55697e; fill: none } }
-@keyframes tut-hit-r { 0%, 67% { stroke: #55697e; fill: none } 72%, 86% { stroke: #39c07a; fill: #39c07a } 92%, 100% { stroke: #55697e; fill: none } }
-.tut-ring { stroke: var(--accent); animation: tut-ring 3.6s ease-out infinite;
-  transform-box: view-box; transform-origin: 160px 90px; }
-@keyframes tut-ring { 0% { transform: scale(1.7); opacity: 0 } 25% { opacity: .85 } 70%, 100% { transform: scale(1); opacity: 0 } }
-.tut-tick-big { stroke: #39c07a; stroke-width: 6; animation: tut-tick 3.6s ease-out infinite;
-  transform-box: view-box; transform-origin: 160px 90px; }
-@keyframes tut-tick { 0%, 20% { opacity: 0; transform: scale(.5) } 40% { opacity: 1; transform: scale(1.1) } 55%, 100% { opacity: 1; transform: scale(1) } }
-
-@media (prefers-reduced-motion: reduce) { .tut-svg * { animation: none !important } }
-@media (max-width: 760px) {
-  .tutorial-body { grid-template-columns: 1fr; }
-  .tutorial-rail { grid-auto-flow: column; grid-auto-columns: minmax(130px, 1fr); overflow-x: auto; }
+/* 新手教学。不另画界面：把正式界面压暗，只留这一步要用的那块亮着，旁边一张卡片。
+   整层不接鼠标，只有卡片接——人要点的是亮框底下那个真按钮。 */
+.tour { position: fixed; inset: 0; z-index: 900; pointer-events: none; }
+.tour.no-target { background: #030812b8; }
+.tour-spot { position: absolute; border-radius: 12px; outline: 2px solid var(--accent);
+  box-shadow: 0 0 0 200vmax #030812b8; }
+.tour-spot.moving { transition: left .35s ease, top .35s ease, width .35s ease, height .35s ease; }
+.tour-spot::after { content: ""; position: absolute; inset: -2px; border: 2px solid var(--accent);
+  border-radius: 14px; animation: tour-pulse 1.8s ease-out infinite; }
+@keyframes tour-pulse { from { inset: -2px; opacity: .9 } to { inset: -16px; opacity: 0 } }
+.tour-spot.done { outline-color: #39c07a; }
+.tour-spot.done::after { border-color: #39c07a; }
+.tour-card { position: absolute; display: grid; gap: 10px; width: min(340px, calc(100vw - 24px)); padding: 16px;
+  pointer-events: auto; background: var(--panel); border: 1px solid var(--accent); border-radius: 14px;
+  box-shadow: 0 16px 44px #000000b0; }
+/* 卡片上的小尖角指向亮框，side 是卡片在亮框的哪一边。 */
+.tour-card::before { content: ""; position: absolute; width: 14px; height: 14px; background: var(--panel);
+  border: solid var(--accent); border-width: 1px 0 0 1px; }
+.tour-card[data-side="none"]::before { display: none; }
+.tour-card[data-side="right"]::before { left: -8px; top: calc(var(--arrow) - 7px); transform: rotate(-45deg); }
+.tour-card[data-side="left"]::before { right: -8px; top: calc(var(--arrow) - 7px); transform: rotate(135deg); }
+.tour-card[data-side="below"]::before { top: -8px; left: calc(var(--arrow) - 7px); transform: rotate(45deg); }
+.tour-card[data-side="above"]::before { bottom: -8px; left: calc(var(--arrow) - 7px); transform: rotate(-135deg); }
+.tour-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--accent); font-size: 12px; }
+.tour-head .btn { min-height: 30px; padding: 3px 10px; font-size: 12px; }
+.tour-card h3 { margin: 0; font-size: 18px; }
+.tour-text { margin: 0; color: #d7e2ec; }
+.tour-check { color: var(--muted); font-size: 12.5px; }
+.tour-check b { display: block; color: var(--accent); font-size: 12px; font-weight: 600; }
+.tour-targets { display: flex; flex-wrap: wrap; gap: 6px; }
+.tour-chip { padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12px; }
+.tour-chip.hit { border-color: #39c07a; background: #16341f; color: #8fe0b4; }
+.tour-hold { height: 8px; border-radius: 4px; background: #263647; overflow: hidden; }
+#tourHoldFill { display: block; width: 0; height: 100%; background: var(--accent); }
+.tour-detail { margin: 0; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.tour-done { padding: 6px 12px; border: 1px solid #39c07a; border-radius: 9px; background: #16341f;
+  color: #8fe0b4; font-weight: 700; animation: tour-done .45s ease-out; }
+@keyframes tour-done { from { transform: scale(.92); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+.tour-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.tour-dots { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 10px 0 0; border-top: 1px solid var(--line); list-style: none; }
+.tour-dots button { min-height: 26px; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px;
+  background: #1c2938; color: var(--muted); font: inherit; font-size: 12px; }
+.tour-dots button.active { border-color: var(--accent); color: inherit; }
+.tour-dots button.done { border-color: #2d6b49; color: #8fe0b4; }
+.tour-dots button:disabled { opacity: .45; }
+@media (prefers-reduced-motion: reduce) {
+  .tour-spot::after, .tour-done { animation: none; }
+  .tour-spot.moving { transition: none; }
 }

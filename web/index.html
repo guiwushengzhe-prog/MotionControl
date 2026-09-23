@@ -265,13 +265,12 @@
 
 <dialog aria-labelledby="fixedZonesTitle" id="fixedZonesMask"><div class="dialog-head"><h2 id="fixedZonesTitle">这会切换成固定区域</h2></div><p>现在的六个区域跟随你的身体，换个站位也对得上。记录参考场景后它们会<strong>固定在画面坐标上，不再跟随身体</strong>；你挪动位置就要重新匹配一次。</p><p>头顶跳跃区也会改用固定判定，起跳手感和现在不同。</p><div class="settings-actions"><button class="btn safe primary" id="fixedZonesCancel">取消，继续用跟随区域</button><button class="btn danger" id="fixedZonesConfirm">仍要切换成固定区域</button></div></dialog>
 <dialog aria-labelledby="voiceTitle" id="voiceCommandsMask"><div class="dialog-head"><h2 id="voiceTitle">语音指令</h2><button class="btn" id="closeVoiceCommandsBtn">关闭</button></div><div id="voiceCommandGrid"></div></dialog>
-<dialog aria-labelledby="tutorialTitle" id="tutorialMask"><div class="dialog-head"><h2 id="tutorialTitle">新手教学</h2><div class="tutorial-progress"><span id="tutorialCount">已完成 0 / 2</span><div class="tutorial-bar"><div id="tutorialBarFill"></div></div></div><button class="btn" id="closeTutorialBtn">退出</button></div>
-<div class="tutorial-body"><ol class="tutorial-rail" id="tutorialRail"></ol>
-<section class="tutorial-stage"><div class="tutorial-art" id="tutorialArt"></div><div><div class="eyebrow" id="tutorialKicker"></div><h3 id="tutorialGoal"></h3><ul class="tutorial-how" id="tutorialHow"></ul></div></section></div>
-<div class="tutorial-foot"><div class="tutorial-check"><b>怎么算做到了</b><span id="tutorialCondition"></span><span class="tut-target-list" id="tutorialTargets" hidden></span></div>
-<div class="tut-meter" id="tutorialMeter" hidden><i class="tut-meter-zero"></i><b id="tutorialNeedle"></b></div>
-<div class="tut-hold" id="tutorialHold" hidden><i id="tutorialHoldFill"></i></div>
-<div class="tutorial-check"><span id="tutorialDetail"></span><span class="tut-done" id="tutorialDone" role="status" hidden>做到了</span></div>
-<div class="settings-actions"><button class="btn" id="tutorialActionBtn" hidden></button><button class="btn" id="tutorialSkipBtn">先跳过，以后再练</button><button class="btn primary" id="tutorialNextBtn">下一步</button></div></div></dialog>
+<div class="tour" hidden="" id="tour"><div class="tour-spot" id="tourSpot"></div><section aria-label="新手教学" class="tour-card" data-side="none" id="tourCard">
+<div class="tour-head"><span id="tourStep">新手教学</span><button class="btn" id="tourCloseBtn">退出教学</button></div>
+<h3 id="tourGoal"></h3><p aria-live="polite" class="tour-text" id="tourText"></p>
+<div class="tour-check" id="tourCheck"><b>做到这个就算完成</b><span id="tourCondition"></span></div>
+<div class="tour-targets" hidden="" id="tourTargets"></div><div class="tour-hold" hidden="" id="tourHold"><i id="tourHoldFill"></i></div><p class="tour-detail" hidden="" id="tourDetail"></p><div class="tour-done" hidden="" id="tourDone" role="status">做到了</div>
+<div class="tour-actions"><button class="btn" id="tourSkipBtn">先跳过</button><button class="btn primary" id="tourNextBtn">下一步</button></div>
+<ol aria-label="教学步骤" class="tour-dots" id="tourDots"></ol></section></div>
 <dialog aria-labelledby="calibrationStage" class="calibration-overlay" id="calibrationOverlay"><div class="calibration-card"><div class="calibration-kicker">头控中心</div><div class="calibration-stage" id="calibrationStage">准备校准</div><div class="calibration-prompt" id="calibrationPrompt">请看向游戏屏幕中心</div><div class="calibration-countdown" id="calibrationCountdown">8.0</div><div class="calibration-progress"><div id="calibrationProgressBar"></div></div><div class="calibration-detail" id="calibrationDetail"></div><button class="calibration-cancel" id="calibrationCancel">取消校准</button></div></dialog>
 </div><script src="/app.js" type="module"></script></body></html>
