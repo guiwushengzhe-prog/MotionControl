@@ -6,6 +6,7 @@ import mimetypes
 import os
 import socket
 import sys
+import queue
 import threading
 import time
 import webbrowser
@@ -29,6 +30,7 @@ from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, Nat
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
 from motioncontrol_shared import macro_schema
+from motioncontrol_shared.describe import trigger_name
 from motioncontrol_shared.profile_schema import action_catalog
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
@@ -329,6 +331,9 @@ def _phone_control_payload() -> dict:
         "version": VERSION,
         "game": {"id": profile.get("id"), "name": profile.get("name"), "appid": profile.get("appid")},
         "bindings": profile.get("bindings", {}),
+        # 真正会生效的那份。区域有一层内置兜底：配置里没有 zone.headJump 时它照样按 A。
+        # 手机只看 bindings 的话会写「未映射」，而游戏里明明有反应。
+        "effective_bindings": KERNEL.effective_bindings(),
         # 绑定里的宏是按编号引用的，手机手上没有宏库就只能显示一串编号。带上名字和
         # 步数，圈上才写得出「三连击」。只在配置变化时推一次，不是实时数据。
         "macros": MACROS.status(),
@@ -398,6 +403,48 @@ def _newest_pose_id() -> str:
 
 
 POSE_TIMER = PoseCaptureTimer(_capture_custom_pose)
+
+# 触发状态往手机推：内核放进队列，这条线程取出来发。
+#
+# 中间必须隔一个队列。内核那个回调是在**控制线程、而且在锁里**被调用的，往 socket
+# 写是会阻塞的操作——一个网络变慢的手机就能把识别线程卡住，表现出来是掉帧，而没人
+# 会把掉帧和"手机上那个显示"联系起来。
+#
+# 队列很浅而且满了就丢。这是显示用的状态，不是指令：丢掉一次的代价是手机上少闪一
+# 下，而攒着不丢的代价是内存一直涨、并且显示越来越滞后。
+_TRIGGER_QUEUE: "queue.Queue[dict]" = queue.Queue(maxsize=8)
+
+
+def _queue_trigger_state(payload: dict) -> None:
+    """内核调的就是这个。必须是放下就走，不能阻塞。"""
+    try:
+        _TRIGGER_QUEUE.put_nowait(payload)
+    except queue.Full:
+        pass
+
+
+def _name_trigger_state(payload: dict) -> dict:
+    """补上人看得懂的名字。内核只给 id，名字表在 describe 里。"""
+    out = dict(payload)
+    for key in ("held", "fired"):
+        out[key] = [
+            {**item, "name": trigger_name(str(item.get("id", "")))}
+            for item in payload.get(key, [])
+        ]
+    return out
+
+
+def _trigger_pump() -> None:
+    while True:
+        payload = _TRIGGER_QUEUE.get()
+        try:
+            INPUT_BRIDGE.broadcast_trigger_state(_name_trigger_state(payload))
+        except Exception:  # noqa: BLE001 - 推送失败不该让这条线程死掉
+            pass
+
+
+threading.Thread(target=_trigger_pump, name="trigger-pump", daemon=True).start()
+KERNEL.configure_trigger_listener(_queue_trigger_state)
 
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None

@@ -37,7 +37,11 @@ def test_target_game_conflict_and_legacy_request_compatibility(tmp_path):
     namespace = {
         "PROFILES": store, "PROFILE_UPDATE_LOCK": RLock(), "ProfileSelectionChanged": ProfileSelectionChanged,
         "KERNEL": SimpleNamespace(configure_bindings=applied.append), "INPUT_BRIDGE": SimpleNamespace(),
-        "VOICE": SimpleNamespace(_lock=RLock(), source_id="phone", _release_locked=released.append),
+        # configure_profile_bindings 是后加的：换游戏时语音那边也要跟着换一批口令。
+        # 替身里没它的话，路由会招 AttributeError 然后返回 400——看起来像参数不对，
+        # 其实是少了一个方法。
+        "VOICE": SimpleNamespace(_lock=RLock(), source_id="phone", _release_locked=released.append,
+                                 configure_profile_bindings=lambda bindings: None),
     }
     request = make_handler(namespace)
     request.path = "/api/game-profiles/overrides"

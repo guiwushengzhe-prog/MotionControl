@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -292,6 +293,71 @@ def test_only_the_rising_edge_is_recorded():
     start = source.index("def _dispatch_controls_locked")
     block = source[start:start + 3000]
     assert "active - self.trigger_previous" in block, "记的不是上升沿"
+
+
+def test_the_kernel_reports_what_will_actually_fire():
+    """区域和动作有一层内置兜底：配置里没有 zone.headJump 这一条时，它照样按 A。
+
+    界面直接读 config 会把它写成「未映射」，而人在游戏里明明被按了一个键。
+    这种"界面说没绑、实际有反应"最难查，因为两边都不报错。2026-09-22 就是在
+    靶场上看见大字写着「头顶区 → A」、旁边的靶子写着「未映射」才发现的。
+    """
+    from motioncontrol.control_kernel import ControlKernel
+
+    class Output:
+        def set_action_holds(self, *a, **k):
+            return {}
+
+        def set_buttons(self, *a, **k):
+            return {}
+
+        def set_holds(self, *a, **k):
+            return {}
+
+        def apply(self, *a, **k):
+            return {}
+
+        def status(self):
+            return {}
+
+    kernel = ControlKernel(Output())
+    kernel.configure_bindings({})
+    status = kernel.status()
+    assert "effective_bindings" in status, "内核没把真正会生效的那份报出来"
+    effective = status["effective_bindings"]
+    # 配置是空的，但内置兜底让区域照样按键。
+    assert not status["control_bindings"], "前提变了：这一步应该是空配置"
+    assert effective, "空配置下也该有兜底的区域绑定"
+    assert any(key.startswith("zone.") for key in effective)
+
+
+def test_the_page_shows_the_effective_binding_not_the_config():
+    """圈上、姿势卡片上、靶场里都走同一个取法，否则三处会各说各的。"""
+    # 只看真正的代码行：注释里提到 control_bindings 是在解释为什么不该读它。
+    code = [line for line in APP_JS.splitlines() if not line.strip().startswith("//")]
+    hits = [line.strip() for line in code if "control_bindings" in line]
+    # 只允许一处：bindingsForDisplay 自己的兑底。别处再读一遍就是第二套规则，
+    # 而两套规则早晚会说两样话。
+    assert len(hits) == 1, f"还有地方直接读配置来显示键位：{hits}"
+    assert "effective_bindings" in hits[0]
+
+
+def test_the_range_is_its_own_tab_and_shows_the_hit_big():
+    """人站在几米外做动作，小字等于没有。"""
+    page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    assert 'data-panel="range"' in page and 'data-view="range"' in page
+    assert "renderRange" in APP_JS
+    css = (ROOT / "web" / "app.css").read_text(encoding="utf-8")
+    hit = css[css.index(".range-hit-what"):css.index(".range-hit-what") + 120]
+    size = float(re.search(r"font-size:([\d.]+)em", hit).group(1))
+    assert size >= 2.0, f"命中那行字只有 {size}em，几米外看不见"
+
+
+def test_an_unmapped_target_still_shows_up_in_the_range():
+    """动作亮了、键位写着未映射，说明识别是好的只是没绑——这是这一页最有用的
+    一条信息，因为它和"根本没识别出来"在游戏里长得一模一样。"""
+    assert "'未映射'" in APP_JS
+    assert "unmapped" in (ROOT / "web" / "app.css").read_text(encoding="utf-8")
 
 
 def test_the_live_view_sits_next_to_the_editor():

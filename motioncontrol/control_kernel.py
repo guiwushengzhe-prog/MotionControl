@@ -430,6 +430,12 @@ class ControlKernel:
         #
         # 只留最近这些条，按时间顺序。它是给人看的，不是日志。
         self.recent_triggers: deque = deque(maxlen=24)
+        # 触发集合一变就通知一次（不是每帧）。手机靠它显示"刚才按了什么"——打游戏
+        # 时人看不到电脑屏幕，只看得见手机。
+        #
+        # 回调必须是"放下就走"的：它在控制线程、而且在锁里被调用，里面做任何可能
+        # 阻塞的事（比如往 socket 写）都会卡住识别，表现出来是掉帧。
+        self._trigger_listener = None
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -1947,6 +1953,27 @@ class ControlKernel:
                     self.pose_debounce.pop(ident, None)
             self._dispatch_controls_locked(time.monotonic())
 
+    def _effective_bindings_locked(self) -> dict[str, dict]:
+        """每个触发器**真正会按下去的**那一份，界面照这个显示。
+
+        为什么不能直接给 control_bindings：区域和动作有一层内置的兜底。配置里没有
+        zone.headJump 这一条时，它照样按 A——兜底在 _effective_binding_locked 里。
+        于是界面读配置读出个空，写「未映射」，而人在游戏里明明被按了一个键。
+
+        这种不一致最难查：界面说没绑，实际有反应，两边都"没报错"。所以真正会生效的
+        那份必须由内核算好报出来，不能让界面自己再猜一遍——猜就一定会有第二套规则。
+        """
+        triggers = set(self.control_bindings)
+        triggers.update(f"zone.{name}" for name in RUNTIME_BODY_ZONES)
+        triggers.update(f"motion.{item.get('id')}" for item in self.motion_config
+                        if item.get("id"))
+        out: dict[str, dict] = {}
+        for trigger in triggers:
+            binding = self._effective_binding_locked(trigger)
+            if binding:
+                out[trigger] = copy.deepcopy(binding)
+        return out
+
     def _effective_binding_locked(self, trigger: str) -> dict | None:
         binding = self.control_bindings.get(trigger)
         if binding is not None:
@@ -1971,6 +1998,20 @@ class ControlKernel:
                     return {"action": {"type": item.get("type", "gamepad"), "target": item.get("target"), "behavior": "hold"}}
         return None
 
+    def effective_bindings(self) -> dict[str, dict]:
+        """真正会生效的那份，给手机用。见 _effective_bindings_locked。"""
+        with self._lock:
+            return self._effective_bindings_locked()
+
+    def configure_trigger_listener(self, listener) -> None:
+        """装上"触发集合变了"的回调。见 _trigger_listener 的说明。"""
+        with self._lock:
+            self._trigger_listener = listener
+
+    def _trigger_brief_locked(self, trigger: str) -> dict:
+        binding = self._effective_binding_locked(trigger)
+        return {"id": trigger, "action": copy.deepcopy((binding or {}).get("action"))}
+
     def note_trigger(self, trigger: str, action: dict | None) -> None:
         """记一次触发。语音走的不是内核这条路，所以由 server 调进来。
 
@@ -1978,7 +2019,21 @@ class ControlKernel:
         不同的地方，早晚差开。
         """
         with self._lock:
-            self._note_trigger_locked(trigger, action, time.monotonic())
+            now = time.monotonic()
+            self._note_trigger_locked(trigger, action, now)
+            # 语音也要推给手机。它是"说一句就完"的那种，不会出现在按住的集合里，
+            # 所以 held 照旧、fired 只有这一条。
+            if self._trigger_listener is not None:
+                try:
+                    self._trigger_listener({
+                        "held": [self._trigger_brief_locked(item)
+                                 for item in sorted(self.trigger_previous)],
+                        "fired": [{"id": str(trigger),
+                                   "action": copy.deepcopy(action) if isinstance(action, dict) else None}],
+                        "at": round(now, 3),
+                    })
+                except Exception as exc:  # noqa: BLE001 - 同上，显示不能拖垮控制
+                    self.last_error = str(exc)
 
     def _note_trigger_locked(self, trigger: str, action: dict | None, now: float) -> None:
         self.recent_triggers.append({
@@ -2042,6 +2097,20 @@ class ControlKernel:
         for trigger in sorted(active - self.trigger_previous):
             binding = self._effective_binding_locked(trigger)
             self._note_trigger_locked(trigger, (binding or {}).get("action"), now)
+
+        # 集合变了才推给手机。每帧推一次的话，按住不放的那几秒就是每秒三十条一模
+        # 一样的消息——手机那边什么都不会变，网络和电池却在一直烧。
+        if active != self.trigger_previous and self._trigger_listener is not None:
+            payload = {
+                "held": [self._trigger_brief_locked(item) for item in sorted(active)],
+                "fired": [self._trigger_brief_locked(item)
+                          for item in sorted(active - self.trigger_previous)],
+                "at": round(now, 3),
+            }
+            try:
+                self._trigger_listener(payload)
+            except Exception as exc:  # noqa: BLE001 - 显示用的东西不该拖垮控制
+                self.last_error = str(exc)
 
         setter = getattr(self.output, "set_action_holds", None)
         if setter is not None:
@@ -2345,6 +2414,8 @@ class ControlKernel:
             "custom_pose_scores": dict(self.custom_pose_scores),
             "pose_confidence": copy.deepcopy(self.pose_confidence),
             "control_bindings": copy.deepcopy(self.control_bindings),
+            # 界面要显示"按的是哪个键"时用这一份，见 _effective_bindings_locked。
+            "effective_bindings": self._effective_bindings_locked(),
             "recent_triggers": list(self.recent_triggers),
             # 界面要靠它把 at 换算成"几秒前"。用服务端自己的钟，省得和浏览器对时。
             "now": round(now, 3),
