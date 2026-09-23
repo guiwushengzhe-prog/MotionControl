@@ -575,6 +575,21 @@ def _standing_pose(dy=0.0, dx=0.0, left_wrist=None, right_wrist=None,
     }
 
 
+def _squat_pose(depth):
+    """Lower the upper body while both ankles stay on the floor."""
+    pose = _standing_pose()
+    for name in ('nose', 'left_ear', 'right_ear', 'left_shoulder', 'right_shoulder',
+                 'left_wrist', 'right_wrist'):
+        pose[name]['y'] += depth
+    for name in ('left_hip', 'right_hip'):
+        pose[name]['y'] += .65 * depth
+    for name in ('left_knee', 'right_knee'):
+        pose[name]['y'] += .20 * depth
+    pose['left_knee']['x'] -= .50 * depth
+    pose['right_knee']['x'] += .50 * depth
+    return pose
+
+
 def _zone_feeder(kernel, monkeypatch):
     clock = [0.0]
     monkeypatch.setattr('motioncontrol.control_kernel.time.monotonic', lambda: clock[0])
@@ -605,6 +620,29 @@ def test_small_jump_can_actually_enter_the_head_zone(monkeypatch):
             feed(_standing_pose(dy=-rise * (frame + 1) / 6.0))
         feed(_standing_pose(dy=-rise), 4)
         assert kernel.zone_state['headJump']['pressed'] is True
+    finally:
+        kernel.close()
+
+
+def test_squat_then_stand_does_not_press_the_following_head_zone(monkeypatch):
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        resting_y = kernel.zone_rects['headJump']['y1']
+        pressed_frames = []
+
+        poses = ([_squat_pose(.12 * (frame + 1) / 12) for frame in range(12)]
+                 + [_squat_pose(.12)] * 45
+                 + [_squat_pose(.12 * (1 - (frame + 1) / 8)) for frame in range(8)]
+                 + [_standing_pose()] * 10)
+        for frame, pose in enumerate(poses):
+            feed(pose)
+            if kernel.zone_state['headJump']['pressed']:
+                pressed_frames.append(frame)
+
+        assert kernel.zone_rects['headJump']['y1'] > resting_y - .02
+        assert not pressed_frames, f'head zone pressed on squat frames {pressed_frames}'
     finally:
         kernel.close()
 

@@ -124,11 +124,13 @@ BODY_MOTION_ACTION_RISK_TIMING = {
 # Head-jump anchor tuning.  The anchor exists so the target above the head can
 # track a changed stance without also riding up with a jump.  Lateral drift is
 # followed promptly; vertical drift is followed slowly and stops entirely above
-# the freeze speed.  0.35 torso lengths per second matches the coherent-vertical
-# threshold the body-motion guard already uses, and a jump peaks near 1.2.
+# the freeze speed.  A crouch also shortens the shoulder-to-hip span, so its
+# vertical follow is held until the player returns to the upright span.  This
+# avoids a delayed target crossing the nose on the way back up.
 HEAD_JUMP_FREEZE_VY = 0.35
 HEAD_JUMP_FOLLOW_X_S = 0.35
 HEAD_JUMP_FOLLOW_Y_S = 1.50
+HEAD_JUMP_CROUCH_RATIO = 0.90
 # A jump spans roughly 0.3-0.5 torso, so this only fires when the player truly
 # relocated or the camera was re-aimed.
 HEAD_JUMP_SNAP_TORSO = 1.20
@@ -300,6 +302,7 @@ class ControlKernel:
         # follower carries the target upward and the nose can never enter it.
         self.head_jump_anchor: dict[str, float] | None = None
         self.head_jump_prev: tuple[float, float, float] | None = None
+        self.head_jump_torso_ref: float | None = None
         self.vertical_look = {
             # Before the first fixed-scene capture we still expose a provisional
             # body-relative lookGate so the six-region layout is visible and usable.
@@ -1300,6 +1303,16 @@ class ControlKernel:
         the guard off, which would silently disable the jump zone.
         """
         torso_n = _distance(shoulder, hip)
+        if self.head_jump_torso_ref is None:
+            self.head_jump_torso_ref = torso_n
+        elif torso_n > self.head_jump_torso_ref:
+            # Camera scale changes can make the body larger; accept that
+            # quickly so a later crouch is still compared with a fresh span.
+            self.head_jump_torso_ref = torso_n
+        crouched = (
+            self.head_jump_torso_ref > 1e-6
+            and torso_n < HEAD_JUMP_CROUCH_RATIO * self.head_jump_torso_ref
+        )
         coherent_vy, dt = 0.0, 0.0
         if self.head_jump_prev is not None and torso_n > 1e-6:
             prev_shoulder_y, prev_hip_y, prev_at = self.head_jump_prev
@@ -1321,7 +1334,7 @@ class ControlKernel:
             return anchor
         step = min(dt, 0.12)
         anchor["x"] += (1.0 - math.exp(-step / HEAD_JUMP_FOLLOW_X_S)) * (float(target["x"]) - anchor["x"])
-        if coherent_vy < HEAD_JUMP_FREEZE_VY:
+        if coherent_vy < HEAD_JUMP_FREEZE_VY and not crouched:
             anchor["y"] += (1.0 - math.exp(-step / HEAD_JUMP_FOLLOW_Y_S)) * (float(target["y"]) - anchor["y"])
         if torso_n > 1e-6 and abs(float(target["y"]) - anchor["y"]) > HEAD_JUMP_SNAP_TORSO * torso_n:
             anchor["y"] = float(target["y"])
@@ -2260,6 +2273,7 @@ class ControlKernel:
         self.zone_rects = {}
         self.head_jump_anchor = None
         self.head_jump_prev = None
+        self.head_jump_torso_ref = None
         self.vertical_gate_active = False
         self._reset_body_motion_guard_locked()
         self._reset_vertical_hand_locked()
