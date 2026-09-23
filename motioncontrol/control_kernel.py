@@ -2323,8 +2323,8 @@ class ControlKernel:
             return "lookGate" in self.fixed_zones
         return "lookGate" in self.zone_rects
 
-    def status_locked(self, now: float) -> dict:
-        pose_age = round(max(0.0, (now - self.body_last_at) * 1000.0)) if self.body_last_at else None
+    def runtime_zones_locked(self) -> dict:
+        """Return only display geometry and pressed state for the phone overlay."""
         gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         zones = {}
@@ -2339,6 +2339,16 @@ class ControlKernel:
         for alias, canonical in ZONE_ALIASES.items():
             if canonical in zones:
                 zones[alias] = copy.deepcopy(zones[canonical])
+        return zones
+
+    def runtime_zones(self) -> dict:
+        """Small lock-protected snapshot; avoids copying full kernel diagnostics."""
+        with self._lock:
+            return self.runtime_zones_locked()
+
+    def status_locked(self, now: float) -> dict:
+        pose_age = round(max(0.0, (now - self.body_last_at) * 1000.0)) if self.body_last_at else None
+        zones = self.runtime_zones_locked()
         self.head = self.head_controller.status(now)
         self.head["hand_mouse"] = self.hand_mouse_controller.status()
         source = "head" if str(self.vertical_look.get("source", "hand")).lower() == "head" else "hand"

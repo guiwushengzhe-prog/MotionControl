@@ -116,6 +116,35 @@ def test_phone_receives_zone_circle_geometry_as_configuration_not_pose_stream():
         bridge.close()
 
 
+def test_ack_carries_low_rate_runtime_zones_on_existing_trigger_protocol():
+    class RuntimeZones:
+        def runtime_zones(self):
+            return {"rightHand": {"rect": {"x1": 0.5, "x2": 1.0, "y1": 0.0, "y2": 0.3}, "pressed": False}}
+
+    bridge = InputBridge(FakeOutput(), RuntimeZones())
+    phone = FakePeer()
+    phone.authenticated_role = "camera"
+    try:
+        bridge.register(phone)
+        bridge.broadcast_trigger_state({"held": [{"id": "zone.leftHand"}], "fired": [], "at": 1.0})
+        phone.messages.clear()
+        for _ in range(14):
+            bridge._accept_input(phone)
+        assert phone.messages == []
+
+        bridge._accept_input(phone)
+        assert phone.messages[0]["type"] == "ack"
+        update = phone.messages[1]
+        assert update["type"] == "trigger_state_v1"
+        assert update["held"] == [{"id": "zone.leftHand"}]
+        assert update["fired"] == []
+        assert update["zones"]["rightHand"]["rect"] == {
+            "x1": 0.5, "x2": 1.0, "y1": 0.0, "y2": 0.3,
+        }
+    finally:
+        bridge.close()
+
+
 
 def pose_features(device_id="camera-compact", sequence=0):
     points = [[0.5, 0.5, 0.0, 0.95] for _ in MOBILE_POSE_FEATURE_INDICES]

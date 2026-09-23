@@ -145,6 +145,33 @@ def test_sensor_and_disconnect_are_handled_by_kernel_directly():
         kernel.close()
 
 
+def test_runtime_zone_snapshot_preserves_dynamic_rect_geometry_and_pressed_state():
+    kernel = ControlKernel(FakeOutput())
+    try:
+        rect = {"x1": 0.1, "x2": 0.4, "y1": 0.0, "y2": 0.3}
+        with kernel._lock:
+            kernel.zone_rects["leftHand"] = rect
+            kernel.zone_state["leftHand"]["pressed"] = True
+        zones = kernel.runtime_zones()
+        assert zones["leftHand"] == {"rect": rect, "pressed": True}
+        assert zones["leftHandUpper"] == zones["leftHand"]
+    finally:
+        kernel.close()
+
+
+def test_runtime_zone_snapshot_preserves_fixed_circle_geometry():
+    kernel = ControlKernel(FakeOutput())
+    try:
+        circle = {"shape": "circle", "cx": 0.7, "cy": 0.4, "r": 0.1}
+        with kernel._lock:
+            kernel.fixed_zones_enabled = True
+            kernel.fixed_zones["rightHand"] = circle
+            kernel.zone_state["rightHand"]["pressed"] = True
+        assert kernel.runtime_zones()["rightHand"] == {"circle": circle, "pressed": True}
+    finally:
+        kernel.close()
+
+
 def test_websocket_input_bridge_forwards_phone_pose_to_kernel_without_ui():
     output = FakeOutput()
     kernel = ControlKernel(output)

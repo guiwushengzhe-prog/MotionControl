@@ -565,6 +565,7 @@ class InputBridge:
         self._pose_last_inference_ms: float | None = None
         self._pose_last_resolution = {"width": 0, "height": 0}
         self._pose_last_count = 0
+        self._last_trigger_held: list[dict] = []
         # The phone is the usual body source whether or not a kernel is wired in.
         self._body_mode = "phone"
         # 最近一次因为"来源选的是电脑"而丢掉手机画面的时刻。界面靠它把这件事说
@@ -632,6 +633,9 @@ class InputBridge:
         message = dict(payload)
         message["type"] = "trigger_state_v1"
         with self._lock:
+            self._last_trigger_held = [
+                dict(item) for item in message.get("held", []) if isinstance(item, dict)
+            ]
             peers = [peer for peer in self._peers if not peer.desktop]
         sent = 0
         for peer in peers:
@@ -973,6 +977,15 @@ class InputBridge:
             pose_count = int(latest["pose_count"]) if latest else 0
             visible = pose_count > 0 and (time.monotonic() - latest["received_at"]) <= 0.30
             players = [{"slot": 0, "signals": {"pose_visible": visible}}]
+            kernel = self.kernel
+            held = [dict(item) for item in self._last_trigger_held]
+        runtime_zones = {}
+        snapshot = getattr(kernel, "runtime_zones", None)
+        if callable(snapshot):
+            try:
+                runtime_zones = snapshot()
+            except Exception:
+                pass
         try:
             peer.send_json({
                 "type": "ack",
@@ -983,6 +996,19 @@ class InputBridge:
                 "pose_count": pose_count,
                 "pose_frames_with_people": self._pose_frames_with_people,
             })
+            # The phone already consumes zones on trigger_state_v1. Reuse that
+            # message at the existing 15-input acknowledgement cadence so
+            # player-relative rectangles keep following the body without a
+            # per-frame broadcast. Fixed configuration still arrives through
+            # control_config_v1.zones.
+            if getattr(peer, "authenticated_role", None) != "sensor":
+                peer.send_json({
+                    "type": "trigger_state_v1",
+                    "held": held,
+                    "fired": [],
+                    "zones": runtime_zones,
+                    "at": round(time.monotonic(), 3),
+                })
         except (ConnectionError, OSError):
             self.disconnect(peer)
 
