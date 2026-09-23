@@ -430,6 +430,12 @@ class ControlKernel:
         #
         # 只留最近这些条，按时间顺序。它是给人看的，不是日志。
         self.recent_triggers: deque = deque(maxlen=24)
+        # 触发集合一变就通知一次（不是每帧）。手机靠它显示"刚才按了什么"——打游戏
+        # 时人看不到电脑屏幕，只看得见手机。
+        #
+        # 回调必须是"放下就走"的：它在控制线程、而且在锁里被调用，里面做任何可能
+        # 阻塞的事（比如往 socket 写）都会卡住识别，表现出来是掉帧。
+        self._trigger_listener = None
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -1992,6 +1998,20 @@ class ControlKernel:
                     return {"action": {"type": item.get("type", "gamepad"), "target": item.get("target"), "behavior": "hold"}}
         return None
 
+    def effective_bindings(self) -> dict[str, dict]:
+        """真正会生效的那份，给手机用。见 _effective_bindings_locked。"""
+        with self._lock:
+            return self._effective_bindings_locked()
+
+    def configure_trigger_listener(self, listener) -> None:
+        """装上"触发集合变了"的回调。见 _trigger_listener 的说明。"""
+        with self._lock:
+            self._trigger_listener = listener
+
+    def _trigger_brief_locked(self, trigger: str) -> dict:
+        binding = self._effective_binding_locked(trigger)
+        return {"id": trigger, "action": copy.deepcopy((binding or {}).get("action"))}
+
     def note_trigger(self, trigger: str, action: dict | None) -> None:
         """记一次触发。语音走的不是内核这条路，所以由 server 调进来。
 
@@ -1999,7 +2019,21 @@ class ControlKernel:
         不同的地方，早晚差开。
         """
         with self._lock:
-            self._note_trigger_locked(trigger, action, time.monotonic())
+            now = time.monotonic()
+            self._note_trigger_locked(trigger, action, now)
+            # 语音也要推给手机。它是"说一句就完"的那种，不会出现在按住的集合里，
+            # 所以 held 照旧、fired 只有这一条。
+            if self._trigger_listener is not None:
+                try:
+                    self._trigger_listener({
+                        "held": [self._trigger_brief_locked(item)
+                                 for item in sorted(self.trigger_previous)],
+                        "fired": [{"id": str(trigger),
+                                   "action": copy.deepcopy(action) if isinstance(action, dict) else None}],
+                        "at": round(now, 3),
+                    })
+                except Exception as exc:  # noqa: BLE001 - 同上，显示不能拖垮控制
+                    self.last_error = str(exc)
 
     def _note_trigger_locked(self, trigger: str, action: dict | None, now: float) -> None:
         self.recent_triggers.append({
@@ -2063,6 +2097,20 @@ class ControlKernel:
         for trigger in sorted(active - self.trigger_previous):
             binding = self._effective_binding_locked(trigger)
             self._note_trigger_locked(trigger, (binding or {}).get("action"), now)
+
+        # 集合变了才推给手机。每帧推一次的话，按住不放的那几秒就是每秒三十条一模
+        # 一样的消息——手机那边什么都不会变，网络和电池却在一直烧。
+        if active != self.trigger_previous and self._trigger_listener is not None:
+            payload = {
+                "held": [self._trigger_brief_locked(item) for item in sorted(active)],
+                "fired": [self._trigger_brief_locked(item)
+                          for item in sorted(active - self.trigger_previous)],
+                "at": round(now, 3),
+            }
+            try:
+                self._trigger_listener(payload)
+            except Exception as exc:  # noqa: BLE001 - 显示用的东西不该拖垮控制
+                self.last_error = str(exc)
 
         setter = getattr(self.output, "set_action_holds", None)
         if setter is not None:

@@ -586,6 +586,26 @@ class InputBridge:
                 self.disconnect(peer)
         return {"sent": sent}
 
+    def broadcast_trigger_state(self, payload: dict) -> dict:
+        """把"现在按着什么、刚才触发了什么"推给手机。
+
+        和 broadcast_control_config 走同一条路，区别只在频率：配置一天变几次，
+        这个在玩的时候一秒可能变几次。所以**只在集合变化时**才会走到这里——
+        内核那边已经挡过一道，这里不再节流。
+        """
+        message = dict(payload)
+        message["type"] = "trigger_state_v1"
+        with self._lock:
+            peers = [peer for peer in self._peers if not peer.desktop]
+        sent = 0
+        for peer in peers:
+            try:
+                peer.send_json(message)
+                sent += 1
+            except (ConnectionError, OSError):
+                self.disconnect(peer)
+        return {"sent": sent}
+
     def request_scene_snapshot(self, purpose: str) -> dict:
         purpose = str(purpose or "capture").strip().lower()
         if purpose not in {"capture", "rematch"}:
