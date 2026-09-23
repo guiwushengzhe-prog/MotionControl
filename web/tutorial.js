@@ -23,8 +23,8 @@ const NAV_PLAY = 'nav [data-view="play"]';
 const NAV_DEVICES = 'nav [data-view="devices"]';
 
 // 设置面板里方案叫什么，就照原样说什么；名字只写在一处。
-function schemeLabel(value) {
-  return (VIEW_CONTROL_CONTENT.horizontal.find(item => item.value === value) || {}).label || value;
+function schemeLabel(axis, value) {
+  return (VIEW_CONTROL_CONTENT[axis].find(item => item.value === value) || {}).label || value;
 }
 
 // 接上画面：每一步都可能先卡在这里，所以单独拿出来。返回 null 表示画面已经好了。
@@ -96,13 +96,45 @@ function standGuide(s, memo, now) {
   return null;
 }
 
-// 左右三种方案，动作完全不同；读数的正负号程序里是「右为正」。
+// 推到自己那个方案满量程的六成算到位，动了但不到一成半就提示「再大一点」。
+// 不能写死成读数 35%：头控的读数上限就是灵敏度（默认 58），调到 35 以下的人永远到
+// 不了；握拳的输出又是另一套量纲。所以 app.js 先把两边都折算成 -1…1 再交过来。
+const LEVEL = 0.6;
+const MORE = 0.15;
+const HAND = {left: '左手', right: '右手'};
+
+// 头控左右两种方案，动作完全不同；读数的正负号程序里是「右为正」。
 // 换边要先回正：程序里从一边直接甩到另一边，读数会先归零。
-const MOVES = {
+const HEAD_MOVES = {
   roll_tilt: {left: '头往左肩歪', right: '头往右肩歪', back: side => `回正，再往${side}肩歪`, hint: '脸还朝着屏幕，歪住别动', more: '再歪大一点'},
   head_turn: {left: '向左转头', right: '向右转头', back: side => `回正，再向${side}转头`, hint: '转住别动', more: '再转大一点'},
-  hand: {left: '握拳，往左移', right: '握拳，往右移', back: side => `松开，再握拳往${side}移`, hint: '松开就停', more: '再移远一点'},
 };
+
+// 握拳控制：握住的那一刻记下手的位置，之后输出是「离那个位置多远」，松开就归零。
+// 所以两个方向都能在一次握拳里做完，不用先松开。
+function fistGuide(s, memo, now, {hand, state, level, want, words}) {
+  const who = HAND[hand] || '手';
+  if (state === 'lost' || state === 'disabled') return {target: '#viewer', say: `${who}举到画面里`, hint: '手腕和手肘都要拍到'};
+  if (state !== 'engaged' && state !== 'moving') {
+    memo.openSince = memo.openSince || now;
+    return {target: '#viewer', say: `${who}握拳`, hint: now - memo.openSince > 5000 ? '握紧一点' : ''};
+  }
+  memo.openSince = 0;
+  const toward = Number.isFinite(level) ? (want === words.negative ? -level : level) : 0;
+  return {
+    target: '#viewer', ready: true, say: `握着${words[want]}`,
+    hint: toward >= MORE && toward < LEVEL ? '再移远一点' : '松开就停',
+  };
+}
+
+// 左右各推到一次、上下各推到一次，判定是同一个：一边到位就记住，两边都到才算。
+function latch(memo, ready, level, negative, positive) {
+  if (ready && Number.isFinite(level)) {
+    if (level <= -LEVEL) memo[negative] = true;
+    if (level >= LEVEL) memo[positive] = true;
+  }
+  return !!(memo[negative] && memo[positive]);
+}
 
 const STEPS = [
   {
@@ -124,37 +156,113 @@ const STEPS = [
       if (s.horizontal === 'off') {
         return s.view !== 'devices'
           ? {target: NAV_DEVICES, say: '点「通用设置」', hint: '左右视角现在是关着的'}
-          : {target: '#viewHorizontalSource', say: `「左右控制」选「${schemeLabel('roll_tilt')}」`};
+          : {target: '#viewHorizontalSource', say: `「左右控制」选「${schemeLabel('horizontal', 'roll_tilt')}」`};
       }
       const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
       if (before) return before;
+      const want = memo.left ? 'right' : 'left';
+      if (HAND[s.horizontal]) {
+        return fistGuide(s, memo, now, {hand: s.horizontal, state: s.hHandState, level: s.hLevel, want,
+          words: {left: '往左移', right: '往右移', negative: 'left'}});
+      }
       // 程序的校准只做一件事：记住你正视屏幕时的样子。所以这里只叫人看屏幕，
       // 左右歪头是校准完成之后的事。
       if (s.calibrating) return {target: '#calBtn', say: '看着屏幕中心，别动'};
       if (!s.calibrated) {
         return {target: '#calBtn', say: '看向屏幕中心，点「站好并校准」', hint: s.calibrationNote || '别看摄像头；倒计时完之前别动'};
       }
-      const move = MOVES[s.horizontal] || MOVES.hand;
-      const want = memo.left ? 'right' : 'left';
+      const move = HEAD_MOVES[s.horizontal] || HEAD_MOVES.roll_tilt;
       const other = want === 'left' ? 'right' : 'left';
-      const x = s.outputX;
-      const toward = Number.isFinite(x) && (want === 'left' ? -x : x);
-      const hint = s.guardBlocked ? '身子别晃，只动头'
-        : toward >= 8 && toward < 35 ? move.more
-        : move.hint;
+      const toward = Number.isFinite(s.hLevel) ? (want === 'left' ? -s.hLevel : s.hLevel) : 0;
       return {
-        target: ['#viewer', '#headStatus'], focus: '#headStatus', ready: true, hint,
+        target: ['#viewer', '#headStatus'], focus: '#headStatus', ready: true,
         say: memo[other] ? move.back(want === 'left' ? '左' : '右') : move[want],
+        hint: s.guardBlocked ? '身子别晃，只动头' : toward >= MORE && toward < LEVEL ? move.more : move.hint,
       };
     },
     check(s, memo, ready) {
-      const x = s.outputX;
-      if (ready && Number.isFinite(x)) {
-        if (x <= -35) memo.left = true;
-        if (x >= 35) memo.right = true;
-      }
-      return {ok: !!(memo.left && memo.right), targets: [{label: '← 左', hit: !!memo.left}, {label: '右 →', hit: !!memo.right}]};
+      const ok = latch(memo, ready, s.hLevel, 'left', 'right');
+      return {ok, targets: [{label: '← 左', hit: !!memo.left}, {label: '右 →', hit: !!memo.right}]};
     },
+  },
+  {
+    id: 'updown',
+    name: '上下转视角',
+    doneSay: '✓ 上下也会了',
+    guide(s, memo, now) {
+      if (s.vertical === 'off') {
+        return s.view !== 'devices'
+          ? {target: NAV_DEVICES, say: '点「通用设置」', hint: '上下视角现在是关着的'}
+          : {target: '#viewVerticalSource', say: `「上下控制」选「${schemeLabel('vertical', 'left')}」`};
+      }
+      const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
+      if (before) return before;
+      const want = memo.up ? 'down' : 'up';
+      if (HAND[s.vertical]) {
+        return fistGuide(s, memo, now, {hand: s.vertical, state: s.vHandState, level: s.vLevel, want,
+          words: {up: '往上移', down: '往下移', negative: 'up'}});
+      }
+      // 原有的上下方案：左手放进绿框才开闸，闸开着的时候右手（或者头）管上下。
+      if (!s.gateActive) return {target: '#viewer', mark: '.zone[data-zone="lookGate"]', say: '左手伸进绿框'};
+      const byHead = s.legacySource === 'head';
+      const toward = Number.isFinite(s.vLevel) ? (want === 'up' ? -s.vLevel : s.vLevel) : 0;
+      return {
+        target: '#viewer', ready: true,
+        say: want === 'up' ? (byHead ? '抬头' : '右手往上抬') : (byHead ? '低头' : '右手往下放'),
+        hint: toward >= MORE && toward < LEVEL ? '再大一点' : '左手留在绿框里',
+      };
+    },
+    check(s, memo, ready) {
+      const ok = latch(memo, ready, s.vLevel, 'up', 'down');
+      return {ok, targets: [{label: '↑ 上', hit: !!memo.up}, {label: '↓ 下', hit: !!memo.down}]};
+    },
+  },
+  {
+    id: 'zone',
+    name: '区域按键',
+    doneSay: '✓ 圈亮了，键就按下了',
+    guide(s, memo, now) {
+      const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
+      if (before) return before;
+      const shown = s.zones.filter(zone => zone.shown);
+      if (!shown.length) return {target: '#viewer', say: '站好，等画面里出现圆圈'};
+      // 先教手：最好够、最好看。挑一个真的绑了键的；一个都没绑，也照样教，但得说清楚。
+      const pick = ['leftHand', 'rightHand', 'headJump', 'leftFoot', 'rightFoot']
+        .map(id => shown.find(zone => zone.id === id && zone.key)).find(Boolean) || shown[0];
+      const how = {leftHand: '左手伸进', rightHand: '右手伸进', headJump: '手举过头，伸进', leftFoot: '左脚踩进', rightFoot: '右脚踩进'}[pick.id] || '伸进';
+      return {
+        target: '#viewer', mark: `.zone[data-zone="${pick.id}"]`, ready: true,
+        say: `${how}「${pick.key || pick.body}」圈`,
+        hint: pick.key ? '' : '这个游戏方案没给圈绑键，亮了游戏里也没反应',
+      };
+    },
+    check: s => ({ok: s.zones.some(zone => zone.pressed)}),
+  },
+  {
+    id: 'start',
+    name: '开始游戏控制',
+    doneSay: '✓ 游戏控制开了',
+    guide(s, memo, now) {
+      const before = connectGuide(s, memo, now);
+      if (before) return before;
+      // 手柄输出靠虚拟手柄驱动；没装的话按钮点下去也不会有手柄，网页又装不了驱动。
+      if (s.driverMissing) {
+        return {target: '#mainActionBtn', say: '先装虚拟手柄驱动', hint: '双击程序文件夹里的「安装虚拟手柄驱动.exe」；装不了就这步先跳过'};
+      }
+      return {target: '#mainActionBtn', ready: true, say: '点「开始游戏控制」', hint: '打开后动作就真的生效，下一步教你停'};
+    },
+    check: s => ({ok: s.outputEnabled}),
+  },
+  {
+    id: 'stop',
+    name: '紧急停止',
+    doneSay: '✓ 全停了',
+    guide(s, memo) {
+      if (memo.stopsBefore === undefined) memo.stopsBefore = s.stops;
+      return {target: '#stopBtn', ready: true, say: '按 F9', hint: '或者点「紧急停止」'};
+    },
+    // 数的是急停真的被触发了几次，而不是输出关没关：点「暂停游戏控制」也会关，但那不是急停。
+    check: (s, memo) => ({ok: s.stops > (memo.stopsBefore ?? s.stops)}),
   },
 ];
 
@@ -167,6 +275,7 @@ export function createTutorial(actions = {}) {
   let index = 0, memos = {}, done = new Set(), skipped = new Set(), ran = new Set();
   let holdSince = 0, doneAt = 0, advance = 0, timer = 0, frame = 0, moveTimer = 0, nudgeTimer = 0;
   let active = false, returnFocus = null, targetKey = '', targetEls = [], focusEl = null, layoutKey = '', chipsKey = '', choice = null;
+  let markEl = null;
 
   try {
     const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
@@ -197,6 +306,16 @@ export function createTutorial(actions = {}) {
     clearTimeout(moveTimer);
     moveTimer = setTimeout(() => spot.classList.remove('moving'), 420);
     reveal();
+  }
+
+  // 亮框里如果还要指明是哪一个（画面里那几个区域圈），就给那个真元素本身加个标记，
+  // 不另画箭头：圈跟着人走，箭头跟不上。
+  function setMark(selector) {
+    const el = selector ? document.querySelector(selector) : null;
+    if (el === markEl) return;
+    markEl?.classList.remove('tour-mark');
+    markEl = el;
+    markEl?.classList.add('tour-mark');
   }
 
   function targetRect() {
@@ -331,6 +450,7 @@ export function createTutorial(actions = {}) {
 
   function renderFinish() {
     setTarget(null);
+    setMark(null);
     setText('tourStep', '新手教学');
     const count = STEPS.filter(step => done.has(step.id)).length;
     setText('tourSay', count === STEPS.length ? '✓ 学会了' : `学了 ${count} / ${STEPS.length} 步`);
@@ -357,6 +477,7 @@ export function createTutorial(actions = {}) {
       actions[guide.run]?.();
     }
     setTarget(guide.target, guide.focus);
+    setMark(doneAt ? null : guide.mark);
     const result = step.check(state, memo, !!guide.ready);
 
     // 做到了就不再往回判：一次抖动不该把刚亮起来的判定又灭掉。
@@ -418,6 +539,7 @@ export function createTutorial(actions = {}) {
     clearTimeout(advance);
     advance = 0;
     root.hidden = true;
+    setMark(null);
     document.removeEventListener('keydown', onKey);
     save();
     returnFocus?.focus?.();

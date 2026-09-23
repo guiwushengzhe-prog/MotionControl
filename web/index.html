@@ -7,7 +7,7 @@
 <header class="top"><div class="brand"><h1>MotionControl <small>2.0</small></h1><span class="tagline">让身体成为游戏手柄</span></div>
 <span id="serviceStatus" role="status">正在连接服务…</span><button class="btn" id="tutorialBtn">新手教学</button><button class="btn danger" id="stopBtn">紧急停止 · F9</button></header>
 <!-- 分页的轴：开始 = 现在要玩；本游戏 = 换游戏就会变的；通用 = 换游戏不用动的。 -->
-<nav aria-label="主要页面"><button aria-current="page" class="btn" data-view="play" data-view-hint="看画面、校准、开始控制">开始</button><button class="btn" data-view="range" data-view-hint="站到镜头前试：打中了什么、按的是哪个键">靶场</button><button class="btn" data-view="games" data-view-hint="只影响当前游戏：按键映射、自定义动作、云端配置">本游戏</button><button class="btn" data-view="devices" data-view-hint="所有游戏共用：设备、手感、语音口令、诊断">通用设置</button><span class="view-hint" id="viewHint">看画面、校准、开始控制</span></nav>
+<nav aria-label="主要页面"><button aria-current="page" class="btn" data-view="play" data-view-hint="看画面、校准、开始控制">开始</button><button class="btn" data-view="range" data-view-hint="站到镜头前试：打中了什么、按的是哪个键">动作测试</button><button class="btn" data-view="games" data-view-hint="只影响当前游戏：按键映射、自定义动作、云端配置">本游戏</button><button class="btn" data-view="devices" data-view-hint="所有游戏共用：设备、手感、语音口令、诊断">通用设置</button><span class="view-hint" id="viewHint">看画面、校准、开始控制</span></nav>
 <section class="session-bar"><div><span class="muted">当前游戏</span><div id="currentGameName">正在读取…</div></div><div><button class="btn primary main-action-btn" disabled="" id="mainActionBtn">连接设备</button><div id="mainActionStatus" role="status">等待服务状态</div></div></section>
 </div><div class="notice" hidden="" id="notice" role="status"></div>
 <main><section class="layout" data-panel="play" id="playPanel"><section class="card viewer-card">
@@ -264,7 +264,7 @@
 
 <section class="range" data-panel="range" hidden="" id="rangePanel">
 <div class="range-intro">
-<div class="title">靶场</div>
+<div class="title">动作测试</div>
 <p class="lede">站到镜头前做个动作，或者说句口令。打中了什么、按的是哪个键，这里用大字写出来——你在几米外也看得见。</p>
 <p class="fineprint">这里只是让你看清楚，不改任何设置。点下面的靶子可以跳到「本游戏」里改它的键。</p>
 <div class="range-warn" hidden="" id="rangeOutputWarn">输出是关的：这里看得见触发，游戏里不会有反应。</div>

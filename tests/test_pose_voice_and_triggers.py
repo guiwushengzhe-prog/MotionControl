@@ -300,7 +300,7 @@ def test_the_kernel_reports_what_will_actually_fire():
 
     界面直接读 config 会把它写成「未映射」，而人在游戏里明明被按了一个键。
     这种"界面说没绑、实际有反应"最难查，因为两边都不报错。2026-09-22 就是在
-    靶场上看见大字写着「头顶区 → A」、旁边的靶子写着「未映射」才发现的。
+    动作测试页上看见大字写着「头顶区 → A」、旁边的靶子写着「未映射」才发现的。
     """
     from motioncontrol.control_kernel import ControlKernel
 
@@ -332,7 +332,7 @@ def test_the_kernel_reports_what_will_actually_fire():
 
 
 def test_the_page_shows_the_effective_binding_not_the_config():
-    """圈上、姿势卡片上、靶场里都走同一个取法，否则三处会各说各的。"""
+    """圈上、姿势卡片上、动作测试页里都走同一个取法，否则三处会各说各的。"""
     # 只看真正的代码行：注释里提到 control_bindings 是在解释为什么不该读它。
     code = [line for line in APP_JS.splitlines() if not line.strip().startswith("//")]
     hits = [line.strip() for line in code if "control_bindings" in line]

@@ -58,7 +58,7 @@ function voiceLatchText(status){
 function bindingsForDisplay(){
   return kernelState?.effective_bindings||kernelState?.control_bindings||{};
 }
-// 一个触发器现在绑的是什么。圈上、姿势卡片上、靶场里都用它，写法才一致。
+// 一个触发器现在绑的是什么。圈上、姿势卡片上、动作测试页里都用它，写法才一致。
 function triggerKeyLabel(triggerKey){
   const binding=bindingsForDisplay()[triggerKey];
   const text=binding&&!binding.disabled?actionKeyText(binding.action):null;
@@ -88,6 +88,8 @@ function zoneKeyLabel(id,def){
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 // 摄像头的完整状态和最近一次扫描结果。新手教学要按这些判断「这台电脑现在能开什么」。
 let cameraInfo=null;const cameraScan={state:'idle',count:0,error:''};
+// 急停真的被按了几次。教学的最后一步要认的是急停，不是随便哪种关掉输出。
+let emergencyStops=0;
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
 const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
 let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false;
@@ -882,14 +884,32 @@ function renderViewControl(force=false){
 // 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
 // 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
 // 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
+// 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
+// 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
 function tutorialState(){
-  const hs=kernelState?.head||{},pose=currentPoseMap||{};
-  const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
+  const hs=kernelState?.head||{},k=kernelState||{},pose=currentPoseMap||{};
+  const hand=hs.hand_mouse||{},axes=hand.axes||{};
+  const handOf=axis=>handMouseConfig.enabled&&['left','right'].includes(handMouseConfig[axis+'_hand'])?handMouseConfig[axis+'_hand']:null;
+  const horizontalHand=handOf('horizontal'),verticalHand=handOf('vertical');
   // 「有画面」要真的有帧在来，不是摄像头开关打开了就算。
   const frameAge=cameraInfo?.last_frame_age_ms;
   const computerLive=cameraRunning&&Number(cameraInfo?.frames)>0&&frameAge!=null&&frameAge<3000;
   const phoneLive=!!inputStatus.mobile_pose_connected;
   const seen=name=>Number(pose[name]?.score??pose[name]?.visibility??0)>=.5;
+  const finite=v=>Number.isFinite(Number(v))&&v!==null&&v!==undefined;
+  // 各方案的读数量纲不一样，这里统一折算成 -1…1（满量程）再交给教学：
+  // 头控左右的读数上限是左右灵敏度；握拳的上限是握拳灵敏度/100；老的上下方案
+  // 用头时上限是上下灵敏度/100，用手时本来就是 -1…1。
+  const handMax=Math.min(1,Math.max(.01,Number(handMouseConfig.sensitivity??hand.config?.sensitivity??70)/100));
+  const hLevel=horizontalHand?(finite(axes.horizontal?.output)?Number(axes.horizontal.output)/handMax:null)
+    :(finite(hs.output_x)?Number(hs.output_x)/Math.max(1,Number(hs.sensitivity_x||head.sensitivityX||58)):null);
+  const legacyMax=head.verticalLookSource==='head'?clamp(Number(hs.sensitivity_y||head.sensitivityY||46)/100,.15,1):1;
+  const vLevel=verticalHand?(finite(axes.vertical?.output)?Number(axes.vertical.output)/handMax:null)
+    :(head.verticalLookEnabled&&finite(hs.output_y)?Number(hs.output_y)/legacyMax:null);
+  const zones=Object.entries(BODY_ZONES).filter(([,def])=>!def.gate).map(([id,def])=>{
+    const z=k.zones?.[id]||{},key=zoneKeyLabel(id,def);
+    return {id,body:def.body,key:key==='未映射'?'':key,shown:!!(z.circle||z.rect),pressed:!!z.pressed};
+  });
   return {
     view:currentView,source:sourceMode,sourcePick:$('#poseSource')?.value||sourceMode,
     cameraReady:sourceMode==='phone'?phoneLive:computerLive,
@@ -903,8 +923,12 @@ function tutorialState(){
     calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
     calibrating:!!hs.calibrating,calibrationNote:String(hs.notice||''),
     horizontal:horizontalHand||(head.enabled?(head.horizontalAlgorithm==='roll_tilt'?'roll_tilt':'head_turn'):'off'),
-    outputX:Number.isFinite(hs.output_x)?Number(hs.output_x):null,
-    guardBlocked:!!hs.horizontal_paused_by_body_motion,
+    hLevel,hHandState:String(axes.horizontal?.state||''),guardBlocked:!!hs.horizontal_paused_by_body_motion,
+    vertical:verticalHand||(head.verticalLookEnabled?'legacy':'off'),
+    vLevel,vHandState:String(axes.vertical?.state||''),gateActive:!!k.vertical_gate_active,legacySource:head.verticalLookSource,
+    zones,
+    outputEnabled:!!output.enabled,driverMissing:output.mode==='gamepad'&&output.server?.vigembus_running===false,
+    stops:emergencyStops,
   };
 }
 function initViewControl(){
@@ -1165,7 +1189,7 @@ async function setOutput(enabled){
   if(result.enabled!==enabled)throw new Error(enabled?'服务未确认开启控制':'尚未确认停止');
 }
 async function emergencyStop(){
-  ++outputEpoch;++kernelEpoch;
+  ++outputEpoch;++kernelEpoch;++emergencyStops;
   try{
     const result=await post('/api/output/stop',{});
     if(result.enabled!==false)throw new Error('服务尚未确认');
@@ -2480,7 +2504,7 @@ function renderTriggerLive() {
   }
 }
 
-/* --- 靶场 ---------------------------------------------------------------
+/* --- 动作测试 ---------------------------------------------------------------
  * 站到镜头前做个动作，看打中了什么、按的是哪个键。
  *
  * 它单独一个页签，不挤在映射表旁边。两个原因：
