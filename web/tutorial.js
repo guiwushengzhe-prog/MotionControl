@@ -105,24 +105,30 @@ const HAND = {left: '左手', right: '右手'};
 
 // 头控左右两种方案，动作完全不同；读数的正负号程序里是「右为正」。
 // 换边要先回正：程序里从一边直接甩到另一边，读数会先归零。
+// 每一句都把结果带上（→ 视角左转）：只说「头往左肩歪」的话，人会以为还在配合校准，
+// 意识不到歪头本身就是在转视角。
 const HEAD_MOVES = {
-  roll_tilt: {left: '头往左肩歪', right: '头往右肩歪', back: side => `回正，再往${side}肩歪`, hint: '脸还朝着屏幕，歪住别动', more: '再歪大一点'},
-  head_turn: {left: '向左转头', right: '向右转头', back: side => `回正，再向${side}转头`, hint: '转住别动', more: '再转大一点'},
+  roll_tilt: {left: '头往左肩歪 → 视角左转', right: '头往右肩歪 → 视角右转', back: side => `回正，再往${side}肩歪 → 视角${side}转`,
+    hint: '脸还朝着屏幕，歪住别动', more: '再歪大一点', done: '✓ 歪头就能转视角'},
+  head_turn: {left: '向左转头 → 视角左转', right: '向右转头 → 视角右转', back: side => `回正，再向${side}转头 → 视角${side}转`,
+    hint: '转住别动', more: '再转大一点', done: '✓ 转头就能转视角'},
 };
 
 // 握拳控制：握住的那一刻记下手的位置，之后输出是「离那个位置多远」，松开就归零。
 // 所以两个方向都能在一次握拳里做完，不用先松开。
 function fistGuide(s, memo, now, {hand, state, level, want, words}) {
   const who = HAND[hand] || '手';
-  if (state === 'lost' || state === 'disabled') return {target: '#viewer', say: `${who}举到画面里`, hint: '手腕和手肘都要拍到'};
+  // 做到的那一刻手可能已经松开了，所以每条分支都带上做到时要说的那句。
+  const doneSay = words.done;
+  if (state === 'lost' || state === 'disabled') return {target: '#viewer', say: `${who}举到画面里`, hint: '手腕和手肘都要拍到', doneSay};
   if (state !== 'engaged' && state !== 'moving') {
     memo.openSince = memo.openSince || now;
-    return {target: '#viewer', say: `${who}握拳`, hint: now - memo.openSince > 5000 ? '握紧一点' : ''};
+    return {target: '#viewer', say: `${who}握拳`, hint: now - memo.openSince > 5000 ? '握紧一点' : '', doneSay};
   }
   memo.openSince = 0;
   const toward = Number.isFinite(level) ? (want === words.negative ? -level : level) : 0;
   return {
-    target: '#viewer', ready: true, say: `握着${words[want]}`,
+    target: '#viewer', ready: true, say: `握着${words[want]} → ${words.effect[want]}`, doneSay,
     hint: toward >= MORE && toward < LEVEL ? '再移远一点' : '松开就停',
   };
 }
@@ -163,20 +169,20 @@ const STEPS = [
       const want = memo.left ? 'right' : 'left';
       if (HAND[s.horizontal]) {
         return fistGuide(s, memo, now, {hand: s.horizontal, state: s.hHandState, level: s.hLevel, want,
-          words: {left: '往左移', right: '往右移', negative: 'left'}});
+          words: {left: '往左移', right: '往右移', negative: 'left', effect: {left: '视角左转', right: '视角右转'}, done: '✓ 握拳就能转视角'}});
       }
       // 程序的校准只做一件事：记住你正视屏幕时的样子。所以这里只叫人看屏幕，
       // 左右歪头是校准完成之后的事。
-      if (s.calibrating) return {target: '#calBtn', say: '看着屏幕中心，别动'};
+      if (s.calibrating) return {target: '#calBtn', say: '正在校准：看着屏幕中心，别动'};
       if (!s.calibrated) {
-        return {target: '#calBtn', say: '看向屏幕中心，点「站好并校准」', hint: s.calibrationNote || '别看摄像头；倒计时完之前别动'};
+        return {target: '#calBtn', say: '先校准：看向屏幕中心，点「站好并校准」', hint: s.calibrationNote || '别看摄像头；倒计时完之前别动'};
       }
       const move = HEAD_MOVES[s.horizontal] || HEAD_MOVES.roll_tilt;
       const other = want === 'left' ? 'right' : 'left';
       const toward = Number.isFinite(s.hLevel) ? (want === 'left' ? -s.hLevel : s.hLevel) : 0;
       return {
         target: ['#viewer', '#headStatus'], focus: '#headStatus', ready: true,
-        say: memo[other] ? move.back(want === 'left' ? '左' : '右') : move[want],
+        say: memo[other] ? move.back(want === 'left' ? '左' : '右') : move[want], doneSay: move.done,
         hint: s.guardBlocked ? '身子别晃，只动头' : toward >= MORE && toward < LEVEL ? move.more : move.hint,
       };
     },
@@ -200,7 +206,7 @@ const STEPS = [
       const want = memo.up ? 'down' : 'up';
       if (HAND[s.vertical]) {
         return fistGuide(s, memo, now, {hand: s.vertical, state: s.vHandState, level: s.vLevel, want,
-          words: {up: '往上移', down: '往下移', negative: 'up'}});
+          words: {up: '往上移', down: '往下移', negative: 'up', effect: {up: '视角往上', down: '视角往下'}, done: '✓ 握拳就能上下看'}});
       }
       // 原有的上下方案：左手放进绿框才开闸，闸开着的时候右手（或者头）管上下。
       if (!s.gateActive) return {target: '#viewer', mark: '.zone[data-zone="lookGate"]', say: '左手伸进绿框'};
@@ -208,7 +214,7 @@ const STEPS = [
       const toward = Number.isFinite(s.vLevel) ? (want === 'up' ? -s.vLevel : s.vLevel) : 0;
       return {
         target: '#viewer', ready: true,
-        say: want === 'up' ? (byHead ? '抬头' : '右手往上抬') : (byHead ? '低头' : '右手往下放'),
+        say: want === 'up' ? (byHead ? '抬头 → 视角往上' : '右手往上抬 → 视角往上') : (byHead ? '低头 → 视角往下' : '右手往下放 → 视角往下'),
         hint: toward >= MORE && toward < LEVEL ? '再大一点' : '左手留在绿框里',
       };
     },
@@ -425,7 +431,7 @@ export function createTutorial(actions = {}) {
 
   function render(step, guide, result, ok) {
     setText('tourStep', `新手教学 · ${index + 1}/${STEPS.length} · ${step.name}`);
-    setText('tourSay', ok ? step.doneSay : guide.say);
+    setText('tourSay', ok ? guide.doneSay || step.doneSay : guide.say);
     $('tourSay').classList.toggle('done', ok);
     const hint = ok ? '' : guide.hint || '';
     setText('tourHint', hint);
