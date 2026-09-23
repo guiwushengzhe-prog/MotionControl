@@ -42,6 +42,17 @@ class FakePeer:
 
 
 class FakeOutput:
+    def __init__(self):
+        self.enabled = False
+
+    def status(self):
+        return {"enabled": self.enabled}
+
+    def set_config(self, *, enabled=None, **_kwargs):
+        if enabled is not None:
+            self.enabled = bool(enabled)
+        return self.status()
+
     def clear_source(self, source):
         pass
 
@@ -50,7 +61,10 @@ def bridge(tmp_path, *, require=False):
     pairing = dp.PairingService(
         dp.PairingStore(tmp_path / "paired.json"), require_paired_devices=require
     )
-    return InputBridge(FakeOutput(), None, pairing=pairing), pairing
+    output = FakeOutput()
+    result = InputBridge(output, None, pairing=pairing)
+    result.test_output = output
+    return result, pairing
 
 
 def authenticate(bridge_obj, pairing, peer, device_id=DEVICE, role="camera"):
@@ -83,7 +97,10 @@ def test_hello_binds_the_connection_identity(tmp_path):
     authenticate(b, pairing, peer)
     assert peer.authenticated_device_id == DEVICE
     assert peer.authenticated_role == "camera"
-    assert peer.sent[-1]["type"] == "hello_ack"
+    assert any(message["type"] == "hello_ack" for message in peer.sent)
+    assert peer.sent[-1] == {
+        "type": "game_output_state_v1", "enabled": False, "ok": True,
+    }
 
 
 def test_nonce_is_single_use(tmp_path):
@@ -115,7 +132,7 @@ def test_enforcement_covers_every_game_reaching_frame_type():
     """Guard against a new frame type being added without identity checks."""
     assert InputBridge.BUSINESS_TYPES == frozenset({
         "pose_frame_v2", "pose_features_v1", "sensor_frame",
-        "voice_text", "voice_command", "scene_snapshot",
+        "voice_text", "voice_command", "scene_snapshot", "game_output_control",
     })
 
 
@@ -134,6 +151,51 @@ def test_unauthenticated_frames_still_work_while_pairing_is_optional(tmp_path):
     # It gets past identity enforcement; whatever the sensor handler does with
     # it afterwards is not this test's business.
     assert not any("配对" in str(m.get("message", "")) for m in peer.sent)
+
+
+@pytest.mark.parametrize("require_pairing", [True, False])
+def test_game_output_control_is_denied_without_auth(tmp_path, require_pairing):
+    b, _pairing = bridge(tmp_path, require=require_pairing)
+    peer = FakePeer()
+    b.handle_message(peer, {
+        "type": "game_output_control", "device_id": DEVICE,
+        "role": "camera", "enabled": True,
+    })
+    assert b.test_output.enabled is False
+    assert peer.sent[-1] == {
+        "type": "game_output_state_v1", "enabled": False, "ok": False,
+        "error": "设备尚未通过配对认证，不能控制游戏输出",
+    }
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_authenticated_game_output_control_returns_actual_state(tmp_path, enabled):
+    b, pairing = bridge(tmp_path)
+    peer = FakePeer()
+    authenticate(b, pairing, peer, role="camera")
+    b.handle_message(peer, {
+        "type": "game_output_control", "device_id": DEVICE,
+        "role": "camera", "enabled": enabled,
+    })
+    assert b.test_output.enabled is enabled
+    assert peer.sent[-1] == {
+        "type": "game_output_state_v1", "enabled": enabled, "ok": True,
+    }
+
+
+def test_authenticated_game_output_control_rejects_non_boolean_enabled(tmp_path):
+    b, pairing = bridge(tmp_path)
+    peer = FakePeer()
+    authenticate(b, pairing, peer, role="camera")
+    b.handle_message(peer, {
+        "type": "game_output_control", "device_id": DEVICE,
+        "role": "camera", "enabled": 1,
+    })
+    assert b.test_output.enabled is False
+    assert peer.sent[-1] == {
+        "type": "game_output_state_v1", "enabled": False, "ok": False,
+        "error": "enabled 必须是布尔值",
+    }
 
 
 def test_challenge_is_offered_on_connect(tmp_path):

@@ -101,6 +101,21 @@ def test_pose_source_is_forwarded_and_only_one_source_is_active():
         bridge.close()
 
 
+def test_phone_receives_zone_circle_geometry_as_configuration_not_pose_stream():
+    bridge = InputBridge(FakeOutput())
+    phone = FakePeer()
+    config = {
+        "type": "control_config_v1",
+        "zones": {"rightHand": {"shape": "circle", "cx": 0.72, "cy": 0.45, "r": 0.12}},
+    }
+    try:
+        bridge.configure_control_config_provider(lambda: config)
+        bridge.register(phone)
+        assert phone.messages == [config]
+    finally:
+        bridge.close()
+
+
 
 def pose_features(device_id="camera-compact", sequence=0):
     points = [[0.5, 0.5, 0.0, 0.95] for _ in MOBILE_POSE_FEATURE_INDICES]

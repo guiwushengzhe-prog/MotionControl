@@ -539,7 +539,7 @@ class InputBridge:
     # one place rather than in each handler.
     BUSINESS_TYPES = frozenset({
         "pose_frame_v2", "pose_features_v1", "sensor_frame",
-        "voice_text", "voice_command", "scene_snapshot",
+        "voice_text", "voice_command", "scene_snapshot", "game_output_control",
     })
 
     def __init__(self, output, kernel=None, voice=None, pairing=None) -> None:
@@ -641,6 +641,58 @@ class InputBridge:
             except (ConnectionError, OSError):
                 self.disconnect(peer)
         return {"sent": sent}
+
+    def _game_output_state(self, *, ok: bool = True, error: str | None = None) -> dict:
+        try:
+            enabled = bool(self.output.status().get("enabled", False))
+        except Exception:
+            enabled = bool(getattr(self.output, "enabled", False))
+        message = {"type": "game_output_state_v1", "enabled": enabled, "ok": bool(ok)}
+        if error:
+            message["error"] = str(error)
+        return message
+
+    def broadcast_game_output_state(self, *, exclude=None) -> dict:
+        """Push actual output state to authenticated phones only."""
+        message = self._game_output_state()
+        with self._lock:
+            peers = [
+                peer for peer in self._peers
+                if peer is not exclude and not peer.desktop
+                and getattr(peer, "authenticated_device_id", None)
+            ]
+        sent = 0
+        for peer in peers:
+            try:
+                peer.send_json(message)
+                sent += 1
+            except (ConnectionError, OSError):
+                self.disconnect(peer)
+        return {"sent": sent, "enabled": message["enabled"]}
+
+    def _send_game_output_state(self, peer, *, ok: bool = True, error: str | None = None) -> None:
+        try:
+            peer.send_json(self._game_output_state(ok=ok, error=error))
+        except (ConnectionError, OSError):
+            self.disconnect(peer)
+
+    def _handle_game_output_control(self, peer, message: dict) -> None:
+        # Output control is security-sensitive even while device pairing is
+        # configured as optional for compatibility with older pose/sensor apps.
+        if not getattr(peer, "authenticated_device_id", None):
+            self._send_game_output_state(peer, ok=False, error="设备尚未通过配对认证，不能控制游戏输出")
+            return
+        enabled = message.get("enabled")
+        if not isinstance(enabled, bool):
+            self._send_game_output_state(peer, ok=False, error="enabled 必须是布尔值")
+            return
+        try:
+            self.output.set_config(enabled=enabled)
+        except Exception as exc:
+            self._send_game_output_state(peer, ok=False, error=str(exc))
+            return
+        self.broadcast_game_output_state(exclude=peer)
+        self._send_game_output_state(peer)
 
     def request_scene_snapshot(self, purpose: str) -> dict:
         purpose = str(purpose or "capture").strip().lower()
@@ -1250,6 +1302,7 @@ class InputBridge:
         # being replayed on this same connection.
         peer.auth_nonce = None
         peer.send_json({"type": "hello_ack", "ok": True, "device_id": device_id, "role": role})
+        self._send_game_output_state(peer)
 
     def _enforce_identity(self, peer: WebSocketPeer, message: dict) -> None:
         """A frame may only claim the identity this connection proved.
@@ -1274,7 +1327,9 @@ class InputBridge:
             if not isinstance(message, dict):
                 raise ValueError("message must be a JSON object")
             message_type = message.get("type")
-            if message_type in self.BUSINESS_TYPES:
+            if message_type == "game_output_control" and getattr(peer, "authenticated_device_id", None):
+                self._enforce_identity(peer, message)
+            elif message_type in self.BUSINESS_TYPES and message_type != "game_output_control":
                 self._enforce_identity(peer, message)
             if message_type == "hello":
                 self._handle_hello(peer, message)
@@ -1302,6 +1357,8 @@ class InputBridge:
                 self._handle_voice_command(peer, message)
             elif message_type == "scene_snapshot":
                 self._handle_scene_snapshot(peer, message)
+            elif message_type == "game_output_control":
+                self._handle_game_output_control(peer, message)
             else:
                 raise ValueError(f"unknown input type: {message_type}")
         except IdentityViolation as exc:
