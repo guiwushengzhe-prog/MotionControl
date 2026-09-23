@@ -90,6 +90,8 @@ let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0,
 let cameraInfo=null;const cameraScan={state:'idle',count:0,error:''};
 // 急停真的被按了几次。教学的最后一步要认的是急停，不是随便哪种关掉输出。
 let emergencyStops=0;
+// 换过几次游戏、最后一次搜的是什么。教「换成我要玩的游戏」时，要认的是真的换成了。
+let profileApplies=0,lastProfileQuery='';
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
 const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
 let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false;
@@ -554,6 +556,7 @@ function renderProfileCatalog(games){
 async function searchProfiles(){
   const q=$('#profileSearch').value.trim();
   const data=await api('/api/game-profiles/catalog'+(q?'?q='+encodeURIComponent(q):''));
+  lastProfileQuery=q;
   renderProfileCatalog(data.games||[]);
   $('#profileMeta').textContent=`离线库 ${Number(data.library_count||data.count||0)} 款 · 当前显示 ${Number(data.count||0)} 款`;
 }
@@ -576,7 +579,7 @@ async function addCustomGame(){
       {name,appid:$('#customGameAppid').value});
     $('#customGameName').value='';$('#customGameAppid').value='';
     const picked=await post('/api/game-profiles/select',{id:data.game.id});
-    gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};
+    gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};++profileApplies;
     // searchProfiles 会把 #profileMeta 写成库统计，所以头部要排在它后面重画一次。
     await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
     notice(`已添加并切换到「${data.game.name}」。按键在下面自己绑。`);
@@ -613,7 +616,7 @@ async function applySelectedProfile(){
   await profileOperation(async()=>{
     await saveProfileBindings();
     const data=await post('/api/game-profiles/select',{id});
-    gameProfile.selected=data.profile;
+    gameProfile.selected=data.profile;++profileApplies;
     gameProfile.overrides=data.profile.overrides||{};
     await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
     notice(`已切换游戏：${data.profile.name}`);
@@ -906,6 +909,12 @@ function tutorialState(){
   const legacyMax=head.verticalLookSource==='head'?clamp(Number(hs.sensitivity_y||head.sensitivityY||46)/100,.15,1):1;
   const vLevel=verticalHand?(finite(axes.vertical?.output)?Number(axes.vertical.output)/handMax:null)
     :(head.verticalLookEnabled&&finite(hs.output_y)?Number(hs.output_y)/legacyMax:null);
+  const events=k.recent_triggers||[],last=events[events.length-1];
+  const lastTrigger=last?{key:String(last.trigger||''),at:Number(last.at),keyText:actionKeyText(last.action)||'',
+    name:(profileTriggers().find(t=>t.key===String(last.trigger||''))||{}).name||String(last.trigger||'')}:null;
+  const vs=voice.status||{};
+  const voiceProblem=!vs.available?'语音识别没装好':!vs.model_ready?'语音模型没装好':!vs.connected?'麦克风没接上'
+    :!vs.audio_ready?'没找到麦克风':!(vs.audio_alive||vs.stream_alive)?'麦克风没有声音进来':'等几秒再看';
   const zones=Object.entries(BODY_ZONES).filter(([,def])=>!def.gate).map(([id,def])=>{
     const z=k.zones?.[id]||{},key=zoneKeyLabel(id,def);
     return {id,body:def.body,key:key==='未映射'?'':key,shown:!!(z.circle||z.rect),pressed:!!z.pressed};
@@ -929,12 +938,23 @@ function tutorialState(){
     zones,
     outputEnabled:!!output.enabled,driverMissing:output.mode==='gamepad'&&output.server?.vigembus_running===false,
     stops:emergencyStops,
+    // 「做了动作，游戏没反应」：最后打中的是什么、按的哪个键；时间用内核自己的钟比。
+    kernelNow:Number(k.now),lastTrigger,
+    // 「按键和我的游戏对不上」
+    profileApplies,searchedFor:lastProfileQuery,catalogCount:gameProfile.catalog.length,
+    gameName:gameProfile.selected?.name||'未选择游戏',
+    // 自己加的游戏 source 是字符串 'custom'，不是 {verified}；它不该被说成「没人试过」。
+    gameKind:gameProfile.selected?.source==='custom'?'custom':gameProfile.selected?.source?.verified?'verified':'auto',
+    // 「手忙不过来，想用嘴说」：听到几句用计数比（同一句说两遍文字不变）；老版本服务没有
+    // 这个数，就退回比最后一句。
+    voiceReady:voiceInputReady,voiceProblem,voiceHeard:String(vs.commands_heard??vs.last_command??''),
+    stopPhrase:(vs.emergency_stop_phrases||[])[0]||'体感紧急停止',voiceListOpen:!!$('#voiceCommandsMask')?.open,
   };
 }
 function initViewControl(){
   fillViewControlOptions();renderViewControl();
-  // 第一次打开页面自动弹一次教学。关掉、跳过、学完都算看过，之后只在按钮上等着。
-  if(!tutorial.seen())tutorial.open(null);
+  // 弹不弹、弹哪个由教学自己定：从没看过就带着做基础；基础走完后的下一次打开，让人挑一次别的。
+  tutorial.autoOpen();
 }
 function renderHandMouse(state){
   if(!state)return;

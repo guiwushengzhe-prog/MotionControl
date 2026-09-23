@@ -682,3 +682,9 @@ dialog::backdrop { background: #030812dc; }
 .zone.tour-mark { outline: 3px solid var(--accent); outline-offset: 4px; animation: tour-mark 1.2s ease-in-out infinite; }
 @keyframes tour-mark { 50% { outline-offset: 10px; outline-color: #67b8ee66 } }
 @media (prefers-reduced-motion: reduce) { .zone.tour-mark { animation: none; } }
+/* 「想学哪个？」：每一项写的是它解决的问题，不是功能名。 */
+.tour-choices { display: grid; gap: 6px; }
+.tour-option { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #1c2938;
+  color: inherit; font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer; }
+.tour-option:hover, .tour-option:focus-visible { border-color: var(--accent); }
+.tour-option.done { border-color: #2d6b49; color: #8fe0b4; }

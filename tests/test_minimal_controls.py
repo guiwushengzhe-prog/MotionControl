@@ -266,6 +266,20 @@ def test_voice_exact_final_dispatches_custom_mapping(tmp_path):
     assert calls == [{'type':'keyboard','target':'M','behavior':'tap','source':'voice'}]
 
 
+def test_voice_counts_each_command_heard_but_not_the_bare_wake_word(tmp_path):
+    """新手教学靠这个数知道「刚又说了一句」：同一句说两遍 last_command 不变，数会变。"""
+    service = VoiceService(tmp_path, lambda action: {'executed': True})
+    service.mappings = [{'phrase': '打开地图', 'type': 'keyboard', 'target': 'M'}]
+    assert service.status()['commands_heard'] == 0
+    service._match_and_execute('打开 地图')
+    service._match_and_execute('打开 地图')
+    assert service.status()['commands_heard'] == 2
+    service._match_and_execute('随便说点什么')
+    assert service.status()['commands_heard'] == 2
+    service._match_and_execute(service.wake_word, enforce_wake=True)
+    assert service.status()['commands_heard'] == 2
+
+
 def test_voice_api_uses_local_mic_or_phone_command_not_browser_audio():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert '/api/voice/status' in server

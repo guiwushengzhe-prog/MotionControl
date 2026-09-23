@@ -153,6 +153,9 @@ class VoiceService:
         self.last_partial = ""
         self.last_final = ""
         self.last_command: str | None = None
+        # 听到并认出了几句口令（只说唤醒词不算）。界面靠它知道「刚刚又说了一句」——
+        # 光看 last_command 不行，同一句说两遍它不会变。
+        self.commands_heard = 0
         self.last_action: str | None = None
         self.wake_until = 0.0
         self.last_wake_at = 0.0
@@ -529,6 +532,7 @@ class VoiceService:
             return {"matched": False, "reason": "invalid_command"}
         if cid == "system.emergency_stop":
             self.last_command = phrase or DEFAULT_EMERGENCY_STOP
+            self.commands_heard += 1
             self.last_action = "emergency_stop"
             try:
                 result = self.emergency_stop() or {}
@@ -545,6 +549,7 @@ class VoiceService:
             action["voice_source_id"] = source_id
             action["voice_source_kind"] = self.source_kind
         self.last_command = phrase or cid
+        self.commands_heard += 1
         self.last_action = f"{kind}:{target}"
 
         def run() -> None:
@@ -576,6 +581,7 @@ class VoiceService:
             if enforce_wake and (not wake or not got.startswith(wake)):
                 return {"matched": False, "reason": "wake_word_required"}
             self.last_command = DEFAULT_EMERGENCY_STOP
+            self.commands_heard += 1
             self.last_action = "emergency_stop"
             try:
                 result = self.emergency_stop() or {}
@@ -628,6 +634,7 @@ class VoiceService:
             action["voice_source_id"] = source_id
             action["voice_source_kind"] = self.source_kind
         self.last_command = match["phrase"]
+        self.commands_heard += 1
         self.last_action = f'{match["type"]}:{match["target"]}'
 
         def run() -> None:
@@ -794,6 +801,7 @@ class VoiceService:
             "last_partial": self.last_partial,
             "last_final": self.last_final,
             "last_command": self.last_command,
+            "commands_heard": self.commands_heard,
             "last_action": self.last_action,
             "last_executed": self.last_executed,
             "last_error": self.last_error,

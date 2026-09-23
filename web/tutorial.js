@@ -272,28 +272,105 @@ const STEPS = [
   },
 ];
 
+const NAV_GAMES = 'nav [data-view="games"]';
+const NAV_RANGE = 'nav [data-view="range"]';
+
+// 基础之外的三课，不在第一遍里教：第一遍只管「能玩起来」。它们各自住在自己那一页，
+// 基础学完之后下次打开时让人挑。挑的时候看到的不是功能名，而是它解决的那个问题——
+// 人不会想「我要学动作测试」，只会想「我做了动作怎么没反应」。
+const EXTRAS = [
+  {
+    id: 'range',
+    name: '动作测试',
+    problem: '做了动作，游戏没反应',
+    doneSay: '✓ 没反应时，先来这里试',
+    guide(s, memo, now) {
+      if (memo.since === undefined) memo.since = s.kernelNow;
+      const last = s.lastTrigger;
+      if (!memo.hit && last && Number.isFinite(memo.since) && last.at > memo.since) memo.hit = last;
+      const hit = memo.hit;
+      if (hit && s.view === 'games') {
+        // 点靶子会跳到「本游戏」里它那一行；亮着那一行，人就知道键在哪改。
+        return {target: `.binding-row[data-trigger="${hit.key}"]`, ready: true, say: '在这里改它按的键'};
+      }
+      if (s.view !== 'range') return {target: NAV_RANGE, say: '点「动作测试」'};
+      if (!hit) {
+        const before = connectGuide(s, memo, now);
+        if (before) return before;
+        if (!s.posed) return {target: '#rangeHit', say: '站到镜头前'};
+        return {target: '#rangeHit', say: '做个动作，打中一块', hint: '伸手进圈、踏步、下蹲都行'};
+      }
+      const tile = `.range-target[data-trigger="${hit.key}"]`;
+      return {
+        target: document.querySelector(tile) ? tile : '#rangeTargets',
+        say: hit.keyText ? '点它，去改它的键' : '它没绑键，点它去绑',
+        hint: `刚打中：${hit.name} → ${hit.keyText || '未映射'}`,
+      };
+    },
+    check: (s, memo) => ({ok: !!memo.hit && s.view === 'games'}),
+  },
+  {
+    id: 'game',
+    name: '选游戏',
+    problem: '按键和我的游戏对不上',
+    doneSay: s => ({custom: '✓ 加好了 · 按键在下面自己绑', verified: '✓ 换好了'}[s.gameKind] || '✓ 换好了 · 这份配置没人试过'),
+    guide(s, memo) {
+      if (memo.appliesBefore === undefined) memo.appliesBefore = s.profileApplies;
+      if (s.view !== 'games') return {target: NAV_GAMES, say: '点「本游戏」', hint: `现在是「${s.gameName}」`};
+      // 在这一页上怎么换成的都算——搜到选中也好，自己加一个也好——所以这几个状态都是 ready。
+      if (!s.searchedFor) return {target: ['#profileSearch', '#profileSearchBtn'], ready: true, say: '搜你要玩的游戏', hint: `现在是「${s.gameName}」`};
+      if (!s.catalogCount) return {target: '#customGameBox', ready: true, say: '搜不到就自己加一个', hint: '展开，填游戏名，点「添加」'};
+      return {target: ['#profileSelect', '#profileApplyBtn'], ready: true, say: '选中它，点「使用这个游戏」', hint: `找到 ${s.catalogCount} 款`};
+    },
+    check: (s, memo) => ({ok: s.profileApplies > (memo.appliesBefore ?? s.profileApplies)}),
+  },
+  {
+    id: 'voice',
+    name: '语音口令',
+    problem: '手忙不过来，想用嘴说',
+    doneSay: '✓ 能说的都在这张表里',
+    guide(s, memo) {
+      if (memo.heardBefore === undefined) memo.heardBefore = s.voiceHeard;
+      if (s.voiceHeard !== memo.heardBefore) memo.heard = true;
+      if (s.view !== 'play') return {target: NAV_PLAY, say: '回到「开始」页'};
+      if (!s.voiceReady) return {target: ['#voicePill', '#voiceStatus'], say: '语音还没准备好', hint: s.voiceProblem};
+      // 先教急停那一句：它无害，而且是最该会的——手占着按不到 F9 的时候就靠它。
+      if (!memo.heard) return {target: ['#voicePill', '#voiceStatus'], say: `说「${s.stopPhrase}」`, hint: '一口气说完'};
+      return {target: '#voiceCommandsBtn', ready: true, say: '点「查看语音指令」', hint: '还能说哪些，都在这'};
+    },
+    check: (s, memo) => ({ok: !!memo.heard && s.voiceListOpen}),
+  },
+];
+
 export function createTutorial(actions = {}) {
   const root = $('tour');
-  if (!root) return {open() {}, close() {}, seen: () => true};
+  if (!root) return {open() {}, close() {}, autoOpen() {}};
   const spot = $('tourSpot'), card = $('tourCard'), dock = document.querySelector('.command-dock');
   const blocks = [...root.querySelectorAll('.tour-block')];
 
-  let index = 0, memos = {}, done = new Set(), skipped = new Set(), ran = new Set();
+  // mode：main 基础那一串；extra 其中一课；menu 让人挑；finish 基础学完。
+  let mode = 'main', index = 0, extra = null, memos = {}, done = new Set(), skipped = new Set(), ran = new Set();
+  let seen = false, offered = false;
   let holdSince = 0, doneAt = 0, advance = 0, timer = 0, frame = 0, moveTimer = 0, nudgeTimer = 0;
   let active = false, returnFocus = null, targetKey = '', targetEls = [], focusEl = null, layoutKey = '', chipsKey = '', choice = null;
-  let markEl = null;
+  let markEl = null, menuKey = '';
 
   try {
     const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
     done = new Set(Array.isArray(saved.done) ? saved.done : []);
     skipped = new Set(Array.isArray(saved.skipped) ? saved.skipped : []);
+    seen = !!saved.seen;
+    offered = !!saved.offered;
   } catch { /* 存不上就每次从头开始，不值得为此挡住教学 */ }
 
   function save() {
     try {
-      localStorage.setItem(STORE, JSON.stringify({done: [...done], skipped: [...skipped], seen: 1}));
+      localStorage.setItem(STORE, JSON.stringify({done: [...done], skipped: [...skipped], seen: 1, offered}));
     } catch { /* 隐私模式下写不了，忽略 */ }
   }
+
+  // 基础里第一步还没做、也没跳过的；-1 表示基础已经走完了。
+  const firstLeft = () => STEPS.findIndex(step => !done.has(step.id) && !skipped.has(step.id));
 
   // 只在文字真的变了时才写：卡片每 250ms 刷一次，整段重写会让读屏软件一直念。
   function setText(id, text) {
@@ -429,51 +506,89 @@ export function createTutorial(actions = {}) {
     }));
   }
 
-  function render(step, guide, result, ok) {
-    setText('tourStep', `新手教学 · ${index + 1}/${STEPS.length} · ${step.name}`);
-    setText('tourSay', ok ? guide.doneSay || step.doneSay : guide.say);
-    $('tourSay').classList.toggle('done', ok);
-    const hint = ok ? '' : guide.hint || '';
+  // 卡片的几种「状态」只差在哪几块露出来；集中在这里改，免得各处各藏各的。
+  function show({say, sayDone = false, hint = '', targets = [], hold = null, skip = '', choiceLabel = '', next = '', menu = false, head}) {
+    setText('tourStep', head);
+    setText('tourSay', say);
+    $('tourSay').classList.toggle('done', sayDone);
     setText('tourHint', hint);
     $('tourHint').hidden = !hint;
-    // 目标格子只在真正开始做动作时才出现：校准时就摆出「← 左 右 →」，人会以为现在就该歪头。
-    renderChips(guide.ready || ok ? result.targets || [] : []);
+    renderChips(targets);
+    $('tourHold').hidden = hold === null;
+    if (hold !== null) $('tourHoldFill').style.width = `${Math.min(100, hold * 100)}%`;
+    $('tourChoices').hidden = !menu;
+    $('tourSkipBtn').hidden = !skip;
+    if (skip) setText('tourSkipBtn', skip);
+    $('tourChoiceBtn').hidden = !choiceLabel;
+    if (choiceLabel) setText('tourChoiceBtn', choiceLabel);
+    $('tourNextBtn').hidden = !next;
+    if (next) setText('tourNextBtn', next);
+    setText('tourCloseBtn', mode === 'main' || mode === 'extra' ? '跳过教学' : '关闭');
+    spot.classList.toggle('done', sayDone);
+  }
 
+  function renderStep(step, guide, result, ok, state) {
     const need = Number(step.hold || 0);
-    $('tourHold').hidden = !need || !guide.ready || ok;
-    if (!$('tourHold').hidden) {
-      const held = holdSince ? (performance.now() - holdSince) / 1000 : 0;
-      $('tourHoldFill').style.width = `${Math.min(100, held / need * 100)}%`;
-    }
-    spot.classList.toggle('done', ok);
-
+    const doneText = guide.doneSay || (typeof step.doneSay === 'function' ? step.doneSay(state) : step.doneSay);
     choice = ok ? null : guide.choice || null;
-    $('tourChoiceBtn').hidden = !choice;
-    if (choice) setText('tourChoiceBtn', choice.label);
-    $('tourSkipBtn').hidden = ok;
-    $('tourNextBtn').hidden = true;
+    show({
+      head: mode === 'main' ? `新手教学 · ${index + 1}/${STEPS.length} · ${step.name}` : `新手教学 · ${step.name}`,
+      say: ok ? doneText : guide.say,
+      sayDone: ok,
+      hint: ok ? '' : guide.hint || '',
+      // 目标格子只在真正开始做动作时才出现：校准时就摆出「← 左 右 →」，人会以为现在就该歪头。
+      targets: guide.ready || ok ? result.targets || [] : [],
+      hold: need > 0 && guide.ready && !ok ? (holdSince ? (performance.now() - holdSince) / 1000 / need : 0) : null,
+      skip: ok ? '' : mode === 'main' ? '这步跳过' : '换一个',
+      choiceLabel: choice?.label || '',
+    });
+  }
+
+  function renderMenu() {
+    setTarget(null);
+    setMark(null);
+    const left = firstLeft();
+    const basics = left === -1 ? '从头学怎么玩 ✓' : done.size || skipped.size ? `从头学怎么玩 · 接着第 ${left + 1} 步` : '从头学怎么玩';
+    const items = [{id: 'main', label: basics}, ...EXTRAS.map(lesson => ({id: lesson.id, label: lesson.problem + (done.has(lesson.id) ? ' ✓' : '')}))];
+    const key = JSON.stringify(items);
+    if (key !== menuKey) {
+      menuKey = key;
+      $('tourChoices').replaceChildren(...items.map(item => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'tour-option' + (item.label.endsWith('✓') ? ' done' : '');
+        btn.textContent = item.label;
+        btn.addEventListener('click', () => {
+          if (item.id === 'main') go(left === -1 ? 0 : left);
+          else startExtra(EXTRAS.find(lesson => lesson.id === item.id));
+        });
+        return btn;
+      }));
+    }
+    show({head: '新手教学', say: '想学哪个？', menu: true});
   }
 
   function renderFinish() {
     setTarget(null);
     setMark(null);
-    setText('tourStep', '新手教学');
     const count = STEPS.filter(step => done.has(step.id)).length;
-    setText('tourSay', count === STEPS.length ? '✓ 学会了' : `学了 ${count} / ${STEPS.length} 步`);
-    $('tourSay').classList.toggle('done', count === STEPS.length);
-    setText('tourHint', '想再练，点顶上的「新手教学」');
-    $('tourHint').hidden = false;
-    for (const id of ['tourTargets', 'tourHold', 'tourSkipBtn', 'tourChoiceBtn']) $(id).hidden = true;
-    spot.classList.remove('done');
-    $('tourNextBtn').hidden = false;
+    show({
+      head: '新手教学',
+      say: count === STEPS.length ? '✓ 学会了' : `学了 ${count} / ${STEPS.length} 步`,
+      sayDone: count === STEPS.length,
+      // 其余几课不在这里接着弹：刚学完一串，人要的是去玩。下次打开时再让他挑。
+      hint: '下次打开，还能学别的',
+      next: '好',
+    });
   }
 
   function tick() {
     if (!active) return;
-    if (index >= STEPS.length) { renderFinish(); return; }
+    if (mode === 'menu') { renderMenu(); return; }
+    if (mode === 'finish') { renderFinish(); return; }
+    const step = mode === 'main' ? STEPS[index] : extra;
     const state = actions.state?.();
-    if (!state) return;
-    const step = STEPS[index];
+    if (!step || !state) return;
     const memo = memos[step.id] || (memos[step.id] = {});
     const now = performance.now();
     const guide = step.guide(state, memo, now);
@@ -497,21 +612,40 @@ export function createTutorial(actions = {}) {
         done.add(step.id);
         skipped.delete(step.id);
         save();
-        advance = setTimeout(() => go(index + 1), 1300);
+        advance = setTimeout(() => (mode === 'main' ? go(index + 1) : showMenu()), 1300);
       }
     }
-    render(step, guide, result, ok);
+    renderStep(step, guide, result, ok, state);
+  }
+
+  function reset() {
+    clearTimeout(advance);
+    advance = 0;
+    holdSince = 0;
+    doneAt = 0;
   }
 
   function go(i) {
-    clearTimeout(advance);
-    advance = 0;
+    reset();
     index = clamp(i, 0, STEPS.length);
-    holdSince = 0;
-    doneAt = 0;
+    mode = index >= STEPS.length ? 'finish' : 'main';
     // 重进一步就重来一次：上一轮打中的目标不能替这一轮算数。
-    if (index < STEPS.length) memos[STEPS[index].id] = {};
+    if (mode === 'main') memos[STEPS[index].id] = {};
     save();
+    tick();
+  }
+
+  function startExtra(lesson) {
+    reset();
+    mode = 'extra';
+    extra = lesson;
+    memos[lesson.id] = {};
+    tick();
+  }
+
+  function showMenu() {
+    reset();
+    mode = 'menu';
     tick();
   }
 
@@ -520,17 +654,19 @@ export function createTutorial(actions = {}) {
     if (event.key === 'Escape' && !document.querySelector('dialog[open]')) close();
   }
 
-  function open(source) {
+  // 顶上的「新手教学」：基础一步都没碰过的人直接开始；碰过的先让他挑——可能是回来
+  // 接着学，也可能是遇到了某个具体问题。
+  function open(source, {menu = true} = {}) {
     returnFocus = source || null;
-    // 从第一步还没做、也没跳过的地方接着；全都过了就从头再走一遍。
-    const next = STEPS.findIndex(step => !done.has(step.id) && !skipped.has(step.id));
-    index = next === -1 ? 0 : next;
     active = true;
     ran = new Set();
     root.hidden = false;
     targetKey = '';
     layoutKey = '';
-    go(index);
+    menuKey = '';
+    const fresh = !done.size && !skipped.size;
+    if (menu && !fresh) showMenu();
+    else go(Math.max(0, firstLeft()));
     clearInterval(timer);
     timer = setInterval(tick, TICK_MS);
     cancelAnimationFrame(frame);
@@ -538,12 +674,22 @@ export function createTutorial(actions = {}) {
     document.addEventListener('keydown', onKey);
   }
 
+  // 打开页面时自己弹不弹：从没看过就直接带着做基础；基础走完之后的下一次打开，让人
+  // 挑一次别的——只挑这一次，之后就只在按钮上等着，不天天弹。
+  function autoOpen() {
+    if (!seen) { seen = true; open(null, {menu: false}); return; }
+    if (firstLeft() === -1 && !offered && EXTRAS.some(lesson => !done.has(lesson.id))) {
+      offered = true;
+      save();
+      open(null);
+    }
+  }
+
   function close() {
     active = false;
     clearInterval(timer);
     cancelAnimationFrame(frame);
-    clearTimeout(advance);
-    advance = 0;
+    reset();
     root.hidden = true;
     setMark(null);
     document.removeEventListener('keydown', onKey);
@@ -556,13 +702,14 @@ export function createTutorial(actions = {}) {
   $('tourCloseBtn').addEventListener('click', close);
   $('tourNextBtn').addEventListener('click', close);
   $('tourSkipBtn').addEventListener('click', () => {
-    if (index >= STEPS.length) return;
+    if (mode === 'extra') { showMenu(); return; }
+    if (mode !== 'main') return;
     skipped.add(STEPS[index].id);
     save();
     go(index + 1);
   });
   $('tourChoiceBtn').addEventListener('click', () => {
-    if (!choice || index >= STEPS.length) return;
+    if (!choice || mode !== 'main') return;
     // 目前唯一的选择是「画面里不是我」：记下现在是哪个摄像头，回设备页换一个，
     // 换成别的序号并且开起来了才算换完。
     if (choice.run === 'repick') {
@@ -575,10 +722,5 @@ export function createTutorial(actions = {}) {
     tick();
   });
 
-  return {
-    open,
-    close,
-    // 从没打开过才自动弹一次。跳过、关掉、学完，都算看过了。
-    seen: () => { try { return !!JSON.parse(localStorage.getItem(STORE) || '{}').seen; } catch { return true; } },
-  };
+  return {open, close, autoOpen};
 }
