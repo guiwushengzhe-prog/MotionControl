@@ -331,8 +331,12 @@ def find_phone_web(root: Path) -> Path | None:
     configured = os.environ.get("PHONE_WEB_DIR", "").strip().strip('"')
     if configured:
         candidates.insert(0, Path(configured))
-    # 开发时两个仓库并排放着。发布包里 phone_web 一定在，走不到这一条。
-    candidates.append(root.parent / "switch" / "mobile" / "dist")
+    # 本机新手机工作树优先于旧 switch：两者同时存在时，不能把旧网页热更回手机。
+    # 发布包里 phone_web 排在前面，不受开发目录影响。
+    candidates.extend([
+        root.parent / "MC-switch" / "mobile" / "dist",
+        root.parent / "switch" / "mobile" / "dist",
+    ])
     for candidate in candidates:
         if candidate.is_dir():
             return candidate

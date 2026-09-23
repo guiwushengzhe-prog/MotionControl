@@ -58,5 +58,13 @@ def test_the_sibling_repo_is_the_last_resort(find, tmp_path):
     assert find(tmp_path / "MotionControl-App") == dist
 
 
+def test_current_mobile_worktree_wins_over_old_build(find, tmp_path):
+    current = tmp_path / "MC-switch" / "mobile" / "dist"
+    old = tmp_path / "switch" / "mobile" / "dist"
+    current.mkdir(parents=True)
+    old.mkdir(parents=True)
+    assert find(tmp_path / "MC-main") == current
+
+
 def test_nothing_anywhere_is_not_a_crash(find, tmp_path):
     assert find(tmp_path / "app") is None
