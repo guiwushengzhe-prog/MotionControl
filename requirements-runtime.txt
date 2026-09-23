@@ -3,10 +3,9 @@
 # The repository had no dependency manifest: the portable release bundles its
 # own Python with these already installed, and development installs them by
 # hand.  That worked while every dependency was optional-ish -- a missing
-# camera library fails loudly at the point of use.  It stopped working when
-# device pairing arrived, because pairing silently degrades to unavailable if
-# its dependency is absent, and a release that cannot pair cannot accept input
-# from a phone once enforcement is on.
+# camera library fails loudly at the point of use.  cryptography is the
+# exception: without it the update signature check fails quietly, and every
+# update is refused as if it were corrupt.
 #
 # Versions here match what the 2.0 portable bundle actually ships, so this file
 # describes reality rather than an aspiration.  Verify with:
@@ -14,8 +13,8 @@
 #   python tools/check_runtime_deps.py
 #   python tools/check_runtime_deps.py --bundle "build/release/.../python"
 
-# Device pairing: ECDH P-256, HKDF and constant-time comparison for /ws/input
-# authentication.  Not optional in a release build -- see device_pairing.py.
+# ECDSA signature check on app updates.  Not optional in a release build --
+# see app_update.py.
 cryptography>=42.0
 
 # Camera capture and pose inference.

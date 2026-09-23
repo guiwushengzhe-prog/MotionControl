@@ -94,7 +94,7 @@ def _nonce_of(query: bytes) -> str | None:
 
 
 def build_reply(query: bytes, *, candidates: list[dict], name: str, version: str,
-                instance: str, pairing_required: bool) -> bytes | None:
+                instance: str) -> bytes | None:
     """该不该答、答什么。纯函数，不碰 socket，所以能直接单测。
 
     返回 None 表示这个包不该被回应——魔数不对、太短、nonce 不合法，或者装不下。
@@ -119,7 +119,6 @@ def build_reply(query: bytes, *, candidates: list[dict], name: str, version: str
             "version": version,
             "port": trimmed[0]["port"] if trimmed else None,
             "instance": instance,
-            "pairing_required": bool(pairing_required),
             "candidates": trimmed,
         }
         reply = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -189,15 +188,13 @@ class DiscoveryResponder:
 
     def __init__(self, host: str, port: int, *,
                  candidates: Callable[[], list[dict]],
-                 name: str, version: str, instance: str,
-                 pairing_required: Callable[[], bool] = lambda: False) -> None:
+                 name: str, version: str, instance: str) -> None:
         self._host = host
         self._port = int(port)
         self._candidates = candidates
         self._name = name
         self._version = version
         self._instance = instance
-        self._pairing_required = pairing_required
         self._socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -275,15 +272,10 @@ class DiscoveryResponder:
                 continue
             if not self._limiter.allow(source_ip, now):
                 continue
-            try:
-                pairing = bool(self._pairing_required())
-            except Exception:
-                pairing = False
             reply = build_reply(query,
                                 candidates=self._fresh_candidates(now),
                                 name=self._name, version=self._version,
-                                instance=self._instance,
-                                pairing_required=pairing)
+                                instance=self._instance)
             if reply is None:
                 continue
             try:

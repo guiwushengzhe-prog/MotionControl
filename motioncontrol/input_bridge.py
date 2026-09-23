@@ -13,12 +13,7 @@ from collections import deque
 from collections.abc import Iterable
 from urllib.parse import parse_qs, urlparse
 
-from motioncontrol import device_pairing
 from motioncontrol import local_endpoints
-
-
-class IdentityViolation(ValueError):
-    """A frame claimed a device_id or role this connection never proved."""
 
 
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -118,13 +113,6 @@ class WebSocketPeer:
         self.accepted_inputs = 0
         self._send_lock = threading.Lock()
         self._closed = False
-        # Pairing state is per-connection, not per-device: the phone opens one
-        # socket for the camera role and another for the handheld sensor role,
-        # and each proves itself separately.  Once set, every later frame on
-        # this socket has to match both of these.
-        self.auth_nonce: str | None = None
-        self.authenticated_device_id: str | None = None
-        self.authenticated_role: str | None = None
 
     def _frame(self, opcode: int, payload: bytes) -> bytes:
         if len(payload) > MAX_MESSAGE_BYTES:
@@ -532,20 +520,9 @@ def _local_addresses() -> list[str]:
 class InputBridge:
     """Receives MotionBridge input and fans mobile poses to desktop consumers."""
 
-    # Frames that actually drive the game.  Every one of these carries a
-    # device_id, and after the dual-plane split these are the only remaining
-    # way for a LAN device to affect this machine -- handle_sensor() writes
-    # straight to the gamepad -- so identity is enforced for all of them in
-    # one place rather than in each handler.
-    BUSINESS_TYPES = frozenset({
-        "pose_frame_v2", "pose_features_v1", "sensor_frame",
-        "voice_text", "voice_command", "scene_snapshot", "game_output_control",
-    })
-
-    def __init__(self, output, kernel=None, voice=None, pairing=None) -> None:
+    def __init__(self, output, kernel=None, voice=None) -> None:
         self.output = output
         self.kernel = kernel
-        self.pairing = pairing
         self._voice_service = voice
         self._scene_snapshot_handler = None
         self._control_config_provider = None
@@ -657,13 +634,12 @@ class InputBridge:
         return message
 
     def broadcast_game_output_state(self, *, exclude=None) -> dict:
-        """Push actual output state to authenticated phones only."""
+        """Push actual output state to every connected phone."""
         message = self._game_output_state()
         with self._lock:
             peers = [
                 peer for peer in self._peers
                 if peer is not exclude and not peer.desktop
-                and getattr(peer, "authenticated_device_id", None)
             ]
         sent = 0
         for peer in peers:
@@ -681,11 +657,6 @@ class InputBridge:
             self.disconnect(peer)
 
     def _handle_game_output_control(self, peer, message: dict) -> None:
-        # Output control is security-sensitive even while device pairing is
-        # configured as optional for compatibility with older pose/sensor apps.
-        if not getattr(peer, "authenticated_device_id", None):
-            self._send_game_output_state(peer, ok=False, error="设备尚未通过配对认证，不能控制游戏输出")
-            return
         enabled = message.get("enabled")
         if not isinstance(enabled, bool):
             self._send_game_output_state(peer, ok=False, error="enabled 必须是布尔值")
@@ -979,6 +950,10 @@ class InputBridge:
             players = [{"slot": 0, "signals": {"pose_visible": visible}}]
             kernel = self.kernel
             held = [dict(item) for item in self._last_trigger_held]
+            # The handheld socket only ever sends sensor frames; it has no
+            # camera picture to draw zones on.
+            sensor_only = bool(peer.source_ids) and all(
+                source.startswith(SENSOR_SOURCE_PREFIX) for source in peer.source_ids)
         runtime_zones = {}
         snapshot = getattr(kernel, "runtime_zones", None)
         if callable(snapshot):
@@ -1001,7 +976,7 @@ class InputBridge:
             # player-relative rectangles keep following the body without a
             # per-frame broadcast. Fixed configuration still arrives through
             # control_config_v1.zones.
-            if getattr(peer, "authenticated_role", None) != "sensor":
+            if not sensor_only:
                 peer.send_json({
                     "type": "trigger_state_v1",
                     "held": held,
@@ -1294,80 +1269,12 @@ class InputBridge:
         except Exception as exc:
             self._send_error(peer, f"场景截图处理失败：{exc}")
 
-    def _send_challenge(self, peer: WebSocketPeer) -> None:
-        """Offer a fresh nonce the moment the socket opens.
-
-        A phone that speaks protocol 2 answers with hello; an older one just
-        ignores this and starts sending frames, which is what keeps already
-        installed phones working while require_paired_devices is off.
-        """
-        if self.pairing is None or peer.desktop:
-            return
-        try:
-            peer.auth_nonce = self.pairing.new_nonce()
-            peer.send_json({
-                "type": "challenge",
-                "protocol_version": device_pairing.PROTOCOL_VERSION,
-                "pair_protocol": device_pairing.PAIR_PROTOCOL,
-                "nonce": peer.auth_nonce,
-                "server_ms": round(time.time() * 1000),
-                "pairing_required": bool(self.pairing.require_paired_devices),
-            })
-        except (ConnectionError, OSError):
-            self.disconnect(peer)
-
-    def _handle_hello(self, peer: WebSocketPeer, message: dict) -> None:
-        if self.pairing is None:
-            raise ValueError("本机未启用设备配对")
-        if not peer.auth_nonce:
-            raise ValueError("缺少 challenge，请重新连接")
-        device_id, role = self.pairing.verify_hello(message, peer.auth_nonce)
-        peer.authenticated_device_id = device_id
-        peer.authenticated_role = role
-        # One nonce, one hello: burning it here stops a captured hello from
-        # being replayed on this same connection.
-        peer.auth_nonce = None
-        peer.send_json({"type": "hello_ack", "ok": True, "device_id": device_id, "role": role})
-        self._send_game_output_state(peer)
-
-    def _enforce_identity(self, peer: WebSocketPeer, message: dict) -> None:
-        """A frame may only claim the identity this connection proved.
-
-        Without this, a device holding one valid key could authenticate as
-        itself and then write any other device_id into its frames, which would
-        make the whole pairing boundary decorative.
-        """
-        if peer.authenticated_device_id is None:
-            if self.pairing is not None and self.pairing.require_paired_devices:
-                raise ValueError("设备尚未通过配对认证，请先在电脑上完成配对")
-            return  # protocol 1 compatibility, only while pairing is optional
-        claimed_id = str(message.get("device_id", "")).strip()
-        if claimed_id != peer.authenticated_device_id:
-            raise IdentityViolation("device_id 与本连接的认证身份不一致")
-        claimed_role = message.get("role")
-        if claimed_role is not None and claimed_role != peer.authenticated_role:
-            raise IdentityViolation("role 与本连接的认证身份不一致")
-
     def handle_message(self, peer: WebSocketPeer, message: dict) -> None:
         try:
             if not isinstance(message, dict):
                 raise ValueError("message must be a JSON object")
             message_type = message.get("type")
-            if message_type == "game_output_control" and getattr(peer, "authenticated_device_id", None):
-                self._enforce_identity(peer, message)
-            elif message_type in self.BUSINESS_TYPES and message_type != "game_output_control":
-                self._enforce_identity(peer, message)
-            if message_type == "hello":
-                self._handle_hello(peer, message)
-            elif message_type == "pair_init":
-                if self.pairing is None:
-                    raise ValueError("本机未启用设备配对")
-                peer.send_json(self.pairing.handle_pair_init(message))
-            elif message_type == "pair_confirm":
-                if self.pairing is None:
-                    raise ValueError("本机未启用设备配对")
-                peer.send_json(self.pairing.handle_pair_confirm(message))
-            elif message_type == "clock_sync":
+            if message_type == "clock_sync":
                 if not _is_number(message.get("client_sent_ms")):
                     raise ValueError("client_sent_ms must be a number")
                 peer.send_json({"type": "clock_sync", "client_sent_ms": message["client_sent_ms"], "server_ms": round(time.time() * 1000)})
@@ -1387,12 +1294,6 @@ class InputBridge:
                 self._handle_game_output_control(peer, message)
             else:
                 raise ValueError(f"unknown input type: {message_type}")
-        except IdentityViolation as exc:
-            # Not a malformed frame but a connection claiming to be someone
-            # else.  Answering and carrying on would let it keep trying, so
-            # the socket goes away.
-            self._send_error(peer, str(exc))
-            self.disconnect(peer)
         except (ValueError, TypeError) as exc:
             self._send_error(peer, str(exc))
         except (ConnectionError, OSError):
@@ -1481,7 +1382,10 @@ class InputBridge:
                 pass
             return
         self.register(peer)
-        self._send_challenge(peer)
+        # Without this the phone's output button would sit on "waiting" until
+        # someone happened to toggle output on the desktop.
+        if not peer.desktop:
+            self._send_game_output_state(peer)
         try:
             while True:
                 try:

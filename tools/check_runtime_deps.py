@@ -7,10 +7,9 @@ Run against the current interpreter, or against the portable release bundle:
 
 This exists because of one specific failure mode.  Most dependencies here fail
 loudly at the point of use -- no OpenCV means the camera refuses to start, with
-a message saying so.  ``cryptography`` does not: device_pairing catches the
-ImportError and reports pairing as unavailable, which on a release with
-``require_paired_devices`` turned on means the phone silently cannot connect at
-all.  A packaging mistake would look like a protocol bug.
+a message saying so.  ``cryptography`` does not: app_update treats any failure
+while checking a signature as a bad signature, so without it every update is
+silently refused.  A packaging mistake would look like a corrupt update.
 """
 
 from __future__ import annotations
@@ -114,8 +113,8 @@ def main() -> int:
         print()
         print("FAIL: missing dependencies that fail silently rather than loudly:",
               ", ".join(missing_critical))
-        print("      Device pairing degrades to unavailable without cryptography, so a")
-        print("      release with pairing enforced would refuse every phone.")
+        print("      Without cryptography every update fails its signature check, so")
+        print("      the app would silently stop updating.")
         return 1
     if missing_other:
         print()

@@ -155,14 +155,13 @@ def test_shared_import_closure_is_stdlib_only():
     assert not extra, f"shared package pulled in non-stdlib modules: {extra}"
 
 
-def test_pairing_dependency_is_declared():
+def test_cryptography_dependency_is_declared():
     """cryptography is the one dependency whose absence is silent.
 
     Everything else fails at the point of use with a message the user sees --
-    no OpenCV means the camera refuses to start and says so.  device_pairing
-    catches ImportError and reports pairing as merely unavailable, so on a
-    build with require_paired_devices on, a packaging slip would look like
-    every phone being rejected for protocol reasons.
+    no OpenCV means the camera refuses to start and says so.  app_update
+    treats any failure while checking a signature as a bad signature, so a
+    packaging slip would look like every update being corrupt.
 
     Only the declaration is checked here.  Whether this machine actually has it
     installed is a desktop-runtime question, and it lives in

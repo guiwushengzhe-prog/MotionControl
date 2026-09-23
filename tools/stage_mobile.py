@@ -137,9 +137,7 @@ def check(apk: Path) -> tuple[dict, str]:
 def readme_text(filename: str) -> str:
     """The phone-side instructions.
 
-    Regenerated rather than copied, because the staged copy had gone stale: it
-    still described connecting by typing an address, with no mention of the
-    pairing code, which is now required before the phone may send anything.
+    Regenerated rather than copied, because a hand-kept copy goes stale.
     """
     return f"""MotionControl 2.0 手机端
 
@@ -148,18 +146,14 @@ def readme_text(filename: str) -> str:
 
 用法：
   1. 电脑那边先启动服务（另一个文件夹里的 启动.bat）。
-  2. 电脑网页打开「设备与设置」，那里会显示一个 ws:// 开头的地址。
-  3. 手机和电脑连同一个 Wi-Fi，把那个地址填进手机应用，连接。
-  4. 第一次连接时，电脑网页上会显示一个 8 位配对码，在手机上填进去。
-     配对码 2 分钟内有效，输错 5 次会作废，重新点一次即可。
-  5. 配对之后手机会被电脑记住，以后直接连，不用再配。
+  2. 手机和电脑连同一个 Wi-Fi，或者插数据线打开「USB 网络共享」。
+  3. 打开手机应用，点「连接并开始」，它会自己找到电脑。
 
 手机第一次打开会要摄像头和麦克风权限，都要给。
 姿态识别和语音识别都在手机本地完成，不上传画面和声音。
 
-关于配对能挡住什么：它保证只有你配过的手机能控制这台电脑，
-别人接进同一个 Wi-Fi 也发不了指令。但它不加密传输内容——
-局域网里的姿态数据和识别出的文字仍然是明文。
+同一个网络里的设备都能连上这台电脑，传输内容也不加密。
+只在自己家里的网络里用。
 """
 
 

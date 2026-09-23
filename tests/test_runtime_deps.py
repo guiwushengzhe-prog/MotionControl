@@ -19,17 +19,16 @@ sys.path.insert(0, str(REPO))
 
 
 def test_cryptography_is_actually_installed():
-    """缺了它，设备配对会静默降级成"不可用"，而不是报错。
+    """缺了它，自动更新会静默失效，而不是报错。
 
     别的依赖缺了都在用到的那一刻当场报错，用户看得见：没有 OpenCV，摄像头就
-    打不开并且说出来。device_pairing 把 ImportError 接住了，于是在开了
-    require_paired_devices 的机器上，打包时漏掉这一个看起来会像是"每台手机都
-    因为协议原因被拒"。
+    打不开并且说出来。app_update.verify 把验签时的异常全接住了、当作"签名不对"，
+    于是打包时漏掉这一个，看起来会像是"每一个更新包都是坏的"。
     """
-    from motioncontrol import device_pairing
+    import importlib.util
 
-    assert device_pairing.crypto_available(), (
-        "这个环境里没有 cryptography，设备配对会静默降级。"
+    assert importlib.util.find_spec("cryptography") is not None, (
+        "这个环境里没有 cryptography，自动更新会静默失效。"
         "跑一下：python tools/check_runtime_deps.py"
     )
 

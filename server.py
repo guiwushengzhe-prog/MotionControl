@@ -260,27 +260,6 @@ VOICE = VoiceService(
     clear_source=OUTPUT.clear_source,
 )
 VOICE.configure_profile_bindings(PROFILES.effective_profile().get("bindings", {}))
-def _build_pairing_service():
-    """Device pairing for /ws/input, or None if it cannot run here.
-
-    Enforcement is off by default for now.  The Android app lives in another
-    repository, so until a build that speaks protocol 2 ships, requiring it
-    would lock out every existing phone.  The exchange, the storage and the
-    per-frame identity checks are all live regardless; turning
-    require_paired_devices on is then a one-line change rather than a protocol
-    redesign.
-    """
-    try:
-        from motioncontrol.device_pairing import PairingService
-
-        required = user_path("require_paired_devices").exists()
-        return PairingService(require_paired_devices=required)
-    except Exception as exc:  # pairing must never stop the controller starting
-        print("设备配对不可用：", exc)
-        return None
-
-
-PAIRING = _build_pairing_service()
 # main() 里装上。放在这里只是为了让收尾那段能无条件 close 它。
 DISCOVERY: DiscoveryResponder | None = None
 
@@ -309,7 +288,7 @@ def _instance_id() -> str:
     return made
 
 
-INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE, pairing=PAIRING)
+INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
 INPUT_BRIDGE.configure_scene_snapshot_handler(_scene_snapshot_from_phone)
 
 def find_phone_web(root: Path) -> Path | None:
@@ -923,7 +902,7 @@ class _BaseHandler(SimpleHTTPRequestHandler):
                 self._serve_file(MODEL_PATH)
             return True
         # 中文语音模型。手机以前自己背一份 41.5 MB 的副本，占了安装包的一半，
-        # 而那些文件跟这台电脑上的逐字节一样——手机本来就要配对一台电脑，让它
+        # 而那些文件跟这台电脑上的逐字节一样——手机本来就要连着一台电脑，让它
         # 从电脑取就行，谁的流量都不用花。
         if route == "/api/model/voice-cn":
             self._send_json({"version": VERSION, **VOICE_MODEL.manifest()})
@@ -1107,15 +1086,6 @@ class AdminHandler(_BaseHandler):
         if route == "/api/hand-mouse/config":
             self._send_json({"version": VERSION,
                              "hand_mouse": KERNEL.hand_mouse_controller.status()})
-            return
-        if route == "/api/pairing/status":
-            if PAIRING is None:
-                self._send_json({"version": VERSION, "available": False,
-                                 "error": "设备配对不可用（缺少 cryptography）"})
-                return
-            self._send_json({"version": VERSION, "available": True,
-                             **PAIRING.pairing_status(),
-                             "devices": PAIRING.store.devices()})
             return
         if route == "/api/cloud/status":
             if not self._is_loopback():
@@ -1317,28 +1287,6 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": str(exc)}, 502)
             except ProfileSelectionChanged as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 409)
-            except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc)}, 400)
-            return
-        if route.startswith("/api/pairing/"):
-            if not self._is_loopback():
-                self._send_json({"ok": False, "error": "pairing is loopback-only"}, 403)
-                return
-            if PAIRING is None:
-                self._send_json({"ok": False, "error": "设备配对不可用（缺少 cryptography）"}, 503)
-                return
-            try:
-                if route == "/api/pairing/begin":
-                    self._send_json({"ok": True, **PAIRING.begin_pairing()})
-                elif route == "/api/pairing/cancel":
-                    PAIRING.cancel_pairing()
-                    self._send_json({"ok": True, **PAIRING.pairing_status()})
-                elif route == "/api/pairing/forget":
-                    removed = PAIRING.store.forget(str(body.get("device_id", "")))
-                    self._send_json({"ok": True, "removed": removed,
-                                     "devices": PAIRING.store.devices()})
-                else:
-                    self._send_json({"ok": False, "error": "not found"}, 404)
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
@@ -1635,10 +1583,11 @@ class DeviceHandler(_BaseHandler):
     remember to check.
 
     Note what this does *not* fix.  Binding the account and config APIs to
-    loopback stops a LAN device from reading them, but /ws/input itself still
-    accepts anyone until device pairing is enforced: handle_sensor() feeds
+    loopback stops a LAN device from reading them, but /ws/input itself
+    accepts any device on the same network: handle_sensor() feeds
     output.set_sensor_state() directly, so a forged sensor_frame is real
-    gamepad input.  Pairing is the other half of this change.
+    gamepad input.  That is a deliberate trade -- device pairing was removed
+    because nobody used it.
     """
 
     def do_GET(self):
@@ -1754,8 +1703,7 @@ def main():
     DISCOVERY = DiscoveryResponder(
         args.host, args.port,
         candidates=INPUT_BRIDGE.server_candidates,
-        name=socket.gethostname(), version=VERSION, instance=_instance_id(),
-        pairing_required=lambda: bool(PAIRING and PAIRING.require_paired_devices))
+        name=socket.gethostname(), version=VERSION, instance=_instance_id())
     if not DISCOVERY.start():
         print(f"手机自动发现未启用：{DISCOVERY.last_error}；手机仍可用地址连接。")
 

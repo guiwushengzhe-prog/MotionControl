@@ -39,7 +39,7 @@ def reply_of(raw: bytes) -> dict:
 
 def build(raw: bytes | None = None, **kwargs) -> bytes | None:
     options = {"candidates": candidates(), "name": "PC", "version": VERSION,
-               "instance": "a1b2c3d4e5f6", "pairing_required": False}
+               "instance": "a1b2c3d4e5f6"}
     options.update(kwargs)
     return dc.build_reply(query() if raw is None else raw, **options)
 

@@ -123,7 +123,6 @@ def test_ack_carries_low_rate_runtime_zones_on_existing_trigger_protocol():
 
     bridge = InputBridge(FakeOutput(), RuntimeZones())
     phone = FakePeer()
-    phone.authenticated_role = "camera"
     try:
         bridge.register(phone)
         bridge.broadcast_trigger_state({"held": [{"id": "zone.leftHand"}], "fired": [], "at": 1.0})
@@ -140,6 +139,73 @@ def test_ack_carries_low_rate_runtime_zones_on_existing_trigger_protocol():
         assert update["fired"] == []
         assert update["zones"]["rightHand"]["rect"] == {
             "x1": 0.5, "x2": 1.0, "y1": 0.0, "y2": 0.3,
+        }
+    finally:
+        bridge.close()
+
+
+def test_handheld_socket_gets_ack_but_no_zone_updates():
+    bridge = InputBridge(FakeOutput())
+    handheld = FakePeer()
+    try:
+        for _ in range(15):
+            bridge._handle_sensor(handheld, sensor_frame())
+        assert [message["type"] for message in handheld.messages] == ["ack"]
+    finally:
+        bridge.close()
+
+
+class SwitchableOutput(FakeOutput):
+    def __init__(self):
+        super().__init__()
+        self.enabled = False
+
+    def status(self):
+        return {"enabled": self.enabled}
+
+    def set_config(self, *, enabled=None, **_kwargs):
+        if enabled is not None:
+            self.enabled = bool(enabled)
+        return self.status()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_phone_switches_game_output_and_gets_actual_state(enabled):
+    output = SwitchableOutput()
+    output.enabled = not enabled
+    bridge = InputBridge(output)
+    phone, other_phone, desktop = FakePeer(), FakePeer(), FakePeer(desktop=True)
+    try:
+        bridge.register(other_phone)
+        bridge.register(desktop)
+        other_phone.messages.clear()
+        desktop.messages.clear()
+        bridge.handle_message(phone, {
+            "type": "game_output_control", "device_id": "camera-a",
+            "role": "camera", "enabled": enabled,
+        })
+        state = {"type": "game_output_state_v1", "enabled": enabled, "ok": True}
+        assert output.enabled is enabled
+        assert phone.messages[-1] == state
+        assert other_phone.messages == [state]
+        assert desktop.messages == []
+    finally:
+        bridge.close()
+
+
+def test_game_output_control_rejects_non_boolean_enabled():
+    output = SwitchableOutput()
+    bridge = InputBridge(output)
+    phone = FakePeer()
+    try:
+        bridge.handle_message(phone, {
+            "type": "game_output_control", "device_id": "camera-a",
+            "role": "camera", "enabled": 1,
+        })
+        assert output.enabled is False
+        assert phone.messages[-1] == {
+            "type": "game_output_state_v1", "enabled": False, "ok": False,
+            "error": "enabled 必须是布尔值",
         }
     finally:
         bridge.close()

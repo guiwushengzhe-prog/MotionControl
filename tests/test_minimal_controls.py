@@ -375,11 +375,6 @@ def test_voice_text_bridge_accepts_only_active_phone_body_source_and_releases_on
             self.desktop = False
             self.accepted_inputs = 0
             self.errors = []
-            # Mirrors WebSocketPeer: unauthenticated, which is the state a
-            # protocol-1 phone stays in while pairing is optional.
-            self.auth_nonce = None
-            self.authenticated_device_id = None
-            self.authenticated_role = None
 
         def send_json(self, message):
             self.errors.append(message)
