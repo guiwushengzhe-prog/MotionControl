@@ -574,7 +574,7 @@ dialog::backdrop { background: #030812dc; }
 
 .voice-trigger-phrase { display: block; width: 100%; margin-top: 6px; box-sizing: border-box; }
 
-/* 靶场：站到镜头前试，打中了什么用大字写出来。
+/* 动作测试：站到镜头前试，打中了什么用大字写出来。
    字号是这一页的全部意义——人在几米外，小字等于没有。 */
 .range{display:flex;flex-direction:column;gap:1rem;max-width:64rem;margin:0 auto}
 .range-intro .title{font-size:1.2em;font-weight:600}
@@ -628,3 +628,68 @@ dialog::backdrop { background: #030812dc; }
   .range-hit-what{font-size:1.8em}
   .range-grid{grid-template-columns:repeat(auto-fill,minmax(7.5rem,1fr))}
 }
+
+/* 新手教学。不另画界面：把正式界面压暗，只留这一步要点的那块亮着，旁边一张卡片。
+   亮框四周是透明挡板，暗处点不了；亮框里没有挡板，点到的就是底下的真按钮。 */
+.tour { position: fixed; inset: 0; z-index: 900; pointer-events: none; }
+.tour.no-target { background: #030812c4; }
+.tour-block { position: absolute; pointer-events: auto; }
+.tour-spot { position: absolute; border-radius: 12px; outline: 2px solid var(--accent);
+  box-shadow: 0 0 0 200vmax #030812c4; }
+.tour-spot.moving { transition: left .35s ease, top .35s ease, width .35s ease, height .35s ease; }
+.tour-spot::after { content: ""; position: absolute; inset: -2px; border: 2px solid var(--accent);
+  border-radius: 14px; animation: tour-pulse 1.8s ease-out infinite; }
+@keyframes tour-pulse { from { inset: -2px; opacity: .9 } to { inset: -16px; opacity: 0 } }
+.tour-spot.nudge::after { animation: tour-nudge .6s ease-out; }
+@keyframes tour-nudge { from { inset: -2px; opacity: 1; border-width: 5px } to { inset: -30px; opacity: 0; border-width: 2px } }
+.tour-spot.done { outline-color: #39c07a; }
+.tour-spot.done::after { border-color: #39c07a; }
+.tour-card { position: absolute; display: grid; gap: 8px; width: min(320px, calc(100vw - 24px)); padding: 14px 16px 12px;
+  pointer-events: auto; background: var(--panel); border: 1px solid var(--accent); border-radius: 14px;
+  box-shadow: 0 16px 44px #000000b0; }
+.tour-card.nudge { animation: tour-shake .4s ease-in-out; }
+@keyframes tour-shake { 25% { translate: -6px 0 } 75% { translate: 6px 0 } }
+/* 卡片上的小尖角指向亮框，side 是卡片在亮框的哪一边。 */
+.tour-card::before { content: ""; position: absolute; width: 14px; height: 14px; background: var(--panel);
+  border: solid var(--accent); border-width: 1px 0 0 1px; }
+.tour-card[data-side="none"]::before { display: none; }
+.tour-card[data-side="right"]::before { left: -8px; top: calc(var(--arrow) - 7px); transform: rotate(-45deg); }
+.tour-card[data-side="left"]::before { right: -8px; top: calc(var(--arrow) - 7px); transform: rotate(135deg); }
+.tour-card[data-side="below"]::before { top: -8px; left: calc(var(--arrow) - 7px); transform: rotate(45deg); }
+.tour-card[data-side="above"]::before { bottom: -8px; left: calc(var(--arrow) - 7px); transform: rotate(-135deg); }
+/* 三层：顶上一行小字是在哪一步；中间大字是现在要做的动作；下面一行小字只在
+   这一刻最可能卡住时出现。其余一概不写。 */
+.tour-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+.tour-head .btn { min-height: 28px; padding: 2px 10px; font-size: 12px; }
+.tour-say { margin: 2px 0 0; color: #fff; font-size: 21px; font-weight: 700; line-height: 1.3; }
+.tour-say.done { color: #8fe0b4; }
+.tour-hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.tour-targets { display: flex; gap: 8px; }
+.tour-chip { flex: 1; padding: 6px 0; border: 1px solid var(--line); border-radius: 9px; text-align: center;
+  color: var(--muted); font-size: 14px; font-weight: 600; }
+.tour-chip.hit { border-color: #39c07a; background: #16341f; color: #8fe0b4; }
+.tour-hold { height: 8px; border-radius: 4px; background: #263647; overflow: hidden; }
+#tourHoldFill { display: block; width: 0; height: 100%; background: var(--accent); }
+.tour-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.tour-foot .btn { min-height: 34px; padding: 4px 12px; font-size: 13px; }
+.tour-link { margin-right: auto; padding: 4px 0; border: 0; background: none; color: var(--muted);
+  font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) {
+  .tour-spot::after, .tour-card.nudge { animation: none; }
+  .tour-spot.moving { transition: none; }
+}
+/* 画面里被点名的那个区域圈：给真元素本身加一圈呼吸光，不另画箭头——圈跟着人走。 */
+.zone.tour-mark { outline: 3px solid var(--accent); outline-offset: 4px; animation: tour-mark 1.2s ease-in-out infinite; }
+@keyframes tour-mark { 50% { outline-offset: 10px; outline-color: #67b8ee66 } }
+@media (prefers-reduced-motion: reduce) { .zone.tour-mark { animation: none; } }
+/* 「想学哪个？」：每一项写的是它解决的问题，不是功能名。 */
+.tour-choices { display: grid; gap: 6px; }
+.tour-option { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #1c2938;
+  color: inherit; font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer; }
+.tour-option:hover, .tour-option:focus-visible { border-color: var(--accent); }
+.tour-option.done { border-color: #2d6b49; color: #8fe0b4; }
+/* 虚拟鼠标：画在教学层上，跟着读数走；只是显示，不是真输出，所以旁边写明。 */
+.tour-cursor { position: absolute; left: 0; top: 0; display: flex; align-items: flex-start; gap: 4px; pointer-events: none; }
+.tour-cursor svg { fill: #fff; stroke: #0b1118; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 2px 3px #000a); }
+.tour-cursor span { margin-top: 18px; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: #0b1118;
+  font-size: 11px; font-weight: 700; white-space: nowrap; }

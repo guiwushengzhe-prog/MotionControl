@@ -1,4 +1,5 @@
 import {VIEW_CONTROL_CONTENT} from './view-control-guide.js';
+import {createTutorial} from './tutorial.js';
 
 const $ = s => document.querySelector(s);
 const canvas = $('#canvas');
@@ -57,7 +58,7 @@ function voiceLatchText(status){
 function bindingsForDisplay(){
   return kernelState?.effective_bindings||kernelState?.control_bindings||{};
 }
-// 一个触发器现在绑的是什么。圈上、姿势卡片上、靶场里都用它，写法才一致。
+// 一个触发器现在绑的是什么。圈上、姿势卡片上、动作测试页里都用它，写法才一致。
 function triggerKeyLabel(triggerKey){
   const binding=bindingsForDisplay()[triggerKey];
   const text=binding&&!binding.disabled?actionKeyText(binding.action):null;
@@ -85,9 +86,15 @@ function zoneKeyLabel(id,def){
 }
 
 let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
+// 摄像头的完整状态和最近一次扫描结果。新手教学要按这些判断「这台电脑现在能开什么」。
+let cameraInfo=null;const cameraScan={state:'idle',count:0,error:''};
+// 急停真的被按了几次。教学的最后一步要认的是急停，不是随便哪种关掉输出。
+let emergencyStops=0;
+// 换过几次游戏、最后一次搜的是什么。教「换成我要玩的游戏」时，要认的是真的换成了。
+let profileApplies=0,lastProfileQuery='';
 const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
 const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
-let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false,guideReturnFocus=null;
+let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false;
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
@@ -267,8 +274,6 @@ function setupConflicts(){
   if((hand.config?.enabled??hand.enabled)&&verticalHand!=='off'&&head.verticalLookEnabled&&head.verticalLookSource==='hand')
     items.push(['手控鼠标握拳时会接管视角，与单独的上下视角控制同时开启可能相互干扰。','关掉上下视角',
       async()=>{const s=$('#verticalLookSource');if(s){s.value='off';s.dispatchEvent(new Event('change',{bubbles:true}))}}]);
-  if(hand.enabled&&hand.grip_source==='pose')
-    items.push(['手机没传手指关节，握拳只能拿三个指尖估，张开和握紧分不太开。',null,null]);
   return items;
 }
 function renderConflicts(){
@@ -351,7 +356,7 @@ function renderKernelState(runtime,force=false){
     $('#headEnable').checked=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();renderViewControl();
   }
   const camera=runtime?.camera||{running:cameraRunning};
-  cameraRunning=!!camera.running;
+  cameraRunning=!!camera.running;if(runtime?.camera)cameraInfo=runtime.camera;
   sessionStarted=sourceMode==='phone'?true:cameraRunning;
   if(desiredSource===null)$('#poseSource').value=sourceMode;
   syncCameraDeviceRow();
@@ -551,6 +556,7 @@ function renderProfileCatalog(games){
 async function searchProfiles(){
   const q=$('#profileSearch').value.trim();
   const data=await api('/api/game-profiles/catalog'+(q?'?q='+encodeURIComponent(q):''));
+  lastProfileQuery=q;
   renderProfileCatalog(data.games||[]);
   $('#profileMeta').textContent=`离线库 ${Number(data.library_count||data.count||0)} 款 · 当前显示 ${Number(data.count||0)} 款`;
 }
@@ -573,7 +579,7 @@ async function addCustomGame(){
       {name,appid:$('#customGameAppid').value});
     $('#customGameName').value='';$('#customGameAppid').value='';
     const picked=await post('/api/game-profiles/select',{id:data.game.id});
-    gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};
+    gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};++profileApplies;
     // searchProfiles 会把 #profileMeta 写成库统计，所以头部要排在它后面重画一次。
     await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
     notice(`已添加并切换到「${data.game.name}」。按键在下面自己绑。`);
@@ -610,7 +616,7 @@ async function applySelectedProfile(){
   await profileOperation(async()=>{
     await saveProfileBindings();
     const data=await post('/api/game-profiles/select',{id});
-    gameProfile.selected=data.profile;
+    gameProfile.selected=data.profile;++profileApplies;
     gameProfile.overrides=data.profile.overrides||{};
     await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
     notice(`已切换游戏：${data.profile.name}`);
@@ -877,20 +883,79 @@ function renderViewControl(force=false){
   $('#viewControlDescription').replaceChildren(...rows.map(([title,text])=>{const p=document.createElement('p');const b=document.createElement('b');b.textContent=title+' ';p.append(b,text);return p}));
   const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='当前设置已读取';
 }
-function renderViewGuide(){
-  $('#viewGuideTitle').textContent=VIEW_CONTROL_CONTENT.guide.title;
-  $('#viewGuideIntro').textContent=VIEW_CONTROL_CONTENT.guide.intro;
-  $('#viewGuideSteps').replaceChildren(...VIEW_CONTROL_CONTENT.guide.steps.map(step=>{const li=document.createElement('li'),title=document.createElement('b');title.textContent=step.title;li.append(title,step.text);return li}));
+// 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
+// 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
+// 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
+// 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
+// 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
+// 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
+function tutorialState(){
+  const hs=kernelState?.head||{},k=kernelState||{},pose=currentPoseMap||{};
+  const hand=hs.hand_mouse||{},axes=hand.axes||{};
+  const handOf=axis=>handMouseConfig.enabled&&['left','right'].includes(handMouseConfig[axis+'_hand'])?handMouseConfig[axis+'_hand']:null;
+  const horizontalHand=handOf('horizontal'),verticalHand=handOf('vertical');
+  // 「有画面」要真的有帧在来，不是摄像头开关打开了就算。
+  const frameAge=cameraInfo?.last_frame_age_ms;
+  const computerLive=cameraRunning&&Number(cameraInfo?.frames)>0&&frameAge!=null&&frameAge<3000;
+  const phoneLive=!!inputStatus.mobile_pose_connected;
+  const seen=name=>Number(pose[name]?.score??pose[name]?.visibility??0)>=.5;
+  const finite=v=>Number.isFinite(Number(v))&&v!==null&&v!==undefined;
+  // 各方案的读数量纲不一样，这里统一折算成 -1…1（满量程）再交给教学：
+  // 头控左右的读数上限是左右灵敏度；握拳的上限是握拳灵敏度/100；老的上下方案
+  // 用头时上限是上下灵敏度/100，用手时本来就是 -1…1。
+  const handMax=Math.min(1,Math.max(.01,Number(handMouseConfig.sensitivity??hand.config?.sensitivity??70)/100));
+  const hLevel=horizontalHand?(finite(axes.horizontal?.output)?Number(axes.horizontal.output)/handMax:null)
+    :(finite(hs.output_x)?Number(hs.output_x)/Math.max(1,Number(hs.sensitivity_x||head.sensitivityX||58)):null);
+  const legacyMax=head.verticalLookSource==='head'?clamp(Number(hs.sensitivity_y||head.sensitivityY||46)/100,.15,1):1;
+  const vLevel=verticalHand?(finite(axes.vertical?.output)?Number(axes.vertical.output)/handMax:null)
+    :(head.verticalLookEnabled&&finite(hs.output_y)?Number(hs.output_y)/legacyMax:null);
+  const events=k.recent_triggers||[],last=events[events.length-1];
+  const lastTrigger=last?{key:String(last.trigger||''),at:Number(last.at),keyText:actionKeyText(last.action)||'',
+    name:(profileTriggers().find(t=>t.key===String(last.trigger||''))||{}).name||String(last.trigger||'')}:null;
+  const vs=voice.status||{};
+  // 语音为什么不能用，只分成人能对付的几种：模型不在、麦克风打不开、麦克风没声音；状态还没回来时算「准备中」。
+  const voiceIssue=!voice.status?'starting':!vs.available||!vs.model_ready?'model'
+    :!vs.connected||!vs.audio_ready?'mic':!(vs.audio_alive||vs.stream_alive)?'silent':'starting';
+  const zones=Object.entries(BODY_ZONES).filter(([,def])=>!def.gate).map(([id,def])=>{
+    const z=k.zones?.[id]||{},key=zoneKeyLabel(id,def);
+    return {id,body:def.body,key:key==='未映射'?'':key,shown:!!(z.circle||z.rect),pressed:!!z.pressed};
+  });
+  return {
+    view:currentView,source:sourceMode,sourcePick:$('#poseSource')?.value||sourceMode,
+    cameraReady:sourceMode==='phone'?phoneLive:computerLive,
+    cameraRunning,cameraIndex:cameraInfo?.camera_index??cameraIndex,cameraError:cameraRunning?'':String(cameraInfo?.last_error||''),
+    // 模型路径随第一次状态一起来；还没来之前是「不知道」，不能当成「没装」。
+    modelOk:cameraInfo?!!cameraInfo.model_path:null,
+    scan:cameraScan.state,scanCount:cameraScan.count,
+    phoneStreaming:phoneLive||!!inputStatus.phone_ignored,usbTether:!!inputStatus.usb_tether?.present,
+    posed:!!currentPoseMap,headShoulders:seen('nose')&&seen('left_shoulder')&&seen('right_shoulder'),
+    // 握拳控左右不需要头部中心，这一点和「视角控制」那块的判断保持一致。
+    calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
+    calibrating:!!hs.calibrating,calibrationNote:String(hs.notice||''),
+    horizontal:horizontalHand||(head.enabled?(head.horizontalAlgorithm==='roll_tilt'?'roll_tilt':'head_turn'):'off'),
+    hLevel,hHandState:String(axes.horizontal?.state||''),guardBlocked:!!hs.horizontal_paused_by_body_motion,
+    vertical:verticalHand||(head.verticalLookEnabled?'legacy':'off'),
+    vLevel,vHandState:String(axes.vertical?.state||''),gateActive:!!k.vertical_gate_active,legacySource:head.verticalLookSource,
+    zones,
+    outputEnabled:!!output.enabled,driverMissing:output.mode==='gamepad'&&output.server?.vigembus_running===false,
+    stops:emergencyStops,
+    // 「做了动作，游戏没反应」：最后打中的是什么、按的哪个键；时间用内核自己的钟比。
+    kernelNow:Number(k.now),lastTrigger,
+    // 「按键和我的游戏对不上」
+    profileApplies,searchedFor:lastProfileQuery,catalogCount:gameProfile.catalog.length,
+    gameName:gameProfile.selected?.name||'未选择游戏',
+    // 自己加的游戏 source 是字符串 'custom'，不是 {verified}；它不该被说成「没人试过」。
+    gameKind:gameProfile.selected?.source==='custom'?'custom':gameProfile.selected?.source?.verified?'verified':'auto',
+    // 「手忙不过来，想用嘴说」：听到几句用计数比（同一句说两遍文字不变）；老版本服务没有
+    // 这个数，就退回比最后一句。
+    voiceReady:voiceInputReady,voiceIssue,voiceHeard:String(vs.commands_heard??vs.last_command??''),
+    stopPhrase:(vs.emergency_stop_phrases||[])[0]||'体感紧急停止',voiceListOpen:!!$('#voiceCommandsMask')?.open,
+  };
 }
-function openViewGuide(source){guideReturnFocus=source||$('#viewGuideBtn');$('#viewGuideMask').showModal()}
-function closeViewGuide(remember=false){
-  if(remember){try{localStorage.setItem('motioncontrol_view_guide_done','1')}catch{}}
-  $('#viewGuideMask').close();
-}
-function initViewGuide(){
-  fillViewControlOptions();renderViewGuide();renderViewControl();
-  let seen=false;try{seen=localStorage.getItem('motioncontrol_view_guide_done')==='1'}catch{}
-  if(!seen)openViewGuide(null);
+function initViewControl(){
+  fillViewControlOptions();renderViewControl();
+  // 弹不弹、弹哪个由教学自己定：从没看过就带着做基础；基础走完后的下一次打开，让人挑一次别的。
+  tutorial.autoOpen();
 }
 function renderHandMouse(state){
   if(!state)return;
@@ -1145,7 +1210,7 @@ async function setOutput(enabled){
   if(result.enabled!==enabled)throw new Error(enabled?'服务未确认开启控制':'尚未确认停止');
 }
 async function emergencyStop(){
-  ++outputEpoch;++kernelEpoch;
+  ++outputEpoch;++kernelEpoch;++emergencyStops;
   try{
     const result=await post('/api/output/stop',{});
     if(result.enabled!==false)throw new Error('服务尚未确认');
@@ -1431,7 +1496,7 @@ function poll(task,delay,enabled=()=>true){
   void next();
 }
 async function init(){
-  initViewGuide();setViewControlBusy(false);syncControlLabels();
+  initViewControl();setViewControlBusy(false);syncControlLabels();
   // 自定义姿势和宏库要排在最前面，比 refreshKernel 还早。
   //
   // 原因不显眼：refreshKernel 里有一句 void loadProfiles()，它不被 await，会自己跑去
@@ -1479,10 +1544,10 @@ for(const axis of ['horizontal','vertical']){
 }
 $('#verticalLookSource').addEventListener('change',()=>void saveLegacyVertical());
 $('#headEnable').addEventListener('change',()=>void saveHeadEnabled());
-for(const id of ['viewGuideBtn','viewGuideSettingsBtn'])$('#'+id).addEventListener('click',e=>openViewGuide(e.currentTarget));
-for(const id of ['closeViewGuideBtn','skipViewGuideBtn','finishViewGuideBtn'])$('#'+id).addEventListener('click',()=>closeViewGuide(true));
-$('#viewGuideMask').addEventListener('cancel',e=>{e.preventDefault();closeViewGuide(true)});
-$('#viewGuideMask').addEventListener('close',()=>guideReturnFocus?.focus());
+// 教学只指路不代劳：连接、校准都由人去点真按钮。它自己只会做一件事——扫一遍
+// 摄像头，好知道该建议什么。
+const tutorial=createTutorial({state:tutorialState,scanCameras});
+for(const id of ['tutorialBtn','tutorialSettingsBtn'])$('#'+id).addEventListener('click',e=>tutorial.open(e.currentTarget));
 bind('poseRecordBtn',startPoseRecord);
 bind('poseRecordCancelBtn',cancelPoseRecord);
 bind('profileSearchBtn',searchProfiles);
@@ -1535,17 +1600,22 @@ $('#cameraDevice').addEventListener('change',e=>runAction(async()=>{
   cameraIndex=Number(data.camera_index??e.target.value);
   notice('已选择摄像头 '+cameraIndex+'，点“连接并开始识别”看看画面对不对');
 }));
-bind('cameraScanBtn',async()=>{
+// 按钮和新手教学用的是同一个扫描：结果记在 cameraScan 里，教学据此判断这台电脑有几个摄像头。
+async function scanCameras(){
+  if(cameraScan.state==='running')return;
+  cameraScan.state='running';
   const status=$('#cameraScanStatus');if(status)status.textContent='正在逐个尝试，可能要几秒…';
   try{
     const data=await api('/api/camera/devices',{timeoutMs:60000});
     renderCameraDevices(data.devices,data.camera_index);
-    if(!status)return;
     const n=(data.devices||[]).length;
+    Object.assign(cameraScan,{state:'done',count:n,error:''});
+    if(!status)return;
     status.textContent=n?`找到 ${n} 个。选一个，连接之后看画面里是不是你。`
       :'一个也没找到。这台电脑可能没有摄像头，或者被别的软件占着——把上面的来源改成手机摄像头也能用。';
-  }catch(e){if(status)status.textContent='扫描失败：'+(e?.message||e)}
-});
+  }catch(e){Object.assign(cameraScan,{state:'failed',error:String(e?.message||e)});if(status)status.textContent='扫描失败：'+cameraScan.error}
+}
+bind('cameraScanBtn',scanCameras);
 bind('copyPhoneUrlBtn',async()=>{await navigator.clipboard.writeText($('#phoneWsUrl').value);notice('连接地址已复制')});
 $('#cameraBackend').addEventListener('change',e=>runAction(async()=>{
   await post('/api/camera/config',{backend:e.target.value});notice('采集方式已保存，下次连接时生效');
@@ -2455,7 +2525,7 @@ function renderTriggerLive() {
   }
 }
 
-/* --- 靶场 ---------------------------------------------------------------
+/* --- 动作测试 ---------------------------------------------------------------
  * 站到镜头前做个动作，看打中了什么、按的是哪个键。
  *
  * 它单独一个页签，不挤在映射表旁边。两个原因：
