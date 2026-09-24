@@ -239,7 +239,7 @@
 
 <div class="settings-section" id="personalVoicePanel">
 <h3 class="title">通用口令</h3>
-<p class="lede">所有游戏都生效，电脑和手机的麦克风都能识别。每句都要先说唤醒词，比如「体感地图」。</p>
+<p class="lede"><b>说法：</b>先说唤醒词，再说动作口令，可以连着一句说。当前唤醒词是「<span id="voiceWakeWordHint">体感</span>」，例如「<span id="voiceWakeExample">体感地图</span>」。电脑和手机的麦克风都按这个顺序听。</p>
 <div class="wake-row"><label>唤醒词<input id="wakeWord" maxlength="12" type="text"/></label><p class="fineprint">唤醒词和急停口令只属于你，不分享：不随游戏切换，装别人的配置也不会覆盖。</p></div>
 <p class="statusline" id="personalVoiceStatus" role="status"></p>
 <p class="fineprint">想多一句急停，就加一行、输出选「系统命令 → 紧急停止」。内置的「体感紧急停止」删不掉，它是输出卡住时最后的出口。说法不能和本游戏口令、内置口令重复。</p>
@@ -271,7 +271,7 @@
 <section class="range" data-panel="range" hidden="" id="rangePanel">
 <div class="range-intro">
 <h2 class="title">动作测试</h2>
-<p class="lede">站到镜头前做个动作，或者说句口令。触发了什么、按的是哪个键，这里用大字显示，几米外也看得清。</p>
+<p class="lede">站到镜头前做个动作，或者说完整口令。触发了什么、按的是哪个键，这里用大字显示，几米外也看得清。</p>
 <p class="fineprint">这里只显示，不改设置。点下面的格子可以跳到「本游戏」改它的键。</p>
 <div class="range-warn" hidden="" id="rangeOutputWarn">游戏控制没开：这里能看到触发，游戏里不会有反应。</div>
 </div>

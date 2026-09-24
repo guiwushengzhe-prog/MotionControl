@@ -536,6 +536,12 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
 
 .voice-row input, .voice-row select { width: 100%; min-width: 0; }
 
+.voice-phrase-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+.voice-prefix { flex: 0 0 auto; color: var(--text-2); white-space: nowrap; }
+
+.voice-phrase-wrap .voice-phrase { flex: 1 1 auto; min-width: 0; }
+
 /* The gamepad picker adds a second control for combos; it stays hidden until
    the combo option is chosen, so the cell normally holds one row. */
 .voice-target-cell { display: grid; gap: 6px; min-width: 0; align-content: start; }
