@@ -33,6 +33,9 @@ from motioncontrol.hand_mouse_control import HANDS
 from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseController
 from motioncontrol.pose_recorder import PoseRecorder
 from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
+from motioncontrol.zone_fit import (
+    HEAD_JUMP_HALF_H, ZoneFitSession, body_frame, is_default, normalize_zone_fit,
+)
 
 
 def _user_recordings_dir():
@@ -306,6 +309,10 @@ class ControlKernel:
         self.last_error: str | None = None
 
         self.zone_rects: dict[str, dict] = {}
+        # 跟随区域放在哪、多大。默认是写死的那组比例，量过身就换成量出来的，
+        # 存在 general_settings.json 里，见 zone_fit.py。
+        self.zone_fit = normalize_zone_fit(None)
+        self.zone_fit_session: ZoneFitSession | None = None
         self.fixed_zones: dict[str, dict] = {}
         self.fixed_zones_enabled = False
         # Provisional head-jump target anchor.  It deliberately does not track
@@ -526,6 +533,8 @@ class ControlKernel:
         # Invalid or absent action-chain settings safely retain the disabled
         # default; user data is never written into the program directory.
         self.action_chain.configure(data.get("action_chain", DEFAULT_ACTION_CHAIN))
+        # 量过身的区域。坏了、缺了都回到默认大小，不影响启动。
+        self.zone_fit = normalize_zone_fit(data.get("zone_fit"))
 
     def general_setting(self, key: str, default=None):
         """读一项不归内核管、但和它存在同一份文件里的设置。
@@ -968,6 +977,80 @@ class ControlKernel:
             self._safe_output(self.output.apply, 0.0, 0.0)
             return self.status_locked(time.monotonic())
 
+    # ---------- 量身定区域 ----------
+
+    def start_zone_fit(self, *, body: bool = True) -> dict:
+        """开始量身。body=False 只量握拳。
+
+        握拳那几步只给现在开着握拳控制的手：手机只给在用的手跑手指识别，另一只手
+        量不到手指关节。两只手共用一对阈值，同一个人两只手读数差不多，换手不用重量。
+        """
+        with self._lock:
+            now = time.monotonic()
+            tracking = self.hand_mouse_controller.tracking_request()
+            grip_hands = tuple(tracking["hands"]) if tracking["enabled"] else ()
+            self.zone_fit_session = ZoneFitSession(self.zone_fit, now, grip_hands=grip_hands, body=body)
+            return self.status_locked(now)
+
+    def skip_zone_fit_phase(self) -> dict:
+        with self._lock:
+            now = time.monotonic()
+            if self.zone_fit_session is not None:
+                self.zone_fit_session.skip(now)
+                if self.zone_fit_session.state == "done":
+                    self._apply_zone_fit_locked()
+            return self.status_locked(now)
+
+    def cancel_zone_fit(self) -> dict:
+        """中途不量了：什么都不改。"""
+        with self._lock:
+            if self.zone_fit_session is not None:
+                self.zone_fit_session.cancel()
+            return self.status_locked(time.monotonic())
+
+    def reset_zone_fit(self) -> dict:
+        """区域回到默认大小。握拳阈值不动：它在设置里有自己的滑块。"""
+        with self._lock:
+            if self.zone_fit_session is not None:
+                self.zone_fit_session.cancel()
+            grip_at = self.zone_fit.get("grip_measured_at_unix")
+            self.zone_fit = normalize_zone_fit(None)
+            self.zone_fit["grip_measured_at_unix"] = grip_at
+            self._general_raw["zone_fit"] = self.zone_fit
+            self._save_general_settings()
+            return self.status_locked(time.monotonic())
+
+    def _apply_zone_fit_locked(self) -> None:
+        """量完了：新区域和握拳阈值装上、存盘。量到几项就换几项。"""
+        session = self.zone_fit_session
+        fit = session.result()
+        if session.values:
+            fit["measured_at_unix"] = round(time.time(), 3)
+        self.zone_fit = normalize_zone_fit(fit)
+        self._general_raw["zone_fit"] = self.zone_fit
+        grip = session.grip_updates()
+        if grip:
+            try:
+                self.hand_mouse_controller.configure(grip)
+                self.zone_fit["grip_measured_at_unix"] = round(time.time(), 3)
+            except ValueError:
+                grip = {}
+        session.applied_grip = grip
+        self._save_general_settings()
+
+    def _zone_fit_status_locked(self) -> dict:
+        session = self.zone_fit_session
+        state = session.status() if session is not None else {
+            "active": False, "state": "idle", "phase": "idle", "phase_index": 0, "phases": [],
+            "issue": "", "hands_reached": {}, "measured": [], "skipped": [],
+        }
+        state["grip_applied"] = sorted(session.applied_grip) if session is not None else []
+        state["custom"] = not is_default(self.zone_fit)
+        state["measured_at_unix"] = self.zone_fit.get("measured_at_unix")
+        state["grip_measured_at_unix"] = self.zone_fit.get("grip_measured_at_unix")
+        state["zones"] = copy.deepcopy(self.zone_fit["zones"])
+        return state
+
     def set_current_center(self) -> dict:
         """Compatibility boundary for the legacy "立即设置中心" endpoint.
 
@@ -1006,6 +1089,12 @@ class ControlKernel:
                        "hand": hand["hand"], "hands": hand["hands"],
                        "axes": hand["axes"]},
             )
+        if self.zone_fit_session is not None and self.zone_fit_session.active:
+            grips = {hand: {"curl": controller.curl, "spread": controller.spread}
+                     for hand, controller in self.hand_mouse_controller.hands.items()}
+            self.zone_fit_session.update(pose_map, self.width, self.height, now, grips)
+            if self.zone_fit_session.state == "done":
+                self._apply_zone_fit_locked()
         self._update_zones_locked(pose_map, now)
         self._update_motion_locked(pose_map, now)
         self._update_cross_poses_locked(pose_map, now)
@@ -1355,24 +1444,18 @@ class ControlKernel:
         return anchor
 
     def _compute_body_zones(self, pose_map: dict[str, dict], now: float) -> dict[str, dict]:
+        # 参考系（胯、肩、头中心、左右朝向、尺子）和量身用的是同一份，见 zone_fit.py。
+        frame = body_frame(pose_map, self.width, self.height)
+        if frame is None:
+            return {}
         iw, ih = self.width, self.height
-        ls, rs = pose_map.get("left_shoulder"), pose_map.get("right_shoulder")
         lh, rh, nose = pose_map.get("left_hip"), pose_map.get("right_hip"), pose_map.get("nose")
-        if not all((ls, rs, lh, rh)) or min(_score(ls), _score(rs), _score(lh), _score(rh)) < 0.4:
-            return {}
-        shoulder, hip = _midpoint(ls, rs), _midpoint(lh, rh)
-        torso_px = _distance(shoulder, hip) * math.hypot(iw, ih)
-        if not math.isfinite(torso_px) or torso_px < 35:
-            return {}
-        left_dir = 1.0 if (ls["x"] - shoulder["x"]) >= 0 else -1.0
-        right_dir = 1.0 if (rs["x"] - shoulder["x"]) >= 0 else -left_dir
+        shoulder, hip, torso_px = frame["shoulder"], frame["hip"], frame["torso_px"]
+        left_dir, right_dir = frame["left_dir"], frame["right_dir"]
+        head_center = frame["head_center"]
+        # 各区放在哪、多大：默认是下面注释里说的那组比例，量过身就是量出来的。
+        fit = self.zone_fit["zones"]
         rects: dict[str, dict] = {}
-        le, re = pose_map.get("left_ear"), pose_map.get("right_ear")
-        head_center = None
-        if le and re and min(_score(le), _score(re)) >= 0.35:
-            head_center = _midpoint(le, re)
-        elif nose and _score(nose) >= 0.35:
-            head_center = nose
         if head_center:
             # One broad region per hand, spanning the whole upper corner on its
             # side.  Edges are stated directly instead of as a center plus a
@@ -1387,10 +1470,9 @@ class ControlKernel:
             # an upright frame it leaves about 0.75 torso between the region and
             # a naturally hanging wrist.  The inner edge clears the head and
             # still leaves a gap to the headJump target beside it.
-            hand_bottom = hip["y"] - 0.40 * torso_px / ih
-            hand_inset = 0.45 * torso_px / iw
             for name, direction in (("leftHand", left_dir), ("rightHand", right_dir)):
-                inner = head_center["x"] + direction * hand_inset
+                hand_bottom = hip["y"] - fit[name]["bottom"] * torso_px / ih
+                inner = head_center["x"] + direction * fit[name]["inset"] * torso_px / iw
                 outer = 1.0 if direction > 0 else 0.0
                 next_rect = {
                     "x1": _clamp(min(inner, outer), 0.0, 1.0),
@@ -1406,10 +1488,11 @@ class ControlKernel:
             # arm passing above the head cannot fire this region by accident.
             jump_anchor = nose if nose and _score(nose) >= 0.35 else head_center
             anchor = self._update_head_jump_anchor(jump_anchor, shoulder, hip, now)
+            # 框的下沿比站着时的鼻子高 rise 个躯干（默认 0.16），框高 0.28 个躯干。
             jump_rect = _rect_at(
                 anchor["x"],
-                anchor["y"] - 0.30 * torso_px / ih,
-                0.52 * torso_px, 0.28 * torso_px, iw, ih,
+                anchor["y"] - (fit["headJump"]["rise"] + HEAD_JUMP_HALF_H) * torso_px / ih,
+                0.52 * torso_px, 2 * HEAD_JUMP_HALF_H * torso_px, iw, ih,
             )
             rects["headJump"] = self._smooth_rect(self.zone_rects.get("headJump"), jump_rect)
 
@@ -1430,12 +1513,13 @@ class ControlKernel:
             floor_y = max(item["y"] for item in visible)
             # 自动脚区保留可见边界，稍减离地间隙以容纳浅侧踢。
             # 原地抬脚由下方身体相对的向外伸脚证据排除，不能仅靠离地。
-            foot_w, foot_h = 1.00 * torso_px, 0.60 * torso_px
+            # 默认：中心在胯外 0.64、离地 0.335 个躯干，宽 1.00、高 0.60 个躯干。
             for name, side_hip, direction in (("leftFoot", lh, left_dir), ("rightFoot", rh, right_dir)):
+                foot = fit[name]
                 next_rect = _rect_at(
-                    side_hip["x"] + direction * 0.64 * torso_px / iw,
-                    floor_y - 0.335 * torso_px / ih,
-                    foot_w, foot_h, iw, ih,
+                    side_hip["x"] + direction * foot["out"] * torso_px / iw,
+                    floor_y - foot["lift"] * torso_px / ih,
+                    2 * foot["half_w"] * torso_px, 2 * foot["half_h"] * torso_px, iw, ih,
                 )
                 old = self.zone_rects.get(name)
                 rects[name] = self._smooth_rect(old, next_rect)
@@ -2492,6 +2576,7 @@ class ControlKernel:
             "now": round(now, 3),
             "action_chain": self.action_chain.status(),
             "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_provisional",
+            "zone_fit": self._zone_fit_status_locked(),
             "vertical_look": copy.deepcopy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),
             "body_motion_guard_enabled": bool(self.body_motion_guard_enabled),

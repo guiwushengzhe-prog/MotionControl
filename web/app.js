@@ -324,7 +324,7 @@ function renderKernelState(runtime,force=false){
   renderTriggerLive();
   renderRange();
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
-  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});
+  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
@@ -966,6 +966,8 @@ function tutorialState(){
     zones,
     outputEnabled:!!output.enabled,driverMissing:output.mode==='gamepad'&&output.server?.vigembus_running===false,
     stops:emergencyStops,
+    // 「量身」：电脑那边量到哪一步了；握拳量哪几只手；固定区域时量的是跟随那一套。
+    fit:k.zone_fit||{},fistHands:fistHands(),sceneFixed:k.scene_mode==='fixed',
     // 「做了动作，游戏没反应」：最后打中的是什么、按的哪个键；时间用内核自己的钟比。
     kernelNow:Number(k.now),lastTrigger,
     // 「按键和我的游戏对不上」
@@ -1300,6 +1302,29 @@ async function handleMainAction(){
   await setOutput(!output.enabled);
 }
 async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'校准已取消':'校准已开始：看向游戏屏幕中心，保持自然姿势')}catch(e){notice('中心设置失败：'+(e?.message||e))}}
+// 量身：开始前先停掉游戏控制，和校准一样——人要挥手、伸脚、跳，别让游戏里跟着乱按。
+async function zoneFit(action,body={}){
+  try{
+    if(action==='start')await setOutput(false);
+    renderKernelState(await post('/api/zones/fit/'+action,body));
+  }catch(e){notice('量身没开始：'+(e?.message||e))}
+}
+// 开着握拳控制的是哪几只手。量身的握拳那一步只量这几只。
+function fistHands(){
+  if(!handMouseConfig.enabled)return[];
+  return[...new Set(['horizontal','vertical'].map(axis=>handMouseConfig[axis+'_hand']).filter(hand=>hand==='left'||hand==='right'))];
+}
+// 设置页「量身」那一块：量没量过、哪天量的。
+function renderZoneFit(k=kernelState||{}){
+  const fit=k.zone_fit,status=$('#zoneFitStatus');if(!fit||!status)return;
+  const day=t=>{const d=new Date(Number(t)*1000);return`${d.getMonth()+1}月${d.getDate()}日`};
+  const zones=!fit.custom?'区域：默认大小':fit.measured_at_unix?`区域：${day(fit.measured_at_unix)}按你的身体量过`:'区域：按你的身体量过';
+  const hands=fistHands();
+  const grip=!hands.length?'握拳控制没开':fit.grip_measured_at_unix?`握拳：${day(fit.grip_measured_at_unix)}量过`:'握拳：还没量过，认不准就量一下';
+  const text=`${zones} · ${grip}`;if(status.textContent!==text)status.textContent=text;
+  $('#zoneFitResetBtn').hidden=!fit.custom;
+  $('#zoneFitGripBtn').hidden=!hands.length;
+}
 async function centerHead(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('视角中心已更新。')}catch(e){notice('视角回正失败：'+(e?.message||e))}}
 
 function drawOverlayZones(octx,w,h,zones={}){
@@ -1604,7 +1629,12 @@ $('#verticalLookSource').addEventListener('change',()=>void saveLegacyVertical()
 $('#headEnable').addEventListener('change',()=>void saveHeadEnabled());
 // 教学只指路不代劳：连接、校准都由人去点真按钮。它自己只会做一件事——扫一遍
 // 摄像头，好知道该建议什么。
-const tutorial=createTutorial({state:tutorialState,scanCameras});
+const tutorial=createTutorial({state:tutorialState,scanCameras,
+  zoneFitStart:()=>zoneFit('start'),zoneFitGripOnly:()=>zoneFit('start',{body:false}),
+  zoneFitSkip:()=>zoneFit('skip'),zoneFitCancel:()=>zoneFit('cancel')});
+$('#zoneFitBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.currentTarget));
+$('#zoneFitGripBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.currentTarget,{gripOnly:true}));
+bind('zoneFitResetBtn',async()=>{renderKernelState(await post('/api/zones/fit/reset',{}));notice('区域已恢复默认大小。')});
 for(const id of ['tutorialBtn','tutorialSettingsBtn'])$('#'+id).addEventListener('click',e=>tutorial.open(e.currentTarget));
 bind('poseRecordBtn',startPoseRecord);
 bind('poseRecordCancelBtn',cancelPoseRecord);

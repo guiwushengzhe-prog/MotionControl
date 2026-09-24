@@ -1459,6 +1459,25 @@ class AdminHandler(_BaseHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
             return
+        # 量身定区域：开始、跳过这一项、不量了、恢复默认大小。和校准一样只给本机。
+        if route in ("/api/zones/fit/start", "/api/zones/fit/skip", "/api/zones/fit/cancel", "/api/zones/fit/reset"):
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "zone fit is loopback-only"}, 403)
+                return
+            action = route.rsplit("/", 1)[1]
+            try:
+                if action == "start":
+                    KERNEL.start_zone_fit(body=body.get("body", True) is not False)
+                elif action == "skip":
+                    KERNEL.skip_zone_fit_phase()
+                elif action == "cancel":
+                    KERNEL.cancel_zone_fit()
+                else:
+                    KERNEL.reset_zone_fit()
+                self._send_json({"ok": True, **RUNTIME.status()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+            return
         if route == "/api/pose/record":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "pose recording is loopback-only"}, 403)

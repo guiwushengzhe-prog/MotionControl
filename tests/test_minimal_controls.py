@@ -65,9 +65,12 @@ def test_body_relative_zones_use_both_wrists_and_both_feet():
     for zone in ['leftHandUpper','leftHandLower','rightHandUpper','rightHandLower','leftFoot','rightFoot']:
         assert zone in kernel
     # Hand regions span the upper corner: bottom edge measured down from the
-    # hips (false-trigger boundary), inner edge inset from the head.
-    assert '0.40 * torso_px / ih' in kernel and '0.45 * torso_px / iw' in kernel
-    assert '1.00 * torso_px' in kernel and '0.52 * torso_px' in kernel
+    # hips (false-trigger boundary), inner edge inset from the head.  The
+    # default ratios live in zone_fit; a body fit replaces them per player.
+    from motioncontrol.zone_fit import DEFAULT_ZONE_FIT
+    assert DEFAULT_ZONE_FIT["leftHand"] == {"bottom": 0.40, "inset": 0.45}
+    assert DEFAULT_ZONE_FIT["leftFoot"]["half_w"] == 0.50 and '0.52 * torso_px' in kernel
+    assert 'fit[name]["bottom"] * torso_px / ih' in kernel and 'fit[name]["inset"] * torso_px / iw' in kernel
     assert 'headJump' in kernel and 'headJump' in app
     assert 'state["inside"] >= 2' in kernel and 'exit_frames = 1 if name == "lookGate" else 2' in kernel
     assert 'set_action_holds' in kernel

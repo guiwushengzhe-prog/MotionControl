@@ -298,7 +298,79 @@ const VOICE_FIX = {
   starting: {say: '语音准备中，等几秒', hint: ''},
 };
 
+// 量身：每一步叫人做什么。量的过程在电脑那边每帧跑，这里只看它量到哪一步了。
+const FIT_SAY = {
+  stand: {say: '站好，别动', hint: '就站在你平时玩的位置'},
+  hands: {say: '两只手往两边抬起来，挥一挥', hint: '抬到平时伸手按键那么高'},
+  leftFoot: {say: '左脚往左边伸出去，再收回来', hint: '像平时踢那一下'},
+  rightFoot: {say: '右脚往右边伸出去，再收回来', hint: '像平时踢那一下'},
+  jump: {say: '原地往上跳一下', hint: '和平时玩的时候跳得一样高'},
+  leftOpen: {say: '左手张开，举在身前', hint: '手指伸直，停一下'},
+  leftFist: {say: '左手握紧', hint: '握住停一下'},
+  rightOpen: {say: '右手张开，举在身前', hint: '手指伸直，停一下'},
+  rightFist: {say: '右手握紧', hint: '握住停一下'},
+};
+const FIT_ISSUE = {
+  not_visible: '看不到你了：头、肩膀和胯都要进画面',
+  feet_hidden: '脚拍不到：往后退一点，或者把摄像头放低',
+  hand_hidden: '看不到这只手：举到画面里，手指也要拍到',
+};
+// 进度格子：张开和握紧算一格。
+const FIT_CHIP = {stand: '站好', hands: '挥手', leftFoot: '左脚', rightFoot: '右脚', jump: '跳', leftFist: '左手握拳', rightFist: '右手握拳'};
+const FIT_NAME = {leftHand: '左手区', rightHand: '右手区', leftFoot: '左脚区', rightFoot: '右脚区', headJump: '跳', leftGrip: '左手握拳', rightGrip: '右手握拳'};
+
+function fitDoneSay(fit = {}) {
+  const measured = fit.measured || [];
+  const skipped = (fit.skipped || []).map(id => FIT_NAME[id] || id);
+  if (!measured.length) return '一项都没量到，还是原来的';
+  if (skipped.length) return `✓ 量好了 · ${skipped.join('、')}没量到，用原来的`;
+  // 「只量握拳」那一轮没动圈，不能说圈放好了。
+  return measured.some(id => !id.endsWith('Grip')) ? '✓ 量好了，圈按你的身体放好了' : '✓ 握拳量好了';
+}
+
 const EXTRAS = [
+  {
+    id: 'fit',
+    name: '量身',
+    problem: '圈够不着，或者站着不动也碰到',
+    doneSay: s => fitDoneSay(s.fit),
+    guide(s, memo, now) {
+      const fit = s.fit || {};
+      // 点了「开始」之后电脑那边才有一轮在量；那之前看到的 done 是上一轮的，不算。
+      if (fit.active) memo.started = true;
+      if (memo.started && fit.state === 'done') return {target: '#viewer', ready: true, say: '✓ 量好了'};
+      if (memo.started && fit.active) {
+        const words = FIT_SAY[fit.phase] || FIT_SAY.stand;
+        return {
+          target: '#viewer', ready: true, say: words.say, hint: FIT_ISSUE[fit.issue] || words.hint,
+          // 站好那一步跳不过去：后面全靠它当基准。
+          choice: fit.phase === 'stand' ? null : {label: '这一项跳过', run: 'zoneFitSkip'},
+        };
+      }
+      memo.started = false;
+      const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
+      if (before) return before;
+      const gripOnly = memo.gripOnly && s.fistHands.length;
+      return {
+        target: '#viewer', say: '站到你平时玩的位置',
+        hint: gripOnly ? '只量握拳：张开一次、握紧一次'
+          : s.sceneFixed ? '现在用的是固定区域；量完的是跟着身体走的那一套，握拳照样生效'
+          : '全身进画面，脚也要拍到。接下来挥手、伸脚、跳一下',
+        choice: {label: '站好了，开始', run: gripOnly ? 'zoneFitGripOnly' : 'zoneFitStart'},
+      };
+    },
+    check(s, memo) {
+      const fit = s.fit || {};
+      const phases = fit.phases || [];
+      const at = fit.state === 'done' ? phases.length : Number(fit.phase_index) || 0;
+      const targets = memo.started
+        ? phases.map((id, i) => ({id, i})).filter(({id}) => FIT_CHIP[id]).map(({id, i}) => ({label: FIT_CHIP[id], hit: i < at}))
+        : [];
+      return {ok: !!memo.started && fit.state === 'done', targets};
+    },
+    // 量到一半离开这一课：电脑那边那一轮也不量了，什么都不改。
+    leave: (s, memo) => { if (memo.started && s.fit?.active) return 'zoneFitCancel'; return null; },
+  },
   {
     id: 'range',
     name: '动作测试',
@@ -372,7 +444,8 @@ export function createTutorial(actions = {}) {
   const blocks = [...root.querySelectorAll('.tour-block')];
 
   // mode：main 基础那一串；extra 其中一课；menu 让人挑；finish 基础学完。
-  let mode = 'main', index = 0, extra = null, memos = {}, done = new Set(), skipped = new Set(), ran = new Set();
+  // only：这一课是从别处（设置页）直接点进来的，做完或不做了就关，不回菜单。
+  let mode = 'main', index = 0, extra = null, only = false, memos = {}, done = new Set(), skipped = new Set(), ran = new Set();
   let seen = false, offered = false;
   let holdSince = 0, doneAt = 0, advance = 0, timer = 0, frame = 0, moveTimer = 0, nudgeTimer = 0;
   let active = false, returnFocus = null, targetKey = '', targetEls = [], focusEl = null, layoutKey = '', chipsKey = '', choice = null;
@@ -583,7 +656,7 @@ export function createTutorial(actions = {}) {
       // 目标格子只在真正开始做动作时才出现：校准时就摆出「← 左 右 →」，人会以为现在就该歪头。
       targets: guide.ready || ok ? result.targets || [] : [],
       hold: need > 0 && guide.ready && !ok ? (holdSince ? (performance.now() - holdSince) / 1000 / need : 0) : null,
-      skip: ok ? '' : mode === 'main' ? '这步跳过' : '换一个',
+      skip: ok ? '' : mode === 'main' ? '这步跳过' : only ? '不做了' : '换一个',
       choiceLabel: choice?.label || '',
     });
   }
@@ -660,13 +733,18 @@ export function createTutorial(actions = {}) {
         done.add(step.id);
         skipped.delete(step.id);
         save();
-        advance = setTimeout(() => (mode === 'main' ? go(index + 1) : showMenu()), 1300);
+        advance = setTimeout(() => (mode === 'main' ? go(index + 1) : only ? close() : showMenu()), 1300);
       }
     }
     renderStep(step, guide, result, ok, state);
   }
 
   function reset() {
+    // 离开一课时让它收拾一下（比如量身量到一半，电脑那边那一轮也得停）。
+    if (mode === 'extra' && extra?.leave) {
+      const run = extra.leave(actions.state?.() || {}, memos[extra.id] || {});
+      if (run) actions[run]?.();
+    }
     cursorWant = null;
     clearTimeout(advance);
     advance = 0;
@@ -684,11 +762,11 @@ export function createTutorial(actions = {}) {
     tick();
   }
 
-  function startExtra(lesson) {
+  function startExtra(lesson, memo = {}) {
     reset();
     mode = 'extra';
     extra = lesson;
-    memos[lesson.id] = {};
+    memos[lesson.id] = memo;
     tick();
   }
 
@@ -705,7 +783,7 @@ export function createTutorial(actions = {}) {
 
   // 顶上的「新手教学」：基础一步都没碰过的人直接开始；碰过的先让他挑——可能是回来
   // 接着学，也可能是遇到了某个具体问题。
-  function open(source, {menu = true} = {}) {
+  function open(source, {menu = true, lesson = null, memo = {}} = {}) {
     returnFocus = source || null;
     active = true;
     ran = new Set();
@@ -714,7 +792,10 @@ export function createTutorial(actions = {}) {
     layoutKey = '';
     menuKey = '';
     const fresh = !done.size && !skipped.size;
-    if (menu && !fresh) showMenu();
+    const direct = lesson && EXTRAS.find(item => item.id === lesson);
+    only = !!direct;
+    if (direct) startExtra(direct, memo);
+    else if (menu && !fresh) showMenu();
     else go(Math.max(0, firstLeft()));
     clearInterval(timer);
     timer = setInterval(tick, TICK_MS);
@@ -739,6 +820,7 @@ export function createTutorial(actions = {}) {
     clearInterval(timer);
     cancelAnimationFrame(frame);
     reset();
+    only = false;
     root.hidden = true;
     setMark(null);
     document.removeEventListener('keydown', onKey);
@@ -751,25 +833,33 @@ export function createTutorial(actions = {}) {
   $('tourCloseBtn').addEventListener('click', close);
   $('tourNextBtn').addEventListener('click', close);
   $('tourSkipBtn').addEventListener('click', () => {
-    if (mode === 'extra') { showMenu(); return; }
+    if (mode === 'extra') { if (only) close(); else showMenu(); return; }
     if (mode !== 'main') return;
     skipped.add(STEPS[index].id);
     save();
     go(index + 1);
   });
   $('tourChoiceBtn').addEventListener('click', () => {
-    if (!choice || mode !== 'main') return;
-    // 目前唯一的选择是「画面里不是我」：记下现在是哪个摄像头，回设备页换一个，
-    // 换成别的序号并且开起来了才算换完。
+    const step = mode === 'main' ? STEPS[index] : mode === 'extra' ? extra : null;
+    if (!choice || !step) return;
+    // 「画面里不是我」：记下现在是哪个摄像头，回设备页换一个，换成别的序号并且
+    // 开起来了才算换完。其余的选择都是让 app.js 做一件事（比如量身的开始、跳过）。
     if (choice.run === 'repick') {
-      const memo = memos[STEPS[index].id] || (memos[STEPS[index].id] = {});
+      const memo = memos[step.id] || (memos[step.id] = {});
       const state = actions.state?.() || {};
       memo.repick = true;
       memo.repickFrom = state.cameraIndex;
       memo.lostSince = 0;
+    } else {
+      actions[choice.run]?.();
     }
     tick();
   });
 
-  return {open, close, autoOpen};
+  // 从别处直接打开某一课，比如设置页的「量身」。memo 是这一课开场要知道的事。
+  function openLesson(id, source, memo = {}) {
+    open(source, {lesson: id, memo});
+  }
+
+  return {open, close, autoOpen, openLesson};
 }
