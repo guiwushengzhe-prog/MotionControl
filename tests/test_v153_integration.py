@@ -180,6 +180,30 @@ def test_v153_runtime_world_pose_dropout_does_not_change_horizontal_output(tmp_p
     assert outputs_with == pytest.approx(outputs_without, abs=1e-9)
 
 
+def test_v153_personal_model_comes_back_after_restart(tmp_path):
+    """个人脸模型也是校准的一部分：下次打开要连它一起装回来，转头的输出和重启前一样。"""
+    estimator = HeadPoseEstimator()
+    if not estimator.pnp_available:
+        pytest.skip(estimator.pnp_error)
+    neutral = _project_pose(estimator)
+    turned = _project_pose(estimator, yaw=12.0)
+    before = HeadController(tmp_path / "head.json")
+    _calibrate(before, world=_world_face(estimator), base_pose=neutral)
+    assert before.personal_pnp_active
+
+    after = HeadController(tmp_path / "head.json")
+    assert after.calibrated and after.personal_pnp_active
+    assert after.status()["horizontal_calibrated"]
+    assert (after.center_yaw, after.center_pitch) == pytest.approx((before.center_yaw, before.center_pitch))
+    before.reset_tracking()
+    outputs_before, outputs_after = [], []
+    for index in range(8):
+        now = 4.5 + index * 0.04
+        outputs_before.append(before.update(turned, 640, 480, now=now)[0])
+        outputs_after.append(after.update(turned, 640, 480, now=now)[0])
+    assert outputs_after == pytest.approx(outputs_before, abs=1e-9)
+
+
 def test_bad_world_template_falls_back_to_generic_pnp(tmp_path):
     estimator = HeadPoseEstimator()
     if not estimator.pnp_available:

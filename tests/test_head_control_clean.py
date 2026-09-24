@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import time
 
@@ -608,18 +609,83 @@ def test_kernel_status_exposes_clean_diagnostics_only(tmp_path, monkeypatch):
         kernel.close()
 
 
-def test_saved_center_is_diagnostic_only_and_new_process_requires_fresh_calibration(tmp_path):
-    path = tmp_path / "head.json"
-    c = _ready_controller(tmp_path, yaw=3.0, pitch=-2.0)
-    c.profile_path = path
-    c.center_quality = "优秀"
-    c._save_profile()
-    reloaded = HeadController(path)
+def _calibrate_by_samples(c, yaw, pitch, now=10.0):
+    c.start_center(now=now, kind="manual")
+    c.center_yaw_samples = [yaw] * CENTER_MIN_SAMPLES
+    c.center_pitch_samples = [pitch] * CENTER_MIN_SAMPLES
+    c.timeout_center()
+    assert c.calibrated and not c.calibrating
+
+
+def test_last_calibration_is_reused_after_restart(tmp_path):
+    """校准一次就记住：人没挪、摄像头没动，下次打开不用再校准。界面上说一声是上次的。"""
+    c = _ready_controller(tmp_path)
+    _calibrate_by_samples(c, 3.0, -2.0)
+    reloaded = HeadController(tmp_path / "head.json")
     assert reloaded.config["algorithm"] == c.config["algorithm"]
-    assert reloaded.center_pending is True
-    assert reloaded.calibrated is False
-    assert reloaded.update({"yaw": 3.0, "pitch": -2.0}, 640, 480, now=1.0) == (0.0, 0.0)
+    assert reloaded.calibrated is True
+    assert reloaded.center_pending is False
     assert reloaded.calibrating is False
+    assert (reloaded.center_yaw, reloaded.center_pitch) == pytest.approx((3.0, -2.0))
+    status = reloaded.status()
+    assert status["quality"].startswith("沿用上次校准")
+    assert status["calibration_from_last_session"] is True
+
+
+def test_recalibrating_replaces_the_remembered_calibration(tmp_path):
+    c = _ready_controller(tmp_path)
+    _calibrate_by_samples(c, 3.0, -2.0)
+    reloaded = HeadController(tmp_path / "head.json")
+    reloaded.estimator = NumericEstimator()
+    _calibrate_by_samples(reloaded, 5.0, 1.0, now=20.0)
+    assert reloaded.status()["calibration_from_last_session"] is False
+    again = HeadController(tmp_path / "head.json")
+    assert (again.center_yaw, again.center_pitch) == pytest.approx((5.0, 1.0))
+
+
+def test_changing_a_setting_mid_calibration_keeps_the_remembered_one(tmp_path):
+    """校准进行到一半时改灵敏度也会写盘，写的必须还是上一份完整的，不是半截的。"""
+    c = _ready_controller(tmp_path)
+    _calibrate_by_samples(c, 3.0, -2.0)
+    c.start_center(now=30.0, kind="manual")
+    c.configure(sensitivity_x=70.0)
+    c.cancel_center()
+    reloaded = HeadController(tmp_path / "head.json")
+    assert reloaded.calibrated is True
+    assert (reloaded.center_yaw, reloaded.center_pitch) == pytest.approx((3.0, -2.0))
+
+
+def test_a_calibration_from_another_estimator_is_not_reused(tmp_path):
+    """pnp 和 ratio 的中心单位都不一样，装回来就是错的中心。"""
+    c = _ready_controller(tmp_path)
+    _calibrate_by_samples(c, 3.0, -2.0)
+    c.configure(algorithm="ratio")
+    reloaded = HeadController(tmp_path / "head.json")
+    assert reloaded.calibrated is False
+    assert reloaded.center_pending is True
+
+
+def test_a_profile_saved_before_calibration_was_kept_still_asks_for_one(tmp_path):
+    path = tmp_path / "head.json"
+    path.write_text(json.dumps({
+        "signal_version": HEAD_SIGNAL_VERSION, "params": {"algorithm": "pnp"},
+        "center": {"yaw": 3.0, "pitch": -2.0},
+    }), encoding="utf-8")
+    reloaded = HeadController(path)
+    assert reloaded.calibrated is False
+    assert reloaded.center_pending is True
+
+
+def test_a_damaged_calibration_is_ignored_not_half_loaded(tmp_path):
+    c = _ready_controller(tmp_path)
+    _calibrate_by_samples(c, 3.0, -2.0)
+    path = tmp_path / "head.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["calibration"]["_generic_center"] = "坏了"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    reloaded = HeadController(path)
+    assert reloaded.calibrated is False
+    assert reloaded.center_pending is True
 
 
 def test_insufficient_recalibration_does_not_overwrite_existing_good_center(tmp_path):

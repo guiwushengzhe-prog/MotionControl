@@ -8,8 +8,8 @@
 All three use the same relative gesture: outward turn moves, a held pose stops,
 and returning to a quiet neutral center rearms without reverse mouse output.
 Legacy profile/API IDs are accepted; ``classic`` now selects gesture_v153.
-One valid capture can be reused across the three horizontal policies. A new
-estimator (pnp/ratio) or camera session still requires a new neutral capture.
+One valid capture can be reused across the three horizontal policies and across
+program starts. A new estimator (pnp/ratio) still requires a new neutral capture.
 """
 
 from __future__ import annotations
@@ -2318,6 +2318,19 @@ class HeadController:
         "personal_pnp_current_depth", "personal_pnp_far_depth_ratio",
     )
 
+    # 一次校准算出来的全部数值。存进 head_profile.json，下次打开原样装回来：人没挪、
+    # 摄像头没动的话，上一次的中心本来就还是对的，不该每次启动都逼人再校准一遍。
+    # 挪了就点「站好并校准」，新的一份整个盖掉旧的。
+    #
+    # 必须整份存、整份装：通用中心、侧倾中心、个人脸模型和固定特征中心是同一次校准
+    # 的产物，只装回一部分的话，换个左右方案就拿到了另一次校准的中心。
+    _PERSISTED_CALIBRATION_FIELDS = (
+        "center_yaw", "noise_yaw", "center_pitch", "noise_pitch",
+        "center_yaw_proxy", "noise_yaw_proxy", "_generic_center", "center_quality",
+        "frozen22_center", "frozen22_sigma", "frozen22_cal_sigma_deg",
+        "frozen22_world_resid_rel", "frozen22_calibration_valid",
+    ) + _CALIBRATION_AUX_FIELDS
+
     def __init__(self, profile_path: Path | None = None) -> None:
         self.estimator = HeadPoseEstimator()
         self.profile_path = profile_path
@@ -2468,6 +2481,12 @@ class HeadController:
         self._generic_center = (math.nan, 0.0, math.nan, 0.0)
         self._calibration_algorithm: str | None = None
         self._personal_policy_store: dict[str, dict] = {}
+        # 存盘用的那份校准（已经是能直接写 JSON 的样子）。正在校准时写盘，写的仍是
+        # 它——那时候内存里的中心是半截的。
+        self._saved_calibration: dict | None = None
+        # 这次的中心是不是上次打开时留下的。界面上要说一声「沿用上次校准」：人换了
+        # 位置却没意识到要重新校准的话，至少看得到原因。
+        self.calibration_from_last_session = False
         self.last_error = ""
         self.notice = ""
         self.notice_until = 0.0
@@ -3201,6 +3220,7 @@ class HeadController:
                     self._calibration_restore_aux_state = None
                     self._calibration_restore_frozen22 = None
                 self.calibrated = True
+                self.calibration_from_last_session = False
                 if len(self._tilt_samples) >= CENTER_MIN_SAMPLES:
                     self.center_tilt, self.noise_tilt = _robust_center_and_sigma(self._tilt_samples)
                 else:
@@ -3225,6 +3245,9 @@ class HeadController:
                         self.notice = f"校准完成 · 质量{self.center_quality}"
                     if personal_required and not self.personal_pnp_active and self.config["algorithm"] == "pnp":
                         self.notice += "；个人模型未采用，已使用通用 PnP"
+                # 先把「正在校准」放下再写盘：_save_profile 在校准中途只写上一份，
+                # 这里写的必须是刚算出来的这一份。
+                self.calibrating = False
                 self._save_profile()
         if not success:
             self._restore_precalibration_pnp_model()
@@ -3989,7 +4012,8 @@ class HeadController:
         elif self.calibrated:
             elapsed = None
             remaining = None
-            quality = f"已校准 · 质量{self.center_quality}"
+            origin = "沿用上次校准" if self.calibration_from_last_session else "已校准"
+            quality = f"{origin} · 质量{self.center_quality}"
         else:
             elapsed = None
             remaining = None
@@ -4135,6 +4159,7 @@ class HeadController:
             "sensitivity_x": round(float(self.config["sensitivity_x"]), 2),
             "sensitivity_y": round(float(self.config["sensitivity_y"]), 2),
             "calibrated": bool(self.calibrated),
+            "calibration_from_last_session": bool(self.calibrated and self.calibration_from_last_session),
             "calibrating": bool(self.calibrating),
             "center_capture_pending": bool(self.center_pending),
             "center_capture_kind": self.center_kind,
@@ -4234,11 +4259,8 @@ class HeadController:
                 "sensitivity_x": _clamp(params.get("sensitivity_x", DEFAULT_CONFIG["sensitivity_x"]), 20.0, 120.0),
                 "sensitivity_y": _clamp(params.get("sensitivity_y", DEFAULT_CONFIG["sensitivity_y"]), 15.0, 100.0),
             })
-            # Persist tuning parameters, but deliberately require a fresh neutral
-            # center after each program launch.  Camera height, player position
-            # and natural posture can change between sessions, and voice-triggered
-            # calibration makes this one-time step cheap.  Saved center data is
-            # retained in the file for diagnostics only.
+            # Start from an uncalibrated state, then install the last complete
+            # calibration if this file carries one for the same estimator.
             self.calibrated = False
             self.center_pending = True
             self.center_quality = "未校准"
@@ -4257,17 +4279,86 @@ class HeadController:
             if set_model is not None:
                 set_model(None)
             self._recompute_deadzone()
+            self._restore_saved_calibration(payload)
         except (OSError, ValueError, TypeError):
             return
+
+    @staticmethod
+    def _tupled(value):
+        """JSON 读回来的列表变回元组：校准里这些值在内存里都是元组。"""
+        if isinstance(value, list):
+            return tuple(HeadController._tupled(item) for item in value)
+        if isinstance(value, dict):
+            return {key: HeadController._tupled(item) for key, item in value.items()}
+        return value
+
+    def _calibration_snapshot(self) -> dict:
+        """当前这份校准，转成写得进 JSON 的样子（元组变列表，NaN/inf 原样）。"""
+        return json.loads(json.dumps(
+            {name: getattr(self, name) for name in self._PERSISTED_CALIBRATION_FIELDS}))
+
+    def _restore_saved_calibration(self, payload: dict) -> None:
+        """把上次存下的校准整份装回来。装不上就保持「未校准」，不装一半。
+
+        只认同一个信号版本、同一种估计方法（pnp/ratio）存下的：换了的话中心的单位
+        都不一样，装回来就是错的中心。更早的档案里没有这一段，照旧要校准一次。
+        """
+        saved = payload.get("calibration")
+        if payload.get("signal_version") != HEAD_SIGNAL_VERSION or not isinstance(saved, dict):
+            return
+        if saved.get("_calibration_algorithm") != self.config["algorithm"]:
+            return
+        if any(name not in saved for name in self._PERSISTED_CALIBRATION_FIELDS):
+            return
+        generic = self._tupled(saved["_generic_center"])
+        if not (
+            isinstance(generic, tuple) and len(generic) == 4
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in generic)
+            and math.isfinite(generic[0]) and math.isfinite(generic[2])
+        ):
+            return
+        before = {name: getattr(self, name) for name in self._PERSISTED_CALIBRATION_FIELDS}
+        try:
+            for name in self._PERSISTED_CALIBRATION_FIELDS:
+                setattr(self, name, self._tupled(saved[name]))
+            self.center_quality = str(self.center_quality)
+            # 个人脸模型装进估计器、按当前左右方案选对中心，都在这里面。
+            self._apply_policy_model()
+        except (ValueError, TypeError, KeyError, AttributeError):
+            for name, value in before.items():
+                setattr(self, name, value)
+            set_model = getattr(self.estimator, "set_pnp_model", None)
+            if set_model is not None:
+                set_model(None)
+            self.personal_pnp_active = False
+            self._recompute_deadzone()
+            return
+        policy = self.config["horizontal_algorithm"]
+        self.calibrated = True
+        self.center_pending = bool(
+            (policy in FROZEN22_POLICIES and not self.frozen22_calibration_valid)
+            or (policy == "roll_tilt" and not math.isfinite(self.center_tilt))
+        )
+        self.calibration_from_last_session = True
+        self._saved_calibration = saved
 
     def _save_profile(self) -> None:
         if not self.profile_path:
             return
         path = Path(self.profile_path)
+        # 正在校准时内存里是半截的，照旧写上一份；没有可用的校准（从没校准过，或刚
+        # 换了估计方法）就写空，下次打开要重新校准。
+        if not self.calibrating:
+            try:
+                self._saved_calibration = self._calibration_snapshot() if self.calibrated else None
+            except (TypeError, ValueError):
+                # 存不下校准不该让改设置失败；最坏是下次打开要重新校准。
+                self._saved_calibration = None
         payload = {
             "signal_version": HEAD_SIGNAL_VERSION,
             "saved_at_unix": time.time(),
             "params": dict(self.config),
+            "calibration": self._saved_calibration,
             "center": {
                 "yaw": self.center_yaw if self.calibrated else None,
                 "pitch": self.center_pitch if self.calibrated else None,

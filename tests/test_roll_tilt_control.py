@@ -89,6 +89,20 @@ def test_calibration_records_tilt_and_mode_switch_preserves_original_yaw(tmp_pat
     assert c.center_tilt == pytest.approx(4.)
 
 
+def test_tilt_center_comes_back_after_restart(tmp_path, monkeypatch):
+    """新玩家默认就是侧倾。它的中心也要记住，不然下次打开还是得先校准。"""
+    c = controller(tmp_path, monkeypatch)
+    c.start_center(1.)
+    for i in range(100):
+        c.update(eyes(4.), 640, 480, now=1 + i * .04)
+    assert c.calibrated
+    reloaded = HeadController(tmp_path / 'head.json')
+    assert reloaded.config['horizontal_algorithm'] == 'roll_tilt'
+    assert reloaded.status()['horizontal_calibrated']
+    assert reloaded.center_tilt == pytest.approx(4.)
+    assert reloaded.center_pending is False
+
+
 def test_tilt_does_not_require_yaw_estimator_to_be_valid_after_calibration(tmp_path, monkeypatch):
     c = controller(tmp_path, monkeypatch)
     monkeypatch.setattr(c.estimator, 'estimate', lambda *args: HeadEstimate(False, error='yaw unavailable'))
