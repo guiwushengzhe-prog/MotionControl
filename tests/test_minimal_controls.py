@@ -28,7 +28,7 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩，本游戏 = 换游戏会变的，
     # 通用设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
-    for required in ['2.0', '开始', '本游戏', '通用设置', '站好并校准', '重新识别位置', '重设正前方', '紧急停止 · F9', '自定义口令', '三维头姿（推荐）', '挪动区域', 'profileBindingRows']:
+    for required in ['2.0', '开始', '本游戏', '通用设置', '站好并校准', '重新识别位置', '重设正前方', '紧急停止 · F9', '通用口令', '三维头姿（推荐）', '挪动区域', 'profileBindingRows']:
         assert required in page
     assert '开始游戏控制' in app and '暂停游戏控制' in app
     for removed in ['开始 30 秒性能测试', '静止抖动测试', '实时性能数据', 'Lite / Full 对比结果', 'modelSelect']:
@@ -47,7 +47,9 @@ def test_v2_command_catalog_and_head_ui():
     # product_version 已经删掉：代码里从来没人读它，只有测试在核对，于是它的全部
     # 作用就是多一个发版时要记得改、改漏了也没人知道的数字。
     assert 'product_version' not in catalog
-    assert len(catalog['commands']) >= 39
+    # 内置口令只留系统功能和每个游戏的 12 句。按游戏键的那些和通用口令是同一件事，
+    # 留着只会同名打架——见 tests/test_voice_phrase_exclusive.py。
+    assert sum(item['id'].startswith('game.profile_slot_') for item in catalog['commands']) == 12
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert "开始游戏控制" in app and "暂停游戏控制" in app
@@ -647,6 +649,61 @@ def test_squat_then_stand_does_not_press_the_following_head_zone(monkeypatch):
         kernel.close()
 
 
+def _leaning_in_pose(scale, drop):
+    """Closer to the camera and lower, as when reaching over to tap the phone."""
+    pose = _standing_pose()
+    for point in pose.values():
+        point['x'] = .5 + (point['x'] - .5) * scale
+        point['y'] = .40 + (point['y'] - .40) * scale + drop
+    return pose
+
+
+def test_head_zone_returns_above_the_head_after_leaning_in(monkeypatch):
+    """Leaning in to tap the phone used to leave the zone under the chin.
+
+    The lean makes the body larger.  The upright span was an all-time maximum,
+    so after sitting back every frame looked like a crouch and the zone never
+    followed back up.
+    """
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        resting_y = kernel.zone_rects['headJump']['y1']
+        feed(_leaning_in_pose(1.25, .10), 60)
+        feed(_standing_pose(), 150)
+
+        assert kernel.zone_rects['headJump']['y2'] < _standing_pose()['nose']['y']
+        assert kernel.zone_rects['headJump']['y1'] == pytest.approx(resting_y, abs=.01)
+    finally:
+        kernel.close()
+
+
+def test_one_stray_hip_estimate_does_not_stop_the_head_zone_following(monkeypatch):
+    """With the hips out of frame their estimate jumps about.
+
+    One long frame used to become the upright span for good.  From then on the
+    zone would not follow the player down, and stayed out of reach above them.
+    """
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        resting_gap = _standing_pose()['nose']['y'] - kernel.zone_rects['headJump']['y2']
+        stray = _standing_pose()
+        for name in ('left_hip', 'right_hip'):
+            stray[name]['y'] += .05
+        feed(stray)
+        feed(_standing_pose(), 30)
+        lower = _standing_pose(dy=.12)
+        feed(lower, 300)
+
+        gap = lower['nose']['y'] - kernel.zone_rects['headJump']['y2']
+        assert gap == pytest.approx(resting_gap, abs=.01)
+    finally:
+        kernel.close()
+
+
 def test_natural_standing_never_enters_the_enlarged_hand_zones(monkeypatch):
     kernel = ControlKernel(KernelOutput())
     try:
@@ -785,7 +842,7 @@ def test_spare_voice_slots_are_editable_not_only_displayable():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     assert "filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_'))" not in app
     assert "slot:String(item.id||'').startsWith('game.profile_slot_')" in app
-    assert "title:'语音口令'" in app
+    assert "title:'本游戏口令'" in app
     assert "className='voice-trigger-phrase'" in app
 
 

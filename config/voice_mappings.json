@@ -5,16 +5,6 @@
   ],
   "mappings": [
     {
-      "phrase": "开始校准",
-      "type": "system",
-      "target": "HEAD_CALIBRATION_START",
-      "behavior": "tap",
-      "synonyms": [
-        "校准头控",
-        "自动校准"
-      ]
-    },
-    {
       "phrase": "开始",
       "type": "keyboard",
       "target": "ENTER",
@@ -139,53 +129,6 @@
       "synonyms": [
         "打开地图",
         "显示地图"
-      ]
-    },
-    {
-      "phrase": "截图",
-      "type": "system",
-      "target": "SCENE.CAPTURE_REFERENCE",
-      "behavior": "tap",
-      "synonyms": [
-        "记录场景",
-        "场景截图"
-      ]
-    },
-    {
-      "phrase": "重新匹配",
-      "type": "system",
-      "target": "SCENE.REMATCH",
-      "behavior": "tap",
-      "synonyms": [
-        "重新适配",
-        "匹配场景"
-      ]
-    },
-    {
-      "phrase": "开始输出",
-      "type": "system",
-      "target": "OUTPUT.START",
-      "behavior": "tap",
-      "synonyms": [
-        "开启输出"
-      ]
-    },
-    {
-      "phrase": "停止输出",
-      "type": "system",
-      "target": "OUTPUT.STOP",
-      "behavior": "tap",
-      "synonyms": [
-        "关闭输出"
-      ]
-    },
-    {
-      "phrase": "设置中心",
-      "type": "system",
-      "target": "HEAD.CENTER",
-      "behavior": "tap",
-      "synonyms": [
-        "立即设置中心"
       ]
     },
     {

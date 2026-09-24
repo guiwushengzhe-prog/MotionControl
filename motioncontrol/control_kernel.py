@@ -124,13 +124,24 @@ BODY_MOTION_ACTION_RISK_TIMING = {
 # Head-jump anchor tuning.  The anchor exists so the target above the head can
 # track a changed stance without also riding up with a jump.  Lateral drift is
 # followed promptly; vertical drift is followed slowly and stops entirely above
-# the freeze speed.  A crouch also shortens the shoulder-to-hip span, so its
-# vertical follow is held until the player returns to the upright span.  This
-# avoids a delayed target crossing the nose on the way back up.
+# the freeze speed.  A crouch also shortens the shoulder-to-hip span, so while
+# the span is short the target is not pulled *down* after the head: a target
+# that followed a squat would sit low, and the nose would cross it on the way
+# back up.  Following *up* stays allowed, since that only moves the target away
+# from the nose.
+#
+# The upright span it compares with has to forget.  It used to be an all-time
+# maximum, and leaning in to tap the phone makes the body bigger: after sitting
+# back every frame looked like a crouch, and the target stayed wherever the
+# lean had left it -- under the chin, which is where the phone showed it.  Now
+# it forgets slowly, so a squat held for more than about ten seconds is taken as
+# the new stance and standing up from it can brush the target once.
 HEAD_JUMP_FREEZE_VY = 0.35
 HEAD_JUMP_FOLLOW_X_S = 0.35
 HEAD_JUMP_FOLLOW_Y_S = 1.50
 HEAD_JUMP_CROUCH_RATIO = 0.90
+HEAD_JUMP_UPRIGHT_RISE_S = 0.30
+HEAD_JUMP_UPRIGHT_FORGET_S = 20.0
 # A jump spans roughly 0.3-0.5 torso, so this only fires when the player truly
 # relocated or the camera was re-aimed.
 HEAD_JUMP_SNAP_TORSO = 1.20
@@ -1305,14 +1316,6 @@ class ControlKernel:
         torso_n = _distance(shoulder, hip)
         if self.head_jump_torso_ref is None:
             self.head_jump_torso_ref = torso_n
-        elif torso_n > self.head_jump_torso_ref:
-            # Camera scale changes can make the body larger; accept that
-            # quickly so a later crouch is still compared with a fresh span.
-            self.head_jump_torso_ref = torso_n
-        crouched = (
-            self.head_jump_torso_ref > 1e-6
-            and torso_n < HEAD_JUMP_CROUCH_RATIO * self.head_jump_torso_ref
-        )
         coherent_vy, dt = 0.0, 0.0
         if self.head_jump_prev is not None and torso_n > 1e-6:
             prev_shoulder_y, prev_hip_y, prev_at = self.head_jump_prev
@@ -1333,8 +1336,19 @@ class ControlKernel:
         if dt <= 0.0:
             return anchor
         step = min(dt, 0.12)
+        # The upright span rises within a fraction of a second, so a camera or
+        # stance change that makes the body larger is accepted, but a single
+        # stray hip estimate is not.  It falls slowly, so a held squat keeps
+        # being recognised while backing away from the camera does not read as
+        # a crouch for good.
+        ref = self.head_jump_torso_ref
+        settle_s = HEAD_JUMP_UPRIGHT_RISE_S if torso_n > ref else HEAD_JUMP_UPRIGHT_FORGET_S
+        ref += (1.0 - math.exp(-step / settle_s)) * (torso_n - ref)
+        self.head_jump_torso_ref = ref
+        crouched = ref > 1e-6 and torso_n < HEAD_JUMP_CROUCH_RATIO * ref
         anchor["x"] += (1.0 - math.exp(-step / HEAD_JUMP_FOLLOW_X_S)) * (float(target["x"]) - anchor["x"])
-        if coherent_vy < HEAD_JUMP_FREEZE_VY and not crouched:
+        rising = float(target["y"]) < anchor["y"]
+        if coherent_vy < HEAD_JUMP_FREEZE_VY and (rising or not crouched):
             anchor["y"] += (1.0 - math.exp(-step / HEAD_JUMP_FOLLOW_Y_S)) * (float(target["y"]) - anchor["y"])
         if torso_n > 1e-6 and abs(float(target["y"]) - anchor["y"]) > HEAD_JUMP_SNAP_TORSO * torso_n:
             anchor["y"] = float(target["y"])

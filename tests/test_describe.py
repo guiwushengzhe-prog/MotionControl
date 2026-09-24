@@ -162,13 +162,13 @@ def test_voice_triggers_use_the_command_label():
         "selected_id": "generic-xbox",
         "overrides_by_profile": {
             "generic-xbox": {
-                "voice.game.attack": {"action": {"type": "keyboard", "target": "F",
-                                                 "behavior": "tap"}},
+                "voice.game.profile_slot_01": {"action": {"type": "keyboard", "target": "F",
+                                                          "behavior": "tap"}},
             },
         },
     }).data
     item = describe("profile_selection", doc)["games"][0]["groups"][0]["items"][0]
-    assert item["name"] == "攻击"
+    assert item["name"] == "当前游戏功能1"
 
 
 def test_motion_and_voice_documents_are_described():

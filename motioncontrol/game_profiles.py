@@ -319,7 +319,10 @@ class GameProfileStore:
             self._save_selection({**self._selection, "selected_id": str(profile_id)})
             return self.effective_profile()
 
-    def set_overrides(self, overrides: dict, profile_id: str | None = None) -> dict:
+    def set_overrides(self, overrides: dict, profile_id: str | None = None, check=None) -> dict:
+        """``check`` sees the merged bindings before anything is saved and may
+        raise to refuse them -- the voice service uses it so a game's phrase
+        cannot take one that is already spoken for."""
         if not isinstance(overrides, dict):
             raise ValueError("overrides must be an object")
         # Validate by applying to the currently selected base profile before saving.
@@ -329,6 +332,8 @@ class GameProfileStore:
             base = self.get_profile(self._selection["selected_id"])
             merged = _merge_bindings(base.get("bindings", {}), overrides)
             validate_motion_bindings(merged)
+            if check is not None:
+                check(merged)
             selection = copy.deepcopy(self._selection)
             selection["overrides_by_profile"][selection["selected_id"]] = copy.deepcopy(overrides)
             self._save_selection(selection)

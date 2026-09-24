@@ -129,7 +129,7 @@ const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',
 // The dispatcher rejects anything outside this set, so offer the list instead
 // of a free text field whose typos can only surface as a silent no-op in game.
 const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
-const VOICE_SYSTEM_TARGETS=[['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
+const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
 const voice={status:null};
 let customPoses=[];
 let customPoseScores={};
@@ -149,7 +149,7 @@ function profileTriggers(){
     .map(item=>({
       key:`voice.${item.id}`,group:'voice',id:item.id,
       slot:String(item.id||'').startsWith('game.profile_slot_'),
-      name:`口令槽 ${String(item.id||'').replace('game.profile_slot_','')}`,phrase:item.phrase,tapOnly:false,
+      name:`口令 ${Number(String(item.id||'').replace('game.profile_slot_',''))}`,phrase:item.phrase,tapOnly:false,
       defaultBinding:item.default_action?{label:item.label,action:item.default_action}:null,
     }));
   // 用户自己录的姿势并进同一份触发器列表，于是它们自动出现在映射界面里，
@@ -249,7 +249,9 @@ function renderMainStatus(){
   const main=$('#mainActionBtn');
   main.disabled=!serviceReady||actionBusy||zoneEditMode;
   main.textContent=output.enabled?'暂停游戏控制':(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady?'连接设备':'开始游戏控制');
+  main.classList.toggle('running',!!output.enabled);
   $('#serviceStatus').textContent=serviceReady?'本地服务已连接':'服务失联 · 当前状态无法确认';
+  $('#serviceStatus').classList.toggle('online',serviceReady);$('#serviceStatus').classList.toggle('offline',!serviceReady);
   const missing=[];
   if(!currentPoseMap)missing.push('人体未识别：区域和身体动作不可用');
   else if(!sceneConfigured)missing.push('区域未定位：固定区域不可用');
@@ -267,7 +269,7 @@ function setupConflicts(){
   const hand=kernelState?.head?.hand_mouse||{};
   const items=[];
   if(inputStatus.phone_ignored)
-    items.push(['手机正在传画面，但来源选的是电脑摄像头——手机传来的都被丢掉了。','改用手机',()=>setSource('phone',true)]);
+    items.push(['手机在传画面，但来源选的是电脑摄像头，手机的画面没有用上。','改用手机',()=>setSource('phone',true)]);
   if(mergeOwnsSticks()&&hand.enabled)
     items.push(['物理手柄合流占着两个摇杆，手控鼠标不会动。','关掉合流',async()=>{$('#xinputMerge').value='';await setXinputMerge()}]);
   const verticalHand=hand.config?.vertical_hand??hand.vertical_hand;
@@ -298,7 +300,7 @@ function renderKernelState(runtime,force=false){
   renderTriggerLive();
   renderRange();
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
-  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
+  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
@@ -326,11 +328,11 @@ function renderKernelState(runtime,force=false){
     const usesHand=hs.hand_mouse?.enabled&&['left','right'].includes(hs.hand_mouse?.config?.horizontal_hand);
     const method=usesHand?'握拳':hs.horizontal_algorithm==='roll_tilt'?'侧倾':'转头';
     const horizontalCalibrated=usesHand||(hs.horizontal_calibrated??hs.calibrated);
-    $('#headStatus').textContent=!usesHand&&hs.enabled===false?'左右视角已关闭':horizontalCalibrated?(!usesHand&&guardBlocked?'身体动作中 · 左右视角已稳定':`${method} · 左右 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说“体感开始校准”';
+    $('#headStatus').textContent=!usesHand&&hs.enabled===false?'左右视角已关闭':horizontalCalibrated?(!usesHand&&guardBlocked?'身体动作中 · 左右视角已稳定':`${method} · 左右 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说「体感开始校准」';
   }
   if(hs.calibrated!==undefined){
     $('#calBtn').textContent=hs.calibrating?'取消校准':'站好并校准';
-    $('#calStatus').textContent=hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'等待校准，可说“开始校准”');
+    $('#calStatus').textContent=hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'等待校准，可说「开始校准」');
     const missingPoints=(hs.frozen22_missing_points||[]).join('、');
     $('#calStatus').title=[hs.estimate_error,missingPoints&&'缺少关键点：'+missingPoints].filter(Boolean).join(' · ');
     renderCalibrationOverlay(hs);
@@ -398,7 +400,7 @@ function renderInputStatus(status){
     const usb=status.usb_tether||{};
     tether.textContent=usb.present
       ? `数据线已接通（${usb.adapter||'USB'}）${usb.carries_internet?'，这台电脑正在走手机的网':''}`
-      : '没检测到数据线。走 WiFi 就不用管它；插了线还是这句话，就是手机上的「USB 网络共享」没打开。';
+      : '没检测到数据线。用 Wi-Fi 连可以不管；插了线还这样，说明手机上的「USB 网络共享」没打开。';
     tether.className='statusline'+(usb.present?'':' warn');
   }
   const field=$('#phoneWsUrl'),urls=status.phone_ws_urls||[];
@@ -713,7 +715,7 @@ function renderProfileBindingRows(){
   const groups=[
     {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
     {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手过头顶不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
-    {id:'voice',title:'语音口令',help:'每个口令槽都可以改“说什么”和执行动作；修改后电脑、手机共用同一份词库。紧急停止始终保留安全兜底。',filter:t=>t.group==='voice',open:false},
+    {id:'voice',title:'本游戏口令',help:'只在这个游戏里生效，会跟着配置一起分享。说法不能和通用口令、内置口令重复。',filter:t=>t.group==='voice',open:false},
   ];
   for(const group of groups){
     const items=triggers.filter(group.filter);if(!items.length)continue;
@@ -1186,9 +1188,9 @@ function renderOutputMix(){
   const pads=gamepadBindingCount();
   let text='';
   if(output.mode==='gamepad'&&handMouseOn){
-    text='视角输出是 Xbox 右摇杆，所以握拳推的是摇杆，桌面上的鼠标不会动。想用握拳直接控制鼠标，把上面的视角输出改成“鼠标视角”。';
+    text='视角输出是 Xbox 右摇杆，握拳控制的是摇杆，鼠标不会动。想让握拳控制鼠标，把视角输出改成「鼠标视角」。';
   }else if(output.mode==='mouse'&&pads>0){
-    text=`视角走鼠标，但这个游戏方案里还有 ${pads} 个动作出的是 Xbox 按键。两种混着出，游戏会在手柄提示和键鼠提示之间反复切换。要么把视角输出改成 Xbox，要么给这些动作换成键盘/鼠标按键。`;
+    text=`视角走鼠标，但这个游戏还有 ${pads} 个动作输出 Xbox 按键，游戏会在手柄和键鼠提示之间来回切换。把视角输出改成 Xbox，或把这些动作改成键鼠按键。`;
   }
   el.hidden=!text;el.textContent=text;
 }
@@ -1229,7 +1231,7 @@ async function setSource(source,enabled=true){
     // 没有摄像头的电脑在这里是死路：报一句"无法打开"然后没有下文。所以失败时
     // 直接把另外两条出路说出来——换一个摄像头，或者改用手机。
     throw new Error((result.camera?.last_error||'摄像头启动失败')
-      +'。这台电脑如果没有摄像头，把“摄像头来源”改成手机摄像头；有好几个的话，点“扫描摄像头”换一个试试。');
+      +'。没有摄像头的话，把「摄像头来源」改成手机摄像头；有好几个的话，点「扫描摄像头」换一个试试。');
   }
   ++kernelEpoch;desiredSource=source;
   renderKernelState(result);await refreshInput();
@@ -1250,9 +1252,9 @@ async function ensureInitialSceneLayout(){
     const current=await api('/api/scene/status');renderSceneEditor(current);if(current?.configured)return true;
     // Recording a scene permanently leaves the body-relative zones behind, so
     // it must be a deliberate choice rather than a side effect of starting.
-    if(!(await confirmFixedZones())){notice('已取消。区域继续跟随身体，随时可以再点“调整区域位置”。');return false}
+    if(!(await confirmFixedZones())){notice('已取消。区域继续跟随身体，随时可以再点「挪动区域」。');return false}
     scenePreparing=true;renderMainStatus();notice('首次使用：请站到正常游戏位置，正在自动定位 6 个体感区域…');
-    if(!(await waitForPose(8000))){notice('还没有识别到头和双肩。请站到镜头前后再点“开始游戏控制”。首次定位不要求全身入镜。');return false}
+    if(!(await waitForPose(8000))){notice('还没识别到头和双肩。站到镜头前再点「开始游戏控制」，首次定位不需要全身入镜。');return false}
     const result=await post('/api/scene/capture',{});
     if(result?.configured){renderSceneEditor(result);notice('6 个体感区域已自动定位。');return true}
     if(result?.scene?.configured){renderSceneEditor(result.scene);notice('6 个体感区域已自动定位。');return true}
@@ -1301,53 +1303,75 @@ function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=do
   // the catalog says so, and without it the picker would come out empty.
   if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder='例如 W / SPACE / CTRL+W';input.value=value||'';target.replaceChildren(input);return}
   fillTargetControl(target,type.value,value);
-};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');for(const[value,label]of [['tap','点按'],['hold','持续按住'],['release','松开']]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';const syncBehavior=()=>{behavior.disabled=type.value==='system';if(behavior.disabled)behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phrase,type,target,behavior,remove);$('#voiceRows').appendChild(row)}
-function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=(row.querySelector('.binding-target')?.value||'').trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('语音命令必须同时填写“说什么”和“输出什么”');const behavior=type==='system'?'tap':row.querySelector('.voice-behavior').value;const item={phrase,type,target,behavior},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
+};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');for(const[value,label]of [['tap','点按'],['hold','持续按住'],['release','松开']]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';const syncBehavior=()=>{behavior.disabled=type.value==='system';if(behavior.disabled)behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phrase,type,target,behavior,remove);$('#voiceRows').appendChild(row)}
+function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=(row.querySelector('.binding-target')?.value||'').trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('每条口令都要填「说什么」和「输出什么」');const behavior=type==='system'?'tap':row.querySelector('.voice-behavior').value;const item={phrase,type,target,behavior},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
 function renderVoiceRows(items){$('#voiceRows').replaceChildren();for(const m of items||[])addVoiceRow(m);if(!$('#voiceRows').children.length)addVoiceRow()}
 function renderVoiceStatus(s=voice.status){
   if(!s)return;voice.status=s;const has=!!s.model_ready,connected=!!s.connected;const isSingleKws=String(s.recognizer_mode||'').includes('single_stage')||String(s.recognizer_mode||'').includes('kws');
   $('#voiceMode').textContent=has?(isSingleKws?`短语识别 · ${s.supported_count||0} 条`:`语音 · ${s.supported_count||0} 条`):'未就绪';$('#voiceMode').className='pill '+(has?'ok':'warn');
   const pcOk=connected&&s.source_kind==='computer'&&s.available&&s.model_ready&&s.audio_ready&&(s.audio_alive||s.stream_alive);const phoneOk=connected&&s.source_kind!=='computer';const ready=pcOk||phoneOk;voiceInputReady=ready;
   $('#voicePill').textContent=ready?'语音 ✓':(connected?'语音准备中':'语音');$('#voicePill').className='pill '+(ready?'ok':(connected?'warn':'optional'));
-  const phrase=String(s.last_command||s.final||'').trim();$('#voiceStatus').textContent=phrase?`已识别：${phrase}`:(ready?'直接说完整口令，例如“体感截图”':'语音尚未准备好');
+  const phrase=String(s.last_command||s.final||'').trim();$('#voiceStatus').textContent=phrase?`已识别：${phrase}`:(ready?'直接说完整口令，例如「体感截图」':'语音尚未准备好');
   const modelPath=s.model_path||s.command_model_path||'—';const mp=$('#voiceModelPath');if(mp){mp.textContent='模型：'+modelPath;mp.title=modelPath}
   renderPersonalVoice(s);
+  const clash=$('#voiceConflicts');if(clash){const list=s.phrase_conflicts||[];clash.hidden=!list.length;clash.textContent=list.length?`${list.join('；')}。同名的只有一条会生效，改掉其中一条的说法。`:''}
   const diag=$('#voiceDiagnostic');if(diag){diag.textContent=[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`最后命令：${phrase||'—'}`,`错误：${s.last_error||'—'}`].join('\n')}
 }
 
-async function saveVoiceMappings(){const s=await post('/api/voice/config',{mappings:readVoiceMappings()});voice.status=s;renderVoiceStatus(s);return s}
-// 唤醒词和急停口令存在自己那一份里，不跟游戏走、也不跟配置分享出去。
-// 界面上也得分开放，否则人会以为它们跟旁边那些口令一起发出去了。
-function renderPersonalVoice(status){
-  const wake=$('#wakeWord'),stop=$('#emergencyPhrases');
-  if(!wake||!stop)return;
-  // 正在输入就不覆盖。语音状态 0.9 秒刷一次，不让开就会把手里打一半的字抹掉。
-  if(document.activeElement===wake||document.activeElement===stop)return;
-  wake.value=status?.wake_word||'';
-  stop.value=(status?.emergency_stop_phrases||[]).join('、');
+/* 急停口令在界面上就是通用口令里的一行：输出选「系统命令 → 紧急停止」。存的时候
+ * 还是分开存——它们在自己那一份里，不跟配置分享出去，装别人的配置也冲不掉；
+ * 听到了也走急停那条最快的路，不经过"游戏控制开没开"。
+ * 存的写法带默认唤醒词「体感」，这样改了唤醒词，它们跟着一起换。 */
+const EMERGENCY_TARGET='EMERGENCY_STOP',DEFAULT_WAKE='体感',BUILT_IN_STOP='紧急停止';
+const isEmergencyRow=item=>item.type==='system'&&item.target===EMERGENCY_TARGET;
+function voiceRowsFromStatus(s){
+  const wake=s?.wake_word||DEFAULT_WAKE;
+  const stops=(s?.emergency_stop_phrases||[])
+    .map(phrase=>String(phrase).startsWith(wake)?String(phrase).slice(wake.length):String(phrase))
+    .filter(phrase=>phrase&&phrase!==BUILT_IN_STOP)
+    .map(phrase=>({phrase,type:'system',target:EMERGENCY_TARGET,behavior:'tap'}));
+  return [...stops,...(s?.mappings||[])];
 }
-async function savePersonalVoice(){
+async function saveVoiceMappings(){
+  const rows=readVoiceMappings();
+  const s=await post('/api/voice/config',{mappings:rows.filter(item=>!isEmergencyRow(item)),
+    emergency_stop_phrases:rows.filter(isEmergencyRow).map(item=>DEFAULT_WAKE+item.phrase)});
+  voice.status=s;renderVoiceStatus(s);return s;
+}
+// 唤醒词只属于你：不跟游戏走、也不跟配置分享出去。
+function renderPersonalVoice(status){
+  const wake=$('#wakeWord');
+  // 正在输入就不覆盖。语音状态 0.9 秒刷一次，不让开就会把手里打一半的字抹掉。
+  if(!wake||document.activeElement===wake)return;
+  wake.value=status?.wake_word||'';
+}
+async function saveWakeWord(){
   const say=(text,kind='')=>{const el=$('#personalVoiceStatus');if(el){el.textContent=text;el.className=kind==='error'?'statusline error':'statusline'}};
+  const value=String($('#wakeWord').value||'').trim();
+  if(!value||value===voice.status?.wake_word)return;
   try{
-    const phrases=String($('#emergencyPhrases').value||'').split(/[、,，;；\s]+/).map(x=>x.trim()).filter(Boolean);
     // mappings 要原样带上：configure 是整份替换，不带等于把口令全删了。
-    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],
-      wake_word:String($('#wakeWord').value||'').trim(),emergency_stop_phrases:phrases});
-    voice.status=s;renderVoiceStatus(s);renderPersonalVoice(s);say('已保存');
+    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],wake_word:value});
+    voice.status=s;renderVoiceStatus(s);say('唤醒词已保存');
   }catch(error){say(error.message,'error')}
 }
-document.getElementById('personalVoiceSaveBtn')?.addEventListener('click',savePersonalVoice);
+document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
-function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
-function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?`${command.label||''} · 系统固定`:`${command.label||''} · ${voiceActionLabel(command.effective_action)}`;card.append(phrase,label);return card}
+function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(new Map(VOICE_SYSTEM_TARGETS).get(action.target)||action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
+function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?(command.label||''):[command.label,voiceActionLabel(command.effective_action)].filter(Boolean).join(' · ');card.append(phrase,label);return card}
 function renderVoiceCommandCatalog(commands){
   voiceCatalog=Array.isArray(commands)?commands:[];
   const full=$('#voiceCommandGrid');full.replaceChildren();
-  const visible=voiceCatalog.filter(item=>item.id==='system.emergency_stop'||(String(item.id||'').startsWith('game.profile_slot_')&&item.effective_action));
-  for(const [name,items] of [
-    ['系统口令 · 所有游戏通用',visible.filter(item=>item.system_fixed)],
-    ['当前游戏口令',visible.filter(item=>!item.system_fixed)],
+  const wake=voice.status?.wake_word||'体感';
+  const shared=voiceRowsFromStatus(voice.status).map(item=>({
+    phrase:wake+item.phrase,label:'',effective_action:{type:item.type,target:item.target,behavior:item.behavior||'tap'},
+  }));
+  for (const [name,items] of [
+    ['内置口令 · 不能改',voiceCatalog.filter(item=>item.system_fixed)],
+    ['本游戏口令',voiceCatalog.filter(item=>String(item.id||'').startsWith('game.profile_slot_')&&item.effective_action)],
+    ['通用口令 · 所有游戏',shared],
   ]){
+    if(!items.length)continue;
     const section=document.createElement('section');section.className='voice-group';
     const title=document.createElement('h3');title.textContent=name;
     const grid=document.createElement('div');grid.className='voice-command-grid';
@@ -1486,6 +1510,7 @@ function showView(view){
   const tab=document.querySelector(`[data-view="${view}"]`);
   $('#viewHint').textContent=tab?.dataset.viewHint||'';
   if(view==='devices'){void refreshXinput();void refreshHandMouse();void refreshPoseRecord()}
+  if(view==='games')loadCloudEndpoint().catch(()=>{});
   window.scrollTo(0,0);
 }
 function poll(task,delay,enabled=()=>true){
@@ -1515,7 +1540,7 @@ async function init(){
     }),
   ]);
   if(results.some(result=>result.status==='rejected'))notice('部分设备信息尚未读取，可继续使用已连接的输入');
-  await loadProfiles();renderVoiceRows(voice.status?.mappings||[]);
+  await loadProfiles();renderVoiceRows(voiceRowsFromStatus(voice.status));
   poll(refreshKernel,250);poll(async()=>{await refreshInput();await refreshOutput();await refreshVoice()},900);
   poll(refreshXinput,1500,()=>currentView==='devices');
   poll(refreshPerformance,1500,()=>currentView==='devices'&&$('#advancedSettings').open&&$('#performancePanel').open);
@@ -1593,12 +1618,12 @@ $('#closeVoiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask')
 $('#poseSource').addEventListener('change',()=>{
   desiredSource=$('#poseSource').value;$('#phoneGuide').open=desiredSource==='phone';
   syncCameraDeviceRow();
-  notice('已选择'+(desiredSource==='phone'?'手机摄像头':'电脑摄像头')+'，点击“连接并开始识别”应用');
+  notice('已选择'+(desiredSource==='phone'?'手机摄像头':'电脑摄像头')+'，点「连接并开始识别」生效');
 });
 $('#cameraDevice').addEventListener('change',e=>runAction(async()=>{
   const data=await post('/api/camera/config',{index:Number(e.target.value)});
   cameraIndex=Number(data.camera_index??e.target.value);
-  notice('已选择摄像头 '+cameraIndex+'，点“连接并开始识别”看看画面对不对');
+  notice('已选择摄像头 '+cameraIndex+'，点「连接并开始识别」看看画面对不对');
 }));
 // 按钮和新手教学用的是同一个扫描：结果记在 cameraScan 里，教学据此判断这台电脑有几个摄像头。
 async function scanCameras(){
@@ -1612,7 +1637,7 @@ async function scanCameras(){
     Object.assign(cameraScan,{state:'done',count:n,error:''});
     if(!status)return;
     status.textContent=n?`找到 ${n} 个。选一个，连接之后看画面里是不是你。`
-      :'一个也没找到。这台电脑可能没有摄像头，或者被别的软件占着——把上面的来源改成手机摄像头也能用。';
+      :'一个也没找到。可能没有摄像头，或者被别的软件占着；也可以把来源改成手机摄像头。';
   }catch(e){Object.assign(cameraScan,{state:'failed',error:String(e?.message||e)});if(status)status.textContent='扫描失败：'+cameraScan.error}
 }
 bind('cameraScanBtn',scanCameras);
@@ -1699,10 +1724,29 @@ async function cloudRefresh() {
   }
 }
 
+/** 只要地址。以前只有「查看分享」会读它，于是没先点那个就点「打开网站」，只会说没连上。 */
+async function loadCloudEndpoint() {
+  if (cloudEndpoint) return cloudEndpoint;
+  const status = await api('/api/cloud/status', { timeoutMs: 12000 });
+  cloudEndpoint = status.endpoint || '';
+  return cloudEndpoint;
+}
+
 /** 在系统浏览器里打开网站上的某一页。详情、浏览全部、上传都在那边。 */
-function openOnSite(path = '') {
-  if (!cloudEndpoint) { cloudSay('还没连上云端', 'error'); return; }
-  window.open(cloudEndpoint + path, '_blank', 'noopener');
+async function openOnSite(path = '') {
+  if (cloudEndpoint) { window.open(cloudEndpoint + path, '_blank', 'noopener'); return; }
+  // 地址还没读到：先趁这一下点击开一个空窗口，读到了再跳过去。等读完再开的话，
+  // 那一下点击已经过期，浏览器会把它当弹窗拦掉。
+  const win = window.open('about:blank', '_blank');
+  try {
+    const endpoint = await loadCloudEndpoint();
+    if (!endpoint) throw new Error('没有配置云端地址');
+    if (win) { win.opener = null; win.location.href = endpoint + path; }
+    else window.open(endpoint + path, '_blank', 'noopener');
+  } catch (error) {
+    win?.close();
+    cloudSay(error.message || '读不到云端地址', 'error');
+  }
 }
 
 const CLOUD_DOC_NAMES = {
@@ -1777,7 +1821,7 @@ async function cloudInstall(item, button) {
     try {
       if (installed.doc_type === 'voice_mappings') {
         await refreshVoice();
-        renderVoiceRows(voice.status?.mappings || []);
+        renderVoiceRows(voiceRowsFromStatus(voice.status));
       } else {
         // Motions are not a panel of their own: they are the motion.* rows of
         // the game profile, so refreshing the profile covers them too.
@@ -2087,7 +2131,7 @@ function renderCustomPoses() {
     addFrame.className = 'btn pose-add';
     addFrame.type = 'button';
     addFrame.textContent = '再加一个姿势';
-    addFrame.title = '摆好下一个姿势再点。做完的动作要按顺序依次做出来才触发';
+    addFrame.title = '摆好下一个姿势再点。几个姿势要按顺序做完才触发';
     addFrame.addEventListener('click', () => appendCustomPoseFrame(item));
     strip.appendChild(addFrame);
 

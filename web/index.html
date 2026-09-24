@@ -1,17 +1,23 @@
 <!DOCTYPE html>
-
 <html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width,initial-scale=1" name="viewport"/>
 <title>MotionControl 2.0 · 体感游戏控制</title><link href="/app.css" rel="stylesheet"/></head>
 <body><div class="wrap">
 <div class="command-dock">
-<header class="top"><div class="brand"><h1>MotionControl <small>2.0</small></h1><span class="tagline">让身体成为游戏手柄</span></div>
-<span id="serviceStatus" role="status">正在连接服务…</span><button class="btn" id="tutorialBtn">新手教学</button><button class="btn danger" id="stopBtn">紧急停止 · F9</button></header>
+<header class="top">
+<h1 class="brand">MotionControl <small>2.0</small></h1>
 <!-- 分页的轴：开始 = 现在要玩；本游戏 = 换游戏就会变的；通用 = 换游戏不用动的。 -->
-<nav aria-label="主要页面"><button aria-current="page" class="btn" data-view="play" data-view-hint="看画面、校准、开始控制">开始</button><button class="btn" data-view="range" data-view-hint="站到镜头前试：打中了什么、按的是哪个键">动作测试</button><button class="btn" data-view="games" data-view-hint="只影响当前游戏：按键映射、自定义动作、云端配置">本游戏</button><button class="btn" data-view="devices" data-view-hint="所有游戏共用：设备、手感、语音口令、诊断">通用设置</button><span class="view-hint" id="viewHint">看画面、校准、开始控制</span></nav>
-<section class="session-bar"><div><span class="muted">当前游戏</span><div id="currentGameName">正在读取…</div></div><div><button class="btn primary main-action-btn" disabled="" id="mainActionBtn">连接设备</button><div id="mainActionStatus" role="status">等待服务状态</div></div></section>
-</div><div class="notice" hidden="" id="notice" role="status"></div>
-<main><section class="layout" data-panel="play" id="playPanel"><section class="card viewer-card">
-<div class="viewer-heading"><div><span class="eyebrow">实时追踪</span><h2>玩家与体感区域</h2></div><span class="viewer-note">区域亮起 = 当前正在触发</span><button class="btn utility-btn" id="adjustZonesBtn">挪动区域</button><button class="btn utility-btn" id="overlayBtn">悬浮窗</button></div>
+<nav aria-label="主要页面"><button aria-current="page" class="tab" data-view="play" data-view-hint="看画面、校准、开始控制" title="看画面、校准、开始控制">开始</button><button class="tab" data-view="range" data-view-hint="做个动作，看按的是哪个键" title="做个动作，看按的是哪个键">动作测试</button><button class="tab" data-view="games" data-view-hint="只影响当前游戏：按键映射、自定义动作、云端配置" title="只影响当前游戏：按键映射、自定义动作、云端配置">本游戏</button><button class="tab" data-view="devices" data-view-hint="所有游戏共用：设备、手感、口令、诊断" title="所有游戏共用：设备、手感、口令、诊断">通用设置</button><span class="visually-hidden" id="viewHint">看画面、校准、开始控制</span></nav>
+<div class="top-actions"><span id="serviceStatus" role="status">正在连接服务…</span><button class="btn" id="tutorialBtn">新手教学</button><button class="btn danger" id="stopBtn">紧急停止 · F9</button></div>
+</header>
+<section class="session-bar"><div class="session-game"><span class="session-label">当前游戏</span><strong id="currentGameName">正在读取…</strong></div><div class="session-action"><span id="mainActionStatus" role="status">等待服务状态</span><button class="btn primary main-action-btn" disabled="" id="mainActionBtn">连接设备</button></div></section>
+</div>
+<div class="notice" hidden="" id="notice" role="status"></div>
+<main>
+
+<section class="layout" data-panel="play" id="playPanel">
+<div class="play-main">
+<section class="card viewer-card">
+<div class="card-head"><h2 class="title">实时画面</h2><div class="card-tools"><button class="btn" id="adjustZonesBtn">挪动区域</button><button class="btn" id="overlayBtn">悬浮窗</button></div></div>
 <div class="viewer" id="viewer">
 <img alt="电脑摄像头预览" hidden="" id="cameraPreview"/>
 <canvas id="canvas"></canvas>
@@ -22,131 +28,139 @@
 <div class="zone head-jump" data-zone="headJump"><strong>A</strong><small>头顶跳跃</small></div>
 <div class="zone look-gate" data-zone="lookGate"><strong>上下视角</strong><small>左手放这里</small></div>
 </div>
-<div class="hint" id="hint">连接摄像头后，在这里查看体感区域</div>
+<div class="hint" id="hint">连接摄像头后，这里显示画面和体感区域</div>
 </div>
 <div class="viewer-foot">
-<div class="look-gate-status" id="lookGateStatus">上下视角待机 · 左手放入绿色区域开启</div>
-<div class="spacer"></div>
+<div class="viewer-status">
 <div class="statusline" id="headStatus">头控：等待中心</div>
-<button class="btn utility-btn" id="centerBtn">重设正前方</button>
-</div>
-<div class="viewer-foot">
 <div class="statusline" id="buttonStatus">身体区域：等待人体</div>
-<div aria-label="当前区域按键" class="mini-pad">
-<span class="shoulder-key" id="padLB">LB</span><span class="key" id="padX">X</span><span class="key" id="padB">B</span><span class="key" id="padA">A</span><span class="shoulder-key" id="padRB">RB</span>
+<div class="statusline" id="motionStatus">动作：未触发</div>
+<div class="look-gate-status" id="lookGateStatus">上下视角待机 · 左手放入绿色区域开启</div>
+</div>
+<div class="viewer-tools">
+<div aria-label="当前区域按键" class="mini-pad"><span class="shoulder-key" id="padLB">LB</span><span class="key" id="padX">X</span><span class="key" id="padB">B</span><span class="key" id="padA">A</span><span class="shoulder-key" id="padRB">RB</span></div>
+<button class="btn" id="centerBtn">重设正前方</button>
 </div>
 </div>
 <div class="trigger-summary"><span class="trigger-chip" id="motionMarch">踏步</span><span class="trigger-chip" id="motionCalf">小腿向后</span><span class="trigger-chip" id="motionSquat">下蹲</span><span class="trigger-chip" id="motionHands">双手过头</span><span class="trigger-chip" id="motionJumpingJack">开合跳</span><span class="trigger-chip" id="motionSideStepJack">侧步开合</span><span class="trigger-chip" id="motionCrossKneeElbow">提膝碰对侧肘</span><span class="trigger-chip" id="poseHandsCross">双手交叉</span></div>
-<div class="statusline" id="motionStatus">动作：未触发</div>
 </section>
-<section class="card zone-edit-bar" hidden="" id="zoneEditBar"><h3>区域调整</h3><p class="muted">拖动圆圈；选中圆圈后可用方向键微调。调整期间体感输出关闭。</p><div class="scene-zone-tools" id="sceneTools"><label>正在编辑<select id="sceneZoneSelect"></select></label><label>区域大小 <span id="sceneRadiusValue">—</span><input id="sceneRadius" max="20" min="2.5" step="0.5" type="range"/></label><label>右手上下范围 <span id="sceneVerticalRangeValue">—</span><input id="sceneVerticalRange" max="40" min="6" step="1" type="range"/></label><label>右手中心死区 <span id="sceneVerticalDeadzoneValue">—</span><input id="sceneVerticalDeadzone" max="35" min="0" step="1" type="range"/></label></div><label>右手上下中心位置<input aria-label="右手上下中心位置" id="sceneVerticalCenter" max="100" min="0" step="1" type="range"/></label><div class="settings-actions"><button class="btn" id="sceneRematchBtn">重新识别位置</button><button class="btn" id="sceneCaptureBtn">重新记录参考位置</button><button class="btn safe" id="saveLiveZonesBtn">保存区域</button><button class="btn" id="cancelLiveZonesBtn">取消</button></div><p id="sceneStatus" role="status"></p></section>
 
-<aside class="card control-card"><h2>开始前检查</h2>
+<section class="card zone-edit-bar" hidden="" id="zoneEditBar">
+<div class="card-head"><div><h2 class="title">挪动区域</h2><p class="card-sub">拖动圆圈调整位置，选中后可用方向键微调。调整期间体感输出暂停。</p></div></div>
+<div class="scene-zone-tools" id="sceneTools"><label>正在编辑<select id="sceneZoneSelect"></select></label><label>区域大小 <span id="sceneRadiusValue">—</span><input id="sceneRadius" max="20" min="2.5" step="0.5" type="range"/></label><label>右手上下范围 <span id="sceneVerticalRangeValue">—</span><input id="sceneVerticalRange" max="40" min="6" step="1" type="range"/></label><label>右手中心死区 <span id="sceneVerticalDeadzoneValue">—</span><input id="sceneVerticalDeadzone" max="35" min="0" step="1" type="range"/></label><label>右手上下中心位置<input aria-label="右手上下中心位置" id="sceneVerticalCenter" max="100" min="0" step="1" type="range"/></label></div>
+<div class="settings-actions"><button class="btn" id="sceneRematchBtn">重新识别位置</button><button class="btn" id="sceneCaptureBtn">重新记录参考位置</button><span class="spacer"></span><button class="btn" id="cancelLiveZonesBtn">取消</button><button class="btn primary" id="saveLiveZonesBtn">保存区域</button></div><p class="statusline" id="sceneStatus" role="status"></p>
+</section>
+</div>
+
+<aside class="card control-card"><h2 class="title">开始前检查</h2>
 <ol class="checklist">
 <li><div class="check-line"><span class="check-num">1</span><b>设备</b><button class="btn" data-go="devices">去连接</button></div>
 <div class="health-strip"><span class="pill" id="cameraPill">摄像头</span><span class="pill" id="posePill">人体</span><span class="pill" id="phonePill">手机</span></div></li>
 <li><div class="check-line"><span class="check-num">2</span><b>游戏</b><button class="btn" data-go="games">换游戏</button></div>
-<p class="fineprint">当前游戏见上方，按键映射也在那一页。</p></li>
+<p class="fineprint">换游戏、改按键都在「本游戏」页。</p></li>
 <li><div class="check-line"><span class="check-num">3</span><b>校准</b><button class="btn" id="calBtn">站好并校准</button></div>
 <p class="fineprint" id="calStatus">首次定位只需头部和双肩入镜</p></li>
 <li><div class="check-line"><span class="check-num">4</span><b>开始</b><span class="pill" id="outputPill">输出关闭</span></div>
-<p class="fineprint">点最上方的「开始游戏控制」。</p></li>
+<p class="fineprint">点顶部的「开始游戏控制」。</p></li>
 </ol>
 <div class="conflicts" hidden="" id="setupConflicts"></div>
-<section class="section"><h3>语音控制 <span class="pill" id="voicePill">语音</span></h3><p class="statusline" id="voiceStatus">正在检查…</p><button class="btn" id="voiceCommandsBtn">查看语音指令</button></section>
-</aside></section>
+<section class="control-voice"><div class="check-line"><b>语音控制</b><span class="pill" id="voicePill">语音</span></div><p class="statusline" id="voiceStatus">正在检查…</p><button class="btn" id="voiceCommandsBtn">查看语音指令</button></section>
+</aside>
+</section>
 
-<section data-panel="games" hidden="" id="gamesPanel">
-<section class="section">
-<div class="title">当前游戏</div>
+<section class="page" data-panel="games" hidden="" id="gamesPanel">
+<section class="card">
+<h2 class="title">当前游戏</h2>
 <div class="profile-game-name" id="profileGameName">通用 Xbox / 默认</div>
-<div class="profile-meta" id="profileMeta">正在读取离线游戏库…</div><p class="profile-unverified" hidden="" id="profileUnverified">自动生成的映射，没有人试玩过。不好用可以直接改，改完自动保存。</p>
+<div class="profile-meta" id="profileMeta">正在读取离线游戏库…</div>
+<p class="profile-unverified" hidden="" id="profileUnverified">这份映射是自动生成的，还没人试玩过。不合适就直接改，改完自动保存。</p>
 <div class="profile-bar"><input aria-label="搜索游戏名或游戏编号" id="profileSearch" placeholder="搜索游戏名或 Steam AppID" type="text"/><button class="btn" id="profileSearchBtn">搜索</button></div>
 <div class="profile-bar"><select aria-label="选择游戏" id="profileSelect"></select><button class="btn primary" id="profileApplyBtn">使用这个游戏</button></div>
-<div class="profile-bar" hidden="" id="customGameActions"><span class="statusline">这是你自己加的游戏。</span><button class="btn" id="customGameRenameBtn">改名</button><button class="btn danger" id="customGameRemoveBtn">删掉</button></div>
+<div class="profile-bar" hidden="" id="customGameActions"><span class="statusline">这是你自己加的游戏</span><span class="profile-bar-tools"><button class="btn" id="customGameRenameBtn">改名</button><button class="btn danger" id="customGameRemoveBtn">删掉</button></span></div>
 <details id="customGameBox"><summary>搜不到你的游戏？自己加一个</summary>
-<p class="fineprint">内置那两百个是从 Steam 榜单生成的，漏掉很正常。加进来之后按键在下面自己绑，用起来和内置的一样。</p>
-<div class="profile-bar"><input id="customGameName" maxlength="80" placeholder="游戏名，例如：黑神话悟空" type="text"/><input id="customGameAppid" maxlength="120" placeholder="Steam 链接或 AppID（选填）" type="text"/><button class="btn primary" id="customGameAddBtn">添加</button></div>
-<p class="fineprint">AppID 选填，但填了这份配置才能和别人的对上号——游戏名每个人写法都不一样。把商店页链接整个粘进来就行，数字它自己挑。</p>
+<p class="fineprint">内置游戏来自 Steam 热门榜，难免有漏。自己加的游戏用法和内置的一样，按键在下面的按键映射里绑。</p>
+<div class="profile-bar three"><input id="customGameName" maxlength="80" placeholder="游戏名，例如：黑神话悟空" type="text"/><input id="customGameAppid" maxlength="120" placeholder="Steam 链接或 AppID（选填）" type="text"/><button class="btn primary" id="customGameAddBtn">添加</button></div>
+<p class="fineprint">AppID 选填，填了才能和别人分享的配置对上号。直接粘贴商店页链接就行。</p>
 </details>
 </section>
 
-<div class="settings-section">
-<div class="title">按键映射</div>
-<p class="lede">身体区域、身体动作、自定义动作和语音，都在这一张表里绑键。</p>
-<p class="fineprint">改完自动保存。「恢复默认」只影响当前游戏。</p>
+<section class="card">
+<h2 class="title">按键映射</h2>
+<p class="lede">身体区域、身体动作、自定义动作和本游戏口令，都在这里绑键。改完自动保存。</p>
 <div class="trigger-live" id="triggerLive">
 <div class="trigger-live-now" id="triggerLiveNow">还没有触发</div>
 <div class="trigger-live-log" id="triggerLiveLog"></div>
-<p class="fineprint">刚才触发过什么都在这儿。点一条就跳到下面它对应的那一行，当场改键。</p>
+<p class="fineprint">最近触发的会列在这里，点一条就跳到它对应的那一行改键。</p>
 </div>
-<fieldset id="mappingFields"><div class="binding-list" id="profileBindingRows"></div></fieldset>
-<div class="profile-actions"><span class="statusline" id="profileSaveStatus" role="status">修改后自动保存</span><button class="btn" hidden="" id="retryProfileSaveBtn">重试保存映射</button><button class="btn" id="resetProfileBindingsBtn">恢复当前游戏默认</button></div>
-</div>
+<fieldset id="mappingFields"><div aria-hidden="true" class="binding-head"><span>触发</span><span>输出类型</span><span>键位</span><span>方式</span></div><div class="binding-list" id="profileBindingRows"></div></fieldset>
+<div class="profile-actions"><span class="statusline" id="profileSaveStatus" role="status">修改后自动保存</span><span class="spacer"></span><button class="btn" hidden="" id="retryProfileSaveBtn">重试保存映射</button><button class="btn" id="resetProfileBindingsBtn">恢复当前游戏默认</button></div>
+</section>
 
-<section class="section" id="customPosePanel">
-<div class="title">自定义动作</div>
-<p class="lede">走到镜头前摆好，倒计时结束拍下那一瞬间的骨架。</p>
+<section class="card" id="customPosePanel">
+<h2 class="title">自定义动作</h2>
+<p class="lede">站到镜头前摆好姿势，倒计时结束时记下这一刻的骨架。</p>
 <ul class="lede-list">
-<li><b>只录一个</b>：摆住就一直触发，像按住键。</li>
-<li><b>录两个以上</b>：按先后顺序做完才触发一次，像按一下键。</li>
-<li>录完回上面的按键映射绑键，名字带「自定义 ·」。</li>
+<li><b>录一个</b>：摆着就持续触发，像按住键。</li>
+<li><b>录两个以上</b>：按顺序做完才触发一次，像点一下键。</li>
+<li>录好后到上面的按键映射里绑键，名字以「自定义 ·」开头。</li>
 </ul>
-<div class="profile-bar">
+<div class="profile-bar pose-bar">
 <input id="customPoseName" maxlength="20" placeholder="给这个姿势起个名字" type="text"/>
-<label>准备时间<select id="customPoseDelay"><option value="3">3 秒</option><option value="5" selected="">5 秒</option><option value="8">8 秒</option><option value="1">立刻</option></select></label>
+<label class="inline-label">准备时间<select id="customPoseDelay"><option value="3">3 秒</option><option value="5" selected="">5 秒</option><option value="8">8 秒</option><option value="1">立刻</option></select></label>
 <button class="btn primary" id="customPoseCaptureBtn">录下当前姿势</button>
 <button class="btn" id="customPoseScoresBtn">显示相似度</button>
-<span class="statusline" id="customPoseStatus"></span>
 </div>
+<p class="statusline" id="customPoseStatus"></p>
 <div id="customPoseList"></div>
-<p class="fineprint" id="customPoseHint" hidden="">摆出那个姿势，看相似度涨到多少，把「像到多少才算」定得略低一点。「保持」是最后那个姿势要摆住多久，用来滤掉路过。连续动作的「每步最多」超时就从头做起。</p>
+<p class="fineprint" id="customPoseHint" hidden="">摆出姿势看相似度，把「像到多少才算」设得比它略低一点。「保持」是最后一个姿势要摆住多久，用来滤掉路过的动作；连续动作某一步超过「每步最多」就从头算。</p>
 </section>
 
-<section class="section" id="cloudPanel">
-<div class="title">云端配置</div>
-<p class="lede">别人为<strong>当前这个游戏</strong>分享的映射。安装前会自动备份你现在的配置。</p>
-<div class="profile-bar">
-<button class="btn" id="cloudRefreshBtn">看看有什么</button>
+<section class="card" id="cloudPanel">
+<h2 class="title">云端配置</h2>
+<p class="lede">其他玩家为<strong>当前游戏</strong>分享的映射。安装前会自动备份你现在的配置。</p>
+<div class="profile-bar cloud-bar">
+<button class="btn" id="cloudRefreshBtn">查看分享</button>
 <button class="btn" id="cloudSiteBtn">打开网站</button>
-<span class="statusline" id="cloudStatus">未连接</span>
+<span class="statusline" id="cloudStatus"></span>
 </div>
 <div id="cloudList"></div>
-<p class="fineprint">浏览全部游戏、上传自己的、管理版本，都在网站上。</p>
+<p class="fineprint">浏览所有游戏、上传和管理自己的配置，请到网站。</p>
 </section>
 </section>
 
-<section class="settings-grid" data-panel="devices" hidden="" id="devicesPanel">
+<section class="page" data-panel="devices" hidden="" id="devicesPanel">
 <h2 class="group-head">设备</h2>
+<div class="settings-pair">
 <div class="settings-section">
-<div class="title">输入来源</div>
-<p class="lede">先选画面来自手机还是电脑，再点连接。选过之后会记住，下次打开还是它。</p>
+<h3 class="title">输入来源</h3>
+<p class="lede">选画面来自电脑还是手机，再点连接。下次打开会记住。</p>
 <div class="controls">
 <label>摄像头来源<select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></label>
-<label id="cameraDeviceRow">用哪个摄像头<select id="cameraDevice"></select></label>
+<label id="cameraDeviceRow">使用的摄像头<select id="cameraDevice"></select></label>
 </div>
-<div class="settings-actions" id="cameraScanRow"><button class="btn" id="cameraScanBtn">扫描摄像头</button><span class="fineprint" id="cameraScanStatus">这台电脑上不止一个摄像头（外接的、采集卡、OBS 虚拟摄像头）时，在这里换。</span></div>
+<div class="settings-actions" id="cameraScanRow"><button class="btn" id="cameraScanBtn">扫描摄像头</button><span class="fineprint" id="cameraScanStatus">有多个摄像头（外接、采集卡、虚拟摄像头）时，在这里切换。</span></div>
 <div class="pill bad" id="mobileStatus">手机未连接</div>
 <p class="fineprint" id="phonePerf"></p>
-<div class="settings-actions"><button class="btn" id="sourceStartBtn">连接并开始识别</button><button class="btn" id="sourceStopBtn">停止识别</button></div><p class="fineprint" id="modelStatus"></p>
-<details id="phoneGuide"><summary>手机连不上怎么办</summary><p class="fineprint">手机上打开 MotionControl，选「固定摄像头」再点「连接并开始」——地址一般不用自己填，它会自己找到这台电脑。第一次要给权限、加载模型，几十秒都正常；之后记住了地址，几秒就连上。</p><p class="fineprint">连不上的话看两件事：手机和电脑要在<b>同一个 WiFi</b>；或者插数据线并在手机上打开「<b>USB 网络共享</b>」，只插线不开是连不上的。</p><div class="statusline" id="usbTetherStatus"></div><label>可用连接地址<select id="phoneWsUrl"></select></label><button class="btn" id="copyPhoneUrlBtn">复制地址</button></details>
+<div class="settings-actions"><button class="btn primary" id="sourceStartBtn">连接并开始识别</button><button class="btn" id="sourceStopBtn">停止识别</button></div><p class="fineprint" id="modelStatus"></p>
+<details id="phoneGuide"><summary>手机连不上怎么办</summary><p class="fineprint">在手机上打开 MotionControl，选「固定摄像头」，点「连接并开始」，它会自己找到这台电脑。第一次要授权、加载模型，几十秒都正常；之后几秒就能连上。</p><p class="fineprint">连不上的话检查两点：手机和电脑在<b>同一个 Wi-Fi</b>；或者插上数据线，并在手机上打开「<b>USB 网络共享</b>」，只插线不打开是连不上的。</p><div class="statusline" id="usbTetherStatus"></div><label>可用连接地址<select id="phoneWsUrl"></select></label><div class="settings-actions"><button class="btn" id="copyPhoneUrlBtn">复制地址</button></div></details>
 </div>
 
 <div class="settings-section" id="outputSettings">
-<div class="title">游戏输出</div>
-<p class="lede">体感最后变成什么：手柄摇杆，还是鼠标。</p>
+<h3 class="title">游戏输出</h3>
+<p class="lede">体感最终输出成鼠标，还是 Xbox 手柄。</p>
 <div class="controls"><label>视角输出<select id="outputMode"><option value="mouse">鼠标视角</option><option value="gamepad">Xbox 360 右摇杆</option></select></label><label>物理手柄合流<select id="xinputMerge"><option value="">关闭体感合流</option></select></label></div>
 <div class="statusline warn" id="outputMixWarn" hidden=""></div>
 <div class="statusline" id="xinputStatus">未启用物理手柄合流</div><div class="statusline" id="outputStatus"></div>
-<label><input disabled="" id="xinputMotionLeft" type="checkbox"/>允许体感左摇杆合成</label>
-<p class="fineprint">左摇杆两边相加：同向限幅、异向合成、反向抵消。右摇杆和扳机始终由物理手柄控制。</p>
-<div class="slider"><label>游戏速度倍率 <b id="strengthValue">160%</b></label><input aria-label="设置选项" id="strength" max="300" min="60" step="10" type="range" value="160"/></div>
+<label class="check"><input disabled="" id="xinputMotionLeft" type="checkbox"/>允许体感合成左摇杆</label>
+<p class="fineprint">两边的左摇杆相加：同向限幅、异向合成、反向抵消。右摇杆和扳机始终由物理手柄控制。</p>
+<div class="slider"><label>游戏速度倍率 <b id="strengthValue">160%</b></label><input aria-label="游戏速度倍率" id="strength" max="300" min="60" step="10" type="range" value="160"/></div>
+</div>
 </div>
 
 <h2 class="group-head">手感</h2>
-<div class="settings-section wide" id="headSettings">
-<div class="view-control-heading"><div class="title">视角控制</div><button class="btn" id="tutorialSettingsBtn">新手教学</button></div>
-<p class="lede">左右与上下分别选择。头部方案只控制左右，默认由左手握拳后移动手控制上下。</p>
+<div class="settings-section" id="headSettings">
+<div class="view-control-heading"><h3 class="title">视角控制</h3><button class="btn" id="tutorialSettingsBtn">新手教学</button></div>
+<p class="lede">左右和上下分开选。头部只管左右；上下默认用左手握拳后移动来控制。</p>
 <div class="view-control-grid">
 <label>左右控制<select id="viewHorizontalSource"><option value="roll_tilt">头部侧倾</option></select></label>
 <label>上下控制<select id="viewVerticalSource"><option value="left">左手握拳</option></select></label>
@@ -155,107 +169,99 @@
 <p class="statusline" id="viewControlStatus" role="status">正在读取当前设置…</p>
 <details class="view-control-more"><summary>更多设置</summary>
 <section class="view-control-subsection">
-<h3>绿色区域与抬低头</h3>
-<p class="fineprint">这是原有的上下视角方案，与握拳后移动手不同。</p>
-<label>原有上下方案<select id="verticalLookSource"><option value="off">关闭</option><option value="hand">右手配合绿色区域</option><option value="head">抬低头</option></select></label>
+<h4>绿色区域与抬低头</h4>
+<p class="fineprint">旧的上下视角方案，和握拳控制是两套。</p>
+<label>旧上下方案<select id="verticalLookSource"><option value="off">关闭</option><option value="hand">右手配合绿色区域</option><option value="head">抬低头</option></select></label>
 </section>
 <section class="view-control-subsection">
-<h3>头部控制细调</h3>
+<h4>头部控制细调</h4>
 <div class="advgrid">
-<div class="tiny">中心稳定区 <b id="deadzoneValue">10%</b><input aria-label="设置选项" id="deadzone" max="25" min="3" type="range" value="10"/></div>
-<div class="tiny">左右视角速度 <b id="speedXValue">58%</b><input aria-label="设置选项" id="speedX" max="120" min="20" step="2" type="range" value="58"/></div>
-<div class="tiny head-vertical-setting">头部上下速度 <b id="speedYValue">46%</b><input aria-label="设置选项" id="speedY" max="100" min="15" step="2" type="range" value="46"/></div>
+<div class="tiny">中心稳定区 <b id="deadzoneValue">10%</b><input aria-label="中心稳定区" id="deadzone" max="25" min="3" type="range" value="10"/></div>
+<div class="tiny">左右视角速度 <b id="speedXValue">58%</b><input aria-label="左右视角速度" id="speedX" max="120" min="20" step="2" type="range" value="58"/></div>
+<div class="tiny head-vertical-setting">头部上下速度 <b id="speedYValue">46%</b><input aria-label="头部上下速度" id="speedY" max="100" min="15" step="2" type="range" value="46"/></div>
 </div>
 <div class="checkrow">
 <label><input checked="" id="headEnable" type="checkbox"/> 启用头部控制</label>
 <label><input id="bodyMotionGuard" type="checkbox"/> 身体动作时稳定视角</label>
-<label><input id="verticalExclusive" type="checkbox"/> 原有上下方案启用时暂停左右</label>
+<label><input id="verticalExclusive" type="checkbox"/> 旧上下方案启用时暂停左右</label>
 <label class="head-vertical-setting"><input id="invertY" type="checkbox"/> 抬低头方向反转</label>
 </div>
-<span id="headSaveStatus" role="status"></span><button class="btn" hidden="" id="retryHeadBtn">重试保存设置</button>
+<span class="statusline" id="headSaveStatus" role="status"></span><button class="btn" hidden="" id="retryHeadBtn">重试保存设置</button>
 </section>
 <section class="view-control-subsection" id="handMouseSettings">
-<h3>握拳控制细调</h3>
-<p class="fineprint">握拳期间只暂停所选手的区域按键；同一只手可同时控制左右和上下，也可左右手分轴。</p>
-<label><input checked="" id="handMouseEnabled" type="checkbox"><span>启用握拳视角控制</span></label>
+<h4>握拳控制细调</h4>
+<p class="fineprint">握拳时只暂停这只手的区域按键。一只手可以同时管左右和上下，也可以两只手各管一个方向。</p>
+<label class="check"><input checked="" id="handMouseEnabled" type="checkbox"/><span>启用握拳视角控制</span></label>
 <div class="advgrid">
 <label>握拳左右<select id="handMouseHorizontalHand"><option value="off">关闭</option><option value="right">右手</option><option value="left">左手</option></select></label>
 <label>握拳上下<select id="handMouseVerticalHand"><option value="left">左手</option><option value="right">右手</option><option value="off">关闭</option></select></label>
-<label>灵敏度 <span id="handMouseSensitivityValue">—</span><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"></label>
-<label>中心死区 <span id="handMouseDeadzoneValue">—</span><input id="handMouseDeadzone" max="0.6" min="0" step="0.02" type="range"></label>
+<label>灵敏度 <span id="handMouseSensitivityValue">—</span><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"/></label>
+<label>中心死区 <span id="handMouseDeadzoneValue">—</span><input id="handMouseDeadzone" max="0.6" min="0" step="0.02" type="range"/></label>
 </div>
 <p class="statusline" id="handMouseStatus">未启用</p>
-<details id="handMouseTuning"><summary>握拳阀值不合手</summary>
-<p class="fineprint">张开手看一次上面的读数，握拳看一次，把两个阀值放在两个读数中间。</p>
+<details id="handMouseTuning"><summary>握拳识别不准</summary>
+<p class="fineprint">张开手看一次上面的读数，握拳再看一次，把两个阈值调到两次读数之间。</p>
 <div class="advgrid" id="handMouseCurlRow">
-<label>握拳阀值 <span id="handMouseCurlCloseValue">—</span><input id="handMouseCurlClose" max="1.9" min="1.0" step="0.05" type="range"></label>
-<label>松开阀值 <span id="handMouseCurlOpenValue">—</span><input id="handMouseCurlOpen" max="2.2" min="1.1" step="0.05" type="range"></label>
+<label>握拳阈值 <span id="handMouseCurlCloseValue">—</span><input id="handMouseCurlClose" max="1.9" min="1.0" step="0.05" type="range"/></label>
+<label>松开阈值 <span id="handMouseCurlOpenValue">—</span><input id="handMouseCurlOpen" max="2.2" min="1.1" step="0.05" type="range"/></label>
 </div>
 <div class="advgrid" id="handMouseSpreadRow">
-<label>握拳阀值 <span id="handMouseCloseValue">—</span><input id="handMouseClose" max="0.6" min="0.1" step="0.01" type="range"></label>
-<label>松开阀值 <span id="handMouseOpenValue">—</span><input id="handMouseOpen" max="0.9" min="0.15" step="0.01" type="range"></label>
+<label>握拳阈值 <span id="handMouseCloseValue">—</span><input id="handMouseClose" max="0.6" min="0.1" step="0.01" type="range"/></label>
+<label>松开阈值 <span id="handMouseOpenValue">—</span><input id="handMouseOpen" max="0.9" min="0.15" step="0.01" type="range"/></label>
 </div>
 </details>
-<details id="poseRecorder"><summary>录制真实骨骼数据</summary>
-<p class="fineprint">倒数 3 秒后录 15 秒，把每帧的骨骼点和当时的握拳读数存成文件。</p>
+<details id="poseRecorder"><summary>录制骨骼数据</summary>
+<p class="fineprint">倒数 3 秒后录 15 秒，把每一帧的骨骼点和握拳读数存成文件，排查问题时用。</p>
 <div class="settings-actions"><button class="btn" id="poseRecordBtn">开始录制</button><button class="btn" id="poseRecordCancelBtn">取消</button></div>
 <p class="statusline" id="poseRecordStatus">未录制</p>
 </details>
-<span id="handMouseSaveStatus" role="status"></span>
+<span class="statusline" id="handMouseSaveStatus" role="status"></span>
 </section>
 </details>
 </div>
 
-<h2 class="group-head">键盘宏</h2>
-<div class="settings-section wide" id="macroPanel">
-<div class="title">键盘宏</div>
-<p class="lede">一串有先后的按键，存成一条，起个名字。「本游戏」那页的按键映射里，凡是能绑键的地方都能直接选它。所有游戏共用，建一次就够。</p>
+<h2 class="group-head">键盘宏与语音</h2>
+<div class="settings-section" id="macroPanel">
+<h3 class="title">键盘宏</h3>
+<p class="lede">把一串按键存成一条宏。所有游戏共用，「本游戏」的按键映射里能绑键的地方都能选它。</p>
 <ul class="lede-list">
-<li>一步里能放键盘、鼠标、手柄，也能直接放<b>另一条已经建好的宏</b>。</li>
-<li>打开「循环」就是按住时反复跑，关着就是触发一次跑一遍。</li>
+<li>每一步可以是键盘、鼠标、手柄按键，也可以是<b>另一条宏</b>。</li>
+<li>打开「循环」：按住期间反复执行；关闭：每次触发执行一遍。</li>
 </ul>
 <div class="profile-bar">
 <input id="macroName" maxlength="20" placeholder="给这条宏起个名字" type="text"/>
-<button class="btn primary" id="macroAddBtn">新建一条宏</button>
-<span class="statusline" id="macroStatus"></span>
+<button class="btn primary" id="macroAddBtn">新建宏</button>
 </div>
+<p class="statusline" id="macroStatus"></p>
 <div id="macroList"></div>
-<p class="fineprint" id="macroHint" hidden="">「按住」是这一步按下去多久，「间隔」是松开之后等多久再走下一步。一条宏最多 12 步，跑完不超过 10 秒。</p>
+<p class="fineprint" id="macroHint" hidden="">「按住」是这一步按下去多久，「间隔」是松开后等多久再走下一步。一条宏最多 12 步，总长不超过 10 秒。</p>
 </div>
 
-<h2 class="group-head">语音</h2>
-<div class="settings-section wide" id="personalVoicePanel">
-<div class="title">个人语音 · 不分享</div>
-<p class="lede">唤醒词和急停口令是<b>你的</b>，不跟游戏走，也不会跟着配置分享出去。装别人分享的语音配置时，这两项不会被换掉。</p>
-<div class="profile-bar">
-<label>唤醒词<input id="wakeWord" maxlength="12" type="text"/></label>
-<label>急停口令<input id="emergencyPhrases" placeholder="多句用顿号隔开" type="text"/></label>
-<button class="btn" id="personalVoiceSaveBtn">保存</button>
-<span class="statusline" id="personalVoiceStatus" role="status"></span>
-</div>
-<p class="fineprint">内置的那句急停删不掉——输出卡住时它是唯一的出口，所以总会被加回来。</p>
-</div>
-
-<div class="settings-section wide">
-<div class="title">自定义口令</div>
-<p class="lede">这里的口令在所有游戏里都生效，电脑和手机的麦克风都认得。跟着游戏走的语音映射在「本游戏」那一页。</p>
+<div class="settings-section" id="personalVoicePanel">
+<h3 class="title">通用口令</h3>
+<p class="lede">所有游戏都生效，电脑和手机的麦克风都能识别。每句都要先说唤醒词，比如「体感地图」。</p>
+<div class="wake-row"><label>唤醒词<input id="wakeWord" maxlength="12" type="text"/></label><p class="fineprint">唤醒词和急停口令只属于你，不分享：不随游戏切换，装别人的配置也不会覆盖。</p></div>
+<p class="statusline" id="personalVoiceStatus" role="status"></p>
+<p class="fineprint">想多一句急停，就加一行、输出选「系统命令 → 紧急停止」。内置的「体感紧急停止」删不掉，它是输出卡住时最后的出口。说法不能和本游戏口令、内置口令重复。</p>
+<p class="statusline warn" hidden="" id="voiceConflicts"></p>
+<div aria-hidden="true" class="voice-head"><span>说什么</span><span>输出类型</span><span>键位或命令</span><span>方式</span><span></span></div>
 <div id="voiceRows"></div>
-<div class="settings-actions"><button class="btn" id="addVoiceBtn">＋别名</button></div>
-<details><summary>怎么做「按住不放」</summary><p class="fineprint">新增「保持右肩键」，选手柄键、填 RB、选「持续按住」；再新增「松开右肩键」，同样填 RB、选「松开」。说「体感保持右肩键」就一直按住，说「体感松开右肩键」才放开。</p></details>
-<span id="voiceSaveStatus" role="status"></span><button class="btn" hidden="" id="retryVoiceBtn">重试保存口令</button>
+<div class="settings-actions"><button class="btn" id="addVoiceBtn">＋ 添加口令</button></div>
+<details><summary>怎么做「按住不放」</summary><p class="fineprint">新增「保持右肩键」：选手柄键、填 RB、选「持续按住」；再新增「松开右肩键」：同样填 RB、选「松开」。之后说「体感保持右肩键」就一直按住，说「体感松开右肩键」才放开。</p></details>
+<span class="statusline" id="voiceSaveStatus" role="status"></span><button class="btn" hidden="" id="retryVoiceBtn">重试保存口令</button>
 </div>
 
 <h2 class="group-head">进阶</h2>
-<section class="settings-section wide">
+<section class="settings-section">
 <details id="advancedSettings"><summary>高级设置与诊断</summary>
 <div class="advgrid">
-<label>算法<select id="headAlgorithm"><option value="pnp">三维头姿（推荐）</option><option value="ratio">脸部比例（实验）</option></select></label>
-<label>横向头控<select id="headHorizontalAlgorithm"><option value="gesture_v188">多信号融合（原稳健版）</option><option value="gesture_v153">个性化 PnP（原 v153）</option><option value="frozen22">固定特征 2D</option><option selected="" value="roll_tilt">侧倾转向（实验）</option></select></label>
+<label>头部算法<select id="headAlgorithm"><option value="pnp">三维头姿（推荐）</option><option value="ratio">脸部比例（实验）</option></select></label>
+<label>左右头控算法<select id="headHorizontalAlgorithm"><option value="gesture_v188">多信号融合（原稳健版）</option><option value="gesture_v153">个性化 PnP（原 v153）</option><option value="frozen22">固定特征 2D</option><option selected="" value="roll_tilt">侧倾转向（实验）</option></select></label>
 <div class="fineprint" hidden="" id="rollTiltHint">脸朝屏幕，头向左肩或右肩倾斜时持续转向，回正立即停止。</div>
 <label>采集兼容模式<select id="cameraBackend"><option selected="" value="auto">自动</option><option value="msmf">系统媒体采集</option><option value="dshow">传统兼容采集</option></select></label>
 </div>
-<details class="perf-panel" id="performancePanel"><summary>高级诊断</summary>
-<div class="fineprint" id="perfSummary">仅在排查问题时查看</div><div class="perf-details" id="perfDetails">等待本地服务诊断数据。</div>
+<details class="perf-panel" id="performancePanel"><summary>运行诊断</summary>
+<div class="fineprint" id="perfSummary">排查问题时再看</div><div class="perf-details" id="perfDetails">等待本地服务诊断数据。</div>
 <div class="pill" id="voiceMode">未就绪</div><div class="model-path" id="voiceModelPath"></div><div class="diagnostic-text" id="voiceDiagnostic"></div>
 </details>
 <div aria-live="polite" class="statusline" id="bodyMotionGuardStatus">防晃版本读取中…</div>
@@ -264,10 +270,10 @@
 
 <section class="range" data-panel="range" hidden="" id="rangePanel">
 <div class="range-intro">
-<div class="title">动作测试</div>
-<p class="lede">站到镜头前做个动作，或者说句口令。打中了什么、按的是哪个键，这里用大字写出来——你在几米外也看得见。</p>
-<p class="fineprint">这里只是让你看清楚，不改任何设置。点下面的靶子可以跳到「本游戏」里改它的键。</p>
-<div class="range-warn" hidden="" id="rangeOutputWarn">输出是关的：这里看得见触发，游戏里不会有反应。</div>
+<h2 class="title">动作测试</h2>
+<p class="lede">站到镜头前做个动作，或者说句口令。触发了什么、按的是哪个键，这里用大字显示，几米外也看得清。</p>
+<p class="fineprint">这里只显示，不改设置。点下面的格子可以跳到「本游戏」改它的键。</p>
+<div class="range-warn" hidden="" id="rangeOutputWarn">游戏控制没开：这里能看到触发，游戏里不会有反应。</div>
 </div>
 
 <div class="range-hit" id="rangeHit">
@@ -278,14 +284,14 @@
 <div class="range-targets" id="rangeTargets"></div>
 
 <div class="range-log-wrap">
-<div class="range-log-title">刚才打中的</div>
+<div class="range-log-title">最近触发</div>
 <div class="range-log" id="rangeLog"></div>
 </div>
 </section>
 </main>
-<footer class="sitefoot"><span>MotionControl 2.0 · © 2026 guiwushengzhe</span><span>遇到问题：QQ 群 <b>1101605483</b></span><a href="https://motioncontrol.guiwu-aware.icu/feedback" rel="noopener" target="_blank">或者跟开发者说一句</a><a href="https://github.com/guiwushengzhe-prog/MotionControl" rel="noopener" target="_blank">源码 · AGPL-3.0</a></footer>
+<footer class="sitefoot"><span>MotionControl 2.0 · © 2026 guiwushengzhe</span><span>QQ 群 <b>1101605483</b></span><a href="https://motioncontrol.guiwu-aware.icu/feedback" rel="noopener" target="_blank">问题反馈</a><a href="https://github.com/guiwushengzhe-prog/MotionControl" rel="noopener" target="_blank">源码 · AGPL-3.0</a></footer>
 
-<dialog aria-labelledby="fixedZonesTitle" id="fixedZonesMask"><div class="dialog-head"><h2 id="fixedZonesTitle">这会切换成固定区域</h2></div><p>现在的六个区域跟随你的身体，换个站位也对得上。记录参考场景后它们会<strong>固定在画面坐标上，不再跟随身体</strong>；你挪动位置就要重新匹配一次。</p><p>头顶跳跃区也会改用固定判定，起跳手感和现在不同。</p><div class="settings-actions"><button class="btn safe primary" id="fixedZonesCancel">取消，继续用跟随区域</button><button class="btn danger" id="fixedZonesConfirm">仍要切换成固定区域</button></div></dialog>
+<dialog aria-labelledby="fixedZonesTitle" id="fixedZonesMask"><div class="dialog-head"><h2 id="fixedZonesTitle">切换成固定区域？</h2></div><p>现在的六个区域跟着你的身体走，换个站位也对得上。记录参考场景后，它们会<strong>固定在画面上，不再跟随身体</strong>；你换了位置就要重新匹配一次。</p><p>头顶跳跃区也会改用固定判定，起跳手感和现在不同。</p><div class="settings-actions"><button class="btn danger" id="fixedZonesConfirm">仍要切换</button><span class="spacer"></span><button class="btn primary" id="fixedZonesCancel">取消，继续用跟随区域</button></div></dialog>
 <dialog aria-labelledby="voiceTitle" id="voiceCommandsMask"><div class="dialog-head"><h2 id="voiceTitle">语音指令</h2><button class="btn" id="closeVoiceCommandsBtn">关闭</button></div><div id="voiceCommandGrid"></div></dialog>
 <div class="tour" hidden="" id="tour"><div class="tour-block"></div><div class="tour-block"></div><div class="tour-block"></div><div class="tour-block"></div><div class="tour-spot" id="tourSpot"></div><div aria-hidden="true" class="tour-cursor" hidden="" id="tourCursor"><svg viewBox="0 0 20 28" width="20" height="28"><path d="M2 2v21l5.5-5.2 3.6 8.2 3.4-1.5-3.6-8.1H18z"/></svg><span>虚拟鼠标</span></div><section aria-label="新手教学" class="tour-card" data-side="none" id="tourCard">
 <div class="tour-head"><span id="tourStep">新手教学</span><button class="btn" id="tourCloseBtn">跳过教学</button></div>

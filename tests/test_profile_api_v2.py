@@ -40,8 +40,10 @@ def test_target_game_conflict_and_legacy_request_compatibility(tmp_path):
         # configure_profile_bindings 是后加的：换游戏时语音那边也要跟着换一批口令。
         # 替身里没它的话，路由会招 AttributeError 然后返回 400——看起来像参数不对，
         # 其实是少了一个方法。
+        # check_profile_phrases 同理：存之前要先查本游戏口令有没有和别的口令同名。
         "VOICE": SimpleNamespace(_lock=RLock(), source_id="phone", _release_locked=released.append,
-                                 configure_profile_bindings=lambda bindings: None),
+                                 configure_profile_bindings=lambda bindings: None,
+                                 check_profile_phrases=lambda bindings: None),
     }
     request = make_handler(namespace)
     request.path = "/api/game-profiles/overrides"

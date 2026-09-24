@@ -15,6 +15,8 @@ from typing import Callable
 SYSTEM_HEAD_CALIBRATION_START = "HEAD_CALIBRATION_START"
 VOICE_TIMEOUT_SECONDS = 1.5
 WAKE_COMMAND_WINDOW_SECONDS = 3.5
+# 每个游戏自己的 12 句口令。其余内置口令都是系统功能，不跟游戏走。
+PROFILE_SLOT_PREFIX = "game.profile_slot_"
 MAX_AUDIO_FRAME_BYTES = 256 * 1024
 
 
@@ -144,7 +146,8 @@ class VoiceService:
         self.model_path = find_vosk_model(root)
         self.action_map_file = root / "config" / "generated_voice" / "voice_action_map.json"
         self.command_registry: dict[str, dict] = {}
-        self._base_command_registry: dict[str, dict] = {}
+        self._catalog: list[dict] = []
+        self._profile_bindings: dict = {}
         self._phrase_index: dict[str, dict] = {}
         self.recognizer: VoskCommandRecognizer | None = None
         self.recognizer_mode = "vosk_constrained_grammar"
@@ -177,6 +180,7 @@ class VoiceService:
         self._lock = threading.RLock()
         self._load()
         self._load_command_registry()
+        self._drop_shadowed_mappings()
         self._rebuild_recognizer()
 
     def _load(self) -> None:
@@ -260,45 +264,142 @@ class VoiceService:
     def configure(self, items, *, wake_word=None, emergency_stop_phrases=None) -> dict:
         with self._lock:
             mappings = self._validate_mappings(items)
+            wake = self._validate_wake_word(wake_word) if wake_word is not None else self.wake_word
+            stops = (self._validate_emergency_phrases(emergency_stop_phrases)
+                     if emergency_stop_phrases is not None else self.emergency_stop_phrases)
+            previous = (self.mappings, self.wake_word, self.emergency_stop_phrases)
+            self.mappings, self.wake_word, self.emergency_stop_phrases = mappings, wake, stops
+            # 内置口令里写着唤醒词，改了唤醒词就要重建一遍，否则它们还卡在旧的那个上。
+            self._build_registry()
+            problems = self._phrase_conflicts(self._commands_for(self._profile_bindings))
+            if problems:
+                self.mappings, self.wake_word, self.emergency_stop_phrases = previous
+                self._build_registry()
+                raise ValueError(f"{problems[0]}，换一个说法")
             self._release_locked(self.source_id)
-            self.mappings = mappings
-            if wake_word is not None:
-                self.wake_word = self._validate_wake_word(wake_word)
-            if emergency_stop_phrases is not None:
-                self.emergency_stop_phrases = self._validate_emergency_phrases(emergency_stop_phrases)
             self._write_config()
             self._write_personal()
-            # 内置口令里写着唤醒词，改了唤醒词就要重建一遍，否则它们还卡在旧的那个上。
-            self._load_command_registry()
             self._rebuild_recognizer()
             return self.status()
 
     def _load_command_registry(self) -> None:
-        """Load built-in commands and build the wake-word-aware phrase index."""
-        self.command_registry = {}
-        self._base_command_registry = {}
-        if not self.action_map_file.is_file(): return
-        try:
-            data = json.loads(self.action_map_file.read_text(encoding="utf-8-sig"))
-            if isinstance(data, dict):
-                for phrase, raw in data.items():
-                    if not isinstance(raw, dict): continue
-                    command = dict(raw); command["phrase"] = str(phrase)
-                    command["synonyms"] = list(command.get("synonyms", []) or [])
-                    self._base_command_registry[compact_text(str(phrase))] = command
-            self._apply_wake_word_to_registry()
-        except Exception as exc:
-            self.last_error = f"语音命令注册表读取失败：{exc}"
+        """Read the shipped built-in commands.  Kept as read, never edited in place:
+        the current game's phrases are laid over a fresh copy each time (see
+        _commands_for), so switching games cannot carry one game's phrases into
+        the next, and saving the shared phrases cannot wipe the game's."""
+        self._catalog = []
+        if self.action_map_file.is_file():
+            try:
+                data = json.loads(self.action_map_file.read_text(encoding="utf-8-sig"))
+                if isinstance(data, dict):
+                    for phrase, raw in data.items():
+                        if not isinstance(raw, dict): continue
+                        command = dict(raw); command["phrase"] = str(phrase)
+                        command["synonyms"] = list(command.get("synonyms", []) or [])
+                        self._catalog.append(command)
+            except Exception as exc:
+                self.last_error = f"语音命令注册表读取失败：{exc}"
+        self._build_registry()
 
-    def _apply_wake_word_to_registry(self) -> None:
-        registry = {}
-        for command in self._base_command_registry.values():
-            item = copy.deepcopy(command)
-            item["phrase"] = self._with_wake_word(str(item.get("phrase", "")))
-            item["synonyms"] = [self._with_wake_word(str(alias)) for alias in item.get("synonyms", []) or []]
-            registry[compact_text(item["phrase"])] = item
-        self.command_registry = registry
+    def _commands_for(self, bindings: dict | None) -> list[dict]:
+        """Built-in commands with a game's phrases laid over them, wake word applied.
+
+        A list rather than a dict keyed by phrase: two commands given the same
+        phrase must both stay visible, or the check that forbids it cannot see it.
+        """
+        commands = copy.deepcopy(self._catalog)
+        voice_bindings = bindings.get("voice", {}) if isinstance(bindings, dict) else {}
+        by_id = {str(item.get("id")): item for item in commands}
+        for command_id, binding in (voice_bindings.items() if isinstance(voice_bindings, dict) else []):
+            command = by_id.get(str(command_id))
+            if command is None or not isinstance(binding, dict): continue
+            phrase = str(binding.get("phrase", "")).strip()
+            if phrase:
+                if not compact_text(phrase).startswith(compact_text(self.wake_word)): phrase = f"{self.wake_word}{phrase}"
+                command["phrase"] = phrase
+            aliases = binding.get("synonyms", []); command["synonyms"] = []
+            for item in aliases if isinstance(aliases, list) else []:
+                alias = str(item).strip()
+                if alias:
+                    if not compact_text(alias).startswith(compact_text(self.wake_word)): alias = f"{self.wake_word}{alias}"
+                    command["synonyms"].append(alias)
+        for command in commands:
+            command["phrase"] = self._with_wake_word(str(command.get("phrase", "")))
+            command["synonyms"] = [self._with_wake_word(str(alias)) for alias in command.get("synonyms", []) or []]
+        return commands
+
+    def _build_registry(self) -> None:
+        self.command_registry = {compact_text(item["phrase"]): item
+                                 for item in self._commands_for(self._profile_bindings)}
         self._rebuild_phrase_index()
+
+    def _phrase_conflicts(self, commands: list[dict]) -> list[str]:
+        """每一句口令只能有一个主人。
+
+        以前内置口令、本游戏口令、通用口令可以同名，识别时内置的先匹配，于是
+        通用口令里和它同名的那几条从来没生效过，界面上却看着能改——表上写闪避
+        是空格，实际按的是 Shift。现在同名直接不让存。
+        """
+        owners: dict[str, tuple[str, str]] = {}
+        problems: list[str] = []
+
+        def claim(phrase: str, label: str, ident: str) -> None:
+            key = compact_text(phrase)
+            if not key:
+                return
+            other = owners.get(key)
+            if other is None:
+                owners[key] = (label, ident)
+            elif other[1] != ident:
+                both = f"{other[0]}和{label}" if other[0] != label else f"两条{label}"
+                problems.append(f"「{phrase}」同时是{both}")
+
+        for phrase in self.spoken_emergency_phrases():
+            claim(phrase, "急停口令", "emergency")
+        for command in commands:
+            cid = str(command.get("id", ""))
+            # 急停那条和上面的急停口令是同一件事，内置的那句总会被加回急停口令里。
+            if cid == "system.emergency_stop":
+                continue
+            label = "本游戏口令" if cid.startswith(PROFILE_SLOT_PREFIX) else "内置口令"
+            for phrase in [command.get("phrase", ""), *(command.get("synonyms") or [])]:
+                claim(str(phrase), label, cid)
+        for index, mapping in enumerate(self.mappings):
+            for phrase in [mapping["phrase"], *mapping.get("synonyms", [])]:
+                claim(f"{self.wake_word}{phrase}", "通用口令", f"mapping:{index}")
+        return problems
+
+    def check_profile_phrases(self, bindings: dict | None) -> None:
+        """在存一个游戏的口令之前调用：和内置口令、通用口令、其他口令重名就不存。"""
+        with self._lock:
+            problems = self._phrase_conflicts(self._commands_for(bindings))
+        if problems:
+            raise ValueError(f"{problems[0]}，换一个说法")
+
+    def _drop_shadowed_mappings(self) -> None:
+        """老版本带的通用口令里有几条和内置口令同名（开始校准、截图……）。内置的
+        先匹配，它们从来没生效过。说法现在要求互斥，读进来时把这几条去掉。"""
+        taken = {compact_text(phrase) for phrase in self.spoken_emergency_phrases()}
+        for command in self.command_registry.values():
+            if str(command.get("id", "")).startswith(PROFILE_SLOT_PREFIX):
+                continue
+            taken.update(compact_text(phrase) for phrase in [command.get("phrase", ""), *(command.get("synonyms") or [])])
+        kept = []
+        for mapping in self.mappings:
+            if compact_text(f"{self.wake_word}{mapping['phrase']}") in taken:
+                continue
+            synonyms = [alias for alias in mapping.get("synonyms", [])
+                        if compact_text(f"{self.wake_word}{alias}") not in taken]
+            entry = {key: value for key, value in mapping.items() if key != "synonyms"}
+            if synonyms:
+                entry["synonyms"] = synonyms
+            kept.append(entry)
+        if kept != self.mappings:
+            self.mappings = kept
+            try:
+                self._write_config()
+            except OSError as exc:
+                self.last_error = f"语音配置保存失败：{exc}"
 
     def _rebuild_phrase_index(self) -> None:
         self._phrase_index = {}
@@ -319,24 +420,8 @@ class VoiceService:
     def configure_profile_bindings(self, bindings: dict | None) -> None:
         """Overlay editable per-game trigger words on shipped command IDs."""
         with self._lock:
-            registry = copy.deepcopy(self._base_command_registry)
-            voice_bindings = bindings.get("voice", {}) if isinstance(bindings, dict) else {}
-            by_id = {str(item.get("id")): item for item in registry.values() if isinstance(item, dict)}
-            for command_id, binding in (voice_bindings.items() if isinstance(voice_bindings, dict) else []):
-                command = by_id.get(str(command_id))
-                if command is None or not isinstance(binding, dict): continue
-                phrase = str(binding.get("phrase", "")).strip()
-                if phrase:
-                    if not compact_text(phrase).startswith(compact_text(self.wake_word)): phrase = f"{self.wake_word}{phrase}"
-                    command["phrase"] = phrase
-                aliases = binding.get("synonyms", []); command["synonyms"] = []
-                for item in aliases if isinstance(aliases, list) else []:
-                    alias = str(item).strip()
-                    if alias:
-                        if not compact_text(alias).startswith(compact_text(self.wake_word)): alias = f"{self.wake_word}{alias}"
-                        command["synonyms"].append(alias)
-            self._base_command_registry = registry
-            self._apply_wake_word_to_registry()
+            self._profile_bindings = copy.deepcopy(bindings) if isinstance(bindings, dict) else {}
+            self._build_registry()
             self._rebuild_recognizer()
 
     def grammar_phrases(self) -> list[str]:
@@ -787,6 +872,9 @@ class VoiceService:
             "supported_count": self.supported_count,
             "unsupported": list(self.unsupported),
             "mappings": list(self.mappings),
+            # 换了游戏、装了别人的配置，都可能带进来一句和通用口令同名的。存的时候
+            # 拦得住，这两条路拦不住，只能照实告诉界面。
+            "phrase_conflicts": self._phrase_conflicts(self._commands_for(self._profile_bindings)),
             "wake_word": self.wake_word,
             # 界面上要显示的是"要怎么说"，不是盘上存的那个写法。
             "emergency_stop_phrases": self.spoken_emergency_phrases(),
