@@ -1488,6 +1488,7 @@ function showView(view){
   const tab=document.querySelector(`[data-view="${view}"]`);
   $('#viewHint').textContent=tab?.dataset.viewHint||'';
   if(view==='devices'){void refreshXinput();void refreshHandMouse();void refreshPoseRecord()}
+  if(view==='games')loadCloudEndpoint().catch(()=>{});
   window.scrollTo(0,0);
 }
 function poll(task,delay,enabled=()=>true){
@@ -1701,10 +1702,29 @@ async function cloudRefresh() {
   }
 }
 
+/** 只要地址。以前只有「查看分享」会读它，于是没先点那个就点「打开网站」，只会说没连上。 */
+async function loadCloudEndpoint() {
+  if (cloudEndpoint) return cloudEndpoint;
+  const status = await api('/api/cloud/status', { timeoutMs: 12000 });
+  cloudEndpoint = status.endpoint || '';
+  return cloudEndpoint;
+}
+
 /** 在系统浏览器里打开网站上的某一页。详情、浏览全部、上传都在那边。 */
-function openOnSite(path = '') {
-  if (!cloudEndpoint) { cloudSay('还没连上云端', 'error'); return; }
-  window.open(cloudEndpoint + path, '_blank', 'noopener');
+async function openOnSite(path = '') {
+  if (cloudEndpoint) { window.open(cloudEndpoint + path, '_blank', 'noopener'); return; }
+  // 地址还没读到：先趁这一下点击开一个空窗口，读到了再跳过去。等读完再开的话，
+  // 那一下点击已经过期，浏览器会把它当弹窗拦掉。
+  const win = window.open('about:blank', '_blank');
+  try {
+    const endpoint = await loadCloudEndpoint();
+    if (!endpoint) throw new Error('没有配置云端地址');
+    if (win) { win.opener = null; win.location.href = endpoint + path; }
+    else window.open(endpoint + path, '_blank', 'noopener');
+  } catch (error) {
+    win?.close();
+    cloudSay(error.message || '读不到云端地址', 'error');
+  }
 }
 
 const CLOUD_DOC_NAMES = {
