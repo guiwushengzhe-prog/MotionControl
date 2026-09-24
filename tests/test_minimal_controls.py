@@ -106,9 +106,9 @@ def test_four_motion_rules_and_settings_exist():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     for action in ['march','calf_back','squat','hands_up']:
         assert action in kernel and action in server
-    assert 'left_angle < 135' in kernel
+    assert 'left_angle < SQUAT_KNEE_ANGLE' in kernel
     assert 'CALF_LIFT_ANKLE_RISE' in kernel and 'CALF_LIFT_KNEE_SHARE' in kernel
-    assert 'self._library_hit_locked("hands_up", pose_map)' in kernel
+    assert 'pose_map["left_wrist"]["y"] < pose_map["nose"]["y"] - 0.06 * torso' in kernel
     assert 'active_until' in kernel
     assert '/api/motion/config' in server
     assert '/api/motion/state' in server

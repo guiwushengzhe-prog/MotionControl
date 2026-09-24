@@ -2266,14 +2266,12 @@ document.getElementById('customPoseScoresBtn')?.addEventListener('click', event 
 document.getElementById('customPoseCaptureBtn')?.addEventListener('click', captureCustomPose);
 
 /* --- 动作库 ---------------------------------------------------------------
- * 做好的身体动作，每个配一个一直在做示范的火柴人。名字、怎么做、示范都是电脑那边
- * motioncontrol_shared/pose_library.py 给的，这里只画。
- *
- * 大部分动作是代码认的，这里只能看、只能跳去绑键；按模板认的（目前是双手举过头）
- * 多一个「像到多少才算」，旁边是实时相似度——和自定义动作同一个用法。
+ * 做好的身体动作，每个配一个一直在做示范的火柴人。名字、怎么做、示范、会扫过哪些圈
+ * 都是电脑那边 motioncontrol_shared/pose_library.py 给的，这里只画。
  */
 const poseLibraryEl = document.getElementById('poseLibraryList');
 let poseLibrary = [];
+const ZONE_NAMES_CN = {leftHand: '左手区', rightHand: '右手区', leftFoot: '左脚区', rightFoot: '右脚区', headJump: '头顶区'};
 
 async function refreshPoseLibrary() {
   if (!poseLibraryEl) return;
@@ -2309,16 +2307,6 @@ setInterval(() => {
   }
 }, 80);
 
-async function updatePoseLibraryThreshold(item, threshold) {
-  try {
-    await post('/api/pose/library/update', { id: item.id, threshold });
-    item.threshold = threshold;
-    paintPoseLibrary();
-  } catch (error) {
-    notice('没存上：' + (error?.message || error));
-  }
-}
-
 function renderPoseLibrary() {
   if (!poseLibraryEl) return;
   poseLibraryEl.replaceChildren();
@@ -2343,51 +2331,78 @@ function renderPoseLibrary() {
     const how = document.createElement('div');
     how.className = 'pose-library-how';
     how.textContent = item.how;
-
     card.append(poseDemo(item.demo), head, how);
 
-    if (item.detector === 'template') {
-      const threshold = document.createElement('input');
-      threshold.type = 'range';
-      threshold.min = '50'; threshold.max = '99'; threshold.step = '1';
-      threshold.value = String(Math.round(Number(item.threshold) * 100));
-      threshold.addEventListener('change', () => updatePoseLibraryThreshold(item, Number(threshold.value) / 100));
-      const meter = document.createElement('div');
-      meter.className = 'pose-library-meter';
-      meter.title = '现在像不像。做一下动作，把「像到多少才算」设得比它略低一点';
-      const fill = document.createElement('div');
-      fill.className = 'custom-pose-fill';
-      const readout = document.createElement('span');
-      readout.className = 'custom-pose-score';
-      meter.append(fill, readout);
-      const tools = document.createElement('div');
-      tools.className = 'pose-library-tools';
-      tools.append(customPoseSlider('像到 ', threshold, v => v + '% 才算'), meter);
-      card.append(tools);
+    // 做这个动作会扫过哪些圈。两边都绑了键时，下面那行 paintPoseLibrary 会写清楚怎么让。
+    if ((item.passes_zones || []).length) {
+      const zones = document.createElement('div');
+      zones.className = 'pose-library-zones';
+      zones.textContent = '做的时候会经过：' + item.passes_zones.map(zone => ZONE_NAMES_CN[zone] || zone).join('、');
+      card.append(zones);
     }
     poseLibraryEl.appendChild(card);
   }
   paintPoseLibrary();
 }
 
-/** 只改键位和相似度，不重建——每次状态轮询都重建会打断正在拖的滑块。 */
+/** 圈给动作让路时说的那句话。电脑那边算好哪些圈在让、让谁，这里只翻译成人话。 */
+function zoneYieldText(trigger) {
+  const overlaps = kernelState?.zone_overlaps || {};
+  const delayed = [], paused = [], sharing = [];
+  for (const [zone, info] of Object.entries(overlaps)) {
+    if (!(info.triggers || []).includes(trigger)) continue;
+    const name = ZONE_NAMES_CN[zone] || zone;
+    if (!info.yields) sharing.push(name);
+    else if (info.delay) delayed.push(name);
+    else paused.push(name);
+  }
+  const wait = Math.round(Number(kernelState?.zone_yield_s || 0.25) * 100) / 100;
+  const parts = [];
+  if (delayed.length) parts.push(`${delayed.join('、')}也绑了键：做这个动作时不按，平时会晚 ${wait} 秒按下，免得误触`);
+  if (paused.length) parts.push(`${paused.join('、')}也绑了键：做这个动作时不按`);
+  if (sharing.length) parts.push(`${sharing.join('、')}也绑了键：做这个动作时会一起按到`);
+  return parts.join('；');
+}
+
+/** 只改键位和提醒，不重建。 */
 function paintPoseLibrary() {
   if (!poseLibraryEl) return;
-  const scores = kernelState?.library_scores || {};
   for (const card of poseLibraryEl.querySelectorAll('.pose-library-item')) {
     const item = poseLibrary.find(entry => entry.id === card.dataset.id);
     if (!item) continue;
     const bound = card.querySelector('.custom-pose-key');
     const label = triggerKeyLabel(item.trigger);
     if (bound && bound.textContent !== label) bound.textContent = label;
-    if (item.detector !== 'template') continue;
-    const score = Number(scores[item.id] ?? 0);
-    card.querySelector('.custom-pose-fill').style.width = Math.round(score * 100) + '%';
-    card.querySelector('.custom-pose-score').textContent = '现在 ' + Math.round(score * 100) + '%';
-    card.classList.toggle('hit', score >= Number(item.threshold));
+    let warn = card.querySelector('.pose-library-warn');
+    const text = triggerMapped(item.trigger) ? zoneYieldText(item.trigger) : '';
+    if (text && !warn) {
+      warn = document.createElement('div');
+      warn.className = 'pose-library-warn';
+      card.append(warn);
+    }
+    if (warn) {
+      warn.hidden = !text;
+      if (warn.textContent !== text) warn.textContent = text;
+    }
   }
+  paintZoneYieldNotice();
 }
 
+/** 映射表上方那一行：绑了会互相碰到的动作和圈时，在绑键的地方就说清楚。 */
+function paintZoneYieldNotice() {
+  const box = document.getElementById('zoneYieldNotice');
+  if (!box) return;
+  const lines = poseLibrary
+    .filter(item => triggerMapped(item.trigger))
+    .map(item => {
+      const text = zoneYieldText(item.trigger);
+      return text ? `「${item.name}」和${text}` : '';
+    })
+    .filter(Boolean);
+  const text = lines.join('\n');
+  box.hidden = !text;
+  if (box.textContent !== text) box.textContent = text;
+}
 document.getElementById('cloudSiteBtn')?.addEventListener('click', () => openOnSite('/'));
 
 /* --- 键盘宏 -------------------------------------------------------------

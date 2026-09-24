@@ -1087,13 +1087,9 @@ class AdminHandler(_BaseHandler):
             })
             return
         if route == "/api/pose/library":
-            # 动作库：名字、怎么做、火柴人示范，模板动作再带上这个人自己的阈值。
-            # 示范是固定数据，界面只在打开时读一次；实时相似度走主状态轮询。
-            library = pose_library.library_payload()
-            for item in library:
-                if item["detector"] == "template":
-                    item["threshold"] = KERNEL.library_threshold(item["id"])
-            self._send_json({"version": VERSION, "library": library})
+            # 动作库：名字、怎么做、火柴人示范、会扫过哪些圈。固定数据，界面只在
+            # 打开时读一次。
+            self._send_json({"version": VERSION, "library": pose_library.library_payload()})
             return
         if route == "/api/pose/custom":
             self._send_json({
@@ -1205,16 +1201,6 @@ class AdminHandler(_BaseHandler):
             except MacroError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc)}, 400)
-            return
-        if route == "/api/pose/library/update":
-            if not self._is_loopback():
-                self._send_json({"ok": False, "error": "pose library is loopback-only"}, 403)
-                return
-            try:
-                self._send_json({"ok": True, **KERNEL.configure_library_threshold(
-                    str(body.get("id", "")), body.get("threshold"))})
-            except (TypeError, ValueError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
         if route.startswith("/api/pose/custom/"):

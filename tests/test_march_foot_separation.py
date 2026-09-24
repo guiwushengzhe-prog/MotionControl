@@ -16,6 +16,12 @@ def lifted(side, *, knee=.10, ankle=.08, outward=0.0, stance=.0):
     return pose
 
 
+def with_elbows(pose, *, left=(.40, .55), right=(.60, .55)):
+    pose['left_elbow'] = {'x': left[0], 'y': left[1], 'score': .95}
+    pose['right_elbow'] = {'x': right[0], 'y': right[1], 'score': .95}
+    return pose
+
+
 @pytest.mark.parametrize('stance', [0.0, .10])
 def test_small_alternating_march_is_detected_without_foot_buttons(monkeypatch, stance):
     """第一步就算走起来了。以前要左右交替才开始，人得踏两三步才动。"""
@@ -135,16 +141,76 @@ def test_a_crossed_foot_does_not_press_the_foot_zone(monkeypatch):
 
 @pytest.mark.parametrize('side', ['left', 'right'])
 def test_lifting_the_lower_leg_back_is_calf_lift_not_a_step(monkeypatch, side):
-    """小腿向后抬起：脚踝比另一只高出一截，膝盖没怎么动。正面看腿几乎是直的，
+    """小腿向后抬起：脚踝抬到膝盖那么高，膝盖没怎么动。正面看腿几乎是直的，
     以前按膝角小于 115° 判定，这样做几乎触发不了。"""
     kernel = ControlKernel(KernelOutput())
     try:
+        # 小腿后抬绑了键，踏步才要等脚抬到最高再定是哪一个。
+        kernel.configure_motions([{'id': 'calf_back', 'enabled': True, 'type': 'gamepad', 'target': 'B'},
+                                  {'id': 'march', 'enabled': True, 'type': 'gamepad', 'target': 'LS_UP'}])
         feed = _zone_feeder(kernel, monkeypatch)
         feed(_standing_pose(), 20)
-        feed(lifted(side, knee=.02, ankle=.30), 6)
+        for rise in (.10, .30, .50):
+            feed(lifted(side, knee=.02, ankle=rise), 1)
+        feed(lifted(side, knee=.02, ankle=.60), 6)
         assert 'calf_back' in kernel.motion_active
-        assert 'march' not in kernel.motion_active
+        assert 'march' not in kernel.motion_active, '往上抬的途中不能先算成一步'
         feed(_standing_pose(), 6)
+        assert 'calf_back' not in kernel.motion_active
+        assert 'march' not in kernel.motion_active, '放下来的时候也不能算成一步'
+    finally:
+        kernel.close()
+
+
+def test_incomplete_knee_to_elbow_attempt_is_not_a_step(monkeypatch):
+    """肘还差一点但明显在靠近时，不能在脚踝峰值处补出踏步。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_motions([
+            {'id': 'cross_knee_elbow', 'enabled': True, 'type': 'gamepad', 'target': 'X'},
+            {'id': 'march', 'enabled': True, 'type': 'gamepad_axis', 'target': 'LS_UP'},
+        ])
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(with_elbows(_standing_pose()), 20)
+        for ankle in (.10, .22, .30, .29):
+            # 左膝已抬起；右肘距离略超过真正碰到的 0.95，但仍在候选余量内。
+            feed(with_elbows(lifted('left', knee=.30, ankle=ankle), right=(.60, .55)))
+        assert 'cross_knee_elbow' not in kernel.motion_active
+        assert 'march' not in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+def test_completed_knee_to_elbow_attempt_still_wins_over_march(monkeypatch):
+    """真正碰到对侧肘时仍认提膝碰肘，并且不产生踏步。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_motions([
+            {'id': 'cross_knee_elbow', 'enabled': True, 'type': 'gamepad', 'target': 'X'},
+            {'id': 'march', 'enabled': True, 'type': 'gamepad_axis', 'target': 'LS_UP'},
+        ])
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(with_elbows(_standing_pose()), 20)
+        for ankle in (.10, .22, .30, .29):
+            pose = lifted('left', knee=.30, ankle=ankle)
+            # 左膝 (.46, .728) 与右肘重合，满足真正碰肘条件。
+            feed(with_elbows(pose, right=(.46, .728)))
+        assert 'cross_knee_elbow' in kernel.motion_active
+        assert 'march' not in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+def test_a_real_step_ankle_rises_less_than_calf_lift(monkeypatch):
+    """真人录像：踏步脚踝抬 0.07~0.29 个躯干，小腿后抬 0.57 以上。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_motions([{'id': 'calf_back', 'enabled': True, 'type': 'gamepad', 'target': 'B'}])
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        for rise in (.10, .22, .25, .18):
+            feed(lifted('left', knee=.04, ankle=rise), 1)
+        assert 'march' in kernel.motion_active
         assert 'calf_back' not in kernel.motion_active
     finally:
         kernel.close()
@@ -163,14 +229,29 @@ def test_a_knee_lift_is_a_step_not_calf_lift(monkeypatch):
         kernel.close()
 
 
-def test_a_small_heel_lift_is_neither(monkeypatch):
+def test_swaying_on_the_spot_is_neither(monkeypatch):
+    """站着晃，脚踝最多离地 0.055 个躯干（真人录像）。"""
     kernel = ControlKernel(KernelOutput())
     try:
         feed = _zone_feeder(kernel, monkeypatch)
         feed(_standing_pose(), 20)
-        feed(lifted('left', knee=0, ankle=.10), 8)
+        for side in ('left', 'right') * 3:
+            feed(lifted(side, knee=0, ankle=.05), 5)
+            feed(_standing_pose(), 3)
         assert 'calf_back' not in kernel.motion_active
         assert 'march' not in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+def test_a_small_step_counts(monkeypatch):
+    """小的那几步脚踝只抬 0.07~0.09，以前认不出来，走着走着就断。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        feed(lifted('left', knee=0, ankle=.09), 3)
+        assert 'march' in kernel.motion_active
     finally:
         kernel.close()
 
