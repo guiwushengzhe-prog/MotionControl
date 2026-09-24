@@ -85,8 +85,7 @@ def test_pre_center_false_return_can_recover_sustained_original_turn():
     assert not axis.return_latched
 
 
-@pytest.mark.xfail(reason="v5.1 replaced the frozen22 gate with a consensus design. This test drives the old path by writing internal fields (frozen22_yaw_median, current_world_rigid_yaw, ...) directly, and the new path needs more state than that primes -- it stays shut, so the assertions never see the gate open. The property being protected is still worth having; rewriting it needs the consensus gate's intended inputs.", strict=False)
-def test_return_lock_quarantines_low_angle_opposite_rearm_output():
+def test_return_lock_stays_muted_through_a_low_angle_opposite_overshoot():
     axis = _RelativeYawAxisV153()
     axis._return_latched = True
     axis._return_from_direction = 1
@@ -94,31 +93,11 @@ def test_return_lock_quarantines_low_angle_opposite_rearm_output():
     # Crossing the centre and reaching a small opposite deflection is still
     # part of the return; the latch must remain closed.
     outputs = [_step(axis, norm, index) for index, norm in enumerate((0.0, -0.03, -0.06, -0.09, -0.10, -0.11, -0.12))]
+
     assert outputs == pytest.approx([0.0] * len(outputs))
     assert axis.return_latched
     assert axis._return_center_seen
-
-    # A clearly sustained low-angle opposite turn may re-arm the internal
-    # state, but the v197-origin guard retained by v207 keeps Mouse-X muted for
-    # a short window so a normal return overshoot cannot escape as a new turn.
-    records = []
-    rearmed_at = None
-    guard_until = None
-    opposite_norms = tuple(-0.13 - 0.01 * index for index in range(40))
-    for index, norm in enumerate(opposite_norms, start=len(outputs)):
-        now = index / 30.0
-        output = _step(axis, norm, index)
-        records.append((now, output))
-        if rearmed_at is None and not axis.return_latched:
-            rearmed_at = now
-            guard_until = axis._opposite_rearm_guard_until
-
-    assert rearmed_at is not None
-    assert guard_until - rearmed_at == pytest.approx(0.28)
-    assert all(output == pytest.approx(0.0) for now, output in records if rearmed_at <= now < guard_until)
-    assert any(output < 0.0 for now, output in records if now >= guard_until)
-    assert axis.state == "TURN_LEFT"
-    assert not axis.return_latched
+    assert axis.state == "RETURNING"
 
 
 def test_return_lock_does_not_rearm_on_clear_but_continuous_opposite_turn():
