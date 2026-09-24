@@ -153,7 +153,7 @@ def test_runtime_zone_snapshot_preserves_dynamic_rect_geometry_and_pressed_state
             kernel.zone_rects["leftHand"] = rect
             kernel.zone_state["leftHand"]["pressed"] = True
         zones = kernel.runtime_zones()
-        assert zones["leftHand"] == {"rect": rect, "pressed": True}
+        assert zones["leftHand"] == {"rect": rect, "pressed": True, "recognized": True}
         assert zones["leftHandUpper"] == zones["leftHand"]
     finally:
         kernel.close()
@@ -167,7 +167,7 @@ def test_runtime_zone_snapshot_preserves_fixed_circle_geometry():
             kernel.fixed_zones_enabled = True
             kernel.fixed_zones["rightHand"] = circle
             kernel.zone_state["rightHand"]["pressed"] = True
-        assert kernel.runtime_zones()["rightHand"] == {"circle": circle, "pressed": True}
+        assert kernel.runtime_zones()["rightHand"] == {"circle": circle, "pressed": True, "recognized": True}
     finally:
         kernel.close()
 

@@ -44,8 +44,16 @@ def frames(kernel, count=1):
             kernel._dispatch_controls_locked(time.monotonic())
 
 
-def test_holding_still_is_one_message_not_thirty():
+def mapped_kernel():
+    """双手交叉默认不绑键，而没绑键的不推给手机。测推送节奏的用例先给它绑一个。"""
     kernel = ControlKernel(Output())
+    kernel.configure_bindings({"poses": {"hands_cross": {
+        "action": {"type": "keyboard", "target": "F", "behavior": "hold"}}}})
+    return kernel
+
+
+def test_holding_still_is_one_message_not_thirty():
+    kernel = mapped_kernel()
     heard = []
     kernel.configure_trigger_listener(heard.append)
     with kernel._lock:
@@ -57,7 +65,7 @@ def test_holding_still_is_one_message_not_thirty():
 
 def test_letting_go_is_a_change_too():
     """松手也要推——不推的话手机上那个键会一直亮着，像是卡住了。"""
-    kernel = ControlKernel(Output())
+    kernel = mapped_kernel()
     heard = []
     kernel.configure_trigger_listener(heard.append)
     with kernel._lock:
@@ -97,7 +105,7 @@ def test_the_key_shown_is_the_one_that_really_fires():
 
 
 def test_a_listener_that_throws_does_not_break_control():
-    kernel = ControlKernel(Output())
+    kernel = mapped_kernel()
 
     def broken(payload):
         raise RuntimeError("手机那边坏了")
@@ -163,6 +171,51 @@ def test_a_shared_phrase_is_shown_by_what_was_said():
                         label="体感地图")
     assert kernel.status()["recent_triggers"][-1]["label"] == "体感地图"
     assert heard[0]["fired"][0]["name"] == "体感地图", "手机头顶那块也要写说的那句"
+    kernel.close()
+
+
+def test_an_unmapped_action_is_not_shown_on_the_phone():
+    """没绑键的动作做了也不按键。手机头顶再写「双手交叉 → 未映射」，人会以为它起作用了。
+    电脑上的「动作测试」页照样看得见——那一页读的是 recent_triggers。"""
+    kernel = ControlKernel(Output())
+    kernel.configure_bindings({})
+    heard = []
+    kernel.configure_trigger_listener(heard.append)
+    with kernel._lock:
+        kernel.pose_active = {"hands_cross"}
+    frames(kernel)
+    assert heard == [], "没绑键的也推给了手机"
+    assert kernel.status()["recent_triggers"][-1]["trigger"] == "pose.hands_cross", "动作测试页要看得见"
+    kernel.close()
+
+
+def test_an_unmapped_action_does_not_hide_a_mapped_one():
+    kernel = ControlKernel(Output())
+    kernel.configure_bindings({"poses": {"hands_cross": {
+        "action": {"type": "keyboard", "target": "F", "behavior": "hold"}}}})
+    heard = []
+    kernel.configure_trigger_listener(heard.append)
+    with kernel._lock:
+        kernel.pose_active = {"hands_cross"}
+        kernel.motion_active = {"squat"}
+    frames(kernel)
+    assert [item["id"] for item in heard[0]["held"]] == ["pose.hands_cross"]
+    assert [item["id"] for item in heard[0]["fired"]] == ["pose.hands_cross"]
+    kernel.close()
+
+
+def test_an_unmapped_zone_does_not_light_up():
+    """框亮 = 这个键正被按下。没绑键的框人伸进去，手机和网页上都不亮；
+    「动作测试」页读 recognized，照样知道认出来了。"""
+    kernel = ControlKernel(Output())
+    kernel.configure_bindings({"zones": {"leftHand": {"disabled": True}}})
+    with kernel._lock:
+        kernel.zone_state["leftHand"]["pressed"] = True
+        kernel.zone_state["rightHand"]["pressed"] = True
+    zones = kernel.runtime_zones()
+    assert zones["leftHand"]["pressed"] is False
+    assert zones["leftHand"]["recognized"] is True
+    assert zones["rightHand"]["pressed"] is True, "右手区有内置的 B，照常亮"
     kernel.close()
 
 

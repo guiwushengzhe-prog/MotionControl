@@ -248,7 +248,8 @@ const STEPS = [
       return {
         target: '#viewer', mark: `.zone[data-zone="${pick.id}"]`, ready: true,
         say: `${how}「${pick.key || pick.body}」圈`,
-        hint: pick.key ? '' : '这个游戏方案没给圈绑键，亮了游戏里也没反应',
+        // 没绑键的圈伸进去也不会亮（亮 = 按下了一个键），这一步只能跳过。
+        hint: pick.key ? '' : '这个游戏方案没给圈绑键，伸进去不会亮；这步可以跳过',
       };
     },
     check: s => ({ok: s.zones.some(zone => zone.pressed)}),

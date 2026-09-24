@@ -2039,6 +2039,15 @@ class ControlKernel:
         binding = self._effective_binding_locked(trigger)
         return {"id": trigger, "action": copy.deepcopy((binding or {}).get("action"))}
 
+    def _mapped_triggers_locked(self, triggers) -> set[str]:
+        """其中真的绑了键的那些。手机上只显示这些。
+
+        没绑键的动作做了也不按任何键，手机头顶再写一个「下蹲 → 未映射」、框再亮一
+        下，人只会以为它起作用了。要看它认没认出来，去电脑上的「动作测试」页——
+        那一页照样全列，靠的是 recent_triggers 和区域的 recognized。
+        """
+        return {trigger for trigger in triggers if self._effective_binding_locked(trigger)}
+
     def note_trigger(self, trigger: str, action: dict | None, label: str | None = None) -> None:
         """记一次触发。语音走的不是内核这条路，所以由 server 调进来。
 
@@ -2052,8 +2061,10 @@ class ControlKernel:
             now = time.monotonic()
             self._note_trigger_locked(trigger, action, now, label)
             # 语音也要推给手机。它是"说一句就完"的那种，不会出现在按住的集合里，
-            # 所以 held 照旧、fired 只有这一条。
-            if self._trigger_listener is not None:
+            # 所以 held 照旧、fired 只有这一条。没有动作的不推，理由同
+            # _mapped_triggers_locked。
+            mapped = isinstance(action, dict) and bool(action.get("type")) and bool(action.get("target"))
+            if mapped and self._trigger_listener is not None:
                 fired = {"id": str(trigger),
                          "action": copy.deepcopy(action) if isinstance(action, dict) else None}
                 if label:
@@ -2061,7 +2072,7 @@ class ControlKernel:
                 try:
                     self._trigger_listener({
                         "held": [self._trigger_brief_locked(item)
-                                 for item in sorted(self.trigger_previous)],
+                                 for item in sorted(self._mapped_triggers_locked(self.trigger_previous))],
                         "fired": [fired],
                         "at": round(now, 3),
                     })
@@ -2137,11 +2148,15 @@ class ControlKernel:
 
         # 集合变了才推给手机。每帧推一次的话，按住不放的那几秒就是每秒三十条一模
         # 一样的消息——手机那边什么都不会变，网络和电池却在一直烧。
-        if active != self.trigger_previous and self._trigger_listener is not None:
+        #
+        # 只看绑了键的那部分：没绑键的动作手机上不显示，它变了也就不用推。
+        shown = self._mapped_triggers_locked(active)
+        shown_before = self._mapped_triggers_locked(self.trigger_previous)
+        if shown != shown_before and self._trigger_listener is not None:
             payload = {
-                "held": [self._trigger_brief_locked(item) for item in sorted(active)],
+                "held": [self._trigger_brief_locked(item) for item in sorted(shown)],
                 "fired": [self._trigger_brief_locked(item)
-                          for item in sorted(active - self.trigger_previous)],
+                          for item in sorted(shown - shown_before)],
                 "at": round(now, 3),
             }
             try:
@@ -2362,15 +2377,23 @@ class ControlKernel:
         return "lookGate" in self.zone_rects
 
     def runtime_zones_locked(self) -> dict:
-        """Return only display geometry and pressed state for the phone overlay."""
+        """Return only display geometry and pressed state for the phone overlay.
+
+        ``pressed`` 是"这个框现在按着一个键"：没绑键的框人伸进去也是 False，
+        手机和网页上就不会亮。``recognized`` 是"身体确实在框里"，不管绑没绑键，
+        只给「动作测试」页用。lookGate 不是键而是一道闸，它两个值一样。
+        """
         gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         zones = {}
         for name in zone_names:
+            recognized = bool(self.zone_state.get(name, {}).get("pressed", False))
+            mapped = name not in RUNTIME_BODY_ZONES or bool(self._effective_binding_locked(f"zone.{name}"))
+            state = {"pressed": recognized and mapped, "recognized": recognized}
             if self.fixed_zones_enabled:
-                zones[name] = {"circle": copy.deepcopy(self.fixed_zones.get(name)), "pressed": bool(self.zone_state.get(name, {}).get("pressed", False))}
+                zones[name] = {"circle": copy.deepcopy(self.fixed_zones.get(name)), **state}
             else:
-                zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), "pressed": bool(self.zone_state[name]["pressed"])}
+                zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), **state}
         # Keep the old four identifiers in status for clients that have not yet
         # learned the merged names. They are aliases only; no second trigger is
         # evaluated or dispatched for them.

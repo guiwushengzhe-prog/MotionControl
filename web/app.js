@@ -65,6 +65,9 @@ function triggerKeyLabel(triggerKey){
   const text=binding&&!binding.disabled?actionKeyText(binding.action):null;
   return text||'未映射';
 }
+// 绑没绑键。没绑的做了也不按任何键，所以除了「动作测试」页，哪里都不显示它触发了——
+// 亮一下只会让人以为它起作用了。
+function triggerMapped(triggerKey){return triggerKeyLabel(triggerKey)!=='未映射'}
 // 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
 function revealBindingRow(triggerKey){
   // 通用口令和内置口令不在本游戏的映射表里：前者在「通用设置」，后者改不了。
@@ -325,11 +328,12 @@ function renderKernelState(runtime,force=false){
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
-  const active=new Set(k.motions||[]),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头'],jumping_jack:['#motionJumpingJack','开合跳'],side_step_jack:['#motionSideStepJack','侧步开合'],cross_knee_elbow:['#motionCrossKneeElbow','提膝碰对侧肘']};
+  // 没绑键的动作做了也不按键，这一页上不亮它；认没认出来去「动作测试」页看。
+  const active=new Set((k.motions||[]).filter(id=>triggerMapped('motion.'+id))),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头'],jumping_jack:['#motionJumpingJack','开合跳'],side_step_jack:['#motionSideStepJack','侧步开合'],cross_knee_elbow:['#motionCrossKneeElbow','提膝碰对侧肘']};
   for(const[id,[sel]]of Object.entries(chips))$(sel)?.classList.toggle('active',active.has(id));
   // 自定义姿势的相似度跟着主状态一起来，不另开一路轮询。
   customPoseScores=k.custom_pose_scores||{};paintCustomPoseScores();
-  const poses=new Set(k.poses_active||[]),poseChips={hands_cross:'#poseHandsCross'};
+  const poses=new Set((k.poses_active||[]).filter(id=>triggerMapped('pose.'+id))),poseChips={hands_cross:'#poseHandsCross'};
   for(const[id,sel]of Object.entries(poseChips))$(sel)?.classList.toggle('active',poses.has(id));
   const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(id=>chips[id]?.[1]||id).join(' + '));if(poses.size)statusParts.push('动作：'+[...poses].map(id=>BASE_PROFILE_TRIGGERS.find(t=>t.id===id)?.name||id).join(' + '));
   $('#motionStatus').textContent=statusParts.join(' · ')||'动作：未触发';
@@ -2547,13 +2551,17 @@ document.getElementById('macroName')?.addEventListener('keydown', event => {
  * 它就放在映射表正上方，不另开一页：看到「左手区 → Y」不对，往下一眼就是改它的
  * 那一行。点一条还能直接跳过去。两件事本来就是同一件事，分两个地方只会让人来回找。
  */
-function activeTriggerKeys() {
+// 默认只给绑了键的；「动作测试」页要的是认出来的全部，传 all。区域的 pressed 本身
+// 就不含没绑键的，那一页要看 recognized。
+function activeTriggerKeys({all = false} = {}) {
   const k = kernelState || {};
   const out = new Set();
-  for (const [id, zone] of Object.entries(k.zones || {})) if (zone?.pressed) out.add('zone.' + id);
+  for (const [id, zone] of Object.entries(k.zones || {})) {
+    if (all ? (zone?.recognized ?? zone?.pressed) : zone?.pressed) out.add('zone.' + id);
+  }
   for (const id of k.motions || []) out.add('motion.' + id);
   for (const id of k.poses_active || []) out.add('pose.' + id);
-  return out;
+  return all ? out : new Set([...out].filter(triggerMapped));
 }
 
 function agoText(seconds) {
@@ -2574,7 +2582,8 @@ function renderTriggerLive() {
   const names = new Map(profileTriggers().map(item => [item.key, item.name]));
   const bindings = bindingsForDisplay();
   const now = Number(kernelState?.now) || 0;
-  const events = kernelState?.recent_triggers || [];
+  // 记录里的动作是触发那一刻绑的键；没绑的那几条不在这里显示，只在「动作测试」页。
+  const events = (kernelState?.recent_triggers || []).filter(event => actionKeyText(event.action));
   const active = [...activeTriggerKeys()].filter(key => names.has(key));
 
   for (const box of boxes) {
@@ -2711,7 +2720,7 @@ function renderRange() {
   const bindings = bindingsForDisplay();
   const now = Number(kernelState?.now) || 0;
   const events = kernelState?.recent_triggers || [];
-  const held = activeTriggerKeys();
+  const held = activeTriggerKeys({all: true});
 
   const warn = document.getElementById('rangeOutputWarn');
   // 输出关着的时候这一页照样亮——这正是人要排查的那种情况，所以说清楚。
