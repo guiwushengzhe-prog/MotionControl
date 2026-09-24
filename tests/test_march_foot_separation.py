@@ -64,6 +64,26 @@ def test_shallow_side_kick_enters_visible_follow_zone(monkeypatch, side, mirrore
         kernel.close()
 
 
+def test_side_kick_does_not_move_the_neutral_foot_anchor(monkeypatch):
+    """抬脚前的横向过渡不能把侧踢的中性位置一起推走。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        rest = _standing_pose()
+        feed(rest, 20)
+        neutral = kernel.foot_neutral['left']
+
+        # 脚还没离地，但已经向侧面滑出；这是录像里曾让 neutral 追随目标的过渡段。
+        for outward in (.08, .16, .24):
+            feed(lifted('left', knee=0, ankle=0, outward=outward), 1)
+        assert kernel.foot_neutral['left'] == pytest.approx(neutral)
+
+        feed(lifted('left', outward=.24), 5)
+        assert kernel.zone_state['leftFoot']['pressed']
+    finally:
+        kernel.close()
+
+
 def test_noise_and_common_body_rise_are_not_marching(monkeypatch):
     """第一步就算数之后，挡误触发的只剩抬起的门槛：晃一下、整个人起伏、一帧的
     跳点都不能算一步。"""

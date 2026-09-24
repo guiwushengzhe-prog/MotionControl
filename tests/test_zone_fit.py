@@ -167,6 +167,37 @@ def test_a_full_pass_fits_every_zone_between_rest_and_reach():
     assert rest["nose"]["y"] - JUMP < jump["y2"], "跳起来鼻子够不着头顶区"
 
 
+def test_preparation_countdown_does_not_collect_until_it_ends():
+    session = ZoneFitSession(normalize_zone_fit(None), 100.0, prepare_s=3.0)
+    pose = person()
+
+    status = session.status(now=100.0)
+    assert status["state"] == "preparing"
+    assert status["preparing"] is True
+    assert status["remaining_s"] == pytest.approx(3.0)
+
+    session.update(pose, W, H, 100.5)
+    assert session.status(now=100.5)["state"] == "preparing"
+    assert session._stand == []
+
+    session.update(pose, W, H, 103.0)
+    status = session.status(now=103.0)
+    assert status["state"] == "measuring"
+    assert status["remaining_s"] == 0.0
+    assert len(session._stand) == 1
+
+
+def test_kernel_start_reports_server_side_preparation():
+    kernel = ControlKernel(Output())
+    try:
+        fit = kernel.start_zone_fit()["zone_fit"]
+        assert fit["state"] == "preparing"
+        assert fit["preparing"] is True
+        assert 2.9 <= fit["remaining_s"] <= 3.0
+    finally:
+        kernel.close()
+
+
 def test_a_step_nobody_does_is_skipped_and_keeps_the_old_zone():
     session = ZoneFitSession(normalize_zone_fit(None), 100.0)
     run(session, lazy=("leftFoot", "rightFoot"))

@@ -332,13 +332,21 @@ const EXTRAS = [
   {
     id: 'fit',
     name: '量身',
-    problem: '圈够不着，或者站着不动也碰到',
+    problem: '动作圈不合适',
     doneSay: s => fitDoneSay(s.fit),
     guide(s, memo, now) {
       const fit = s.fit || {};
       // 点了「开始」之后电脑那边才有一轮在量；那之前看到的 done 是上一轮的，不算。
       if (fit.active) memo.started = true;
       if (memo.started && fit.state === 'done') return {target: '#viewer', ready: true, say: '✓ 量好了'};
+      if (memo.started && fit.state === 'preparing') {
+        const left = Math.max(1, Math.ceil(Number(fit.remaining_s) || 0));
+        return {
+          target: '#viewer', ready: true,
+          say: '回到镜头前站好，倒计时结束才开始采集',
+          hint: `准备倒计时：还剩 ${left} 秒`,
+        };
+      }
       if (memo.started && fit.active) {
         const words = FIT_SAY[fit.phase] || FIT_SAY.stand;
         return {
@@ -351,12 +359,12 @@ const EXTRAS = [
       const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
       if (before) return before;
       const gripOnly = memo.gripOnly && s.fistHands.length;
+      const prepareHint = '点下后倒数 3 秒，点完回到镜头前；倒数结束才开始量身';
       return {
         target: '#viewer', say: '站到你平时玩的位置',
-        hint: gripOnly ? '只量握拳：张开一次、握紧一次'
-          : s.sceneFixed ? '现在用的是固定区域；量完的是跟着身体走的那一套，握拳照样生效'
-          : '全身进画面，脚也要拍到。接下来挥手、伸脚、跳一下',
-        choice: {label: '站好了，开始', run: gripOnly ? 'zoneFitGripOnly' : 'zoneFitStart'},
+        hint: gripOnly ? `只量握拳：张开一次、握紧一次。${prepareHint}`
+          : `${s.sceneFixed ? '现在用的是固定区域；量完的是跟着身体走的那一套，握拳照样生效' : '全身进画面，脚也要拍到。接下来挥手、伸脚、跳一下'}。${prepareHint}`,
+        choice: {label: '点这里，3 秒后开始', run: gripOnly ? 'zoneFitGripOnly' : 'zoneFitStart'},
       };
     },
     check(s, memo) {

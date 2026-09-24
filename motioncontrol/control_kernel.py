@@ -34,7 +34,8 @@ from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseCo
 from motioncontrol.pose_recorder import PoseRecorder
 from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.zone_fit import (
-    HEAD_JUMP_HALF_H, ZoneFitSession, body_frame, is_default, normalize_zone_fit,
+    HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, is_default,
+    normalize_zone_fit,
 )
 from motioncontrol_shared import pose_library
 
@@ -1037,7 +1038,10 @@ class ControlKernel:
             now = time.monotonic()
             tracking = self.hand_mouse_controller.tracking_request()
             grip_hands = tuple(tracking["hands"]) if tracking["enabled"] else ()
-            self.zone_fit_session = ZoneFitSession(self.zone_fit, now, grip_hands=grip_hands, body=body)
+            self.zone_fit_session = ZoneFitSession(
+                self.zone_fit, now, grip_hands=grip_hands, body=body,
+                prepare_s=ZONE_FIT_PREPARE_S,
+            )
             return self.status_locked(now)
 
     def skip_zone_fit_phase(self) -> dict:
@@ -1086,10 +1090,11 @@ class ControlKernel:
         session.applied_grip = grip
         self._save_general_settings()
 
-    def _zone_fit_status_locked(self) -> dict:
+    def _zone_fit_status_locked(self, now: float | None = None) -> dict:
         session = self.zone_fit_session
-        state = session.status() if session is not None else {
-            "active": False, "state": "idle", "phase": "idle", "phase_index": 0, "phases": [],
+        state = session.status(now=now) if session is not None else {
+            "active": False, "state": "idle", "preparing": False, "remaining_s": 0.0,
+            "phase": "idle", "phase_index": 0, "phases": [],
             "issue": "", "hands_reached": {}, "measured": [], "skipped": [],
         }
         state["grip_applied"] = sorted(session.applied_grip) if session is not None else []
@@ -1780,10 +1785,13 @@ class ControlKernel:
         return lateral, rise
 
     def _update_foot_neutral(self, pose_map: dict[str, dict]) -> None:
-        # 双脚等高时记录站姿；抬脚期间冻结，避免目标追随侧踢。
+        # 只在第一次拿到有效站姿时记录基准。若每一帧都在双脚尚未明显离地时
+        # 更新，侧踢开始前的横向过渡会把 neutral 一路推向目标脚，最后
+        # ``lateral - neutral`` 反而达不到脚圈的门槛。
         for side in ("left", "right"):
             relative = self._foot_relative(pose_map, side)
-            if relative is not None and abs(relative[1]) < .035:
+            if (relative is not None and abs(relative[1]) < .035
+                    and side not in self.foot_neutral):
                 self.foot_neutral[side] = relative[0]
 
     def _foot_outward(self, pose_map: dict[str, dict], side: str) -> bool:
@@ -2748,7 +2756,7 @@ class ControlKernel:
             "now": round(now, 3),
             "action_chain": self.action_chain.status(),
             "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_provisional",
-            "zone_fit": self._zone_fit_status_locked(),
+            "zone_fit": self._zone_fit_status_locked(now),
             # 哪些圈在给哪些动作让路。界面在绑键的地方照这个提醒。
             "zone_overlaps": self.zone_overlaps_locked(),
             "zone_yield_s": ZONE_YIELD_S,

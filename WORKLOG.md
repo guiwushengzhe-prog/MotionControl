@@ -501,3 +501,10 @@
 - 新增未完成与完成碰肘的回归用例。
 - 验证：\`python -m pytest -q\` 为 1079 passed、20 skipped；\`py_compile\`、\`node --check web/app.js\`、\`git diff --check\` 通过。
 - 仍未进行真实摄像头、真人动作或游戏内验收。
+
+## 2026-09-25：量身准备倒计时与脚圈中性位置
+
+- 只在独立副本 `F:\MotionControl-App-pose-library-next` 修改；原 `F:\MotionControl-App-pose-library` 和运行中的 `F:\MC-main` 未改动。
+- 量身开始增加 3 秒准备阶段：点击后先回到镜头前，倒计时结束才采集站定基准；教学文案改为“动作圈不合适”，按钮明确显示 3 秒后开始。
+- 根据真人姿态录制 `C:\Users\Lenovo\AppData\Local\MotionControl\recordings\pose-20260925-020232.jsonl` 重放，修复脚区中性位置在抬脚过渡帧被追随的问题；握拳占用左手时左手区域仍按既有规则暂停。
+- 验证：量身、脚区和最小控制测试 75 项通过；排除当前环境缺少依赖的云端与场景测试后，其余 983 项通过、14 项跳过。全量收集仍受 `sqlalchemy`、`argon2`、`cv2` 和本机 `pywin32` 环境差异影响。

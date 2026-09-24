@@ -26,6 +26,7 @@ from __future__ import annotations
 import copy
 import math
 import statistics
+import time
 from typing import Any
 
 ZONE_FIT_VERSION = 1
@@ -76,6 +77,10 @@ STAND_S = 1.2           # 站定多久取基准
 SETTLE_S = 0.6          # 做到之后再收一会儿，峰值才收全
 PHASE_TIMEOUT_S = 15.0  # 一项迟迟做不到就跳过，那一项用原来的
 LOST_ISSUE_S = 1.5      # 看不到人（或看不到脚、看不到手）多久才提示
+
+# 点下「站好了，开始」后留给人走回镜头前的时间。准备阶段不采姿态，
+# 所以人从电脑前走开、回到正常游戏位置的这几秒不会混进站定基准。
+ZONE_FIT_PREPARE_S = 3.0
 
 # 什么算"真做了这个动作"，而不是站着晃了一下。单位同上。
 HAND_RAISE_MIN = 0.35
@@ -260,7 +265,7 @@ class ZoneFitSession:
     """
 
     def __init__(self, current: dict, now: float, *, grip_hands: tuple[str, ...] = (),
-                 body: bool = True) -> None:
+                 body: bool = True, prepare_s: float = 0.0) -> None:
         """body=False 是「只量握拳」：换了只手、或者握拳认不准时用，不用再挥手跳。"""
         self.base = normalize_zone_fit(current)
         self.grip_hands = tuple(hand for hand in ("left", "right") if hand in grip_hands)
@@ -269,9 +274,11 @@ class ZoneFitSession:
         if not self.phases:
             raise ValueError("没有要量的：握拳控制关着，又只量握拳")
         self.phase_index = 0
+        self.prepare_s = max(0.0, float(prepare_s))
+        self.prepare_until = now + self.prepare_s
         self.phase_started = now
         self.reached_at: float | None = None
-        self.state = "measuring"
+        self.state = "preparing" if self.prepare_s > 0.0 else "measuring"
         self.issue = ""
         self.lost_since: float | None = None
         self.measured: list[str] = []
@@ -298,7 +305,16 @@ class ZoneFitSession:
 
     @property
     def active(self) -> bool:
+        return self.state in {"preparing", "measuring"}
+
+    @property
+    def measuring(self) -> bool:
         return self.state == "measuring"
+
+    def _start_measuring_if_ready(self, now: float) -> None:
+        if self.state == "preparing" and now >= self.prepare_until:
+            self.state = "measuring"
+            self.phase_started = now
 
     # ---------- 每一帧 ----------
 
@@ -306,6 +322,9 @@ class ZoneFitSession:
                grips: dict[str, dict] | None = None) -> None:
         """grips 是握拳控制那边这一帧的读数：{手: {"curl": …, "spread": …}}。"""
         if not self.active:
+            return
+        self._start_measuring_if_ready(now)
+        if not self.measuring:
             return
         frame = body_frame(pose_map, width, height)
         if frame is not None and frame["nose"] is not None:
@@ -543,7 +562,7 @@ class ZoneFitSession:
 
     def skip(self, now: float) -> None:
         """这一项不量了，用原来的。站定那一步跳不过去：后面全靠它当基准。"""
-        if not self.active:
+        if not self.measuring:
             return
         phase = self.phases[self.phase_index]
         if phase == "stand":
@@ -578,10 +597,15 @@ class ZoneFitSession:
     def grip_updates(self) -> dict[str, float]:
         return fit_grip(self.grips)
 
-    def status(self) -> dict:
+    def status(self, *, now: float | None = None) -> dict:
+        now = time.monotonic() if now is None else now
+        self._start_measuring_if_ready(now)
         return {
             "active": self.active,
             "state": self.state,
+            "preparing": self.state == "preparing",
+            "remaining_s": round(max(0.0, self.prepare_until - now), 2)
+            if self.state == "preparing" else 0.0,
             "phase": self.phase,
             "phase_index": self.phase_index,
             "phases": list(self.phases),
