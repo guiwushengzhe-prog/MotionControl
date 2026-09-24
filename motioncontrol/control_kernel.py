@@ -133,7 +133,9 @@ BODY_MOTION_ACTION_RISK_TIMING = {
 # The upright span it compares with has to forget.  It used to be an all-time
 # maximum, and leaning in to tap the phone makes the body bigger: after sitting
 # back every frame looked like a crouch, and the target stayed wherever the
-# lean had left it -- under the chin, on the phone the user was holding.
+# lean had left it -- under the chin, which is where the phone showed it.  Now
+# it forgets slowly, so a squat held for more than about ten seconds is taken as
+# the new stance and standing up from it can brush the target once.
 HEAD_JUMP_FREEZE_VY = 0.35
 HEAD_JUMP_FOLLOW_X_S = 0.35
 HEAD_JUMP_FOLLOW_Y_S = 1.50
