@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from . import pose_library
+
 
 # Only keep the one configuration conflict requested by the product semantics:
 # a jumping jack contains the hands-overhead pose, so mapping both would make
@@ -17,16 +19,8 @@ MOTION_CONFLICT_GROUPS: tuple[tuple[str, ...], ...] = (
     ("jumping_jack", "hands_up"),
 )
 
-MOTION_DISPLAY_NAMES = {
-    "march": "原地踏步",
-    "calf_back": "小腿向后",
-    "squat": "下蹲",
-    "hands_up": "双手过头",
-    "jumping_jack": "开合跳",
-    "side_step_jack": "侧步开合",
-    "cross_knee_elbow": "提膝碰对侧肘",
-    "hands_cross": "双手交叉",
-}
+# 名字只在动作库里写一份。以前这里把 hands_up 叫「双手过头」，界面叫「双手举过头」。
+MOTION_DISPLAY_NAMES = {**pose_library.MOTION_NAMES, **pose_library.POSE_NAMES}
 
 
 def _normalise_id(value) -> str:

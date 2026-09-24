@@ -18,14 +18,15 @@ def lifted(side, *, knee=.10, ankle=.08, outward=0.0, stance=.0):
 
 @pytest.mark.parametrize('stance', [0.0, .10])
 def test_small_alternating_march_is_detected_without_foot_buttons(monkeypatch, stance):
+    """第一步就算走起来了。以前要左右交替才开始，人得踏两三步才动。"""
     kernel = ControlKernel(KernelOutput())
     try:
         feed = _zone_feeder(kernel, monkeypatch)
         rest = lifted('left', knee=0, ankle=0, stance=stance)
         feed(rest, 20)
-        for index, side in enumerate(('left', 'right', 'left', 'right')):
+        for side in ('left', 'right', 'left', 'right'):
             feed(lifted(side, stance=stance), 5)
-            assert ('march' in kernel.motion_active) == (index > 0)
+            assert 'march' in kernel.motion_active
             assert not kernel.zone_state['leftFoot']['pressed']
             assert not kernel.zone_state['rightFoot']['pressed']
             feed(rest, 4)
@@ -57,17 +58,15 @@ def test_shallow_side_kick_enters_visible_follow_zone(monkeypatch, side, mirrore
         kernel.close()
 
 
-def test_noise_one_sided_lifts_and_common_body_rise_are_not_marching(monkeypatch):
+def test_noise_and_common_body_rise_are_not_marching(monkeypatch):
+    """第一步就算数之后，挡误触发的只剩抬起的门槛：晃一下、整个人起伏、一帧的
+    跳点都不能算一步。"""
     kernel = ControlKernel(KernelOutput())
     try:
         feed = _zone_feeder(kernel, monkeypatch)
         feed(_standing_pose(), 15)
         for side in ('left', 'right') * 3:
             feed(lifted(side, knee=.04, ankle=.03), 4)
-            assert 'march' not in kernel.motion_active
-        for _ in range(3):
-            feed(lifted('left'), 5)
-            feed(_standing_pose(), 4)
             assert 'march' not in kernel.motion_active
         for dy in (-.03, -.05, 0.0):
             feed(_standing_pose(dy=dy), 4)
@@ -118,7 +117,7 @@ def test_wide_stance_march_inside_fixed_circle_does_not_count_as_side_kick(monke
         kernel.close()
 
 
-def test_crossed_foot_and_tracking_loss_do_not_create_a_march_pair(monkeypatch):
+def test_a_crossed_foot_does_not_press_the_foot_zone(monkeypatch):
     kernel = ControlKernel(KernelOutput())
     try:
         feed = _zone_feeder(kernel, monkeypatch)
@@ -126,11 +125,52 @@ def test_crossed_foot_and_tracking_loss_do_not_create_a_march_pair(monkeypatch):
         feed(lifted('left', outward=-.15), 5)
         assert not kernel.zone_state['leftFoot']['pressed']
         feed({}, 2)
+        feed(_standing_pose(), 50)
+        assert 'march' not in kernel.motion_active, '停下来之后不该还在走'
         feed(lifted('right'), 5)
-        assert 'march' not in kernel.motion_active
-        feed(_standing_pose(), 5)
-        feed(lifted('left'), 5)
         assert 'march' in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+@pytest.mark.parametrize('side', ['left', 'right'])
+def test_lifting_the_lower_leg_back_is_calf_lift_not_a_step(monkeypatch, side):
+    """小腿向后抬起：脚踝比另一只高出一截，膝盖没怎么动。正面看腿几乎是直的，
+    以前按膝角小于 115° 判定，这样做几乎触发不了。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        feed(lifted(side, knee=.02, ankle=.30), 6)
+        assert 'calf_back' in kernel.motion_active
+        assert 'march' not in kernel.motion_active
+        feed(_standing_pose(), 6)
+        assert 'calf_back' not in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+def test_a_knee_lift_is_a_step_not_calf_lift(monkeypatch):
+    """踏步是膝盖带着脚一起上来。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        feed(lifted('left', knee=.30, ankle=.30), 6)
+        assert 'march' in kernel.motion_active
+        assert 'calf_back' not in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+def test_a_small_heel_lift_is_neither(monkeypatch):
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        feed(lifted('left', knee=0, ankle=.10), 8)
+        assert 'calf_back' not in kernel.motion_active
+        assert 'march' not in kernel.motion_active
     finally:
         kernel.close()
 

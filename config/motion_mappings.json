@@ -1,7 +1,7 @@
 {
   "motions": [
     {"id":"march","name":"原地踏步","enabled":false,"type":"gamepad_axis","target":"LS_UP"},
-    {"id":"calf_back","name":"小腿向后（左/右）","enabled":false,"type":"gamepad","target":"B"},
+    {"id":"calf_back","name":"小腿向后抬起","enabled":false,"type":"gamepad","target":"B"},
     {"id":"squat","name":"下蹲","enabled":false,"type":"gamepad","target":"X"},
     {"id":"hands_up","name":"双手举过头顶","enabled":false,"type":"gamepad","target":"Y"},
     {"id":"jumping_jack","name":"开合跳","enabled":false,"type":"gamepad","target":"A"},

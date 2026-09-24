@@ -42,7 +42,7 @@
 <button class="btn" id="centerBtn">重设正前方</button>
 </div>
 </div>
-<div class="trigger-summary"><span class="trigger-chip" id="motionMarch">踏步</span><span class="trigger-chip" id="motionCalf">小腿向后</span><span class="trigger-chip" id="motionSquat">下蹲</span><span class="trigger-chip" id="motionHands">双手过头</span><span class="trigger-chip" id="motionJumpingJack">开合跳</span><span class="trigger-chip" id="motionSideStepJack">侧步开合</span><span class="trigger-chip" id="motionCrossKneeElbow">提膝碰对侧肘</span><span class="trigger-chip" id="poseHandsCross">双手交叉</span></div>
+<div class="trigger-summary"><span class="trigger-chip" id="motionMarch">踏步</span><span class="trigger-chip" id="motionCalf">小腿后抬</span><span class="trigger-chip" id="motionSquat">下蹲</span><span class="trigger-chip" id="motionHands">双手过头</span><span class="trigger-chip" id="motionJumpingJack">开合跳</span><span class="trigger-chip" id="motionSideStepJack">侧步开合</span><span class="trigger-chip" id="motionCrossKneeElbow">提膝碰对侧肘</span><span class="trigger-chip" id="poseHandsCross">双手交叉</span></div>
 </section>
 
 <section class="card zone-edit-bar" hidden="" id="zoneEditBar">
@@ -94,6 +94,12 @@
 </div>
 <fieldset id="mappingFields"><div aria-hidden="true" class="binding-head"><span>触发</span><span>输出类型</span><span>键位</span><span>方式</span></div><div class="binding-list" id="profileBindingRows"></div></fieldset>
 <div class="profile-actions"><span class="statusline" id="profileSaveStatus" role="status">修改后自动保存</span><span class="spacer"></span><button class="btn" hidden="" id="retryProfileSaveBtn">重试保存映射</button><button class="btn" id="resetProfileBindingsBtn">恢复当前游戏默认</button></div>
+</section>
+
+<section class="card" id="poseLibraryPanel">
+<h2 class="title">动作库</h2>
+<p class="lede">做好的身体动作，不用录，照着小人做就行。键在上面的按键映射里绑，点右边的键位也能跳过去。</p>
+<div class="pose-library" id="poseLibraryList"></div>
 </section>
 
 <section class="card" id="customPosePanel">

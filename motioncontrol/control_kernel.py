@@ -36,6 +36,7 @@ from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZoneFitSession, body_frame, is_default, normalize_zone_fit,
 )
+from motioncontrol_shared import pose_library
 
 
 def _user_recordings_dir():
@@ -148,6 +149,11 @@ HEAD_JUMP_UPRIGHT_FORGET_S = 20.0
 # A jump spans roughly 0.3-0.5 torso, so this only fires when the player truly
 # relocated or the camera was re-aimed.
 HEAD_JUMP_SNAP_TORSO = 1.20
+
+# 小腿向后抬起：这只脚踝比另一只高出 0.18 个躯干（小腿往后抬约 40 度），而膝盖
+# 升得不到脚踝的四成。踏步是膝盖和脚一起上来，比例接近一。
+CALF_LIFT_ANKLE_RISE = 0.18
+CALF_LIFT_KNEE_SHARE = 0.40
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -442,6 +448,13 @@ class ControlKernel:
         # 文件，这样测试里可以直接塞一个假的。
         self.custom_pose_store = None
         self.custom_pose_scores: dict[str, float] = {}
+        # 动作库里按模板认的那几个（见 motioncontrol_shared/pose_library.py）。模板
+        # 是示范帧生成的，所有人一样；"像到多少才算"每人可以自己调，存在
+        # general_settings.json 里——那是身体上的数，不跟游戏、不上云。
+        self.library_templates = {ident: pose_library.library_template(ident)
+                                  for ident in pose_library.TEMPLATE_IDS}
+        self.library_thresholds: dict[str, float] = {}
+        self.library_scores: dict[str, float] = {}
         # 用户自己建的键盘宏。和上面一样，文件不归内核管，由 server.py 装进来。
         self.macro_store = None
         # 最近触发过什么。做一个动作、摆一个姿势、说一句口令，到底有没有生效、按的
@@ -535,6 +548,16 @@ class ControlKernel:
         self.action_chain.configure(data.get("action_chain", DEFAULT_ACTION_CHAIN))
         # 量过身的区域。坏了、缺了都回到默认大小，不影响启动。
         self.zone_fit = normalize_zone_fit(data.get("zone_fit"))
+        library = data.get("pose_library")
+        if isinstance(library, dict):
+            low, high = pose_library.THRESHOLD_RANGE
+            for ident, item in library.items():
+                try:
+                    value = float((item or {}).get("threshold"))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if ident in pose_library.TEMPLATE_IDS and math.isfinite(value):
+                    self.library_thresholds[ident] = _clamp(value, low, high)
 
     def general_setting(self, key: str, default=None):
         """读一项不归内核管、但和它存在同一份文件里的设置。
@@ -724,6 +747,31 @@ class ControlKernel:
             except Exception:  # noqa: BLE001 - 宏库出问题时保持原样，不影响别的绑定
                 continue
         return bindings
+
+    def library_threshold(self, ident: str) -> float:
+        return self.library_thresholds.get(ident, pose_library.default_threshold(ident))
+
+    def configure_library_threshold(self, ident: str, threshold) -> dict:
+        """动作库里模板动作的「像到多少才算」。只有模板动作有这个数。"""
+        if ident not in pose_library.TEMPLATE_IDS:
+            raise ValueError("这个动作不是按模板认的，没有相似度可调")
+        value = float(threshold)
+        low, high = pose_library.THRESHOLD_RANGE
+        if not math.isfinite(value) or not low <= value <= high:
+            raise ValueError(f"相似度要在 {round(low * 100)}% 到 {round(high * 100)}% 之间")
+        with self._lock:
+            self.library_thresholds[ident] = value
+            self._general_raw["pose_library"] = {
+                key: {"threshold": round(item, 4)} for key, item in self.library_thresholds.items()}
+            self._save_general_settings()
+            return {"id": ident, "threshold": value}
+
+    def _library_hit_locked(self, ident: str, pose_map: dict[str, dict]) -> bool:
+        """一个模板动作这一帧认没认出来，顺手记下相似度给界面看。"""
+        template = self.library_templates.get(ident)
+        result = pose_library.match(template, pose_map, self.library_threshold(ident)) if template else None
+        self.library_scores[ident] = round(result["score"], 4) if result else 0.0
+        return bool(result and result["hit"])
 
     def configure_macros(self, store) -> None:
         """装上（或换掉）键盘宏库。"""
@@ -1778,30 +1826,37 @@ class ControlKernel:
         shoulder = _midpoint(pose_map["left_shoulder"], pose_map["right_shoulder"]) if self._points_good(pose_map, ("left_shoulder", "right_shoulder")) else None
         hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"]) if self._points_good(pose_map, ("left_hip", "right_hip")) else None
         torso = max(0.025, abs(hip["y"] - shoulder["y"])) if shoulder and hip else math.nan
-        hands_raw = squat_raw = calf_raw = march_raw = False
+        squat_raw = calf_raw = march_raw = False
         jumping_jack_raw = side_step_jack_raw = cross_knee_elbow_raw = False
-        if math.isfinite(torso) and self._points_good(pose_map, ("nose", "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist")):
-            hands_raw = (
-                pose_map["left_wrist"]["y"] < pose_map["nose"]["y"] - 0.06 * torso
-                and pose_map["right_wrist"]["y"] < pose_map["nose"]["y"] - 0.06 * torso
-                and pose_map["left_elbow"]["y"] < pose_map["left_shoulder"]["y"] + 0.08 * torso
-                and pose_map["right_elbow"]["y"] < pose_map["right_shoulder"]["y"] + 0.08 * torso
-            )
+        # 双手举过头按动作库的模板认：两条手臂都朝上，每段都要大致到位。
+        hands_raw = self._library_hit_locked("hands_up", pose_map)
         leg_good = math.isfinite(torso) and self._points_good(pose_map, ("left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle"))
         if leg_good:
             left_angle = self._angle_at(pose_map["left_hip"], pose_map["left_knee"], pose_map["left_ankle"])
             right_angle = self._angle_at(pose_map["right_hip"], pose_map["right_knee"], pose_map["right_ankle"])
             hip_knee = ((pose_map["left_knee"]["y"] - pose_map["left_hip"]["y"]) + (pose_map["right_knee"]["y"] - pose_map["right_hip"]["y"])) / 2.0
             squat_raw = left_angle < 135 and right_angle < 135 and hip_knee < 0.84 * torso
-            left_calf = left_angle < 115 and (pose_map["left_knee"]["y"] - pose_map["left_hip"]["y"]) > 0.58 * torso and (pose_map["left_ankle"]["y"] - pose_map["left_knee"]["y"]) < 0.58 * torso
-            right_calf = right_angle < 115 and (pose_map["right_knee"]["y"] - pose_map["right_hip"]["y"]) > 0.58 * torso and (pose_map["right_ankle"]["y"] - pose_map["right_knee"]["y"]) < 0.58 * torso
-            calf_raw = not squat_raw and (left_calf or right_calf)
+
+            def rise(side: str, other: str, joint: str) -> float:
+                """这一侧的膝或踝比另一侧高出多少个躯干，各自相对自己那边的髋量。"""
+                return ((pose_map[other + "_" + joint]["y"] - pose_map[other + "_hip"]["y"])
+                        - (pose_map[side + "_" + joint]["y"] - pose_map[side + "_hip"]["y"])) / torso
+
+            def calf_lift(side: str, other: str) -> bool:
+                # 小腿向后抬起：膝盖基本不动，脚往后抬。正对镜头看到的是这只脚踝比
+                # 另一只高出一截，而膝盖没怎么升——和踏步的区别就在膝盖：踏步是膝盖
+                # 带着脚一起上来。以前要求画面上膝角小于 115°，可正面看往后抬的腿在
+                # 画面里几乎是直的，很难做到。
+                ankle = rise(side, other, "ankle")
+                return (ankle > CALF_LIFT_ANKLE_RISE
+                        and rise(side, other, "knee") < CALF_LIFT_KNEE_SHARE * ankle
+                        and not self._foot_outward(pose_map, side))
+
+            calf_raw = not squat_raw and (calf_lift("left", "right") or calf_lift("right", "left"))
             def march_lift(side: str, other: str) -> bool:
-                # 膝、踝相对各自髋部同时升高；放低门槛后仍需持续和交替。
-                knee_rise = ((pose_map[other + "_knee"]["y"] - pose_map[other + "_hip"]["y"])
-                             - (pose_map[side + "_knee"]["y"] - pose_map[side + "_hip"]["y"])) / torso
-                ankle_rise = ((pose_map[other + "_ankle"]["y"] - pose_map[other + "_hip"]["y"])
-                              - (pose_map[side + "_ankle"]["y"] - pose_map[side + "_hip"]["y"])) / torso
+                # 膝、踝相对各自髋部同时升高，并持续一小会儿。
+                knee_rise = rise(side, other, "knee")
+                ankle_rise = rise(side, other, "ankle")
                 held = self.step[side + "_was"]
                 lifted = knee_rise > (.035 if held else .08) and ankle_rise > (.025 if held else .065)
                 lifted = lifted and not squat_raw and not calf_raw and not self._foot_outward(pose_map, side)
@@ -1815,8 +1870,10 @@ class ControlKernel:
             left_lift = march_lift("left", "right")
             right_lift = march_lift("right", "left")
             def step_event(side: str) -> None:
-                if self.step["last_side"] and side != self.step["last_side"] and 0.10 <= now - self.step["last_at"] <= 1.50:
-                    self.step["active_until"] = now + 0.70
+                # 第一步就算走起来了。以前要左右交替才开始，第一步永远不算，人得踏
+                # 两三步才动。误触发靠的是上面抬起的门槛（膝和踝都要升、要持续、
+                # 排除下蹲/小腿后抬/侧踢），不靠交替。
+                self.step["active_until"] = now + 0.70
                 self.step["last_side"], self.step["last_at"] = side, now
             if left_lift and not self.step["left_was"]:
                 step_event("L")
@@ -2567,6 +2624,8 @@ class ControlKernel:
             # 自定义姿势的实时相似度。放进这份状态里，界面就复用已有的轮询，
             # 不用为它再开一路——多一路轮询就多一份和主状态不同步的机会。
             "custom_pose_scores": dict(self.custom_pose_scores),
+            # 动作库里模板动作的实时相似度，和上面自定义动作那份一个用处。
+            "library_scores": dict(self.library_scores),
             "pose_confidence": copy.deepcopy(self.pose_confidence),
             "control_bindings": copy.deepcopy(self.control_bindings),
             # 界面要显示"按的是哪个键"时用这一份，见 _effective_bindings_locked。

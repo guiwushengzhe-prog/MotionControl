@@ -29,7 +29,7 @@ from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
-from motioncontrol_shared import macro_schema
+from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
 from motioncontrol_shared.profile_schema import action_catalog
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
@@ -478,7 +478,7 @@ PHONE_WEB = ModelShare("phone-web", find_phone_web(ROOT), skip=("models/", "wasm
 MOTION_CONFIG_FILE = user_path("motion_mappings")
 DEFAULT_MOTIONS = [
     {"id": "march", "name": "原地踏步", "enabled": False, "type": "gamepad_axis", "target": "LS_UP"},
-    {"id": "calf_back", "name": "小腿向后（左/右）", "enabled": False, "type": "gamepad", "target": "B"},
+    {"id": "calf_back", "name": "小腿向后抬起", "enabled": False, "type": "gamepad", "target": "B"},
     {"id": "squat", "name": "下蹲", "enabled": False, "type": "gamepad", "target": "X"},
     {"id": "hands_up", "name": "双手举过头顶", "enabled": False, "type": "gamepad", "target": "Y"},
     {"id": "jumping_jack", "name": "开合跳", "enabled": False, "type": "gamepad", "target": "A"},
@@ -1086,6 +1086,15 @@ class AdminHandler(_BaseHandler):
                 "error": MACROS.last_error,
             })
             return
+        if route == "/api/pose/library":
+            # 动作库：名字、怎么做、火柴人示范，模板动作再带上这个人自己的阈值。
+            # 示范是固定数据，界面只在打开时读一次；实时相似度走主状态轮询。
+            library = pose_library.library_payload()
+            for item in library:
+                if item["detector"] == "template":
+                    item["threshold"] = KERNEL.library_threshold(item["id"])
+            self._send_json({"version": VERSION, "library": library})
+            return
         if route == "/api/pose/custom":
             self._send_json({
                 "version": VERSION,
@@ -1196,6 +1205,16 @@ class AdminHandler(_BaseHandler):
             except MacroError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/pose/library/update":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "pose library is loopback-only"}, 403)
+                return
+            try:
+                self._send_json({"ok": True, **KERNEL.configure_library_threshold(
+                    str(body.get("id", "")), body.get("threshold"))})
+            except (TypeError, ValueError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
         if route.startswith("/api/pose/custom/"):

@@ -14,7 +14,7 @@ from motioncontrol_shared.motion_conflicts import (
 def test_jumping_jack_and_hands_up_are_mutually_exclusive():
     conflicts = find_motion_conflicts(("jumping_jack", "hands_up"))
     assert conflicts == (("jumping_jack", "hands_up"),)
-    with pytest.raises(ValueError, match="开合跳.*双手过头"):
+    with pytest.raises(ValueError, match="开合跳.*双手举过头"):
         validate_motion_bindings(
             {
                 "motions": {

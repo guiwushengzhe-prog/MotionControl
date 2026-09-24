@@ -115,7 +115,7 @@ const BASE_PROFILE_TRIGGERS=[
   {key:'zone.rightFoot',group:'zones',id:'rightFoot',name:'右脚区'},
   {key:'zone.headJump',group:'zones',id:'headJump',name:'头顶区'},
   {key:'motion.march',group:'motions',id:'march',name:'原地踏步'},
-  {key:'motion.calf_back',group:'motions',id:'calf_back',name:'小腿向后'},
+  {key:'motion.calf_back',group:'motions',id:'calf_back',name:'小腿向后抬起'},
   {key:'motion.squat',group:'motions',id:'squat',name:'下蹲'},
   {key:'motion.hands_up',group:'motions',id:'hands_up',name:'双手举过头'},
   {key:'motion.jumping_jack',group:'motions',id:'jumping_jack',name:'开合跳'},
@@ -124,9 +124,9 @@ const BASE_PROFILE_TRIGGERS=[
   {key:'pose.hands_cross',group:'poses',id:'hands_cross',name:'双手交叉'},
 ];
 const MOTION_CONFLICT_GROUPS=[
-  {ids:['jumping_jack','hands_up'],label:'开合跳与双手过头'},
+  {ids:['jumping_jack','hands_up'],label:'开合跳与双手举过头'},
 ];
-const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后',squat:'下蹲',hands_up:'双手过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
+const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',squat:'下蹲',hands_up:'双手举过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
 const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆',macro:'键盘宏'};
 // 宏库。每一处映射的下拉都从这里取，所以只在增删改之后刷一次，不跟着状态轮询走。
 const macroLibrary={items:[],limits:null};
@@ -329,10 +329,10 @@ function renderKernelState(runtime,force=false){
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
   // 没绑键的动作做了也不按键，这一页上不亮它；认没认出来去「动作测试」页看。
-  const active=new Set((k.motions||[]).filter(id=>triggerMapped('motion.'+id))),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿向后'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头'],jumping_jack:['#motionJumpingJack','开合跳'],side_step_jack:['#motionSideStepJack','侧步开合'],cross_knee_elbow:['#motionCrossKneeElbow','提膝碰对侧肘']};
+  const active=new Set((k.motions||[]).filter(id=>triggerMapped('motion.'+id))),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿后抬'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头'],jumping_jack:['#motionJumpingJack','开合跳'],side_step_jack:['#motionSideStepJack','侧步开合'],cross_knee_elbow:['#motionCrossKneeElbow','提膝碰对侧肘']};
   for(const[id,[sel]]of Object.entries(chips))$(sel)?.classList.toggle('active',active.has(id));
   // 自定义姿势的相似度跟着主状态一起来，不另开一路轮询。
-  customPoseScores=k.custom_pose_scores||{};paintCustomPoseScores();
+  customPoseScores=k.custom_pose_scores||{};paintCustomPoseScores();paintPoseLibrary();
   const poses=new Set((k.poses_active||[]).filter(id=>triggerMapped('pose.'+id))),poseChips={hands_cross:'#poseHandsCross'};
   for(const[id,sel]of Object.entries(poseChips))$(sel)?.classList.toggle('active',poses.has(id));
   const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(id=>chips[id]?.[1]||id).join(' + '));if(poses.size)statusParts.push('动作：'+[...poses].map(id=>BASE_PROFILE_TRIGGERS.find(t=>t.id===id)?.name||id).join(' + '));
@@ -739,7 +739,7 @@ function renderProfileBindingRows(){
   const triggers=profileTriggers();
   const groups=[
     {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
-    {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手过头顶不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
+    {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手举过头不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
     {id:'voice',title:'本游戏口令',help:'只在这个游戏里生效，会跟着配置一起分享。说法不能和通用口令、内置口令重复。',filter:t=>t.group==='voice',open:false},
   ];
   for(const group of groups){
@@ -792,7 +792,7 @@ function readProfileOverrides(){
     overrides[trigger.key]=override;
   }
   const conflicts=motionConflictsForSelection(selectedMotionIdsFromRows());
-  if(conflicts.length)throw new Error(`动作冲突：${motionConflictText(conflicts)}。开合跳与双手过头顶只能选择一个`);
+  if(conflicts.length)throw new Error(`动作冲突：${motionConflictText(conflicts)}。开合跳与双手举过头只能选择一个`);
   return overrides;
 }
 async function saveProfileBindings(){
@@ -1590,7 +1590,7 @@ async function init(){
   await Promise.all([refreshCustomPoses({rebuild:false}), refreshMacros({rebuild:false})]);
   await refreshKernel();await refreshOutput();
   const results=await Promise.allSettled([
-    refreshInput(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshScene(),
+    refreshInput(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshScene(),refreshPoseLibrary(),
     reloadViewControlState().then(()=>{setViewControlBusy(false);renderViewControl(true)}),
     api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
@@ -2264,6 +2264,129 @@ document.getElementById('customPoseScoresBtn')?.addEventListener('click', event 
 });
 
 document.getElementById('customPoseCaptureBtn')?.addEventListener('click', captureCustomPose);
+
+/* --- 动作库 ---------------------------------------------------------------
+ * 做好的身体动作，每个配一个一直在做示范的火柴人。名字、怎么做、示范都是电脑那边
+ * motioncontrol_shared/pose_library.py 给的，这里只画。
+ *
+ * 大部分动作是代码认的，这里只能看、只能跳去绑键；按模板认的（目前是双手举过头）
+ * 多一个「像到多少才算」，旁边是实时相似度——和自定义动作同一个用法。
+ */
+const poseLibraryEl = document.getElementById('poseLibraryList');
+let poseLibrary = [];
+
+async function refreshPoseLibrary() {
+  if (!poseLibraryEl) return;
+  const data = await api('/api/pose/library');
+  poseLibrary = data.library || [];
+  renderPoseLibrary();
+}
+
+/** 示范的几帧叠在一起，一次只露一帧；换帧由下面那个计时器做。 */
+function poseDemo(demo) {
+  const box = document.createElement('div');
+  box.className = 'pose-demo';
+  box.dataset.frameMs = String(Math.round((Number(demo?.frame_s) || 0.5) * 1000));
+  (demo?.frames || []).forEach((frame, index) => {
+    const svg = poseThumbnail(frame);
+    if (index) svg.classList.add('off');
+    box.appendChild(svg);
+  });
+  return box;
+}
+
+// 一个计时器管所有示范。这一页没打开时什么都不做：看不见的动画白费电。
+setInterval(() => {
+  if (!poseLibraryEl?.offsetParent) return;
+  const now = performance.now();
+  for (const box of poseLibraryEl.querySelectorAll('.pose-demo')) {
+    const frames = box.children;
+    if (frames.length < 2 || now < Number(box.dataset.next || 0)) continue;
+    const at = (Number(box.dataset.at || 0) + 1) % frames.length;
+    [...frames].forEach((svg, index) => svg.classList.toggle('off', index !== at));
+    box.dataset.at = String(at);
+    box.dataset.next = String(now + Number(box.dataset.frameMs));
+  }
+}, 80);
+
+async function updatePoseLibraryThreshold(item, threshold) {
+  try {
+    await post('/api/pose/library/update', { id: item.id, threshold });
+    item.threshold = threshold;
+    paintPoseLibrary();
+  } catch (error) {
+    notice('没存上：' + (error?.message || error));
+  }
+}
+
+function renderPoseLibrary() {
+  if (!poseLibraryEl) return;
+  poseLibraryEl.replaceChildren();
+  for (const item of poseLibrary) {
+    const card = document.createElement('div');
+    card.className = 'pose-library-item';
+    card.dataset.id = item.id;
+
+    const name = document.createElement('span');
+    name.className = 'pose-library-name';
+    name.textContent = item.name;
+    // 绑的是哪个键。和自定义动作一样只显示，点它跳到映射表里那一行去改。
+    const bound = document.createElement('button');
+    bound.type = 'button';
+    bound.className = 'custom-pose-key';
+    bound.title = '点一下跳到上面的按键映射';
+    bound.addEventListener('click', () => revealBindingRow(item.trigger));
+    const head = document.createElement('div');
+    head.className = 'pose-library-head';
+    head.append(name, bound);
+
+    const how = document.createElement('div');
+    how.className = 'pose-library-how';
+    how.textContent = item.how;
+
+    card.append(poseDemo(item.demo), head, how);
+
+    if (item.detector === 'template') {
+      const threshold = document.createElement('input');
+      threshold.type = 'range';
+      threshold.min = '50'; threshold.max = '99'; threshold.step = '1';
+      threshold.value = String(Math.round(Number(item.threshold) * 100));
+      threshold.addEventListener('change', () => updatePoseLibraryThreshold(item, Number(threshold.value) / 100));
+      const meter = document.createElement('div');
+      meter.className = 'pose-library-meter';
+      meter.title = '现在像不像。做一下动作，把「像到多少才算」设得比它略低一点';
+      const fill = document.createElement('div');
+      fill.className = 'custom-pose-fill';
+      const readout = document.createElement('span');
+      readout.className = 'custom-pose-score';
+      meter.append(fill, readout);
+      const tools = document.createElement('div');
+      tools.className = 'pose-library-tools';
+      tools.append(customPoseSlider('像到 ', threshold, v => v + '% 才算'), meter);
+      card.append(tools);
+    }
+    poseLibraryEl.appendChild(card);
+  }
+  paintPoseLibrary();
+}
+
+/** 只改键位和相似度，不重建——每次状态轮询都重建会打断正在拖的滑块。 */
+function paintPoseLibrary() {
+  if (!poseLibraryEl) return;
+  const scores = kernelState?.library_scores || {};
+  for (const card of poseLibraryEl.querySelectorAll('.pose-library-item')) {
+    const item = poseLibrary.find(entry => entry.id === card.dataset.id);
+    if (!item) continue;
+    const bound = card.querySelector('.custom-pose-key');
+    const label = triggerKeyLabel(item.trigger);
+    if (bound && bound.textContent !== label) bound.textContent = label;
+    if (item.detector !== 'template') continue;
+    const score = Number(scores[item.id] ?? 0);
+    card.querySelector('.custom-pose-fill').style.width = Math.round(score * 100) + '%';
+    card.querySelector('.custom-pose-score').textContent = '现在 ' + Math.round(score * 100) + '%';
+    card.classList.toggle('hit', score >= Number(item.threshold));
+  }
+}
 
 document.getElementById('cloudSiteBtn')?.addEventListener('click', () => openOnSite('/'));
 

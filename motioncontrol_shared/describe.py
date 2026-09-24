@@ -15,6 +15,7 @@ control_kernel.py 的 BODY_ZONES、config/voice_commands_v094.json），云端�
 
 from __future__ import annotations
 
+from . import pose_library
 from .mapping_schema import normalize_key_combo  # noqa: F401  (re-export 方便调用方)
 from .profile_schema import ZONE_ID_MERGES
 
@@ -45,19 +46,9 @@ ZONE_RUNTIME_ALIASES = {
     "rightHandLower": "rightHand",
 }
 
-MOTION_NAMES = {
-    "march": "原地踏步",
-    "calf_back": "小腿向后",
-    "squat": "下蹲",
-    "hands_up": "双手举过头",
-    "jumping_jack": "开合跳",
-    "side_step_jack": "侧步开合",
-    "cross_knee_elbow": "提膝碰对侧肘",
-}
-
-POSE_NAMES = {
-    "hands_cross": "双手交叉",
-}
+# 内置身体动作的名字只在动作库里写一份。
+MOTION_NAMES = dict(pose_library.MOTION_NAMES)
+POSE_NAMES = dict(pose_library.POSE_NAMES)
 
 VOICE_COMMAND_NAMES = {
     "system.emergency_stop": "紧急停止",
