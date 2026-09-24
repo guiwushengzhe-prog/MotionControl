@@ -1353,7 +1353,8 @@ class AdminHandler(_BaseHandler):
                     if route.endswith("/select"):
                         profile = PROFILES.select(str(body.get("id", "")))
                     else:
-                        profile = PROFILES.set_overrides(body.get("overrides", {}), profile_id=body.get("profile_id"))
+                        profile = PROFILES.set_overrides(body.get("overrides", {}), profile_id=body.get("profile_id"),
+                                                         check=VOICE.check_profile_phrases)
                     with VOICE._lock:
                         VOICE._release_locked(VOICE.source_id)
                         KERNEL.configure_bindings(profile.get("bindings", {}))

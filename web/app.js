@@ -149,7 +149,7 @@ function profileTriggers(){
     .map(item=>({
       key:`voice.${item.id}`,group:'voice',id:item.id,
       slot:String(item.id||'').startsWith('game.profile_slot_'),
-      name:`口令槽 ${String(item.id||'').replace('game.profile_slot_','')}`,phrase:item.phrase,tapOnly:false,
+      name:`口令 ${Number(String(item.id||'').replace('game.profile_slot_',''))}`,phrase:item.phrase,tapOnly:false,
       defaultBinding:item.default_action?{label:item.label,action:item.default_action}:null,
     }));
   // 用户自己录的姿势并进同一份触发器列表，于是它们自动出现在映射界面里，
@@ -715,7 +715,7 @@ function renderProfileBindingRows(){
   const groups=[
     {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
     {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手过头顶不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
-    {id:'voice',title:'语音口令',help:'每条口令的说法和动作都能改，电脑和手机共用一份。紧急停止始终保留。',filter:t=>t.group==='voice',open:false},
+    {id:'voice',title:'本游戏口令',help:'只在这个游戏里生效，会跟着配置一起分享。说法不能和通用口令、内置口令重复。',filter:t=>t.group==='voice',open:false},
   ];
   for(const group of groups){
     const items=triggers.filter(group.filter);if(!items.length)continue;
@@ -1314,6 +1314,7 @@ function renderVoiceStatus(s=voice.status){
   const phrase=String(s.last_command||s.final||'').trim();$('#voiceStatus').textContent=phrase?`已识别：${phrase}`:(ready?'直接说完整口令，例如「体感截图」':'语音尚未准备好');
   const modelPath=s.model_path||s.command_model_path||'—';const mp=$('#voiceModelPath');if(mp){mp.textContent='模型：'+modelPath;mp.title=modelPath}
   renderPersonalVoice(s);
+  const clash=$('#voiceConflicts');if(clash){const list=s.phrase_conflicts||[];clash.hidden=!list.length;clash.textContent=list.length?`${list.join('；')}。同名的只有一条会生效，改掉其中一条的说法。`:''}
   const diag=$('#voiceDiagnostic');if(diag){diag.textContent=[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`最后命令：${phrase||'—'}`,`错误：${s.last_error||'—'}`].join('\n')}
 }
 
@@ -1340,16 +1341,21 @@ async function savePersonalVoice(){
 }
 document.getElementById('personalVoiceSaveBtn')?.addEventListener('click',savePersonalVoice);
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
-function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
-function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?`${command.label||''} · 系统固定`:`${command.label||''} · ${voiceActionLabel(command.effective_action)}`;card.append(phrase,label);return card}
+function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(new Map(VOICE_SYSTEM_TARGETS).get(action.target)||action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
+function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?(command.label||''):[command.label,voiceActionLabel(command.effective_action)].filter(Boolean).join(' · ');card.append(phrase,label);return card}
 function renderVoiceCommandCatalog(commands){
   voiceCatalog=Array.isArray(commands)?commands:[];
   const full=$('#voiceCommandGrid');full.replaceChildren();
-  const visible=voiceCatalog.filter(item=>item.id==='system.emergency_stop'||(String(item.id||'').startsWith('game.profile_slot_')&&item.effective_action));
-  for(const [name,items] of [
-    ['系统口令 · 所有游戏通用',visible.filter(item=>item.system_fixed)],
-    ['当前游戏口令',visible.filter(item=>!item.system_fixed)],
+  const wake=voice.status?.wake_word||'体感';
+  const shared=(voice.status?.mappings||[]).map(item=>({
+    phrase:wake+item.phrase,label:'',effective_action:{type:item.type,target:item.target,behavior:item.behavior||'tap'},
+  }));
+  for (const [name,items] of [
+    ['内置口令 · 不能改',voiceCatalog.filter(item=>item.system_fixed)],
+    ['本游戏口令',voiceCatalog.filter(item=>String(item.id||'').startsWith('game.profile_slot_')&&item.effective_action)],
+    ['通用口令 · 所有游戏',shared],
   ]){
+    if(!items.length)continue;
     const section=document.createElement('section');section.className='voice-group';
     const title=document.createElement('h3');title.textContent=name;
     const grid=document.createElement('div');grid.className='voice-command-grid';

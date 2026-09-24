@@ -86,7 +86,7 @@
 
 <section class="card">
 <h2 class="title">按键映射</h2>
-<p class="lede">身体区域、身体动作、自定义动作和语音口令，都在这里绑键。改完自动保存。</p>
+<p class="lede">身体区域、身体动作、自定义动作和本游戏口令，都在这里绑键。改完自动保存。</p>
 <div class="trigger-live" id="triggerLive">
 <div class="trigger-live-now" id="triggerLiveNow">还没有触发</div>
 <div class="trigger-live-log" id="triggerLiveLog"></div>
@@ -220,7 +220,7 @@
 </details>
 </div>
 
-<h2 class="group-head">键盘宏与口令</h2>
+<h2 class="group-head">键盘宏与语音</h2>
 <div class="settings-section" id="macroPanel">
 <h3 class="title">键盘宏</h3>
 <p class="lede">把一串按键存成一条宏。所有游戏共用，「本游戏」的按键映射里能绑键的地方都能选它。</p>
@@ -238,7 +238,7 @@
 </div>
 
 <div class="settings-section" id="personalVoicePanel">
-<h3 class="title">个人语音 · 不分享</h3>
+<h3 class="title">唤醒词和急停 · 不分享</h3>
 <p class="lede">唤醒词和急停口令只属于你：不随游戏切换，不会分享出去，安装别人的语音配置也不会覆盖它们。</p>
 <div class="profile-bar voice-personal">
 <label>唤醒词<input id="wakeWord" maxlength="12" type="text"/></label>
@@ -250,8 +250,10 @@
 </div>
 
 <div class="settings-section">
-<h3 class="title">自定义口令</h3>
-<p class="lede">在所有游戏里生效，电脑和手机的麦克风都能识别。只对某个游戏生效的口令在「本游戏」页设置。</p>
+<h3 class="title">通用口令</h3>
+<p class="lede">所有游戏都生效，电脑和手机的麦克风都能识别。说的时候前面加唤醒词，比如「体感地图」。</p>
+<p class="fineprint">说法不能和「本游戏」页的本游戏口令重复，也不能和内置口令（开始校准、截图这些系统功能）重复。</p>
+<p class="statusline warn" hidden="" id="voiceConflicts"></p>
 <div aria-hidden="true" class="voice-head"><span>说什么</span><span>输出类型</span><span>键位或命令</span><span>方式</span><span></span></div>
 <div id="voiceRows"></div>
 <div class="settings-actions"><button class="btn" id="addVoiceBtn">＋ 添加口令</button></div>
