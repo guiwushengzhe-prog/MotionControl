@@ -628,7 +628,8 @@ class VoiceService:
                 self.last_executed = False
                 self.last_error = str(exc)
                 return {"matched": True, "command": self.last_command, "ok": False, "message": str(exc)}
-        action = {"type": kind, "target": target, "command_id": cid}
+        # phrase 只给界面看：记触发时写"刚才说的是哪一句"。
+        action = {"type": kind, "target": target, "command_id": cid, "phrase": phrase}
         action["source"] = f"voice:{source_id}" if source_id else "voice"
         if kind == "system":
             action["voice_source_id"] = source_id
@@ -713,7 +714,8 @@ class VoiceService:
                 break
         if match is None:
             return {"matched": False, "reason": "command_not_in_mapping"}
-        action = {"type": match["type"], "target": match["target"], "behavior": match.get("behavior", "tap")}
+        action = {"type": match["type"], "target": match["target"], "behavior": match.get("behavior", "tap"),
+                  "phrase": f"{self.wake_word}{match['phrase']}"}
         action["source"] = f"voice:{source_id}" if source_id else "voice"
         if match["type"] == "system":
             action["voice_source_id"] = source_id

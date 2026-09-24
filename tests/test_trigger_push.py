@@ -151,3 +151,25 @@ def test_the_phone_is_told_what_really_fires():
     effective = kernel.effective_bindings()
     assert effective["zone.headJump"]["action"]["target"] == "A"
     kernel.close()
+
+
+def test_a_shared_phrase_is_shown_by_what_was_said():
+    """通用口令不在映射表里，界面和手机都查不到名字。以前记成 voice.M，
+    动作测试页上就写「voice.M → M」——说的是哪一句，看不出来。"""
+    kernel = ControlKernel(Output())
+    heard = []
+    kernel.configure_trigger_listener(heard.append)
+    kernel.note_trigger("voice.shared.体感地图", {"type": "keyboard", "target": "M", "behavior": "tap"},
+                        label="体感地图")
+    assert kernel.status()["recent_triggers"][-1]["label"] == "体感地图"
+    assert heard[0]["fired"][0]["name"] == "体感地图", "手机头顶那块也要写说的那句"
+    kernel.close()
+
+
+def test_every_spoken_command_carries_its_phrase():
+    """通用口令、内置口令、急停，三条路都要把说的那句带到记录里。"""
+    voice = (ROOT / "motioncontrol" / "voice_backend.py").read_text(encoding="utf-8")
+    assert '"command_id": cid, "phrase": phrase' in voice
+    assert '"phrase": f"{self.wake_word}{match[\'phrase\']}"' in voice
+    assert "KERNEL.note_trigger(trigger, noted, label=phrase or None)" in SERVER
+    assert "emergency_stop=voice_emergency_stop" in SERVER

@@ -36,6 +36,7 @@ function actionKeyText(action){
   // 宏的编号对人没有意义，圈上和卡片上要写它的名字。
   if(type==='macro')return macroName(action.target);
   if(type==='keyboard')return target;
+  if(type==='system')return SYSTEM_TARGET_NAMES.get(target)||target;
   if(type==='mouse_button')return({LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键1',X2:'侧键2'}[target]||target);
   if(type==='mouse_wheel')return target.includes('UP')?'滚轮↑':target.includes('DOWN')?'滚轮↓':target;
   if(type==='gamepad_axis')return target.endsWith('UP')?'摇杆↑':target.endsWith('DOWN')?'摇杆↓':target.endsWith('LEFT')?'摇杆←':target.endsWith('RIGHT')?'摇杆→':target;
@@ -66,6 +67,9 @@ function triggerKeyLabel(triggerKey){
 }
 // 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
 function revealBindingRow(triggerKey){
+  // 通用口令和内置口令不在本游戏的映射表里：前者在「通用设置」，后者改不了。
+  if(triggerKey.startsWith('voice.shared.')){showView('devices');document.getElementById('personalVoicePanel')?.scrollIntoView({behavior:'smooth',block:'start'});return}
+  if(triggerKey.startsWith('voice.')&&!triggerKey.startsWith('voice.game.profile_slot_')){notice('这是内置口令，不能改键');return}
   // 从「开始」页点过来的话，映射表所在的页签还藏着——藏着的东西滚不过去，
   // 也高亮不出来。先切过去再找。
   if(currentView!=='games')showView('games');
@@ -130,6 +134,7 @@ const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',
 // of a free text field whose typos can only surface as a silent no-op in game.
 const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
 const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
+const SYSTEM_TARGET_NAMES=new Map([...VOICE_SYSTEM_TARGETS,['HEAD.CALIBRATE','开始校准']]);
 const voice={status:null};
 let customPoses=[];
 let customPoseScores={};
@@ -1357,7 +1362,7 @@ async function saveWakeWord(){
 }
 document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
-function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(new Map(VOICE_SYSTEM_TARGETS).get(action.target)||action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
+function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?(command.label||''):[command.label,voiceActionLabel(command.effective_action)].filter(Boolean).join(' · ');card.append(phrase,label);return card}
 function renderVoiceCommandCatalog(commands){
   voiceCatalog=Array.isArray(commands)?commands:[];
@@ -2544,7 +2549,7 @@ function renderTriggerLive() {
       row.type = 'button';
       row.className = 'trigger-live-item';
       row.textContent = `${agoText(Math.max(0, now - Number(event.at || 0)))} · `
-        + `${names.get(key) || key} → ${actionKeyText(event.action) || '未映射'}`;
+        + `${event.label || names.get(key) || key} → ${actionKeyText(event.action) || '未映射'}`;
       row.title = '点一下跳到它的映射那一行';
       row.addEventListener('click', () => revealBindingRow(key));
       log.appendChild(row);
@@ -2593,7 +2598,7 @@ const RANGE_GROUPS = [
   { key: 'zones', name: '身体区域' },
   { key: 'motions', name: '身体动作' },
   { key: 'poses', name: '自定义动作' },
-  { key: 'voice', name: '语音口令' },
+  { key: 'voice', name: '本游戏口令' },
 ];
 
 let rangeTargetKeys = '';
@@ -2680,12 +2685,12 @@ function renderRange() {
     hit.className = 'range-hit on';
   } else if (latest && since <= RANGE_HIT_HOLD_S) {
     const key = String(latest.trigger || '');
-    what.textContent = `${names.get(key) || key} → ${actionKeyText(latest.action) || '未映射'}`;
+    what.textContent = `${latest.label || names.get(key) || key} → ${actionKeyText(latest.action) || '未映射'}`;
     when.textContent = agoText(since);
     hit.className = 'range-hit on';
   } else if (latest) {
     const key = String(latest.trigger || '');
-    what.textContent = `${names.get(key) || key} → ${actionKeyText(latest.action) || '未映射'}`;
+    what.textContent = `${latest.label || names.get(key) || key} → ${actionKeyText(latest.action) || '未映射'}`;
     when.textContent = agoText(since);
     hit.className = 'range-hit';
   } else {
@@ -2722,7 +2727,7 @@ function renderRange() {
     row.type = 'button';
     row.className = 'range-log-item';
     row.textContent = `${agoText(Math.max(0, now - Number(event.at || 0)))} · `
-      + `${names.get(key) || key} → ${actionKeyText(event.action) || '未映射'}`;
+      + `${event.label || names.get(key) || key} → ${actionKeyText(event.action) || '未映射'}`;
     row.title = '点一下去改它的键';
     row.addEventListener('click', () => revealBindingRow(key));
     log.appendChild(row);

@@ -168,14 +168,35 @@ HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
 
 def _note_voice_trigger(action: dict) -> None:
     command_id = str(action.get("command_id", "")).strip()
-    trigger = f"voice.{command_id}" if command_id else "voice." + str(action.get("target", "")).strip()
+    # 说出口的那句话。通用口令没有编号，以前记成 "voice.M"——两句都按 M 的口令
+    # 分不开，界面上也只能显示代号。
+    phrase = str(action.get("phrase", "")).strip()
+    if command_id:
+        trigger = f"voice.{command_id}"
+    elif phrase:
+        trigger = f"voice.shared.{phrase}"
+    else:
+        trigger = "voice." + str(action.get("target", "")).strip()
     binding = KERNEL.control_bindings.get(trigger) if command_id else None
     if isinstance(binding, dict) and not binding.get("disabled") and isinstance(binding.get("action"), dict):
         noted = binding["action"]
     else:
         noted = {"type": str(action.get("type", "")), "target": action.get("target", ""),
                  "behavior": str(action.get("behavior", "tap"))}
-    KERNEL.note_trigger(trigger, noted)
+    KERNEL.note_trigger(trigger, noted, label=phrase or None)
+
+
+def voice_emergency_stop() -> dict:
+    """口令急停。先停，再补记一笔：急停不经过 execute_voice_action（它要最快），
+    不记的话动作测试页和手机头顶都看不见"刚才那句急停听到了"。"""
+    result = emergency_stop_all()
+    try:
+        KERNEL.note_trigger("voice.system.emergency_stop",
+                            {"type": "system", "target": "EMERGENCY_STOP", "behavior": "tap"},
+                            label="紧急停止")
+    except Exception:
+        pass
+    return result
 
 
 def execute_voice_action(action: dict) -> dict:
@@ -256,7 +277,7 @@ def execute_voice_action(action: dict) -> dict:
 VOICE = VoiceService(
     ROOT,
     execute_voice_action,
-    emergency_stop=emergency_stop_all,
+    emergency_stop=voice_emergency_stop,
     clear_source=OUTPUT.clear_source,
 )
 VOICE.configure_profile_bindings(PROFILES.effective_profile().get("bindings", {}))

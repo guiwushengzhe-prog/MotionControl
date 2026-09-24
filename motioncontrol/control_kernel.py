@@ -2039,37 +2039,47 @@ class ControlKernel:
         binding = self._effective_binding_locked(trigger)
         return {"id": trigger, "action": copy.deepcopy((binding or {}).get("action"))}
 
-    def note_trigger(self, trigger: str, action: dict | None) -> None:
+    def note_trigger(self, trigger: str, action: dict | None, label: str | None = None) -> None:
         """记一次触发。语音走的不是内核这条路，所以由 server 调进来。
 
         一份记录、一个时钟。分两份存的话，界面上要把两串时间戳对齐，而它们来自
         不同的地方，早晚差开。
+
+        ``label`` 是人说出口的那句话。通用口令和内置口令不在映射表里，界面上
+        没有名字可查，不带它的话只能显示成 voice.M 这种代号。
         """
         with self._lock:
             now = time.monotonic()
-            self._note_trigger_locked(trigger, action, now)
+            self._note_trigger_locked(trigger, action, now, label)
             # 语音也要推给手机。它是"说一句就完"的那种，不会出现在按住的集合里，
             # 所以 held 照旧、fired 只有这一条。
             if self._trigger_listener is not None:
+                fired = {"id": str(trigger),
+                         "action": copy.deepcopy(action) if isinstance(action, dict) else None}
+                if label:
+                    fired["name"] = str(label)
                 try:
                     self._trigger_listener({
                         "held": [self._trigger_brief_locked(item)
                                  for item in sorted(self.trigger_previous)],
-                        "fired": [{"id": str(trigger),
-                                   "action": copy.deepcopy(action) if isinstance(action, dict) else None}],
+                        "fired": [fired],
                         "at": round(now, 3),
                     })
                 except Exception as exc:  # noqa: BLE001 - 同上，显示不能拖垮控制
                     self.last_error = str(exc)
 
-    def _note_trigger_locked(self, trigger: str, action: dict | None, now: float) -> None:
-        self.recent_triggers.append({
+    def _note_trigger_locked(self, trigger: str, action: dict | None, now: float,
+                             label: str | None = None) -> None:
+        record = {
             "at": round(now, 3),
             "trigger": str(trigger),
             # 动作原样带上，不在这里翻译成"Y 键"。名字和写法归界面管，内核翻一遍
             # 就成了第二套说法，和映射表那边迟早不一致。
             "action": copy.deepcopy(action) if isinstance(action, dict) else None,
-        })
+        }
+        if label:
+            record["label"] = str(label)
+        self.recent_triggers.append(record)
 
     def _update_action_chain_locked(self, now: float) -> None:
         squat = "squat" in self.motion_active
