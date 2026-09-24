@@ -204,6 +204,75 @@ def test_the_expanded_step_count_is_capped():
         normalize_macro_library({"macros": macros})
 
 
+# --- 同时按 -----------------------------------------------------------------
+
+def test_a_step_can_be_pressed_together_with_the_previous_one():
+    """按住 SHIFT 的同时点左键：跨键盘和鼠标，写成一步做不到。"""
+    result = normalize_macro(macro("m1", "冲刺攻击", [
+        key("SHIFT"), {"type": "mouse_button", "target": "LEFT", "with_prev": True},
+    ]))
+    assert "with_prev" not in result["steps"][0]
+    assert result["steps"][1]["with_prev"] is True
+
+
+def test_an_unticked_step_is_stored_exactly_as_before():
+    """没勾的步骤不多带一个字段，老的宏文件和新存的长得一样。"""
+    assert normalize_step(key("W", with_prev=False)) == normalize_step(key("W"))
+
+
+def test_the_first_step_has_nothing_to_be_together_with():
+    """删掉原来的第一步之后，第二步身上的勾就没意义了。去掉，不拒绝保存。"""
+    result = normalize_macro(macro("m1", "甲", [key("W", with_prev=True), key("E")]))
+    assert "with_prev" not in result["steps"][0]
+
+
+def test_a_nested_macro_cannot_be_pressed_together():
+    with pytest.raises(ValueError, match="不能和上一步同时按"):
+        normalize_step({"type": "macro", "target": "m_inner", "with_prev": True})
+    with pytest.raises(ValueError, match="上一步是另一条宏"):
+        normalize_macro(macro("m1", "甲", [{"type": "macro", "target": "m_inner"}, key("W", with_prev=True)]))
+
+
+def test_a_group_lasts_as_long_as_its_longest_member():
+    steps = [
+        key("W", hold_ms=300, gap_ms=0),
+        key("SPACE", hold_ms=50, gap_ms=100, with_prev=True),
+        key("E", hold_ms=60, gap_ms=40),
+    ]
+    assert macro_schema.step_groups(steps) == [steps[:2], steps[2:]]
+    assert steps_duration_ms(steps) == 300 + 100
+
+
+def test_a_nested_steps_gap_pushes_back_the_whole_last_group():
+    """被引用那段的最后是同时按的一组时，间隔只加在一步上，整组结束时间不一定变。"""
+    library = normalize_macro_library({"macros": [
+        macro("inner", "里面", [key("Q", hold_ms=300, gap_ms=0), key("E", hold_ms=50, gap_ms=0, with_prev=True)]),
+        macro("outer", "外面", [{"type": "macro", "target": "inner", "gap_ms": 200}, key("R")]),
+    ]})
+    macros = {item["id"]: item for item in library["macros"]}
+    steps = expand_steps(macros, "outer")
+    assert [step["target"] for step in steps] == ["Q", "E", "R"]
+    assert steps_duration_ms(steps[:2]) == 300 + 200
+
+
+def test_a_referenced_macro_does_not_glue_onto_the_step_before_it():
+    """被引用那段的第一步从来不带勾，展开后不会和外面的上一步变成一组。"""
+    library = normalize_macro_library({"macros": [
+        macro("inner", "里面", [key("Q"), key("E", with_prev=True)]),
+        macro("outer", "外面", [key("W"), {"type": "macro", "target": "inner"}]),
+    ]})
+    macros = {item["id"]: item for item in library["macros"]}
+    groups = macro_schema.step_groups(expand_steps(macros, "outer"))
+    assert [[step["target"] for step in group] for group in groups] == [["W"], ["Q", "E"]]
+
+
+def test_together_survives_a_round_trip_through_the_file(tmp_path):
+    first = store(tmp_path)
+    created = first.create("冲刺攻击", steps=[key("SHIFT"), {"type": "mouse_button", "target": "LEFT", "with_prev": True}])
+    again = store(tmp_path)
+    assert again.get(created["id"])["steps"][1]["with_prev"] is True
+
+
 # --- 宏库文件 ---------------------------------------------------------------
 
 def store(tmp_path) -> MacroStore:

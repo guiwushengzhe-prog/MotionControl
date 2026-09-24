@@ -2367,7 +2367,7 @@ function macroNumberField(label, value, low, high, unit) {
 /** 把界面上那一排控件读回成一条宏的步骤表。整条一起提交，不做单步保存——服务端
  *  校验的是整条（转不转圈、总共多久都得看全貌），单步存等于把校验切碎。 */
 function readMacroSteps(row) {
-  return [...row.querySelectorAll('.macro-step')].map(stepEl => {
+  const steps = [...row.querySelectorAll('.macro-step')].map(stepEl => {
     const step = {
       type: stepEl.querySelector('.macro-step-type').value,
       target: String(stepEl.querySelector('.macro-step-target')?.value || '').trim(),
@@ -2376,8 +2376,15 @@ function readMacroSteps(row) {
     const gap = stepEl.querySelector('.macro-step-gap');
     if (hold) step.hold_ms = Number(hold.value);
     if (gap) step.gap_ms = Number(gap.value);
+    if (stepEl.querySelector('.macro-step-with-prev')?.checked) step.with_prev = true;
     return step;
   });
+  // 刚把某一步换成「跑另一条宏」时，它自己或下一步身上可能还留着「同时按」的勾。
+  // 那个组合存不进去，勾也就跟着失效，与其让服务端拒绝整条，不如这里先去掉。
+  steps.forEach((step, index) => {
+    if (step.with_prev && (index === 0 || step.type === 'macro' || steps[index - 1].type === 'macro')) delete step.with_prev;
+  });
+  return steps;
 }
 
 function renderMacroStepBody(stepEl, step, others) {
@@ -2478,7 +2485,23 @@ function renderMacros() {
         updateMacro(macro.id, { steps: kept });
       });
 
-      stepEl.append(order, type, body, drop);
+      stepEl.append(order, type, body);
+      // 「和上一步同时按」：第一步前面没东西，「跑另一条宏」是一整串，都不给这个勾。
+      const previous = index > 0 ? macro.steps[index - 1] : null;
+      if (previous && previous.type !== 'macro' && step.type !== 'macro') {
+        const together = document.createElement('label');
+        together.className = 'macro-step-with';
+        together.title = '勾上后这一步和上一步同一瞬间按下，比如按住 SHIFT 的同时点鼠标左键。'
+          + '两步各按各的时长、各等各的间隔，都结束了才走下一步。';
+        const togetherBox = document.createElement('input');
+        togetherBox.type = 'checkbox';
+        togetherBox.className = 'macro-step-with-prev';
+        togetherBox.checked = !!step.with_prev;
+        together.append(togetherBox, '和上一步同时按');
+        stepEl.appendChild(together);
+        if (step.with_prev) stepEl.classList.add('with-prev');
+      }
+      stepEl.appendChild(drop);
       renderMacroStepBody(stepEl, step, others);
       steps.appendChild(stepEl);
     });

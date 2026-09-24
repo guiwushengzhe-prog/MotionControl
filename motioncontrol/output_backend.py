@@ -9,6 +9,8 @@ import threading
 import time
 from pathlib import Path
 
+from motioncontrol_shared.macro_schema import step_groups
+
 
 _UNSET = object()
 
@@ -603,8 +605,8 @@ class _MacroRun:
     里，join 会等一个正要拿这把锁的线程，那就是死锁。
     """
 
-    __slots__ = ("output", "source", "macro_id", "steps", "repeat", "managed",
-                 "key", "started_at", "finished", "_stop", "_thread")
+    __slots__ = ("output", "source", "macro_id", "steps", "groups", "repeat", "managed",
+                 "key", "held", "started_at", "finished", "_stop", "_thread")
 
     def __init__(self, output, source: str, macro_id: str, steps: list[dict],
                  repeat: bool, *, managed: bool) -> None:
@@ -612,12 +614,18 @@ class _MacroRun:
         self.source = str(source)
         self.macro_id = str(macro_id)
         self.steps = steps
+        # 勾了"和上一步同时按"的几步连成一组，一起按下。
+        self.groups = step_groups(steps)
         self.repeat = bool(repeat)
         # managed = 由 set_action_holds 维持的：跑完不销毁，留着当"这一轮已经跑过"
         # 的记号，等触发真的松开时才去掉。不留这个记号，下一帧就会看见"该跑但没在
         # 跑"，于是按帧率反复重启，一秒三十遍。
         self.managed = bool(managed)
         self.key = f"{self.source}|macro"
+        # 这一刻按着的步：组内序号 → 这一步按下去的那些键。同一组里的几步可能落在
+        # 同一种设备上（两个键盘键），所以不能一步占一格来源——那样后按的会把先按的
+        # 盖掉。每次按下或松开都从这张表重新算这条宏在各个来源里的那一份。
+        self.held: dict[int, dict] = {}
         self.started_at = time.monotonic()
         self.finished = False
         self._stop = threading.Event()
@@ -636,20 +644,31 @@ class _MacroRun:
     def join(self, timeout: float | None = None) -> None:
         self._thread.join(timeout)
 
+    def _wait_until(self, deadline: float) -> None:
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            self._stop.wait(remaining)
+
     def _run(self) -> None:
         try:
             while not self._stop.is_set():
-                for step in self.steps:
+                for group in self.groups:
                     if self._stop.is_set():
                         break
-                    self.output._macro_press(self, step)
-                    hold_ms = int(step.get("hold_ms", 0))
-                    if hold_ms:
-                        self._stop.wait(hold_ms / 1000.0)
-                    self.output._macro_release(self)
-                    gap_ms = int(step.get("gap_ms", 0))
-                    if gap_ms:
-                        self._stop.wait(gap_ms / 1000.0)
+                    # 同一组一起按下，各按各的时长松开；整组最晚结束的那个到点了，
+                    # 才走下一组。只有一步的组就是原来的"按下、等、松开、等"。
+                    started = time.monotonic()
+                    for slot, step in enumerate(group):
+                        self.output._macro_press(self, step, slot)
+                    for slot, step in sorted(enumerate(group), key=lambda item: int(item[1].get("hold_ms", 0))):
+                        if self._stop.is_set():
+                            break
+                        self._wait_until(started + int(step.get("hold_ms", 0)) / 1000.0)
+                        self.output._macro_release(self, slot)
+                    if self._stop.is_set():
+                        break
+                    end_ms = max(int(step.get("hold_ms", 0)) + int(step.get("gap_ms", 0)) for step in group)
+                    self._wait_until(started + end_ms / 1000.0)
                 if not self.repeat:
                     break
         finally:
@@ -1145,7 +1164,7 @@ class OutputManager:
             self.last_error = str(exc)
             return [], False
 
-    def _macro_press(self, run, step) -> None:
+    def _macro_press(self, run, step, slot: int = 0) -> None:
         step_type = str(step.get("type", "")).strip().lower()
         target = step.get("target", "")
         if not isinstance(target, (list, tuple, set)):
@@ -1160,58 +1179,94 @@ class OutputManager:
             if merge and step_type != "gamepad":
                 return
             try:
+                held: dict = {}
                 if step_type == "keyboard":
-                    self._keyboard_sources[run.key] = self._combo_keys(target)
-                    self._refresh_keyboard_locked()
+                    held["keys"] = self._combo_keys(target)
                 elif step_type == "mouse_button":
                     if target not in {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}:
                         return
-                    self._mouse_button_sources[run.key] = {target}
-                    self._refresh_mouse_buttons_locked()
+                    held["mouse"] = {target}
                 elif step_type == "mouse_wheel":
                     # 滚轮是一下就完的事，没有"按住"，所以也没有对应的松开。
                     if target in {"SCROLL_UP", "SCROLL_DOWN"}:
                         self.mouse.wheel(target, 1)
+                    return
                 elif step_type == "gamepad":
                     buttons, stick = self._gamepad_parts(target)
-                    self._button_sources[run.key] = buttons
+                    held["buttons"] = buttons
                     if stick is not None and (not merge or self._xinput_motion_left_enabled):
-                        self._left_stick_sources[run.key] = stick
-                    self._refresh_buttons_locked()
-                    self._refresh_left_stick_locked()
+                        held["stick"] = stick
                 elif step_type == "gamepad_axis":
                     if merge and not self._xinput_motion_left_enabled:
                         return
-                    if target in GAMEPAD_AXES:
-                        self._left_stick_sources[run.key] = GAMEPAD_AXES[target]
-                        self._refresh_left_stick_locked()
+                    if target not in GAMEPAD_AXES:
+                        return
+                    held["stick"] = GAMEPAD_AXES[target]
                 elif step_type == "gamepad_trigger":
                     if target == "LT":
-                        self._trigger_sources[run.key] = (1.0, 0.0)
+                        held["triggers"] = (1.0, 0.0)
                     elif target == "RT":
-                        self._trigger_sources[run.key] = (0.0, 1.0)
+                        held["triggers"] = (0.0, 1.0)
                     else:
                         return
-                    self._refresh_triggers_locked()
+                else:
+                    return
+                run.held[slot] = held
+                self._apply_macro_held_locked(run)
                 self.last_error = None
             except Exception as exc:  # noqa: BLE001 - 宏线程里抛出去没人接
                 self.last_error = str(exc)
 
-    def _macro_release(self, run) -> None:
+    def _apply_macro_held_locked(self, run) -> None:
+        """把这条宏此刻按着的所有步合成一份，写进各个来源再刷新。
+
+        同一组里两个键盘步各按各的键，合起来就是两者的并集；其中一个先松开，
+        另一个的键还按着。摇杆方向相加、扳机取大，和不同来源之间的合并规则一样。
+        """
+        keys: set[str] = set()
+        mouse: set[str] = set()
+        buttons: set[str] = set()
+        stick: tuple[float, float] | None = None
+        triggers: tuple[float, float] | None = None
+        for held in run.held.values():
+            keys |= held.get("keys", set())
+            mouse |= held.get("mouse", set())
+            buttons |= held.get("buttons", set())
+            if held.get("stick") is not None:
+                sx, sy = held["stick"]
+                stick = (sx, sy) if stick is None else (stick[0] + sx, stick[1] + sy)
+            if held.get("triggers") is not None:
+                tl, tr = held["triggers"]
+                triggers = (tl, tr) if triggers is None else (max(triggers[0], tl), max(triggers[1], tr))
+        for store, value in ((self._keyboard_sources, keys or None),
+                             (self._mouse_button_sources, mouse or None),
+                             (self._button_sources, buttons or None),
+                             (self._left_stick_sources, stick),
+                             (self._trigger_sources, triggers)):
+            if value is None:
+                store.pop(run.key, None)
+            else:
+                store[run.key] = value
+        self._refresh_buttons_locked()
+        self._refresh_keyboard_locked()
+        self._refresh_mouse_buttons_locked()
+        self._refresh_left_stick_locked()
+        self._refresh_triggers_locked()
+
+    def _macro_release(self, run, slot: int | None = None) -> None:
+        """松开一步；不给 slot 就是这条宏按着的全部松开（停下、跑完、出错）。"""
         with self._lock:
-            touched = False
-            for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources,
-                          self._left_stick_sources, self._trigger_sources):
-                if store.pop(run.key, None) is not None:
-                    touched = True
+            if slot is None:
+                run.held.clear()
+            else:
+                run.held.pop(slot, None)
+            touched = any(run.key in store for store in (
+                self._button_sources, self._keyboard_sources, self._mouse_button_sources,
+                self._left_stick_sources, self._trigger_sources))
             if not touched:
                 return
             try:
-                self._refresh_buttons_locked()
-                self._refresh_keyboard_locked()
-                self._refresh_mouse_buttons_locked()
-                self._refresh_left_stick_locked()
-                self._refresh_triggers_locked()
+                self._apply_macro_held_locked(run)
             except Exception as exc:  # noqa: BLE001 - 同上
                 self.last_error = str(exc)
 

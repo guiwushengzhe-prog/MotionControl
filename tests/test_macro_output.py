@@ -293,3 +293,55 @@ def test_a_finished_one_shot_is_not_reported_as_running(rig):
     out.set_action_holds([hold_item("zone.leftHand", "m1")], source_group="controls")
     assert wait_until(lambda: presses(keyboard) == ["Q"])
     assert wait_until(lambda: out.status()["macros_running"] == [])
+
+
+# --- 同时按 -----------------------------------------------------------------
+
+def test_a_together_step_goes_down_at_the_same_time_across_devices(rig):
+    """按住 SHIFT 的同时点鼠标左键。"""
+    out, keyboard, mouse = rig
+    out.configure_macros(Library({"m1": ([
+        step("SHIFT", hold_ms=200),
+        {**step("LEFT", hold_ms=200, step_type="mouse_button"), "with_prev": True},
+    ], False)}))
+    out.execute_action({"type": "macro", "target": "m1", "source": "test"})
+    assert wait_until(lambda: "SHIFT" in keyboard.pressed and "LEFT" in mouse.pressed)
+    assert wait_until(lambda: not keyboard.pressed and not mouse.pressed)
+
+
+def test_two_keys_in_one_group_release_on_their_own_time(rig):
+    """同一种设备上的两步不能互相盖掉：先松开的那个不能把另一个也带走。"""
+    out, keyboard, _ = rig
+    out.configure_macros(Library({"m1": ([
+        step("W", hold_ms=400),
+        {**step("SPACE", hold_ms=30), "with_prev": True},
+    ], False)}))
+    out.execute_action({"type": "macro", "target": "m1", "source": "test"})
+    assert wait_until(lambda: {"W", "SPACE"} <= keyboard.pressed)
+    assert wait_until(lambda: "SPACE" not in keyboard.pressed)
+    assert "W" in keyboard.pressed, "SPACE 松开时把 W 也松了"
+    assert wait_until(lambda: not keyboard.pressed)
+
+
+def test_the_next_step_waits_for_the_whole_group(rig):
+    out, keyboard, _ = rig
+    out.configure_macros(Library({"m1": ([
+        step("Q", hold_ms=10),
+        {**step("W", hold_ms=120), "with_prev": True},
+        step("E"),
+    ], False)}))
+    out.execute_action({"type": "macro", "target": "m1", "source": "test"})
+    assert wait_until(lambda: ("E", True) in keyboard.log)
+    assert keyboard.log.index(("W", False)) < keyboard.log.index(("E", True)), keyboard.log
+
+
+def test_stopping_in_the_middle_of_a_group_releases_every_member(rig):
+    out, keyboard, mouse = rig
+    out.configure_macros(Library({"m1": ([
+        step("SHIFT", hold_ms=500),
+        {**step("LEFT", hold_ms=500, step_type="mouse_button"), "with_prev": True},
+    ], True)}))
+    out.set_action_holds([hold_item("zone.leftHand", "m1")], source_group="controls")
+    assert wait_until(lambda: "SHIFT" in keyboard.pressed and "LEFT" in mouse.pressed)
+    out.set_action_holds([], source_group="controls")
+    assert wait_until(lambda: not keyboard.pressed and not mouse.pressed)

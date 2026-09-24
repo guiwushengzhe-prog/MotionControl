@@ -703,6 +703,11 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
 
 .btn.macro-step-drop:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger); }
 
+.macro-step-with { display: flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 12px; white-space: nowrap; }
+
+/* 和上一步同时按的那一步贴着上一步，左边一道竖线，一眼看出它们是一组。 */
+.macro-step.with-prev { margin-top: -4px; border-top-left-radius: 0; border-top-right-radius: 0; box-shadow: inset 3px 0 0 var(--accent); }
+
 .macro-tools { display: flex; gap: 8px; }
 
 /* --- 动作测试：站到镜头前试，打中了什么用大字写出来。

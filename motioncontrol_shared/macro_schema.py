@@ -10,6 +10,11 @@
 1. 存盘之前就把整张引用图走一遍，有环直接拒绝，并说出是哪几条在转圈；
 2. 展开之后的步数和总时长都封顶——没有环也可能一层套一层套出几千步。
 
+步骤默认一个接一个。勾了 ``with_prev`` 的一步和上一步**同一瞬间按下**，比如按住
+SHIFT 的同时点鼠标左键。连在一起的这几步叫"一组"：各按各的时长、各等各的间隔，
+整组里最晚结束的那个结束了，才走下一步。同一种设备的几个键其实写成一步
+（``CTRL+W``）也能一起按，但那样只能一起松开，也没法跨键盘、鼠标、手柄。
+
 封顶的数字不是随便定的。超过十秒的宏，人早就在做别的动作了而宏还在按键，那种毛病
 事后没人查得出来是宏干的，只会觉得"软件抽风"。宁可存不进去，也不要让它存进去。
 """
@@ -60,10 +65,15 @@ def normalize_step(raw) -> dict:
 
     gap_ms = _as_ms(raw.get("gap_ms", DEFAULT_GAP_MS), MIN_GAP_MS, MAX_GAP_MS, "间隔")
 
+    with_prev = bool(raw.get("with_prev", False))
+
     if step_type == "macro":
         target = str(raw.get("target", "")).strip().lower()
         if not MACRO_ID_RE.match(target):
             raise ValueError(f"引用的宏编号不对：{target or '(空)'}")
+        if with_prev:
+            # 引用的是一整串有先后的步骤，没法"和上一步同时"只按下一下。
+            raise ValueError("「跑另一条宏」这一步不能和上一步同时按")
         # 引用步没有"按住多久"——按多久由被引用的那条宏自己的步骤决定。
         return {"type": "macro", "target": target, "gap_ms": gap_ms}
 
@@ -74,7 +84,11 @@ def normalize_step(raw) -> dict:
     if action["type"] == "mouse_wheel":
         # 滚轮是一下就完的事，没有"按住"。写多少都一样，统一成 0 免得看着像能调。
         hold_ms = 0
-    return {"type": action["type"], "target": action["target"], "hold_ms": hold_ms, "gap_ms": gap_ms}
+    step = {"type": action["type"], "target": action["target"], "hold_ms": hold_ms, "gap_ms": gap_ms}
+    if with_prev:
+        # 只在勾上时才写，没勾的步骤和以前存的一模一样。
+        step["with_prev"] = True
+    return step
 
 
 def _as_ms(value, low: int, high: int, what: str) -> int:
@@ -105,6 +119,12 @@ def normalize_macro(raw) -> dict:
     if len(steps_raw) > MAX_STEPS:
         raise ValueError(f"「{name}」有 {len(steps_raw)} 步，最多 {MAX_STEPS} 步")
     steps = [normalize_step(step) for step in steps_raw]
+    # 第一步前面没有东西可以"同时"。删掉原来的第一步之后第二步就顶上来了，
+    # 这时它身上的勾没有意义，直接去掉，不值得为这个拒绝保存。
+    steps[0].pop("with_prev", None)
+    for index in range(1, len(steps)):
+        if steps[index].get("with_prev") and steps[index - 1]["type"] == "macro":
+            raise ValueError(f"「{name}」第 {index + 1} 步不能和上一步同时按：上一步是另一条宏")
     return {
         "id": macro_id,
         "name": name,
@@ -141,10 +161,15 @@ def expand_steps(macros: dict[str, dict], macro_id: str, *, _chain: tuple[str, .
         if not inner:
             continue
         out.extend(inner)
-        # 引用步自己的间隔加在被引用那段的最后一步后面：读起来就是
-        # "跑完这段，歇一会，再往下"。
+        # 引用步自己的间隔加在被引用那段的最后一组后面：读起来就是
+        # "跑完这段，歇一会，再往下"。最后一组是同时按的几步时，每一步都加，
+        # 整组的结束时间才正好往后推这么多。
         if step["gap_ms"]:
-            out[-1] = {**out[-1], "gap_ms": min(MAX_GAP_MS, out[-1]["gap_ms"] + step["gap_ms"])}
+            last = len(out) - 1
+            while last > 0 and out[last].get("with_prev"):
+                last -= 1
+            for index in range(last, len(out)):
+                out[index] = {**out[index], "gap_ms": min(MAX_GAP_MS, out[index]["gap_ms"] + step["gap_ms"])}
         if len(out) > MAX_EXPANDED_STEPS:
             raise ValueError(f"展开之后超过 {MAX_EXPANDED_STEPS} 步了")
     if len(out) > MAX_EXPANDED_STEPS:
@@ -152,8 +177,23 @@ def expand_steps(macros: dict[str, dict], macro_id: str, *, _chain: tuple[str, .
     return out
 
 
+def step_groups(steps: list[dict]) -> list[list[dict]]:
+    """按"同时按下"切成组：每组从一个没勾 ``with_prev`` 的步开始。"""
+    groups: list[list[dict]] = []
+    for step in steps:
+        if groups and step.get("with_prev"):
+            groups[-1].append(step)
+        else:
+            groups.append([step])
+    return groups
+
+
 def steps_duration_ms(steps: list[dict]) -> int:
-    return sum(int(step.get("hold_ms", 0)) + int(step.get("gap_ms", 0)) for step in steps)
+    # 同一组一起开始，最晚结束的那个说了算。
+    return sum(
+        max(int(step.get("hold_ms", 0)) + int(step.get("gap_ms", 0)) for step in group)
+        for group in step_groups(steps)
+    )
 
 
 def normalize_macro_library(raw) -> dict:
