@@ -349,7 +349,7 @@ def test_the_range_is_its_own_tab_and_shows_the_hit_big():
     assert "renderRange" in APP_JS
     css = (ROOT / "web" / "app.css").read_text(encoding="utf-8")
     hit = css[css.index(".range-hit-what"):css.index(".range-hit-what") + 120]
-    size = float(re.search(r"font-size:([\d.]+)em", hit).group(1))
+    size = float(re.search(r"font-size:\s*([\d.]+)em", hit).group(1))
     assert size >= 2.0, f"命中那行字只有 {size}em，几米外看不见"
 
 

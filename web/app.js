@@ -249,7 +249,9 @@ function renderMainStatus(){
   const main=$('#mainActionBtn');
   main.disabled=!serviceReady||actionBusy||zoneEditMode;
   main.textContent=output.enabled?'暂停游戏控制':(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady?'连接设备':'开始游戏控制');
+  main.classList.toggle('running',!!output.enabled);
   $('#serviceStatus').textContent=serviceReady?'本地服务已连接':'服务失联 · 当前状态无法确认';
+  $('#serviceStatus').classList.toggle('online',serviceReady);$('#serviceStatus').classList.toggle('offline',!serviceReady);
   const missing=[];
   if(!currentPoseMap)missing.push('人体未识别：区域和身体动作不可用');
   else if(!sceneConfigured)missing.push('区域未定位：固定区域不可用');
@@ -267,7 +269,7 @@ function setupConflicts(){
   const hand=kernelState?.head?.hand_mouse||{};
   const items=[];
   if(inputStatus.phone_ignored)
-    items.push(['手机正在传画面，但来源选的是电脑摄像头——手机传来的都被丢掉了。','改用手机',()=>setSource('phone',true)]);
+    items.push(['手机在传画面，但来源选的是电脑摄像头，手机的画面没有用上。','改用手机',()=>setSource('phone',true)]);
   if(mergeOwnsSticks()&&hand.enabled)
     items.push(['物理手柄合流占着两个摇杆，手控鼠标不会动。','关掉合流',async()=>{$('#xinputMerge').value='';await setXinputMerge()}]);
   const verticalHand=hand.config?.vertical_hand??hand.vertical_hand;
@@ -298,7 +300,7 @@ function renderKernelState(runtime,force=false){
   renderTriggerLive();
   renderRange();
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
-  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;draw(currentPoseMap);renderKernelZones(k.zones||{});
+  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
@@ -326,11 +328,11 @@ function renderKernelState(runtime,force=false){
     const usesHand=hs.hand_mouse?.enabled&&['left','right'].includes(hs.hand_mouse?.config?.horizontal_hand);
     const method=usesHand?'握拳':hs.horizontal_algorithm==='roll_tilt'?'侧倾':'转头';
     const horizontalCalibrated=usesHand||(hs.horizontal_calibrated??hs.calibrated);
-    $('#headStatus').textContent=!usesHand&&hs.enabled===false?'左右视角已关闭':horizontalCalibrated?(!usesHand&&guardBlocked?'身体动作中 · 左右视角已稳定':`${method} · 左右 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说“体感开始校准”';
+    $('#headStatus').textContent=!usesHand&&hs.enabled===false?'左右视角已关闭':horizontalCalibrated?(!usesHand&&guardBlocked?'身体动作中 · 左右视角已稳定':`${method} · 左右 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说「体感开始校准」';
   }
   if(hs.calibrated!==undefined){
     $('#calBtn').textContent=hs.calibrating?'取消校准':'站好并校准';
-    $('#calStatus').textContent=hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'等待校准，可说“开始校准”');
+    $('#calStatus').textContent=hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'等待校准，可说「开始校准」');
     const missingPoints=(hs.frozen22_missing_points||[]).join('、');
     $('#calStatus').title=[hs.estimate_error,missingPoints&&'缺少关键点：'+missingPoints].filter(Boolean).join(' · ');
     renderCalibrationOverlay(hs);
@@ -398,7 +400,7 @@ function renderInputStatus(status){
     const usb=status.usb_tether||{};
     tether.textContent=usb.present
       ? `数据线已接通（${usb.adapter||'USB'}）${usb.carries_internet?'，这台电脑正在走手机的网':''}`
-      : '没检测到数据线。走 WiFi 就不用管它；插了线还是这句话，就是手机上的「USB 网络共享」没打开。';
+      : '没检测到数据线。用 Wi-Fi 连可以不管；插了线还这样，说明手机上的「USB 网络共享」没打开。';
     tether.className='statusline'+(usb.present?'':' warn');
   }
   const field=$('#phoneWsUrl'),urls=status.phone_ws_urls||[];
@@ -713,7 +715,7 @@ function renderProfileBindingRows(){
   const groups=[
     {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
     {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手过头顶不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
-    {id:'voice',title:'语音口令',help:'每个口令槽都可以改“说什么”和执行动作；修改后电脑、手机共用同一份词库。紧急停止始终保留安全兜底。',filter:t=>t.group==='voice',open:false},
+    {id:'voice',title:'语音口令',help:'每条口令的说法和动作都能改，电脑和手机共用一份。紧急停止始终保留。',filter:t=>t.group==='voice',open:false},
   ];
   for(const group of groups){
     const items=triggers.filter(group.filter);if(!items.length)continue;
@@ -1186,9 +1188,9 @@ function renderOutputMix(){
   const pads=gamepadBindingCount();
   let text='';
   if(output.mode==='gamepad'&&handMouseOn){
-    text='视角输出是 Xbox 右摇杆，所以握拳推的是摇杆，桌面上的鼠标不会动。想用握拳直接控制鼠标，把上面的视角输出改成“鼠标视角”。';
+    text='视角输出是 Xbox 右摇杆，握拳控制的是摇杆，鼠标不会动。想让握拳控制鼠标，把视角输出改成「鼠标视角」。';
   }else if(output.mode==='mouse'&&pads>0){
-    text=`视角走鼠标，但这个游戏方案里还有 ${pads} 个动作出的是 Xbox 按键。两种混着出，游戏会在手柄提示和键鼠提示之间反复切换。要么把视角输出改成 Xbox，要么给这些动作换成键盘/鼠标按键。`;
+    text=`视角走鼠标，但这个游戏还有 ${pads} 个动作输出 Xbox 按键，游戏会在手柄和键鼠提示之间来回切换。把视角输出改成 Xbox，或把这些动作改成键鼠按键。`;
   }
   el.hidden=!text;el.textContent=text;
 }
@@ -1229,7 +1231,7 @@ async function setSource(source,enabled=true){
     // 没有摄像头的电脑在这里是死路：报一句"无法打开"然后没有下文。所以失败时
     // 直接把另外两条出路说出来——换一个摄像头，或者改用手机。
     throw new Error((result.camera?.last_error||'摄像头启动失败')
-      +'。这台电脑如果没有摄像头，把“摄像头来源”改成手机摄像头；有好几个的话，点“扫描摄像头”换一个试试。');
+      +'。没有摄像头的话，把「摄像头来源」改成手机摄像头；有好几个的话，点「扫描摄像头」换一个试试。');
   }
   ++kernelEpoch;desiredSource=source;
   renderKernelState(result);await refreshInput();
@@ -1250,9 +1252,9 @@ async function ensureInitialSceneLayout(){
     const current=await api('/api/scene/status');renderSceneEditor(current);if(current?.configured)return true;
     // Recording a scene permanently leaves the body-relative zones behind, so
     // it must be a deliberate choice rather than a side effect of starting.
-    if(!(await confirmFixedZones())){notice('已取消。区域继续跟随身体，随时可以再点“调整区域位置”。');return false}
+    if(!(await confirmFixedZones())){notice('已取消。区域继续跟随身体，随时可以再点「挪动区域」。');return false}
     scenePreparing=true;renderMainStatus();notice('首次使用：请站到正常游戏位置，正在自动定位 6 个体感区域…');
-    if(!(await waitForPose(8000))){notice('还没有识别到头和双肩。请站到镜头前后再点“开始游戏控制”。首次定位不要求全身入镜。');return false}
+    if(!(await waitForPose(8000))){notice('还没识别到头和双肩。站到镜头前再点「开始游戏控制」，首次定位不需要全身入镜。');return false}
     const result=await post('/api/scene/capture',{});
     if(result?.configured){renderSceneEditor(result);notice('6 个体感区域已自动定位。');return true}
     if(result?.scene?.configured){renderSceneEditor(result.scene);notice('6 个体感区域已自动定位。');return true}
@@ -1301,15 +1303,15 @@ function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=do
   // the catalog says so, and without it the picker would come out empty.
   if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder='例如 W / SPACE / CTRL+W';input.value=value||'';target.replaceChildren(input);return}
   fillTargetControl(target,type.value,value);
-};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');for(const[value,label]of [['tap','点按'],['hold','持续按住'],['release','松开']]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';const syncBehavior=()=>{behavior.disabled=type.value==='system';if(behavior.disabled)behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phrase,type,target,behavior,remove);$('#voiceRows').appendChild(row)}
-function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=(row.querySelector('.binding-target')?.value||'').trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('语音命令必须同时填写“说什么”和“输出什么”');const behavior=type==='system'?'tap':row.querySelector('.voice-behavior').value;const item={phrase,type,target,behavior},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
+};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');for(const[value,label]of [['tap','点按'],['hold','持续按住'],['release','松开']]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';const syncBehavior=()=>{behavior.disabled=type.value==='system';if(behavior.disabled)behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phrase,type,target,behavior,remove);$('#voiceRows').appendChild(row)}
+function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=(row.querySelector('.binding-target')?.value||'').trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('每条口令都要填「说什么」和「输出什么」');const behavior=type==='system'?'tap':row.querySelector('.voice-behavior').value;const item={phrase,type,target,behavior},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
 function renderVoiceRows(items){$('#voiceRows').replaceChildren();for(const m of items||[])addVoiceRow(m);if(!$('#voiceRows').children.length)addVoiceRow()}
 function renderVoiceStatus(s=voice.status){
   if(!s)return;voice.status=s;const has=!!s.model_ready,connected=!!s.connected;const isSingleKws=String(s.recognizer_mode||'').includes('single_stage')||String(s.recognizer_mode||'').includes('kws');
   $('#voiceMode').textContent=has?(isSingleKws?`短语识别 · ${s.supported_count||0} 条`:`语音 · ${s.supported_count||0} 条`):'未就绪';$('#voiceMode').className='pill '+(has?'ok':'warn');
   const pcOk=connected&&s.source_kind==='computer'&&s.available&&s.model_ready&&s.audio_ready&&(s.audio_alive||s.stream_alive);const phoneOk=connected&&s.source_kind!=='computer';const ready=pcOk||phoneOk;voiceInputReady=ready;
   $('#voicePill').textContent=ready?'语音 ✓':(connected?'语音准备中':'语音');$('#voicePill').className='pill '+(ready?'ok':(connected?'warn':'optional'));
-  const phrase=String(s.last_command||s.final||'').trim();$('#voiceStatus').textContent=phrase?`已识别：${phrase}`:(ready?'直接说完整口令，例如“体感截图”':'语音尚未准备好');
+  const phrase=String(s.last_command||s.final||'').trim();$('#voiceStatus').textContent=phrase?`已识别：${phrase}`:(ready?'直接说完整口令，例如「体感截图」':'语音尚未准备好');
   const modelPath=s.model_path||s.command_model_path||'—';const mp=$('#voiceModelPath');if(mp){mp.textContent='模型：'+modelPath;mp.title=modelPath}
   renderPersonalVoice(s);
   const diag=$('#voiceDiagnostic');if(diag){diag.textContent=[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`最后命令：${phrase||'—'}`,`错误：${s.last_error||'—'}`].join('\n')}
@@ -1593,12 +1595,12 @@ $('#closeVoiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask')
 $('#poseSource').addEventListener('change',()=>{
   desiredSource=$('#poseSource').value;$('#phoneGuide').open=desiredSource==='phone';
   syncCameraDeviceRow();
-  notice('已选择'+(desiredSource==='phone'?'手机摄像头':'电脑摄像头')+'，点击“连接并开始识别”应用');
+  notice('已选择'+(desiredSource==='phone'?'手机摄像头':'电脑摄像头')+'，点「连接并开始识别」生效');
 });
 $('#cameraDevice').addEventListener('change',e=>runAction(async()=>{
   const data=await post('/api/camera/config',{index:Number(e.target.value)});
   cameraIndex=Number(data.camera_index??e.target.value);
-  notice('已选择摄像头 '+cameraIndex+'，点“连接并开始识别”看看画面对不对');
+  notice('已选择摄像头 '+cameraIndex+'，点「连接并开始识别」看看画面对不对');
 }));
 // 按钮和新手教学用的是同一个扫描：结果记在 cameraScan 里，教学据此判断这台电脑有几个摄像头。
 async function scanCameras(){
@@ -1612,7 +1614,7 @@ async function scanCameras(){
     Object.assign(cameraScan,{state:'done',count:n,error:''});
     if(!status)return;
     status.textContent=n?`找到 ${n} 个。选一个，连接之后看画面里是不是你。`
-      :'一个也没找到。这台电脑可能没有摄像头，或者被别的软件占着——把上面的来源改成手机摄像头也能用。';
+      :'一个也没找到。可能没有摄像头，或者被别的软件占着；也可以把来源改成手机摄像头。';
   }catch(e){Object.assign(cameraScan,{state:'failed',error:String(e?.message||e)});if(status)status.textContent='扫描失败：'+cameraScan.error}
 }
 bind('cameraScanBtn',scanCameras);
@@ -2087,7 +2089,7 @@ function renderCustomPoses() {
     addFrame.className = 'btn pose-add';
     addFrame.type = 'button';
     addFrame.textContent = '再加一个姿势';
-    addFrame.title = '摆好下一个姿势再点。做完的动作要按顺序依次做出来才触发';
+    addFrame.title = '摆好下一个姿势再点。几个姿势要按顺序做完才触发';
     addFrame.addEventListener('click', () => appendCustomPoseFrame(item));
     strip.appendChild(addFrame);
 
