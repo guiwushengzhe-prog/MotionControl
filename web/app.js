@@ -129,7 +129,7 @@ const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',
 // The dispatcher rejects anything outside this set, so offer the list instead
 // of a free text field whose typos can only surface as a silent no-op in game.
 const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
-const VOICE_SYSTEM_TARGETS=[['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
+const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
 const voice={status:null};
 let customPoses=[];
 let customPoseScores={};
@@ -1318,28 +1318,44 @@ function renderVoiceStatus(s=voice.status){
   const diag=$('#voiceDiagnostic');if(diag){diag.textContent=[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`最后命令：${phrase||'—'}`,`错误：${s.last_error||'—'}`].join('\n')}
 }
 
-async function saveVoiceMappings(){const s=await post('/api/voice/config',{mappings:readVoiceMappings()});voice.status=s;renderVoiceStatus(s);return s}
-// 唤醒词和急停口令存在自己那一份里，不跟游戏走、也不跟配置分享出去。
-// 界面上也得分开放，否则人会以为它们跟旁边那些口令一起发出去了。
-function renderPersonalVoice(status){
-  const wake=$('#wakeWord'),stop=$('#emergencyPhrases');
-  if(!wake||!stop)return;
-  // 正在输入就不覆盖。语音状态 0.9 秒刷一次，不让开就会把手里打一半的字抹掉。
-  if(document.activeElement===wake||document.activeElement===stop)return;
-  wake.value=status?.wake_word||'';
-  stop.value=(status?.emergency_stop_phrases||[]).join('、');
+/* 急停口令在界面上就是通用口令里的一行：输出选「系统命令 → 紧急停止」。存的时候
+ * 还是分开存——它们在自己那一份里，不跟配置分享出去，装别人的配置也冲不掉；
+ * 听到了也走急停那条最快的路，不经过"游戏控制开没开"。
+ * 存的写法带默认唤醒词「体感」，这样改了唤醒词，它们跟着一起换。 */
+const EMERGENCY_TARGET='EMERGENCY_STOP',DEFAULT_WAKE='体感',BUILT_IN_STOP='紧急停止';
+const isEmergencyRow=item=>item.type==='system'&&item.target===EMERGENCY_TARGET;
+function voiceRowsFromStatus(s){
+  const wake=s?.wake_word||DEFAULT_WAKE;
+  const stops=(s?.emergency_stop_phrases||[])
+    .map(phrase=>String(phrase).startsWith(wake)?String(phrase).slice(wake.length):String(phrase))
+    .filter(phrase=>phrase&&phrase!==BUILT_IN_STOP)
+    .map(phrase=>({phrase,type:'system',target:EMERGENCY_TARGET,behavior:'tap'}));
+  return [...stops,...(s?.mappings||[])];
 }
-async function savePersonalVoice(){
+async function saveVoiceMappings(){
+  const rows=readVoiceMappings();
+  const s=await post('/api/voice/config',{mappings:rows.filter(item=>!isEmergencyRow(item)),
+    emergency_stop_phrases:rows.filter(isEmergencyRow).map(item=>DEFAULT_WAKE+item.phrase)});
+  voice.status=s;renderVoiceStatus(s);return s;
+}
+// 唤醒词只属于你：不跟游戏走、也不跟配置分享出去。
+function renderPersonalVoice(status){
+  const wake=$('#wakeWord');
+  // 正在输入就不覆盖。语音状态 0.9 秒刷一次，不让开就会把手里打一半的字抹掉。
+  if(!wake||document.activeElement===wake)return;
+  wake.value=status?.wake_word||'';
+}
+async function saveWakeWord(){
   const say=(text,kind='')=>{const el=$('#personalVoiceStatus');if(el){el.textContent=text;el.className=kind==='error'?'statusline error':'statusline'}};
+  const value=String($('#wakeWord').value||'').trim();
+  if(!value||value===voice.status?.wake_word)return;
   try{
-    const phrases=String($('#emergencyPhrases').value||'').split(/[、,，;；\s]+/).map(x=>x.trim()).filter(Boolean);
     // mappings 要原样带上：configure 是整份替换，不带等于把口令全删了。
-    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],
-      wake_word:String($('#wakeWord').value||'').trim(),emergency_stop_phrases:phrases});
-    voice.status=s;renderVoiceStatus(s);renderPersonalVoice(s);say('已保存');
+    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],wake_word:value});
+    voice.status=s;renderVoiceStatus(s);say('唤醒词已保存');
   }catch(error){say(error.message,'error')}
 }
-document.getElementById('personalVoiceSaveBtn')?.addEventListener('click',savePersonalVoice);
+document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
 function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(new Map(VOICE_SYSTEM_TARGETS).get(action.target)||action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?(command.label||''):[command.label,voiceActionLabel(command.effective_action)].filter(Boolean).join(' · ');card.append(phrase,label);return card}
@@ -1347,7 +1363,7 @@ function renderVoiceCommandCatalog(commands){
   voiceCatalog=Array.isArray(commands)?commands:[];
   const full=$('#voiceCommandGrid');full.replaceChildren();
   const wake=voice.status?.wake_word||'体感';
-  const shared=(voice.status?.mappings||[]).map(item=>({
+  const shared=voiceRowsFromStatus(voice.status).map(item=>({
     phrase:wake+item.phrase,label:'',effective_action:{type:item.type,target:item.target,behavior:item.behavior||'tap'},
   }));
   for (const [name,items] of [
@@ -1524,7 +1540,7 @@ async function init(){
     }),
   ]);
   if(results.some(result=>result.status==='rejected'))notice('部分设备信息尚未读取，可继续使用已连接的输入');
-  await loadProfiles();renderVoiceRows(voice.status?.mappings||[]);
+  await loadProfiles();renderVoiceRows(voiceRowsFromStatus(voice.status));
   poll(refreshKernel,250);poll(async()=>{await refreshInput();await refreshOutput();await refreshVoice()},900);
   poll(refreshXinput,1500,()=>currentView==='devices');
   poll(refreshPerformance,1500,()=>currentView==='devices'&&$('#advancedSettings').open&&$('#performancePanel').open);
@@ -1805,7 +1821,7 @@ async function cloudInstall(item, button) {
     try {
       if (installed.doc_type === 'voice_mappings') {
         await refreshVoice();
-        renderVoiceRows(voice.status?.mappings || []);
+        renderVoiceRows(voiceRowsFromStatus(voice.status));
       } else {
         // Motions are not a panel of their own: they are the motion.* rows of
         // the game profile, so refreshing the profile covers them too.

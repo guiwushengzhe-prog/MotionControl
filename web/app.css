@@ -425,8 +425,6 @@ main { padding-top: 20px; }
 
 .profile-bar.three { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; }
 
-.profile-bar.voice-personal { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto; align-items: end; }
-
 .profile-bar.pose-bar { grid-template-columns: minmax(0, 1fr) auto auto auto; }
 
 .profile-bar.cloud-bar { display: flex; flex-wrap: wrap; }
@@ -519,6 +517,15 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
   background: transparent; color: var(--text-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
 .trigger-live-item:hover, .range-log-item:hover { border-color: var(--accent); color: var(--text); }
+
+/* 唤醒词放在通用口令的最上面：每句口令都以它开头。 */
+.wake-row { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: end; gap: 16px; margin-top: 14px; }
+
+.wake-row .fineprint { padding-bottom: 9px; }
+
+.settings-section > .fineprint, .card > .fineprint { margin-top: 10px; }
+
+.fineprint:empty { display: none; }
 
 /* 口令：一行一条。 */
 .voice-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr 60px; gap: 10px; margin-top: 10px; }
@@ -821,7 +828,7 @@ dialog .settings-actions { margin-top: 20px; }
   .session-action { flex-direction: column-reverse; align-items: stretch; gap: 6px; margin-left: 0; }
   #mainActionStatus { text-align: left; white-space: normal; }
   .settings-pair, .controls, .advgrid, .view-control-grid, .voice-command-grid, .voice-row { grid-template-columns: 1fr; }
-  .profile-bar.three, .profile-bar.voice-personal, .profile-bar.pose-bar { grid-template-columns: 1fr; }
+  .profile-bar.three, .profile-bar.pose-bar, .wake-row { grid-template-columns: 1fr; }
   .binding-row { grid-template-columns: 1fr 1fr; }
   .binding-head, .voice-head { display: none; }
   .viewer-foot { flex-direction: column; align-items: stretch; }

@@ -111,3 +111,15 @@ def test_old_shared_phrases_that_never_worked_are_dropped(tmp_path):
     assert [item["phrase"] for item in voice.mappings] == ["地图"]
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert [item["phrase"] for item in saved["mappings"]] == ["地图"], "去掉之后要落盘，否则每次启动都在丢"
+
+
+def test_an_extra_stop_phrase_stops_and_cannot_double_as_a_shared_one(tmp_path):
+    """界面上多加的急停就是通用口令表里的一行，存的时候还是存进急停口令那一份。"""
+    stops = []
+    voice = make_service(tmp_path)
+    voice.emergency_stop = lambda: stops.append(True) or {"executed": True}
+    voice.configure([], emergency_stop_phrases=["体感停下"])
+    assert voice._match_and_execute("体感停下", enforce_wake=True)["emergency"] is True
+    assert stops, "多加的急停没走急停那条路"
+    with pytest.raises(ValueError, match="急停口令"):
+        voice.configure([shared("停下")], emergency_stop_phrases=["体感停下"])
