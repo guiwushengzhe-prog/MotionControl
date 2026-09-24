@@ -647,6 +647,61 @@ def test_squat_then_stand_does_not_press_the_following_head_zone(monkeypatch):
         kernel.close()
 
 
+def _leaning_in_pose(scale, drop):
+    """Closer to the camera and lower, as when reaching over to tap the phone."""
+    pose = _standing_pose()
+    for point in pose.values():
+        point['x'] = .5 + (point['x'] - .5) * scale
+        point['y'] = .40 + (point['y'] - .40) * scale + drop
+    return pose
+
+
+def test_head_zone_returns_above_the_head_after_leaning_in(monkeypatch):
+    """Leaning in to tap the phone used to leave the zone under the chin.
+
+    The lean makes the body larger.  The upright span was an all-time maximum,
+    so after sitting back every frame looked like a crouch and the zone never
+    followed back up.
+    """
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        resting_y = kernel.zone_rects['headJump']['y1']
+        feed(_leaning_in_pose(1.25, .10), 60)
+        feed(_standing_pose(), 150)
+
+        assert kernel.zone_rects['headJump']['y2'] < _standing_pose()['nose']['y']
+        assert kernel.zone_rects['headJump']['y1'] == pytest.approx(resting_y, abs=.01)
+    finally:
+        kernel.close()
+
+
+def test_one_stray_hip_estimate_does_not_stop_the_head_zone_following(monkeypatch):
+    """With the hips out of frame their estimate jumps about.
+
+    One long frame used to become the upright span for good.  From then on the
+    zone would not follow the player down, and stayed out of reach above them.
+    """
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 40)
+        resting_gap = _standing_pose()['nose']['y'] - kernel.zone_rects['headJump']['y2']
+        stray = _standing_pose()
+        for name in ('left_hip', 'right_hip'):
+            stray[name]['y'] += .05
+        feed(stray)
+        feed(_standing_pose(), 30)
+        lower = _standing_pose(dy=.12)
+        feed(lower, 300)
+
+        gap = lower['nose']['y'] - kernel.zone_rects['headJump']['y2']
+        assert gap == pytest.approx(resting_gap, abs=.01)
+    finally:
+        kernel.close()
+
+
 def test_natural_standing_never_enters_the_enlarged_hand_zones(monkeypatch):
     kernel = ControlKernel(KernelOutput())
     try:
