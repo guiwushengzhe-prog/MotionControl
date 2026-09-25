@@ -99,6 +99,8 @@ def test_every_motion_has_a_name():
      "系统命令 FUTURE.THING · 点按"),
     ({"type": "gamepad", "target": ["LB", "LS_UP"], "behavior": "hold"},
      "Xbox LB+LS_UP 键 · 持续按住"),
+    ({"type": "voice_release", "target": ["game.profile_slot_01", "game.profile_slot_02"],
+     "behavior": "tap"}, "停住语音按住：当前游戏功能1、当前游戏功能2"),
 ])
 def test_action_wording(action, expected):
     assert describe_action(action) == expected

@@ -536,3 +536,11 @@
 - 回归测试覆盖单腿重复有效抬脚不触发，以及左右交替后正常触发；README 已同步行为说明。
 - 验证：`python -m pytest -q tests/test_march_foot_separation.py tests/test_control_kernel.py tests/test_minimal_controls.py tests/test_default_motion_bindings.py tests/test_body_motion_guard_defaults.py tests/test_body_motion_head_guard.py tests/test_motion_conflicts.py tests/test_pose_rules.py` 为 149 passed；`compileall`、`git diff --check` 通过。
 - 尚未重启当前服务，也未做真人摄像头或游戏内验收。
+
+## 2026-09-25：本游戏映射的“停住语音按住”支持多选
+
+- 在独立工作树 `F:\MotionControl-App-voice-release-multiselect` 修改；原 `F:\MC-main` 尚未合并、运行中的服务未重启。
+- 映射表里的 `voice_release` 目标改成原生多选框：可以选多条当前设为“持续按住”的本游戏口令；单条旧配置仍保持字符串格式，多条保存为编号列表，重绘和口令状态刷新不会丢选择。
+- 共享配置校验接受口令编号列表并去重；内核一次触发逐条释放，缺失的一条不阻止其他有效口令释放；描述和界面标签支持多条显示。
+- 验证：针对性测试 30 通过、84 项配置/宏/语音回归通过；全量 `python -m pytest -q` 为 1206 通过、23 跳过；`node --check web/app.js` 和 `git diff --check` 通过。界面自动检查因当前工作树缺少 `playwright` 依赖未运行。
+- 尚未合并到 `F:\MC-main`，尚未重启服务，尚未做浏览器真人操作验收。

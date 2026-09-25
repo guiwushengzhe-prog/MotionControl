@@ -35,7 +35,7 @@ function actionKeyText(action){
   if(!type||!target)return null;
   // 宏的编号对人没有意义，圈上和卡片上要写它的名字。
   if(type==='macro')return macroName(action.target);
-  if(type==='voice_release')return `停「${voiceCommandPhrase(action.target)}」`;
+  if(type==='voice_release')return `停「${voiceCommandPhrases(action.target).join('、')}」`;
   if(type==='keyboard')return target;
   if(type==='system')return SYSTEM_TARGET_NAMES.get(target)||target;
   if(type==='mouse_button')return({LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键1',X2:'侧键2'}[target]||target);
@@ -539,7 +539,7 @@ function syncMotionConflictChoices(){
 function targetLabel(action){
   if(!action)return '未映射';
   if(action.type==='macro')return macroName(action.target);
-  if(action.type==='voice_release')return voiceCommandName(action.target);
+  if(action.type==='voice_release')return voiceCommandNames(action.target).join('、');
   const t=String(action.target||'').toUpperCase();
   if(action.type==='system')return SYSTEM_TARGET_NAMES.get(t)||t;
   if(action.type==='keyboard')return t;
@@ -719,6 +719,13 @@ function voiceCommandName(id){
   const phrase=voiceCommandPhrase(id);
   return slot&&phrase!==id?`${slot}「${phrase}」`:slot||phrase;
 }
+function voiceCommandIds(value){
+  const values=Array.isArray(value)?value:[value];
+  return values.map(voiceCommandId).filter(Boolean);
+}
+function voiceCommandPhrases(value){return voiceCommandIds(value).map(voiceCommandPhrase).filter(Boolean)}
+function voiceCommandNames(value){return voiceCommandIds(value).map(voiceCommandName).filter(Boolean)}
+function voiceReleaseTargetIds(select){return [...(select?.selectedOptions||[])].map(option=>voiceCommandId(option.value)).filter(Boolean)}
 function voiceHoldChoices(excludeKey=''){
   const out=[];
   for(const row of document.querySelectorAll('.binding-row[data-trigger^="voice."]')){
@@ -731,15 +738,18 @@ function voiceHoldChoices(excludeKey=''){
   return out;
 }
 function fillVoiceReleaseSelect(select,excludeKey,value){
-  const want=voiceCommandId(value||select.value);
+  const previous=voiceReleaseTargetIds(select);
+  const want=voiceCommandIds(value==null?previous:value);
   const choices=voiceHoldChoices(excludeKey);
+  select.multiple=true;
+  select.title='可多选：按住 Ctrl 再点选多条口令';
   select.replaceChildren();
-  for(const id of choices){const o=document.createElement('option');o.value=id;o.textContent=voiceCommandName(id);select.appendChild(o)}
+  for(const id of choices){const o=document.createElement('option');o.value=id;o.textContent=voiceCommandName(id);o.selected=want.includes(id);select.appendChild(o)}
   // 指着的那条已经不是持续按住了，照实写出来，不偷偷换成别的一条。
-  if(want&&!choices.includes(want)){const o=document.createElement('option');o.value=want;o.textContent=`${voiceCommandName(want)}（已不是持续按住）`;select.appendChild(o)}
-  if(!select.options.length){const o=document.createElement('option');o.value='';o.textContent='先把一条本游戏口令设成「持续按住」';select.appendChild(o)}
-  select.value=want||select.options[0].value;
-  select.disabled=!choices.length&&!want;
+  for(const id of want.filter(item=>!choices.includes(item))){const o=document.createElement('option');o.value=id;o.textContent=`${voiceCommandName(id)}（已不是持续按住）`;o.selected=true;select.appendChild(o)}
+  if(!select.options.length){const o=document.createElement('option');o.value='';o.textContent='先把一条本游戏口令设成「持续按住」';o.selected=true;select.appendChild(o)}
+  select.size=Math.min(4,Math.max(2,select.options.length));
+  select.disabled=!choices.length&&!want.length;
 }
 // 口令改了说法、改成或不再是持续按住，所有「停住语音按住」的下拉框和选项都跟着变。
 function syncVoiceReleaseChoices(){
@@ -752,7 +762,7 @@ function syncVoiceReleaseChoices(){
       option.textContent=none?`${ACTION_TYPE_LABELS.voice_release}（没有持续按住的口令）`:ACTION_TYPE_LABELS.voice_release;
     }
     const select=row.querySelector('select.voice-release-target');
-    if(select)fillVoiceReleaseSelect(select,row.dataset.trigger,select.value);
+    if(select)fillVoiceReleaseSelect(select,row.dataset.trigger,voiceReleaseTargetIds(select));
   }
 }
 // 键盘键位框：点进去按一下，就换成刚按的那个键。以前是普通文本框，原来写着 SPACE，
@@ -842,7 +852,7 @@ function fillTargetControl(container,type,value='',comboLeadMs=80,comboLeadExpli
   }
   if(type==='voice_release'){
     const select=document.createElement('select');select.className='binding-target voice-release-target';
-    fillVoiceReleaseSelect(select,container.dataset.trigger||'',Array.isArray(value)?'':String(value||''));
+    fillVoiceReleaseSelect(select,container.dataset.trigger||'',value);
     container.appendChild(select);return;
   }
   if(type==='system'){
@@ -935,7 +945,7 @@ function buildBindingRow(trigger){
     const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=binding?.phrase||trigger.phrase||'';phrase.placeholder='例如：体感地图';phrase.title='说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);watchVoicePhrase(phrase);
   }
   const type=makeTypeSelect(action?{action}:binding);
-  const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;fillTargetControl(target,type.value,action?.target||'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
+  const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;fillTargetControl(target,type.value,action?.target??'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
   const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
   const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'),action?.target||'');
   type.addEventListener('change',()=>{fillTargetControl(target,type.value,'',80);fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
@@ -1004,9 +1014,15 @@ function readProfileOverrides(){
     const row=document.querySelector(`.binding-row[data-trigger="${trigger.key}"]`);if(!row)continue;
     const type=row.querySelector('.binding-type')?.value||'';
     if(!type){overrides[trigger.key]=null;continue}
-    const raw=String(row.querySelector('.binding-target')?.value||'').trim();
-    const target=type==='macro'||type==='voice_release'?raw.toLowerCase():raw.toUpperCase();
-    if(!target)throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:type==='voice_release'?`${trigger.name} 还没有选择要停住哪条口令`:`${trigger.name} 还没有选择具体键位`);
+    let target;
+    if(type==='voice_release'){
+      const ids=voiceReleaseTargetIds(row.querySelector('.voice-release-target')).map(id=>id.toLowerCase());
+      target=ids.length===1?ids[0]:ids;
+    }else{
+      const raw=String(row.querySelector('.binding-target')?.value||'').trim();
+      target=type==='macro'?raw.toLowerCase():raw.toUpperCase();
+    }
+    if(!target||(Array.isArray(target)&&!target.length))throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:type==='voice_release'?`${trigger.name} 还没有选择要停住哪条口令`:`${trigger.name} 还没有选择具体键位`);
     const behavior=trigger.tapOnly||type==='mouse_wheel'||type==='voice_release'||type==='system'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
     const override={action:{type,target,behavior}};
     const comboLead=row.querySelector('.combo-lead-ms');
@@ -1637,7 +1653,7 @@ async function saveWakeWord(){
 document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
 if($('#wakeWord'))watchVoicePhrase($('#wakeWord'));
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
-function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandName(action.target)}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
+function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandNames(action.target).join('、')}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?(command.label||''):[command.label,voiceActionLabel(command.effective_action)].filter(Boolean).join(' · ');card.append(phrase,label);return card}
 function renderVoiceCommandCatalog(commands){
   voiceCatalog=Array.isArray(commands)?commands:[];

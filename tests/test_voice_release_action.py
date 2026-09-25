@@ -48,8 +48,16 @@ def test_schema_takes_a_command_id_and_is_always_a_tap():
     action = normalize_action({"type": "voice_release", "target": "voice.game.profile_slot_01",
                                "behavior": "hold"})
     assert action == {"type": "voice_release", "target": "game.profile_slot_01", "behavior": "tap"}
+    multiple = normalize_action({"type": "voice_release", "target": [
+        "voice.game.profile_slot_01", "game.profile_slot_02", "game.profile_slot_01",
+    ]})
+    assert multiple == {"type": "voice_release", "target": [
+        "game.profile_slot_01", "game.profile_slot_02",
+    ], "behavior": "tap"}
     with pytest.raises(ValueError):
         normalize_action({"type": "voice_release", "target": ""})
+    with pytest.raises(ValueError):
+        normalize_action({"type": "voice_release", "target": []})
 
 
 def test_body_triggers_may_bind_it():
@@ -114,6 +122,27 @@ def test_a_zone_edge_releases_the_voice_commands_current_keys(isolated_user_data
     kernel._dispatch_controls_locked(1.0)
     kernel._dispatch_controls_locked(1.1)  # 还在区域里，不再松第二次
     assert [a["target"] for a in output.released] == [["LB", "LS_UP"]]
+    assert output.executed == []
+
+
+def test_a_zone_edge_releases_multiple_voice_commands_once(isolated_user_data):
+    output = RecordingOutput()
+    kernel = ControlKernel(output)
+    kernel.configure_bindings({
+        "zones": {"headJump": {"action": {"type": "voice_release", "target": [
+            "game.profile_slot_01", "game.profile_slot_02",
+        ]}}},
+        "voice": {
+            "game.profile_slot_01": {"phrase": "体感爬绳", "action": {
+                "type": "gamepad", "target": "LB", "behavior": "hold"}},
+            "game.profile_slot_02": {"phrase": "往下爬", "action": {
+                "type": "gamepad", "target": "RB", "behavior": "hold"}},
+        },
+    })
+    kernel.zone_state["headJump"]["pressed"] = True
+    kernel._dispatch_controls_locked(1.0)
+    kernel._dispatch_controls_locked(1.1)
+    assert [a["target"] for a in output.released] == ["LB", "RB"]
     assert output.executed == []
 
 

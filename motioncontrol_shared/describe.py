@@ -130,7 +130,14 @@ def describe_action(action) -> str:
     elif kind == "mouse_wheel":
         what = f"滚轮 {_WHEEL_NAMES.get(target, target)}"
     elif kind == "voice_release":
-        return f"停住语音按住：{VOICE_COMMAND_NAMES.get(target.lower(), target)}"
+        raw_targets = raw if isinstance(raw, (list, tuple)) else [raw]
+        names = []
+        for item in raw_targets:
+            ident = str(item).strip().lower()
+            if ident.startswith("voice."):
+                ident = ident[len("voice."):]
+            names.append(VOICE_COMMAND_NAMES.get(ident, ident))
+        return f"停住语音按住：{'、'.join(names)}"
     elif kind == "system":
         what = VOICE_SYSTEM_NAMES.get(target, f"系统命令 {target}")
     else:

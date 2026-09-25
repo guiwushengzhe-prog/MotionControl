@@ -35,11 +35,11 @@ ACTION_TYPES = {
     # 时：界面写「宏已丢失」，输出什么都不做。安静地不动，比按下一串说不清哪来的
     # 键安全得多。
     "macro",
-    # 停住某一条语音"持续按住"：target 是那条口令的编号（例如
-    # game.profile_slot_01）。按的是哪几个键看那条口令当时的绑定，这里不抄一份——
-    # 抄了就会出现口令改了键、这边还在松旧键的情况。引用的口令不存在或者不是持续
-    # 按住，运行时什么都不做，和宏丢失一样。任何触发器（区域、动作、姿势、语音）
-    # 都能绑它，永远是触发一次。
+    # 停住一条或多条语音"持续按住"：target 是口令编号，多个编号用列表保存（例如
+    # ["game.profile_slot_01", "game.profile_slot_02"]）。按的是哪几个键看每条
+    # 口令当时的绑定，这里不抄一份——抄了就会出现口令改了键、这边还在松旧键的情况。
+    # 引用的口令不存在或者不是持续按住，运行时什么都不做，和宏丢失一样。任何触发器
+    # （区域、动作、姿势、语音）都能绑它，永远是触发一次。
     "voice_release",
     # 系统功能：不按游戏里的键，让本程序自己做一件事（定住区域、视角回正……）。
     # target 必须在 BINDING_SYSTEM_TARGETS 里，电脑端按名字执行。永远是触发一次。
@@ -64,6 +64,32 @@ BINDING_SYSTEM_TARGETS = {
 _MACRO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
 # 语音口令编号：game.profile_slot_01 这种，小写、点和下划线。
 _VOICE_COMMAND_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.]{0,63}$")
+
+
+def _normalize_voice_command_targets(raw_target) -> str | list[str]:
+    """规范化一条或多条要停住的本游戏口令编号。
+
+    旧配置用一个字符串；多选界面保存为列表。保留单项字符串可以让旧快照、
+    旧接口和新界面共存，多个编号则按用户选择的顺序保存，并去掉重复项。
+    """
+    if isinstance(raw_target, set):
+        items = sorted(raw_target, key=str)
+    elif isinstance(raw_target, (list, tuple)):
+        items = list(raw_target)
+    else:
+        items = [raw_target]
+    targets: list[str] = []
+    for item in items:
+        target = str(item).strip().lower()
+        if target.startswith("voice."):
+            target = target[len("voice."):]
+        if not _VOICE_COMMAND_ID_RE.match(target):
+            raise ValueError(f"要停的语音口令不对：{target or '(空)'}")
+        if target not in targets:
+            targets.append(target)
+    if not targets:
+        raise ValueError("要停的语音口令不对：(空)")
+    return targets[0] if len(targets) == 1 else targets
 KEYBOARD_KEYS = (
     {chr(code) for code in range(ord("A"), ord("Z") + 1)}
     | {str(code) for code in range(10)}
@@ -136,11 +162,7 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         if not _MACRO_ID_RE.match(target):
             raise ValueError(f"宏编号不对：{target or '(空)'}")
     elif action_type == "voice_release":
-        target = str(raw_target).strip().lower()
-        if target.startswith("voice."):
-            target = target[len("voice."):]
-        if not _VOICE_COMMAND_ID_RE.match(target):
-            raise ValueError(f"要停的语音口令不对：{target or '(空)'}")
+        target = _normalize_voice_command_targets(raw_target)
     elif action_type == "system":
         target = str(raw_target).strip().upper()
         if target not in BINDING_SYSTEM_TARGETS:
