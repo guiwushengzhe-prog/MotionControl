@@ -130,18 +130,6 @@
         "打开地图",
         "显示地图"
       ]
-    },
-    {
-      "phrase": "保持左肩键",
-      "type": "gamepad",
-      "target": "LB",
-      "behavior": "hold"
-    },
-    {
-      "phrase": "松开左肩键",
-      "type": "gamepad",
-      "target": "LB",
-      "behavior": "release"
     }
   ]
 }
