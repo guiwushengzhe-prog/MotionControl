@@ -560,6 +560,9 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
 .combo-picker label { display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
 
 .combo-picker input { width: auto; min-height: 0; }
+.combo-lead-box { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.combo-lead-box input { flex: 1; width: auto; min-width: 72px; }
+.combo-lead-value { min-width: 46px; text-align: right; }
 
 #voiceRows:not(:empty) { margin-top: 6px; }
 

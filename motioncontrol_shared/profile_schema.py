@@ -20,6 +20,11 @@ GAMEPAD_BUTTONS = {
 }
 GAMEPAD_AXES = {"LS_UP", "LS_DOWN", "LS_LEFT", "LS_RIGHT"}
 GAMEPAD_TRIGGERS = {"LT", "RT"}
+# Xbox 混合组合（按键 + 左摇杆）的按键领先时间。这个字段属于游戏动作，
+# 不写入旧配置时仍按原来的约 80 毫秒处理。
+DEFAULT_COMBO_STICK_LEAD_MS = 80
+MIN_COMBO_STICK_LEAD_MS = 0
+MAX_COMBO_STICK_LEAD_MS = 200
 MOUSE_BUTTONS = {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}
 MOUSE_WHEEL = {"SCROLL_UP", "SCROLL_DOWN"}
 ACTION_TYPES = {
@@ -128,7 +133,24 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
     # A wheel is an impulse by definition; allowing hold would create runaway scrolling.
     if action_type == "mouse_wheel":
         behavior = "tap"
-    return {"type": action_type, "target": target, "behavior": behavior}
+    out = {"type": action_type, "target": target, "behavior": behavior}
+    # 只给同时含 Xbox 按键和左摇杆方向的组合保存领先时间；普通动作不带这
+    # 个字段，保持旧配置的规范化结果和云端文档兼容。接受旧实验字段 lead_ms
+    # 作为读取别名，写回时统一为 combo_stick_lead_ms。
+    if action_type == "gamepad" and isinstance(target, list):
+        parts = set(target)
+        if parts & GAMEPAD_BUTTONS and parts & GAMEPAD_AXES:
+            raw_lead = action.get("combo_stick_lead_ms", action.get("lead_ms"))
+            if raw_lead is not None:
+                try:
+                    number = float(raw_lead)
+                except (TypeError, ValueError):
+                    raise ValueError("Xbox 组合领先时间必须是 0 到 200 毫秒") from None
+                if not number == number or number in {float("inf"), float("-inf")}:
+                    raise ValueError("Xbox 组合领先时间必须是 0 到 200 毫秒")
+                out["combo_stick_lead_ms"] = int(round(max(
+                    MIN_COMBO_STICK_LEAD_MS, min(MAX_COMBO_STICK_LEAD_MS, number))))
+    return out
 
 
 def normalize_binding(binding: dict, *, default_behavior: str) -> dict:

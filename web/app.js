@@ -719,7 +719,7 @@ function makeKeyCaptureInput(className,value=''){
   input.addEventListener('blur',settle);
   return input;
 }
-function fillTargetControl(container,type,value=''){
+function fillTargetControl(container,type,value='',comboLeadMs=80){
   container.replaceChildren();if(!type)return;
   const meta=gameProfile.actions?.[type]||{};
   if(type==='gamepad'){
@@ -740,9 +740,13 @@ function fillTargetControl(container,type,value=''){
       label.append(box,document.createTextNode(TARGET_LABELS[key]||key));picker.appendChild(label);
     }
     sync();
-    const update=()=>{const isCombo=select.value==='__combo__';select.className=isCombo?'binding-gamepad-select':'binding-target';combo.className=isCombo?'binding-target':'';picker.hidden=!isCombo};
+    const leadBox=document.createElement('label');leadBox.className='combo-lead-box';leadBox.textContent='按键领先摇杆';
+    const lead=document.createElement('input');lead.type='range';lead.className='combo-lead-ms';lead.min='0';lead.max='200';lead.step='5';lead.value=String(Math.max(0,Math.min(200,Number(comboLeadMs)||0)));
+    const leadValue=document.createElement('span');leadValue.className='combo-lead-value';leadValue.textContent=`${lead.value} 毫秒`;
+    lead.addEventListener('input',()=>{leadValue.textContent=`${lead.value} 毫秒`});leadBox.append(lead,leadValue);
+    const update=()=>{const isCombo=select.value==='__combo__';select.className=isCombo?'binding-gamepad-select':'binding-target';combo.className=isCombo?'binding-target':'';picker.hidden=!isCombo;leadBox.hidden=!isCombo};
     select.value=[...select.options].some(o=>o.value===raw)?raw:'__combo__';
-    select.addEventListener('change',update);update();container.append(select,picker,combo);return;
+    select.addEventListener('change',update);update();container.append(select,picker,combo,leadBox);return;
   }
   if(type==='macro'){
     const select=document.createElement('select');select.className='binding-target';
@@ -811,10 +815,10 @@ function buildBindingRow(trigger){
     const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=binding?.phrase||trigger.phrase||'';phrase.placeholder='例如：体感地图';phrase.title='说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);
   }
   const type=makeTypeSelect(binding);
-  const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
+  const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'',action?.combo_stick_lead_ms??80);
   const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
   const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'),action?.target||'');
-  type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
+  type.addEventListener('change',()=>{fillTargetControl(target,type.value,'',80);fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
   // 换了另一条宏，「跑一遍还是循环」要跟着那条宏重算——那一格写的必须是现在
   // 选中这条的，否则界面说一套、实际跑另一套。
   target.addEventListener('change',()=>{if(type.value==='macro')fillBehaviorControl(behavior,trigger,'macro',behavior.querySelector('.binding-behavior')?.value,pickedMacro())});
@@ -883,6 +887,10 @@ function readProfileOverrides(){
     if(!target)throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:`${trigger.name} 还没有选择具体键位`);
     const behavior=trigger.tapOnly||type==='mouse_wheel'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
     const override={action:{type,target,behavior}};
+    const comboLead=row.querySelector('.combo-lead-ms');
+    if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden){
+      override.action.combo_stick_lead_ms=Math.max(0,Math.min(200,Number(comboLead.value)||0));
+    }
     if(trigger.group==='voice'){
       const phrase=row.querySelector('.voice-trigger-phrase')?.value.trim();
       if(!phrase)throw new Error(`${trigger.name} 还没有填写触发词`);

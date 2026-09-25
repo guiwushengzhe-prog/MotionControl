@@ -10,6 +10,11 @@ import time
 from pathlib import Path
 
 from motioncontrol_shared.macro_schema import step_groups
+from motioncontrol_shared.profile_schema import (
+    DEFAULT_COMBO_STICK_LEAD_MS,
+    MAX_COMBO_STICK_LEAD_MS,
+    MIN_COMBO_STICK_LEAD_MS,
+)
 
 
 _UNSET = object()
@@ -728,7 +733,11 @@ class OutputManager:
         # A mixed combo lets the button lead the stick by this much.  Some games
         # latch the modifier first and ignore a direction that arrives in the
         # same pad report -- climbing in Uncharted 4 wants LB before up.
-        self._combo_stick_lead = 0.08
+        # A mixed Xbox combo lets the button arrive before the left-stick
+        # direction.  Per-action profiles may override this default in the
+        # 0..200 ms range; this attribute remains the compatibility fallback
+        # for older callers that only submit a target.
+        self._combo_stick_lead = DEFAULT_COMBO_STICK_LEAD_MS / 1000.0
         self._combo_timers: dict[str, threading.Timer] = {}
         self._combo_started: dict[str, float] = {}
         self._xinput_reader = xinput_reader or XInputReader()
@@ -1417,9 +1426,11 @@ class OutputManager:
                 source = prefix + ident
                 if action_type in {"gamepad", "gamepad_button", "xinput_button"}:
                     buttons, stick = self._gamepad_parts(target)
+                    lead_seconds = self._combo_lead_seconds(action.get("combo_stick_lead_ms"),
+                                                            self._combo_stick_lead)
                     self._hold_combo_locked(source, buttons, stick, allow_stick=not (
                         self._xinput_merge_active_locked() and not self._xinput_motion_left_enabled
-                    ))
+                    ), lead_seconds=lead_seconds)
                 elif action_type == "keyboard":
                     if self._xinput_merge_active_locked():
                         continue
@@ -1516,7 +1527,21 @@ class OutputManager:
             if timer is not None:
                 timer.cancel()
 
-    def _hold_combo_locked(self, source: str, buttons: set[str], stick, *, allow_stick: bool) -> None:
+    @staticmethod
+    def _combo_lead_seconds(value=None, fallback: float = 0.08) -> float:
+        """Convert a profile lead value to a bounded delay in seconds."""
+        if value is None:
+            value = fallback * 1000.0
+        try:
+            milliseconds = float(value)
+        except (TypeError, ValueError):
+            milliseconds = fallback * 1000.0
+        if milliseconds != milliseconds or milliseconds in {float("inf"), float("-inf")}:
+            milliseconds = fallback * 1000.0
+        return max(MIN_COMBO_STICK_LEAD_MS, min(MAX_COMBO_STICK_LEAD_MS, milliseconds)) / 1000.0
+
+    def _hold_combo_locked(self, source: str, buttons: set[str], stick, *, allow_stick: bool,
+                           lead_seconds: float | None = None) -> None:
         """Hold a gamepad combo, letting the buttons lead the stick.
 
         Body triggers re-enter here every frame and rebuild their group from
@@ -1534,12 +1559,20 @@ class OutputManager:
             return
         now = time.monotonic()
         started = self._combo_started.setdefault(source, now)
-        if now - started >= self._combo_stick_lead:
+        if lead_seconds is None:
+            lead = self._combo_lead_seconds(None, self._combo_stick_lead)
+        else:
+            try:
+                lead = max(MIN_COMBO_STICK_LEAD_MS / 1000.0,
+                           min(MAX_COMBO_STICK_LEAD_MS / 1000.0, float(lead_seconds)))
+            except (TypeError, ValueError):
+                lead = self._combo_lead_seconds(None, self._combo_stick_lead)
+        if now - started >= lead:
             self._left_stick_sources[source] = stick
             return
         if source not in self._combo_timers:
             timer = threading.Timer(
-                max(0.0, self._combo_stick_lead - (now - started)),
+                max(0.0, lead - (now - started)),
                 self._apply_delayed_stick, args=(source, stick),
             )
             timer.daemon = True
@@ -1599,22 +1632,33 @@ class OutputManager:
                 raise
             return self.status()
 
-    def tap_gamepad(self, button: str, duration: float = 0.10, source: str | None = None) -> None:
+    def tap_gamepad(self, button: str, duration: float = 0.10, source: str | None = None,
+                    combo_stick_lead_ms=None) -> None:
         buttons, stick = self._gamepad_parts(button)
         source = str(source).strip() if source else f"voice-{time.monotonic_ns()}"
+        lead_seconds = self._combo_lead_seconds(combo_stick_lead_ms, self._combo_stick_lead)
         with self._lock:
             if not self.enabled:
                 return
             if buttons:
-                self._button_sources[source] = buttons
-            # A combo may also nudge the stick; pulse both halves together so a
-            # tap of "LB+LS_UP" is not silently reduced to the bumper alone.
-            if stick is not None and (not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled):
+                self._hold_combo_locked(source, buttons, stick, allow_stick=(
+                    not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled
+                ), lead_seconds=lead_seconds)
+            elif stick is not None and (not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled):
                 self._left_stick_sources[source] = stick
-                self._refresh_left_stick_locked()
             self._refresh_buttons_locked()
-        time.sleep(max(0.04, min(0.25, float(duration))))
+            self._refresh_left_stick_locked()
+        # Keep a mixed tap alive long enough for the delayed stick half to be
+        # observable. A normal tap remains within the existing 40..250 ms cap.
+        try:
+            pulse = float(duration)
+        except (TypeError, ValueError):
+            pulse = 0.10
+        if buttons and stick is not None:
+            pulse = max(pulse, lead_seconds + 0.04)
+        time.sleep(max(0.04, min(0.25, pulse)))
         with self._lock:
+            self._cancel_combo_timers_locked(lambda key: key == source)
             self._button_sources.pop(source, None)
             self._left_stick_sources.pop(source, None)
             self._refresh_buttons_locked()
@@ -1672,6 +1716,7 @@ class OutputManager:
             target = str(target).strip().upper()
         source = str(action.get("source", "")).strip() or f"pulse:{action_type}:{time.monotonic_ns()}"
         duration = float(action.get("duration", 0.08))
+        combo_stick_lead_ms = action.get("combo_stick_lead_ms", action.get("lead_ms"))
         nonblocking = bool(action.get("nonblocking", False))
         # Preserve the existing voice/API contract: ordinary keyboard/gamepad taps
         # are complete when execute_action returns. Pose edges opt into the timer
@@ -1694,7 +1739,8 @@ class OutputManager:
         if action_type in {"gamepad_button", "xinput_button"}:
             action_type = "gamepad"
         if not nonblocking and action_type == "gamepad":
-            self.tap_gamepad(target, duration=duration, source=source)
+            self.tap_gamepad(target, duration=duration, source=source,
+                             combo_stick_lead_ms=combo_stick_lead_ms)
             return {"executed": True, "action": f"{action_type}:{target}"}
         if not nonblocking and action_type == "keyboard":
             self.tap_keyboard(target, duration=duration, source=source)
@@ -1705,9 +1751,10 @@ class OutputManager:
                 return {"executed": False, "reason": "输出已关闭或此体感输出未允许合流"}
             if action_type == "gamepad":
                 buttons, stick = self._gamepad_parts(target)
+                lead_seconds = self._combo_lead_seconds(combo_stick_lead_ms, self._combo_stick_lead)
                 self._hold_combo_locked(source, buttons, stick, allow_stick=(
                     not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled
-                ))
+                ), lead_seconds=lead_seconds)
                 self._refresh_buttons_locked()
                 self._refresh_left_stick_locked()
             elif action_type == "keyboard":
@@ -1743,7 +1790,17 @@ class OutputManager:
                 raise ValueError(f"不支持的输出类型：{action_type}")
             self.last_error = None
         if not persistent:
-            self._release_later(source, duration)
+            # A delayed mixed tap must not be released at the same instant the
+            # stick is scheduled to arrive, otherwise only the leading button
+            # is ever observable.
+            release_duration = duration
+            if action_type == "gamepad" and combo_stick_lead_ms is not None:
+                buttons, stick = self._gamepad_parts(target)
+                if buttons and stick is not None:
+                    release_duration = max(release_duration,
+                                           self._combo_lead_seconds(combo_stick_lead_ms,
+                                                                    self._combo_stick_lead) + 0.04)
+            self._release_later(source, release_duration)
         return {"executed": True, "action": f"{action_type}:{target}"}
 
     def _clear_motion_locked(self) -> None:
