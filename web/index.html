@@ -42,7 +42,7 @@
 <button class="btn" id="centerBtn">重设正前方</button>
 </div>
 </div>
-<div class="trigger-summary"><span class="trigger-chip" id="motionMarch">踏步</span><span class="trigger-chip" id="motionCalf">小腿后抬</span><span class="trigger-chip" id="motionSquat">下蹲</span><span class="trigger-chip" id="motionHands">双手过头</span><span class="trigger-chip" id="motionJumpingJack">开合跳</span><span class="trigger-chip" id="motionSideStepJack">侧步开合</span><span class="trigger-chip" id="motionCrossKneeElbow">提膝碰对侧肘</span><span class="trigger-chip" id="poseHandsCross">双手交叉</span></div>
+<div class="trigger-summary" id="triggerChips"></div>
 </section>
 
 <section class="card zone-edit-bar" hidden="" id="zoneEditBar">
@@ -93,6 +93,7 @@
 <p class="fineprint">最近触发的会列在这里，点一条就跳到它对应的那一行改键。</p>
 </div>
 <p class="zone-yield-notice" hidden="" id="zoneYieldNotice" role="status"></p>
+<p class="pose-missing-notice" hidden="" id="poseMissingNotice" role="status"><span></span><button class="btn" id="poseMissingGo" type="button">去官方动作库</button></p>
 <fieldset id="mappingFields"><div aria-hidden="true" class="binding-head"><span>触发</span><span>输出类型</span><span>键位</span><span>方式</span></div><div class="binding-list" id="profileBindingRows"></div></fieldset>
 <div class="profile-actions"><span class="statusline" id="profileSaveStatus" role="status">修改后自动保存</span><span class="spacer"></span><button class="btn" hidden="" id="retryProfileSaveBtn">重试保存映射</button><button class="btn" id="resetProfileBindingsBtn">恢复当前游戏默认</button></div>
 </section>
@@ -100,7 +101,16 @@
 <section class="card" id="poseLibraryPanel">
 <h2 class="title">动作库</h2>
 <p class="lede">做好的身体动作，不用录，照着小人做就行。想用哪个就点它的「加到映射」，上面的按键映射里会多出这一行，在那里绑键；绑好的点键位也能跳过去改。</p>
+<ul class="lede-list">
+<li>程序自带原地踏步和小腿向后抬起；别的动作到下面的「官方动作库」下载。</li>
+<li>星级：运动强度、识别度（镜头前认得准不准）、上手难度，满分 5 星；「锻炼」写的是练到哪些部位。</li>
+</ul>
 <div class="pose-library" id="poseLibraryList"></div>
+<div class="pose-cloud" id="poseCloudPanel">
+<div class="pose-cloud-head"><h3 class="title">官方动作库</h3><button class="btn" id="poseCloudBtn" type="button">看看有哪些动作</button></div>
+<p class="statusline" id="poseCloudStatus"></p>
+<div class="pose-library" hidden="" id="poseCloudList"></div>
+</div>
 </section>
 
 <section class="card" id="customPosePanel">

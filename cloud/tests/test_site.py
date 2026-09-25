@@ -28,7 +28,7 @@ async def test_the_root_serves_the_app(client):
 
 
 @needs_build
-@pytest.mark.parametrize("path", ["/browse", "/login", "/config/whatever-id"])
+@pytest.mark.parametrize("path", ["/browse", "/poses", "/login", "/config/whatever-id"])
 async def test_deep_links_reach_the_app(client, path):
     """These are real URLs people reload and share, not just in-app navigation."""
     response = await client.get(path)

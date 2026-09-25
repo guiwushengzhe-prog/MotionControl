@@ -117,13 +117,11 @@ const BASE_PROFILE_TRIGGERS=[
   {key:'zone.headJump',group:'zones',id:'headJump',name:'头顶区'},
   {key:'motion.march',group:'motions',id:'march',name:'原地踏步'},
   {key:'motion.calf_back',group:'motions',id:'calf_back',name:'小腿向后抬起'},
-  {key:'motion.squat',group:'motions',id:'squat',name:'下蹲'},
-  {key:'motion.hands_up',group:'motions',id:'hands_up',name:'双手举过头'},
-  {key:'motion.jumping_jack',group:'motions',id:'jumping_jack',name:'开合跳'},
-  {key:'motion.side_step_jack',group:'motions',id:'side_step_jack',name:'侧步开合'},
-  {key:'motion.cross_knee_elbow',group:'motions',id:'cross_knee_elbow',name:'提膝碰对侧肘'},
-  {key:'pose.hands_cross',group:'poses',id:'hands_cross',name:'双手交叉'},
 ];
+// 本机的动作库：自带的原地踏步、小腿向后抬起，加上从官方动作库下载的。下载的那些
+// 也是能绑键的触发器，由 profileTriggers 并进来；没下载的在映射表里没有这一行。
+let poseLibrary=[];
+let poseLibraryNames={cloud:{}};
 const MOTION_CONFLICT_GROUPS=[
   {ids:['jumping_jack','hands_up'],label:'开合跳与双手举过头'},
 ];
@@ -184,7 +182,10 @@ function profileTriggers(){
     key:`pose.${item.id}`,group:'poses',id:item.id,
     name:`自定义 · ${item.name}`,tapOnly:false,
   }));
-  return [...BASE_PROFILE_TRIGGERS,...customPoseTriggers,...voiceTriggers];
+  const downloadedTriggers=poseLibrary.filter(item=>item.source==='cloud').map(item=>({
+    key:item.trigger,group:item.group==='pose'?'poses':'motions',id:item.id,name:item.name,
+  }));
+  return [...BASE_PROFILE_TRIGGERS,...downloadedTriggers,...customPoseTriggers,...voiceTriggers];
 }
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -330,13 +331,14 @@ function renderKernelState(runtime,force=false){
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
   // 没绑键的动作做了也不按键，这一页上不亮它；认没认出来去「动作测试」页看。
-  const active=new Set((k.motions||[]).filter(id=>triggerMapped('motion.'+id))),chips={march:['#motionMarch','踏步'],calf_back:['#motionCalf','小腿后抬'],squat:['#motionSquat','下蹲'],hands_up:['#motionHands','双手过头'],jumping_jack:['#motionJumpingJack','开合跳'],side_step_jack:['#motionSideStepJack','侧步开合'],cross_knee_elbow:['#motionCrossKneeElbow','提膝碰对侧肘']};
-  for(const[id,[sel]]of Object.entries(chips))$(sel)?.classList.toggle('active',active.has(id));
+  const active=new Set((k.motions||[]).filter(id=>triggerMapped('motion.'+id)));
+  for(const chip of document.querySelectorAll('#triggerChips .trigger-chip'))chip.classList.toggle('active',chip.dataset.group==='motion'?active.has(chip.dataset.id):false);
   // 自定义姿势的相似度跟着主状态一起来，不另开一路轮询。
   customPoseScores=k.custom_pose_scores||{};paintCustomPoseScores();paintPoseLibrary();
-  const poses=new Set((k.poses_active||[]).filter(id=>triggerMapped('pose.'+id))),poseChips={hands_cross:'#poseHandsCross'};
-  for(const[id,sel]of Object.entries(poseChips))$(sel)?.classList.toggle('active',poses.has(id));
-  const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(id=>chips[id]?.[1]||id).join(' + '));if(poses.size)statusParts.push('动作：'+[...poses].map(id=>BASE_PROFILE_TRIGGERS.find(t=>t.id===id)?.name||id).join(' + '));
+  const poses=new Set((k.poses_active||[]).filter(id=>triggerMapped('pose.'+id)));
+  for(const chip of document.querySelectorAll('#triggerChips .trigger-chip[data-group="pose"]'))chip.classList.toggle('active',poses.has(chip.dataset.id));
+  const actionName=id=>poseLibrary.find(item=>item.id===id)?.name||profileTriggers().find(t=>t.id===id)?.name||id;
+  const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(actionName).join(' + '));if(poses.size)statusParts.push('动作：'+[...poses].map(actionName).join(' + '));
   $('#motionStatus').textContent=statusParts.join(' · ')||'动作：未触发';
   const hs=k.head||{};
   const guardVersion=String(hs.body_motion_guard_version||k.body_motion_guard_version||'未上报');
@@ -870,6 +872,7 @@ function renderProfileBindingRows(){
     }
   }
   syncMotionConflictChoices();
+  paintPoseMissingNotice();
 }
 function readProfileOverrides(){
   const overrides=structuredClone(gameProfile.overrides);
@@ -2367,18 +2370,40 @@ document.getElementById('customPoseScoresBtn')?.addEventListener('click', event 
 document.getElementById('customPoseCaptureBtn')?.addEventListener('click', captureCustomPose);
 
 /* --- 动作库 ---------------------------------------------------------------
- * 做好的身体动作，每个配一个一直在做示范的火柴人。名字、怎么做、示范、会扫过哪些圈
- * 都是电脑那边 motioncontrol_shared/pose_library.py 给的，这里只画。
+ * 做好的身体动作，每个配一个一直在做示范的火柴人。名字、怎么做、示范、星级、会扫过
+ * 哪些圈都是电脑那边 motioncontrol_shared/pose_library.py 给的，这里只画。
+ *
+ * 程序只自带原地踏步、小腿向后抬起；别的动作在下面的「官方动作库」里，下载了才认得
+ * 出来（识别规则跟着动作一起下载，电脑那边验过签名才装）。
  */
 const poseLibraryEl = document.getElementById('poseLibraryList');
-let poseLibrary = [];
+const poseCloudEl = document.getElementById('poseCloudList');
 const ZONE_NAMES_CN = {leftHand: '左手区', rightHand: '右手区', leftFoot: '左脚区', rightFoot: '右脚区', headJump: '头顶区'};
+let ratingNames = {intensity: '运动强度', recognition: '识别度', difficulty: '上手难度'};
+let bodyPartNames = {legs: '腿部', glutes: '臀部', core: '核心', arms: '手臂', shoulders: '肩背'};
 
 async function refreshPoseLibrary() {
   if (!poseLibraryEl) return;
   const data = await api('/api/pose/library');
   poseLibrary = data.library || [];
+  ratingNames = data.rating_names || ratingNames;
+  bodyPartNames = data.body_part_names || bodyPartNames;
+  poseLibraryNames.cloud = {...poseLibraryNames.cloud, ...(data.cloud_names || {})};
+  if (data.error) poseCloudSay(data.error, 'error');
   renderPoseLibrary();
+  // 映射表可能在动作库读回来之前就画好了，那时下载的动作还不在触发器里。
+  if (gameProfile.selected && poseLibrary.some(item => item.source === 'cloud')) renderProfileBindingRows();
+  paintPoseMissingNotice();
+}
+
+/** 下载或删掉一个动作之后：映射表里多一行或少一行。先把没存的改动落盘，再重画。 */
+async function afterPoseLibraryChange(library) {
+  poseLibrary = library || poseLibrary;
+  renderPoseLibrary();
+  try { await saveProfileBindings(); } catch { /* 存不上那边自己会报，这里不抢话 */ }
+  renderProfileBindingRows();
+  paintPoseMissingNotice();
+  if (poseCloudItems.length) renderPoseCloud();
 }
 
 /** 示范的几帧叠在一起，一次只露一帧；换帧由下面那个计时器做。 */
@@ -2398,7 +2423,7 @@ function poseDemo(demo) {
 setInterval(() => {
   if (!poseLibraryEl?.offsetParent) return;
   const now = performance.now();
-  for (const box of poseLibraryEl.querySelectorAll('.pose-demo')) {
+  for (const box of document.querySelectorAll('#poseLibraryPanel .pose-demo')) {
     const frames = box.children;
     if (frames.length < 2 || now < Number(box.dataset.next || 0)) continue;
     const at = (Number(box.dataset.at || 0) + 1) % frames.length;
@@ -2408,7 +2433,62 @@ setInterval(() => {
   }
 }, 80);
 
+/** 星级：三项 1~5 星，锻炼部位各自打星。一个动作卡片上都是同一套写法。 */
+function poseRatings(item) {
+  const box = document.createElement('div');
+  box.className = 'pose-ratings';
+  const stars = count => '★'.repeat(count) + '☆'.repeat(Math.max(0, 5 - count));
+  for (const [key, label] of Object.entries(ratingNames)) {
+    const count = Number(item.ratings?.[key] || 0);
+    if (!count) continue;
+    const row = document.createElement('div');
+    row.className = 'pose-rating';
+    row.title = `${label} ${count} 星（满分 5 星）`;
+    const name = document.createElement('span');
+    name.textContent = label;
+    const value = document.createElement('span');
+    value.className = 'pose-stars';
+    value.textContent = stars(count);
+    row.append(name, value);
+    box.appendChild(row);
+  }
+  const parts = Object.entries(item.body_parts || {}).sort((a, b) => b[1] - a[1]);
+  if (parts.length) {
+    const row = document.createElement('div');
+    row.className = 'pose-parts';
+    row.textContent = '锻炼：' + parts.map(([key, count]) => `${bodyPartNames[key] || key} ${'★'.repeat(count)}`).join(' · ');
+    row.title = '锻炼部位，星越多练得越多';
+    box.appendChild(row);
+  }
+  return box;
+}
+
+/** 示范右边那一栏：名字、怎么做、星级竖着排。 */
+function poseCardBody(...parts) {
+  const body = document.createElement('div');
+  body.className = 'pose-library-body';
+  body.append(...parts);
+  return body;
+}
+
+// 「开始」页画面下面那排小标签：本机动作库里有什么就列什么，做着的那个亮起来。
+// 名字太长的几个用短一点的叫法，一排放得下。
+const TRIGGER_CHIP_NAMES = {march: '踏步', calf_back: '小腿后抬', hands_up: '双手过头'};
+function renderTriggerChips() {
+  const box = document.getElementById('triggerChips');
+  if (!box) return;
+  box.replaceChildren(...poseLibrary.map(item => {
+    const chip = document.createElement('span');
+    chip.className = 'trigger-chip';
+    chip.dataset.id = item.id;
+    chip.dataset.group = item.group;
+    chip.textContent = TRIGGER_CHIP_NAMES[item.id] || item.name;
+    return chip;
+  }));
+}
+
 function renderPoseLibrary() {
+  renderTriggerChips();
   if (!poseLibraryEl) return;
   poseLibraryEl.replaceChildren();
   for (const item of poseLibrary) {
@@ -2432,7 +2512,22 @@ function renderPoseLibrary() {
     const how = document.createElement('div');
     how.className = 'pose-library-how';
     how.textContent = item.how;
-    card.append(poseDemo(item.demo), head, how);
+
+    // 从哪来：自带的删不掉；下载的写第几版，能删。
+    const source = document.createElement('div');
+    source.className = 'pose-library-source';
+    if (item.source === 'cloud') {
+      source.append(`官方动作库 · 第 ${item.revision} 版`);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn pose-library-remove';
+      remove.textContent = '删除';
+      remove.addEventListener('click', () => removePoseAction(item));
+      source.append(remove);
+    } else {
+      source.textContent = '程序自带';
+    }
+    card.append(poseDemo(item.demo), poseCardBody(head, how, poseRatings(item)), source);
 
     // 做这个动作会扫过哪些圈。两边都绑了键时，下面那行 paintPoseLibrary 会写清楚怎么让。
     if ((item.passes_zones || []).length) {
@@ -2445,6 +2540,132 @@ function renderPoseLibrary() {
   }
   paintPoseLibrary();
 }
+
+async function removePoseAction(item) {
+  const bound = triggerMapped(item.trigger);
+  const warning = bound ? '这个游戏里它绑着键，删掉后那一行会失效，直到重新下载。' : '以后要用再从官方动作库下载。';
+  if (!confirm(`删掉「${item.name}」？${warning}`)) return;
+  try {
+    const data = await post('/api/pose/remove', { id: item.id });
+    poseCloudSay(`已删掉「${item.name}」`);
+    await afterPoseLibraryChange(data.library);
+  } catch (error) { poseCloudSay(error.message, 'error'); }
+}
+
+/* --- 官方动作库 -----------------------------------------------------------
+ * 云端官方发布的动作。点「下载」，电脑那边从云端取回动作文件、验过签名装上，本机
+ * 动作库和映射表里就多了它。列表只在点开时读一次，不跟着状态轮询走。
+ */
+let poseCloudItems = [];
+
+function poseCloudSay(text, kind = '') {
+  const el = document.getElementById('poseCloudStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = kind === 'error' ? 'statusline error' : 'statusline';
+}
+
+async function openPoseCloud() {
+  const button = document.getElementById('poseCloudBtn');
+  if (button) button.disabled = true;
+  poseCloudSay('正在读官方动作库…');
+  try {
+    const data = await api('/api/pose/cloud', { timeoutMs: 20000 });
+    poseCloudItems = data.actions || [];
+    ratingNames = data.rating_names || ratingNames;
+    bodyPartNames = data.body_part_names || bodyPartNames;
+    for (const item of poseCloudItems) poseLibraryNames.cloud[item.id] = item.name;
+    const fresh = poseCloudItems.filter(item => !item.installed_revision).length;
+    poseCloudSay(poseCloudItems.length
+      ? (fresh ? `官方动作库里有 ${poseCloudItems.length} 个动作，${fresh} 个还没下载。` : '官方动作库里的动作都下载了。')
+      : '官方动作库里暂时还没有发布的动作。');
+    renderPoseCloud();
+    paintPoseMissingNotice();
+  } catch (error) {
+    poseCloudSay(error.message, 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function renderPoseCloud() {
+  if (!poseCloudEl) return;
+  poseCloudEl.hidden = !poseCloudItems.length;
+  poseCloudEl.replaceChildren();
+  for (const item of poseCloudItems) {
+    const card = document.createElement('div');
+    card.className = 'pose-library-item';
+    card.dataset.id = item.id;
+    const name = document.createElement('span');
+    name.className = 'pose-library-name';
+    name.textContent = item.name;
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'btn';
+    if (!item.installed_revision) {
+      action.classList.add('primary');
+      action.textContent = '下载';
+    } else if (item.update_available) {
+      action.textContent = `更新到第 ${item.revision} 版`;
+    } else {
+      action.textContent = '已下载';
+      action.disabled = true;
+    }
+    action.addEventListener('click', () => installPoseAction(item, action));
+    const head = document.createElement('div');
+    head.className = 'pose-library-head';
+    head.append(name, action);
+    const how = document.createElement('div');
+    how.className = 'pose-library-how';
+    how.textContent = item.how;
+    card.append(poseDemo(item.demo), poseCardBody(head, how, poseRatings(item)));
+    poseCloudEl.appendChild(card);
+  }
+}
+
+async function installPoseAction(item, button) {
+  button.disabled = true;
+  poseCloudSay(`正在下载「${item.name}」…`);
+  try {
+    const data = await post('/api/pose/cloud/install', { id: item.id }, 20000);
+    item.installed_revision = item.revision;
+    item.update_available = false;
+    poseCloudSay(`「${item.name}」已下载。在上面它的卡片上点「加到映射」就能绑键。`);
+    await afterPoseLibraryChange(data.library);
+  } catch (error) {
+    button.disabled = false;
+    poseCloudSay(error.message, 'error');
+  }
+}
+
+document.getElementById('poseCloudBtn')?.addEventListener('click', openPoseCloud);
+
+/** 这份配置绑了还没下载的动作：那几行现在不会触发。说清楚是哪几个、去哪下载。
+ *  不自动下载——以后要和账号、收费一起考虑。 */
+function paintPoseMissingNotice() {
+  const box = document.getElementById('poseMissingNotice');
+  if (!box) return;
+  const known = new Set(profileTriggers().map(trigger => trigger.key));
+  const missing = [];
+  for (const [group, prefix] of [['motions', 'motion'], ['poses', 'pose']]) {
+    const items = gameProfile.selected?.bindings?.[group] || {};
+    for (const [id, binding] of Object.entries(items)) {
+      if (!binding || binding.disabled || !binding.action?.target) continue;
+      if (id.startsWith('custom') || known.has(`${prefix}.${id}`)) continue;
+      missing.push(poseLibraryNames.cloud[id] || id);
+    }
+  }
+  box.hidden = !missing.length;
+  const text = missing.length
+    ? `这份配置用到了还没下载的动作：${missing.join('、')}。${missing.length > 1 ? '它们' : '它'}现在不会触发，先到下面的「官方动作库」下载。`
+    : '';
+  const label = box.querySelector('span');
+  if (label && label.textContent !== text) label.textContent = text;
+}
+document.getElementById('poseMissingGo')?.addEventListener('click', () => {
+  document.getElementById('poseCloudPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!poseCloudItems.length) openPoseCloud();
+});
 
 /** 圈给动作让路时说的那句话。电脑那边算好哪些圈在让、让谁，这里只翻译成人话。 */
 function zoneYieldText(trigger) {

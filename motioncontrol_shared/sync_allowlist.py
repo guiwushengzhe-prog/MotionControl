@@ -93,6 +93,9 @@ CLASSIFICATION = {
     # 配置是在分享"说什么话按什么键"，不是在把自己的唤醒词装到别人机器上。
     # 所以它单独一个文件、全局一份，而且永远不在 CLOUD_SYNC_ALLOWLIST 里。
     "personal_voice": USER_CONFIGURATION,
+    # 下载过的官方动作。不同步：动作从官方动作库下载，换台电脑再下一次就是；以后要
+    # 跟账号、收费挂钩时，"这个账号有哪些动作"该由云端说了算，而不是由某台电脑上传。
+    "pose_actions": USER_CONFIGURATION,
     "scene_layout": SPATIAL_CALIBRATION,
     "scene_reference": SPATIAL_CALIBRATION,
 }

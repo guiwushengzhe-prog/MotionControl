@@ -677,22 +677,49 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
 .pose-library-item { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; row-gap: 6px; align-items: start;
   padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
 
-.pose-demo { grid-row: 1 / span 3; line-height: 0; }
+.pose-demo { line-height: 0; }
+
+.pose-library-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 
 .pose-demo .pose-thumb.off { display: none; }
 
 .pose-library-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 
-.pose-library-name { flex: 1; min-width: 0; font-weight: 600; }
+.pose-library-name { flex: 1; min-width: 4em; font-weight: 600; }
 
 .pose-library-how { font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
 
-.pose-library-zones { font-size: 12px; color: var(--text-3); }
+.pose-library-zones { grid-column: 1 / -1; font-size: 12px; color: var(--text-3); }
 
 /* 这个动作和它会经过的圈都绑了键：写清楚圈怎么让，免得人以为圈"变慢了"是坏了。 */
 .pose-library-warn { grid-column: 1 / -1; font-size: 12px; line-height: 1.5; color: var(--warn); }
 
 .zone-yield-notice { margin: 0 0 10px; font-size: 12.5px; line-height: 1.6; color: var(--warn); white-space: pre-line; }
+
+/* 星级：三项各一行，星用强调色；锻炼部位一行写完。 */
+.pose-ratings { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; font-size: 12px; color: var(--text-3); }
+
+.pose-rating { display: flex; justify-content: space-between; gap: 8px; max-width: 13rem; white-space: nowrap; }
+
+.pose-stars { color: var(--accent); letter-spacing: 1px; }
+
+.pose-parts { margin-top: 2px; color: var(--text-2); }
+
+.pose-library-source { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-3); }
+
+.btn.pose-library-remove { min-height: 24px; padding: 0 10px; font-size: 12px; }
+
+/* 官方动作库：和本机动作库隔开一段，一看就知道下面这些还没在本机。 */
+.pose-cloud { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+.pose-cloud-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+
+.pose-cloud .pose-library { margin-top: 10px; }
+
+/* 这份配置绑了还没下载的动作。 */
+.pose-missing-notice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; font-size: 12.5px; line-height: 1.6; color: var(--warn); }
+
+.pose-missing-notice[hidden] { display: none; }
 
 /* --- 键盘宏：一条一个块，上面是名字和循环开关，中间是步骤，下面是加步骤/删除。 --- */
 

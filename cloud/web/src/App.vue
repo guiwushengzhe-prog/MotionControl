@@ -20,6 +20,7 @@ async function leave() {
   <nav v-if="!bare">
     <RouterLink to="/" class="brand">MotionControl</RouterLink>
     <div class="links" v-if="ready">
+      <RouterLink to="/poses">官方动作库</RouterLink>
       <RouterLink to="/browse">公开配置</RouterLink>
       <RouterLink to="/changelog">更新日志</RouterLink>
       <RouterLink to="/feedback">反馈</RouterLink>

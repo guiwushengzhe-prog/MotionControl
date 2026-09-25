@@ -140,6 +140,20 @@ class CloudClient:
             raise CloudError("云端返回的列表格式不对")
         return data
 
+    def pose_library(self) -> dict:
+        """官方动作库的列表：名字、怎么做、示范、星级。不含识别规则。"""
+        data = _json(f"{self.api}/pose-library")
+        if not isinstance(data, dict) or not isinstance(data.get("actions"), list):
+            raise CloudError("云端返回的动作库格式不对")
+        return data
+
+    def pose_action(self, action_id: str) -> tuple[str, str]:
+        """一个官方动作的文件和签名，都是 base64。验签在 pose_downloads 里做。"""
+        data = _json(f"{self.api}/pose-library/{urllib.parse.quote(action_id)}", DOWNLOAD_TIMEOUT_S)
+        if not isinstance(data, dict) or not data.get("document") or not data.get("signature"):
+            raise CloudError("云端返回的动作文件格式不对")
+        return str(data["document"]), str(data["signature"])
+
     def profile(self, profile_id: str) -> dict:
         return _json(f"{self.api}/profiles/{urllib.parse.quote(profile_id)}")
 

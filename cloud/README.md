@@ -86,7 +86,11 @@ motioncontrol.guiwu-aware.icu {
 
 ## 网站
 
-Vue 3 + TypeScript + Vite，四个页面：登录/注册、我的配置、版本历史与回滚、公开浏览。
+Vue 3 + TypeScript + Vite，页面有：登录/注册、我的配置、版本历史与回滚、公开浏览、官方动作库。
+
+## 官方动作库
+
+`/api/v1/pose-library` 列出官方发布的动作（名字、怎么做、火柴人示范、星级），`/api/v1/pose-library/<id>` 发一个动作的完整文件和签名。动作文件在仓库的 `cloud/official_poses/` 里，随部署上来，接口只读；签了名、签完没再改过的才发布（`python tools/sign_pose_library.py`）。云端不验签名本身，只核对内容和签名记录对得上——验签是电脑端的事，它只信自己内置的公钥。详见 [official_poses/README.md](official_poses/README.md)。
 
 构建产物 `cloud/web/dist` **由 FastAPI 自己服务**，不交给 Caddy。这样页面和接口同源，
 所以这个项目里没有任何 CORS 配置 —— 根本没有跨源的东西要放行，会话 Cookie 也不需要

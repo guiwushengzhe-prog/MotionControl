@@ -9,6 +9,7 @@ import Feedback from "./pages/Feedback.vue";
 import Login from "./pages/Login.vue";
 import Invite from "./pages/Invite.vue";
 import MyConfigs from "./pages/MyConfigs.vue";
+import PoseLibrary from "./pages/PoseLibrary.vue";
 import { ready, refresh, user } from "./session";
 import "./style.css";
 
@@ -26,6 +27,8 @@ const router = createRouter({
     { path: "/feedback", component: Feedback },
     { path: "/invite", component: Invite, meta: { auth: true } },
     { path: "/login", component: Login },
+    // 官方动作库。和公开配置一样不要求登录：没账号的人也要能先看看有哪些动作。
+    { path: "/poses", component: PoseLibrary },
   ],
 });
 

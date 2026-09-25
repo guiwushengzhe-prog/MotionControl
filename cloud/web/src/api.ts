@@ -142,6 +142,33 @@ export interface Summary {
 
 export type FeedbackKind = "bug" | "idea" | "question" | "other";
 
+/** 火柴人的一帧：点是 0~1 的坐标，bones 是连线。和电脑端动作库同一种格式。 */
+export interface PoseFrame {
+  points: Record<string, [number, number]>;
+  bones: [string, string][];
+}
+
+/** 官方动作库里的一个动作。星级都是 1~5。 */
+export interface PoseAction {
+  id: string;
+  trigger: string;
+  group: "motion" | "pose";
+  name: string;
+  how: string;
+  ratings: Record<string, number>;
+  body_parts: Record<string, number>;
+  passes_zones: string[];
+  revision: number;
+  demo: { frames: PoseFrame[]; frame_s: number };
+}
+
+export interface PoseLibrary {
+  engine: number;
+  rating_names: Record<string, string>;
+  body_part_names: Record<string, string>;
+  actions: PoseAction[];
+}
+
 export const api = {
   me: () => request<User>("/auth/me"),
   login: (email: string, password: string) => post<User>("/auth/login", { email, password }),
@@ -178,6 +205,9 @@ export const api = {
 
   updateProfile: (id: string, body: Partial<Pick<Profile, "title" | "summary" | "visibility" | "game_id">>) =>
     request<Profile>(`/profiles/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+
+  /** 官方动作库。谁都能看，不要求登录；下载在电脑端做，见 routers/pose_library.py。 */
+  poseLibrary: () => request<PoseLibrary>("/pose-library"),
 
   /** 留言给开发者。不要求登录，见 routers/feedback.py。 */
   sendFeedback: (body: {

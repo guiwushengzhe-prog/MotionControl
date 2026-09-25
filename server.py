@@ -25,6 +25,7 @@ _APP_DIR = Path(__file__).resolve().parent
 from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
 from motioncontrol.key_macros import MacroError, MacroStore
+from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
 from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from motioncontrol.input_bridge import InputBridge
@@ -389,6 +390,24 @@ MACROS = MacroStore(user_path("key_macros"))
 KERNEL.configure_macros(MACROS)
 if MACROS.last_error:
     print(MACROS.last_error)
+# 从云端官方动作库下载过的动作。程序只自带原地踏步和小腿向后抬起，别的动作在这里
+# 有才认得出来。读盘时每个都再验一次签名，验不过的不加载。
+POSE_ACTIONS = PoseActionStore(user_path("pose_actions"))
+if POSE_ACTIONS.last_error:
+    print(POSE_ACTIONS.last_error)
+# 最近一次读到的官方动作库列表。只用来给还没下载的动作报名字（"这份配置用到了开合跳"），
+# 不参与识别。
+CLOUD_POSE_LIBRARY: dict = {}
+
+
+def _apply_pose_actions() -> None:
+    """下载或删掉一个动作之后：动作库登记、内核识别一起换。"""
+    docs = POSE_ACTIONS.docs()
+    pose_library.register(docs)
+    KERNEL.configure_pose_actions(docs)
+
+
+_apply_pose_actions()
 
 
 def _capture_custom_pose(purpose: str, pose_id: str, name: str) -> dict:
@@ -1087,9 +1106,43 @@ class AdminHandler(_BaseHandler):
             })
             return
         if route == "/api/pose/library":
-            # 动作库：名字、怎么做、火柴人示范、会扫过哪些圈。固定数据，界面只在
-            # 打开时读一次。
-            self._send_json({"version": VERSION, "library": pose_library.library_payload()})
+            # 本机的动作库：自带的两个加上下载过的。名字、怎么做、火柴人示范、星级、
+            # 会扫过哪些圈。cloud_names 是官方动作库里的名字，给还没下载的动作报名用。
+            self._send_json({
+                "version": VERSION,
+                "library": pose_library.library_payload(),
+                "rating_names": pose_library.RATING_NAMES,
+                "body_part_names": pose_library.BODY_PART_NAMES,
+                "cloud_names": {item["id"]: item["name"] for item in CLOUD_POSE_LIBRARY.get("actions", [])},
+                "error": POSE_ACTIONS.last_error,
+            })
+            return
+        if route == "/api/pose/cloud":
+            # 官方动作库：云端发布的全部动作，标上这台电脑装了哪一版。
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "pose library is loopback-only"}, 403)
+                return
+            try:
+                data = CloudClient(cloud_endpoint()).pose_library()
+            except CloudError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 502)
+                return
+            CLOUD_POSE_LIBRARY.clear()
+            CLOUD_POSE_LIBRARY.update(data)
+            actions = []
+            for item in data.get("actions", []):
+                if not isinstance(item, dict) or not item.get("id"):
+                    continue
+                installed = POSE_ACTIONS.revision(str(item["id"]))
+                try:
+                    latest = int(item.get("revision", 0))
+                except (TypeError, ValueError):
+                    latest = 0
+                actions.append({**item, "installed_revision": installed,
+                                "update_available": bool(installed) and latest > installed})
+            self._send_json({"ok": True, "actions": actions,
+                             "rating_names": data.get("rating_names") or pose_library.RATING_NAMES,
+                             "body_part_names": data.get("body_part_names") or pose_library.BODY_PART_NAMES})
             return
         if route == "/api/pose/custom":
             self._send_json({
@@ -1273,6 +1326,28 @@ class AdminHandler(_BaseHandler):
             except CustomPoseError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route in ("/api/pose/cloud/install", "/api/pose/remove"):
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "pose library is loopback-only"}, 403)
+                return
+            ident = str(body.get("id", "")).strip()
+            try:
+                # 联网在锁外做：云端慢的时候不能把别的配置保存一起卡住。
+                downloaded = (CloudClient(cloud_endpoint()).pose_action(ident)
+                              if route == "/api/pose/cloud/install" else None)
+                with PROFILE_UPDATE_LOCK:
+                    if downloaded is not None:
+                        POSE_ACTIONS.install(*downloaded, expected_id=ident)
+                    elif not POSE_ACTIONS.remove(ident):
+                        self._send_json({"ok": False, "error": "这个动作没有下载过"}, 404)
+                        return
+                    _apply_pose_actions()
+                self._send_json({"ok": True, "library": pose_library.library_payload()})
+            except CloudError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 502)
+            except PoseDownloadError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
         if route.startswith("/api/cloud/"):

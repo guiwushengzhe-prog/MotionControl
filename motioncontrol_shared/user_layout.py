@@ -52,6 +52,9 @@ USER_DATA_FILES = {
     # voice_mappings.json 里，于是装一份别人的配置就会顺手把唤醒词覆盖掉——那台
     # 机器的主人只会发现"我的唤醒词自己变了"，根本想不到是装配置装的。
     "personal_voice": "personal_voice.json",
+    # 从云端官方动作库下载的动作（下蹲、开合跳……），连同各自的签名。程序只自带原地
+    # 踏步和小腿向后抬起，别的动作在这里有才认得出来。
+    "pose_actions": "pose_actions.json",
 }
 
 # Where 2.0 and earlier wrote them, relative to the program directory.  Only
