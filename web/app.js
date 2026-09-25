@@ -726,6 +726,70 @@ function voiceCommandIds(value){
 function voiceCommandPhrases(value){return voiceCommandIds(value).map(voiceCommandPhrase).filter(Boolean)}
 function voiceCommandNames(value){return voiceCommandIds(value).map(voiceCommandName).filter(Boolean)}
 function voiceReleaseTargetIds(select){return [...(select?.selectedOptions||[])].map(option=>voiceCommandId(option.value)).filter(Boolean)}
+let voiceReleasePickerEventsReady=false;
+function setVoiceReleasePickerOpen(picker,open){
+  picker.classList.toggle('open',open);
+  const button=picker.querySelector('.voice-release-picker-button');
+  if(button)button.setAttribute('aria-expanded',open?'true':'false');
+}
+function ensureVoiceReleasePickerEvents(){
+  if(voiceReleasePickerEventsReady)return;
+  document.addEventListener('click',event=>{
+    const button=event.target.closest?.('.voice-release-picker-button');
+    if(button){
+      const picker=button.closest('.voice-release-picker');
+      if(!picker||button.disabled)return;
+      document.querySelectorAll('.voice-release-picker.open').forEach(item=>{if(item!==picker)setVoiceReleasePickerOpen(item,false)});
+      setVoiceReleasePickerOpen(picker,!picker.classList.contains('open'));
+      return;
+    }
+    const option=event.target.closest?.('.voice-release-option');
+    if(option){
+      event.preventDefault();
+      const picker=option.closest('.voice-release-picker');
+      const select=picker?.querySelector('select.voice-release-target');
+      if(!picker||!select||select.disabled||option.disabled)return;
+      const id=voiceCommandId(option.dataset.value);
+      if(!id)return;
+      const selected=voiceReleaseTargetIds(select);
+      const next=selected.includes(id)?selected.filter(item=>item!==id):[...selected,id];
+      [...select.options].forEach(item=>{item.selected=next.includes(voiceCommandId(item.value))});
+      fillVoiceReleaseSelect(select,select.closest('.binding-target-box')?.dataset.trigger||'',next);
+      select.dispatchEvent(new Event('change',{bubbles:true}));
+      return;
+    }
+    if(!event.target.closest?.('.voice-release-picker')){
+      document.querySelectorAll('.voice-release-picker.open').forEach(item=>setVoiceReleasePickerOpen(item,false));
+    }
+  });
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape')document.querySelectorAll('.voice-release-picker.open').forEach(item=>setVoiceReleasePickerOpen(item,false));
+  });
+  voiceReleasePickerEventsReady=true;
+}
+function updateVoiceReleasePicker(select){
+  const picker=select?.closest('.voice-release-picker');
+  if(!picker)return;
+  const button=picker.querySelector('.voice-release-picker-button');
+  const menu=picker.querySelector('.voice-release-picker-menu');
+  const selected=voiceReleaseTargetIds(select);
+  const labels=voiceCommandNames(selected);
+  if(button){
+    button.textContent=labels.length?labels.join('、'):(select.options.length&&select.options[0].value===''?select.options[0].textContent:'请选择要停住的口令');
+    button.disabled=select.disabled;
+    button.setAttribute('aria-label',labels.length?`已选：${labels.join('、')}`:'选择要停住的口令');
+  }
+  if(!menu)return;
+  menu.replaceChildren();
+  for(const option of select.options){
+    const item=document.createElement('button');
+    item.type='button';item.className='voice-release-option';item.dataset.value=option.value;
+    item.textContent=option.textContent;item.disabled=!option.value||option.disabled;
+    item.setAttribute('role','option');item.setAttribute('aria-selected',option.selected?'true':'false');
+    item.classList.toggle('selected',option.selected);menu.appendChild(item);
+  }
+  if(!menu.children.length){const empty=document.createElement('div');empty.className='voice-release-empty';empty.textContent='没有可停住的口令';menu.appendChild(empty)}
+}
 function voiceHoldChoices(excludeKey=''){
   const out=[];
   for(const row of document.querySelectorAll('.binding-row[data-trigger^="voice."]')){
@@ -742,14 +806,14 @@ function fillVoiceReleaseSelect(select,excludeKey,value){
   const want=voiceCommandIds(value==null?previous:value);
   const choices=voiceHoldChoices(excludeKey);
   select.multiple=true;
-  select.title='可多选：按住 Ctrl 再点选多条口令';
+  select.hidden=true;
   select.replaceChildren();
   for(const id of choices){const o=document.createElement('option');o.value=id;o.textContent=voiceCommandName(id);o.selected=want.includes(id);select.appendChild(o)}
   // 指着的那条已经不是持续按住了，照实写出来，不偷偷换成别的一条。
   for(const id of want.filter(item=>!choices.includes(item))){const o=document.createElement('option');o.value=id;o.textContent=`${voiceCommandName(id)}（已不是持续按住）`;o.selected=true;select.appendChild(o)}
   if(!select.options.length){const o=document.createElement('option');o.value='';o.textContent='先把一条本游戏口令设成「持续按住」';o.selected=true;select.appendChild(o)}
-  select.size=Math.min(4,Math.max(2,select.options.length));
   select.disabled=!choices.length&&!want.length;
+  updateVoiceReleasePicker(select);
 }
 // 口令改了说法、改成或不再是持续按住，所有「停住语音按住」的下拉框和选项都跟着变。
 function syncVoiceReleaseChoices(){
@@ -851,9 +915,14 @@ function fillTargetControl(container,type,value='',comboLeadMs=80,comboLeadExpli
     sync();select.addEventListener('change',update);update();container.append(select,picker,combo,leadBox);return;
   }
   if(type==='voice_release'){
-    const select=document.createElement('select');select.className='binding-target voice-release-target';
+    ensureVoiceReleasePickerEvents();
+    const picker=document.createElement('div');picker.className='voice-release-picker';
+    const button=document.createElement('button');button.type='button';button.className='voice-release-picker-button';button.setAttribute('aria-haspopup','listbox');button.setAttribute('aria-expanded','false');
+    const menu=document.createElement('div');menu.className='voice-release-picker-menu';menu.setAttribute('role','listbox');
+    const select=document.createElement('select');select.className='binding-target voice-release-target';select.setAttribute('aria-hidden','true');
+    picker.append(button,menu,select);
     fillVoiceReleaseSelect(select,container.dataset.trigger||'',value);
-    container.appendChild(select);return;
+    container.appendChild(picker);return;
   }
   if(type==='system'){
     const select=document.createElement('select');select.className='binding-target';
