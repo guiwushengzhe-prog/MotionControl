@@ -218,6 +218,8 @@ def execute_voice_action(action: dict) -> dict:
                 if binding.get("disabled"):
                     return {"executed": False, "reason": "当前游戏未启用这条语音"}
                 if isinstance(binding.get("action"), dict):
+                    if binding["action"].get("type") == "voice_release":
+                        return KERNEL.release_voice_hold(binding["action"].get("target", ""))
                     mapped = dict(binding["action"])
                     mapped["source"] = action.get("source", "voice")
                     return OUTPUT.execute_voice_action(mapped)

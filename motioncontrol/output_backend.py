@@ -1651,13 +1651,16 @@ class OutputManager:
     def clear_source(self, source: str) -> dict:
         """Release all output contributed by one remote source immediately."""
         source = str(source)
+        return self._clear_sources(lambda key: key == source or key.startswith(source + "|voice-"))
+
+    def _clear_sources(self, predicate) -> dict:
         with self._lock:
-            self._cancel_combo_timers_locked(lambda key: key == source or key.startswith(source + "|voice-"))
+            self._cancel_combo_timers_locked(predicate)
             # 说"松开"要能停住一条正在循环的宏。不停它，键会被下面清掉又被宏按回来。
-            self._stop_macros_locked(lambda key: key == source or key.startswith(source + "|voice-"))
+            self._stop_macros_locked(predicate)
             for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
                 for key in list(store):
-                    if key == source or key.startswith(source + "|voice-"):
+                    if predicate(key):
                         store.pop(key, None)
             try:
                 self._refresh_buttons_locked()
@@ -1746,24 +1749,46 @@ class OutputManager:
         timer.daemon = True
         timer.start()
 
+    @staticmethod
+    def _voice_hold_key(normalized: dict) -> str:
+        """语音按住那条源的后半截："voice-hold:<类型>:<目标>"，组合键按字母排好。"""
+        target = normalized["target"]
+        if normalized["type"] in {"keyboard", "gamepad"}:
+            parts = target if isinstance(target, list) else target.split("+")
+            target = "+".join(sorted(set(parts)))
+        return f"voice-hold:{normalized['type']}:{target}"
+
     def execute_voice_action(self, action: dict) -> dict:
         """Latch by connection and canonical target; pulses never own a latch."""
         from motioncontrol_shared.profile_schema import normalize_action
         normalized = normalize_action(action, default_behavior="tap")
         behavior = normalized["behavior"]
-        target = normalized["target"]
-        if normalized["type"] in {"keyboard", "gamepad"}:
-            parts = target if isinstance(target, list) else target.split("+")
-            target = "+".join(sorted(set(parts)))
         owner = str(action.get("source") or "voice")
-        source = f"{owner}|voice-hold:{normalized['type']}:{target}"
+        source = f"{owner}|{self._voice_hold_key(normalized)}"
         with self._lock:
             if behavior == "release":
                 self.clear_source(source)
-                return {"executed": True, "action": f"release:{target}"}
+                return {"executed": True, "action": f"release:{self._voice_hold_key(normalized)}"}
             if behavior == "tap":
                 source = f"{owner}|voice-tap:{time.monotonic_ns()}"
             return self.execute_action({**action, **normalized, "source": source, "nonblocking": True}, persistent=behavior == "hold")
+
+    def release_voice_hold(self, action: dict) -> dict:
+        """松开语音按住的这一条动作，不管是哪部手机、哪个麦克风说的。
+
+        给"停住语音按住"用：触发它的可能是身体区域、动作或者另一句口令，它们都
+        不知道当初是谁说的那句"按住"，所以按动作找，不按说话的人找。
+        """
+        from motioncontrol_shared.profile_schema import normalize_action
+        normalized = normalize_action({**action, "behavior": "hold"}, default_behavior="hold")
+        marker = "|" + self._voice_hold_key(normalized)
+
+        def held_by_voice(key: str) -> bool:
+            _, found, rest = key.partition(marker)
+            return bool(found) and (not rest or rest.startswith("|"))
+
+        self._clear_sources(held_by_voice)
+        return {"executed": True, "action": "release" + marker}
 
     def execute_action(self, action: dict, *, persistent: bool = False) -> dict:
         """Execute one discrete action without blocking the pose/control thread."""

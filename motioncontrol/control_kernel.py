@@ -2403,6 +2403,27 @@ class ControlKernel:
         }
         self.action_chain_result = self.action_chain.update(now, signals)
 
+    def release_voice_hold(self, command_id: str) -> dict:
+        """停住口令 ``command_id`` 当初"持续按住"的那些键（或那条循环宏）。"""
+        with self._lock:
+            return self._release_voice_hold_locked(command_id)
+
+    def _release_voice_hold_locked(self, command_id) -> dict:
+        # 按那条口令现在的绑定去找要松的键，不在停止这一侧另存一份——口令改了键，
+        # 停止跟着就对，不会去松一个早就不按的键。
+        ident = str(command_id or "").strip().lower()
+        if ident.startswith("voice."):
+            ident = ident[len("voice."):]
+        binding = self.control_bindings.get(f"voice.{ident}")
+        action = binding.get("action") if isinstance(binding, dict) and not binding.get("disabled") else None
+        if not isinstance(action, dict) or action.get("type") in {"system", "voice_release"}:
+            return {"executed": False, "reason": "要停的那条口令不存在或没有按住任何东西"}
+        releaser = getattr(self.output, "release_voice_hold", None)
+        if releaser is None:
+            return {"executed": False, "reason": "输出不支持停住语音按住"}
+        self._safe_output(releaser, action)
+        return {"executed": True, "action": f"voice_release:{ident}"}
+
     def _dispatch_controls_locked(self, now: float) -> None:
         managed = self.action_chain.managed_triggers if self.action_chain.enabled else set()
         active = {
@@ -2432,7 +2453,11 @@ class ControlKernel:
             # held output is released when the pose ends.  Rewriting it here
             # made the configured behavior unreachable no matter what was saved.
             behavior = str(action.get("behavior", "tap" if trigger.startswith("pose.") else "hold")).lower()
-            if behavior == "tap":
+            if action.get("type") == "voice_release":
+                # 停住一条语音按住：只在刚触发那一下做一次，本身不按任何键。
+                if trigger not in self.trigger_previous:
+                    self._release_voice_hold_locked(action.get("target", ""))
+            elif behavior == "tap":
                 if trigger not in self.trigger_previous:
                     action["source"] = f"trigger:{trigger}:{time.monotonic_ns()}"
                     action["nonblocking"] = True

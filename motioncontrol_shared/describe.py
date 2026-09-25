@@ -126,6 +126,8 @@ def describe_action(action) -> str:
         what = f"鼠标 {_MOUSE_NAMES.get(target, target)}"
     elif kind == "mouse_wheel":
         what = f"滚轮 {_WHEEL_NAMES.get(target, target)}"
+    elif kind == "voice_release":
+        return f"停住语音按住：{VOICE_COMMAND_NAMES.get(target.lower(), target)}"
     elif kind == "system":
         what = VOICE_SYSTEM_NAMES.get(target, f"系统命令 {target}")
     else:

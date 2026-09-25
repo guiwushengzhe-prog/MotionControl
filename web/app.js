@@ -35,6 +35,7 @@ function actionKeyText(action){
   if(!type||!target)return null;
   // 宏的编号对人没有意义，圈上和卡片上要写它的名字。
   if(type==='macro')return macroName(action.target);
+  if(type==='voice_release')return `停「${voiceCommandPhrase(action.target)}」`;
   if(type==='keyboard')return target;
   if(type==='system')return SYSTEM_TARGET_NAMES.get(target)||target;
   if(type==='mouse_button')return({LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键1',X2:'侧键2'}[target]||target);
@@ -126,7 +127,7 @@ const MOTION_CONFLICT_GROUPS=[
   {ids:['jumping_jack','hands_up'],label:'开合跳与双手举过头'},
 ];
 const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',squat:'下蹲',hands_up:'双手举过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
-const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆',macro:'键盘宏'};
+const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆',macro:'键盘宏',voice_release:'停住语音按住'};
 // 宏库。每一处映射的下拉都从这里取，所以只在增删改之后刷一次，不跟着状态轮询走。
 const macroLibrary={items:[],limits:null};
 function macroById(id){return macroLibrary.items.find(item=>item.id===String(id||'').toLowerCase())||null}
@@ -507,6 +508,7 @@ function syncMotionConflictChoices(){
 function targetLabel(action){
   if(!action)return '未映射';
   if(action.type==='macro')return macroName(action.target);
+  if(action.type==='voice_release')return voiceCommandName(action.target);
   const t=String(action.target||'').toUpperCase();
   if(action.type==='keyboard')return t;
   if(action.type==='gamepad'){const values=Array.isArray(action.target)?action.target: String(action.target||'').split('+');return values.map(v=>TARGET_LABELS[String(v).toUpperCase()]||String(v).toUpperCase()).join('+')}
@@ -668,6 +670,59 @@ function makeTypeSelect(binding){
   for(const type of Object.keys(ACTION_TYPE_LABELS)){if(!gameProfile.actions?.[type])continue;const o=document.createElement('option');o.value=type;o.textContent=ACTION_TYPE_LABELS[type];sel.appendChild(o)}
   sel.value=binding?.disabled?'':(binding?.action?.type||'');return sel;
 }
+// 「停住语音按住」能停哪几条：本游戏口令里现在设成持续按住的那些（循环的宏也算，
+// 它同样要另一个动作才停得下来）。读的是表里的当前状态而不是存下来的配置——刚把
+// 口令 1 改成持续按住，别的行马上就该能选它，不用先等保存。自己停自己没有意义，
+// 所以排除本行。
+function voiceCommandId(triggerKey){return String(triggerKey||'').replace(/^voice\./,'')}
+function voiceCommandPhrase(id){
+  id=voiceCommandId(id);
+  const row=document.querySelector(`.binding-row[data-trigger="voice.${id}"] .voice-trigger-phrase`);
+  const binding=bindingsForDisplay()[`voice.${id}`];
+  return row?.value.trim()||binding?.phrase||voiceCatalog.find(item=>item.id===id)?.phrase||id;
+}
+function voiceCommandName(id){
+  id=voiceCommandId(id);
+  const slot=id.startsWith('game.profile_slot_')?`口令 ${Number(id.replace('game.profile_slot_',''))}`:'';
+  const phrase=voiceCommandPhrase(id);
+  return slot&&phrase!==id?`${slot}「${phrase}」`:slot||phrase;
+}
+function voiceHoldChoices(excludeKey=''){
+  const out=[];
+  for(const row of document.querySelectorAll('.binding-row[data-trigger^="voice."]')){
+    if(row.dataset.trigger===excludeKey)continue;
+    const type=row.querySelector('.binding-type')?.value||'';
+    if(!type||type==='voice_release')continue;
+    const behavior=row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value;
+    if(behavior==='hold')out.push(voiceCommandId(row.dataset.trigger));
+  }
+  return out;
+}
+function fillVoiceReleaseSelect(select,excludeKey,value){
+  const want=voiceCommandId(value||select.value);
+  const choices=voiceHoldChoices(excludeKey);
+  select.replaceChildren();
+  for(const id of choices){const o=document.createElement('option');o.value=id;o.textContent=voiceCommandName(id);select.appendChild(o)}
+  // 指着的那条已经不是持续按住了，照实写出来，不偷偷换成别的一条。
+  if(want&&!choices.includes(want)){const o=document.createElement('option');o.value=want;o.textContent=`${voiceCommandName(want)}（已不是持续按住）`;select.appendChild(o)}
+  if(!select.options.length){const o=document.createElement('option');o.value='';o.textContent='先把一条本游戏口令设成「持续按住」';select.appendChild(o)}
+  select.value=want||select.options[0].value;
+  select.disabled=!choices.length&&!want;
+}
+// 口令改了说法、改成或不再是持续按住，所有「停住语音按住」的下拉框和选项都跟着变。
+function syncVoiceReleaseChoices(){
+  for(const row of document.querySelectorAll('#profileBindingRows .binding-row')){
+    const typeSel=row.querySelector('.binding-type');if(!typeSel)continue;
+    const option=[...typeSel.options].find(o=>o.value==='voice_release');
+    if(option){
+      const none=!voiceHoldChoices(row.dataset.trigger).length;
+      option.disabled=none&&typeSel.value!=='voice_release';
+      option.textContent=none?`${ACTION_TYPE_LABELS.voice_release}（没有持续按住的口令）`:ACTION_TYPE_LABELS.voice_release;
+    }
+    const select=row.querySelector('select.voice-release-target');
+    if(select)fillVoiceReleaseSelect(select,row.dataset.trigger,select.value);
+  }
+}
 // 键盘键位框：点进去按一下，就换成刚按的那个键。以前是普通文本框，原来写着 SPACE，
 // 想换成 D 一按就成了 SPACED，还存不进去。按住几个一起按是组合键（按住 CTRL 再按 W
 // 就是 CTRL+W），全部松开才算定下来——宏那边一提交就整条重画，按到一半就提交的话，
@@ -753,6 +808,11 @@ function fillTargetControl(container,type,value='',comboLeadMs=80,comboLeadExpli
     select.value=[...select.options].some(o=>o.value===raw)?raw:'__combo__';
     sync();select.addEventListener('change',update);update();container.append(select,picker,combo,leadBox);return;
   }
+  if(type==='voice_release'){
+    const select=document.createElement('select');select.className='binding-target voice-release-target';
+    fillVoiceReleaseSelect(select,container.dataset.trigger||'',Array.isArray(value)?'':String(value||''));
+    container.appendChild(select);return;
+  }
   if(type==='macro'){
     const select=document.createElement('select');select.className='binding-target';
     if(!macroLibrary.items.length){
@@ -783,19 +843,19 @@ function fillBehaviorControl(container,trigger,type,value,macroId){
       const span=document.createElement('span');span.className='binding-behavior';
       span.dataset.value=mode;span.textContent=text;container.appendChild(span);return;
     }
-    // 语音多一项：循环的宏要靠另一句口令停住，那句得能选「松开」。
-    const sel=document.createElement('select');sel.className='binding-behavior';
-    for(const[v,t]of[[mode,text],['release','松开（停住这条宏）']]){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
-    sel.value=value==='release'?'release':mode;container.appendChild(sel);return;
+    // 循环的宏靠另一个动作停住：那个动作选「停住语音按住」，再选这句口令。
+    const span=document.createElement('span');span.className='binding-behavior';
+    span.dataset.value=mode;span.textContent=text;container.appendChild(span);return;
   }
+  if(type==='voice_release'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='触发时停住一次';span.dataset.value='tap';container.appendChild(span);return}
   if(trigger.tapOnly||type==='mouse_wheel'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='进入时触发一次';span.dataset.value='tap';container.appendChild(span);return}
   if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='—';span.dataset.value='hold';container.appendChild(span);return}
   const sel=document.createElement('select');sel.className='binding-behavior';
-  for(const[v,t]of (trigger.group==='voice'?[['tap','点按'],['hold','持续按住'],['release','松开同一语音按键']]:[['hold','保持动作时持续'],['tap','进入时触发一次']])){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
+  for(const[v,t]of (trigger.group==='voice'?[['tap','点按'],['hold','持续按住']]:[['hold','保持动作时持续'],['tap','进入时触发一次']])){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
   // Poses default to a single edge trigger on the server, so show that rather
   // than "hold" while a pose has no binding yet.
   const edgeDefault=trigger.group==='voice'||trigger.group==='poses';
-  sel.value=trigger.group==='voice'?(['tap','hold','release'].includes(value)?value:'tap'):(value==='tap'||(!value&&edgeDefault)?'tap':'hold');container.appendChild(sel);
+  sel.value=trigger.group==='voice'?(['tap','hold'].includes(value)?value:'tap'):(value==='tap'||(!value&&edgeDefault)?'tap':'hold');container.appendChild(sel);
 }
 // 身体动作那一组只列这个游戏用着的：配置里绑了键的（默认就绑了原地踏步、小腿向后
 // 抬起两个），加上这次从动作库点进来的。其余的在下面「动作库」「自定义动作」里挑，
@@ -812,15 +872,29 @@ function libraryKeyLabel(triggerKey){
   const label=triggerKeyLabel(triggerKey);
   return label==='未映射'&&!shownBodyRows.keys.has(triggerKey)?'加到映射':label;
 }
+// 旧的「松开同一语音按键」：那句口令自己又选了一遍同样的键。按键对上哪条持续按住
+// 的口令，就显示成「停住语音按住 · 那条口令」；存的还是旧写法，改这一行时才换成新的。
+function legacyReleaseTarget(action){
+  const same=(a,b)=>{const norm=x=>(Array.isArray(x)?x:String(x||'').split('+')).map(v=>String(v).trim().toUpperCase()).filter(Boolean).sort().join('+');return norm(a)===norm(b)};
+  const bindings=bindingsForDisplay();
+  for(const[key,binding]of Object.entries(bindings)){
+    const other=binding?.action;
+    if(!key.startsWith('voice.')||binding?.disabled||!other||other.behavior!=='hold')continue;
+    if(other.type===action.type&&(other.type==='macro'?String(other.target).toLowerCase()===String(action.target).toLowerCase():same(other.target,action.target)))return voiceCommandId(key);
+  }
+  return '';
+}
 function buildBindingRow(trigger){
-  const binding=bindingFor(trigger),action=binding?.disabled?null:binding?.action;
+  const binding=bindingFor(trigger);
+  let action=binding?.disabled?null:binding?.action;
+  if(action?.behavior==='release')action={type:'voice_release',target:legacyReleaseTarget(action),behavior:'tap'};
   const row=document.createElement('div');row.className='binding-row';row.dataset.trigger=trigger.key;
   const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
   if(trigger.group==='voice'){
     const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=binding?.phrase||trigger.phrase||'';phrase.placeholder='例如：体感地图';phrase.title='说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);
   }
-  const type=makeTypeSelect(binding);
-  const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
+  const type=makeTypeSelect(action?{action}:binding);
+  const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;fillTargetControl(target,type.value,action?.target||'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
   const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
   const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'),action?.target||'');
   type.addEventListener('change',()=>{fillTargetControl(target,type.value,'',80);fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
@@ -846,7 +920,7 @@ function addBodyRow(triggerKey){
   const rows=document.querySelector('.binding-group[data-group="body"] .binding-group-rows');
   if(!trigger||!rows)return null;
   const row=buildBindingRow(trigger);rows.appendChild(row);shownBodyRows.keys.add(trigger.key);
-  syncBodyGroup();syncMotionConflictChoices();
+  syncBodyGroup();syncMotionConflictChoices();syncVoiceReleaseChoices();
   return row;
 }
 function renderProfileBindingRows(){
@@ -879,6 +953,7 @@ function renderProfileBindingRows(){
     }
   }
   syncMotionConflictChoices();
+  syncVoiceReleaseChoices();
   paintPoseMissingNotice();
 }
 function readProfileOverrides(){
@@ -889,9 +964,9 @@ function readProfileOverrides(){
     const type=row.querySelector('.binding-type')?.value||'';
     if(!type){overrides[trigger.key]=null;continue}
     const raw=String(row.querySelector('.binding-target')?.value||'').trim();
-    const target=type==='macro'?raw.toLowerCase():raw.toUpperCase();
-    if(!target)throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:`${trigger.name} 还没有选择具体键位`);
-    const behavior=trigger.tapOnly||type==='mouse_wheel'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
+    const target=type==='macro'||type==='voice_release'?raw.toLowerCase():raw.toUpperCase();
+    if(!target)throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:type==='voice_release'?`${trigger.name} 还没有选择要停住哪条口令`:`${trigger.name} 还没有选择具体键位`);
+    const behavior=trigger.tapOnly||type==='mouse_wheel'||type==='voice_release'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
     const override={action:{type,target,behavior}};
     const comboLead=row.querySelector('.combo-lead-ms');
     if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden&&(comboLead.dataset.explicit==='1'||comboLead.dataset.touched==='1')){
@@ -1530,7 +1605,7 @@ async function saveWakeWord(){
 }
 document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
-function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
+function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandName(action.target)}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?(command.label||''):[command.label,voiceActionLabel(command.effective_action)].filter(Boolean).join(' · ');card.append(phrase,label);return card}
 function renderVoiceCommandCatalog(commands){
   voiceCatalog=Array.isArray(commands)?commands:[];
@@ -1762,7 +1837,7 @@ bind('customGameRemoveBtn',removeCustomGame);
 $('#customGameName').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(addCustomGame)});
 $('#customGameAppid').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(addCustomGame)});
 bind('retryProfileSaveBtn',retryProfileBindings);
-for(const event of ['input','change'])$('#profileBindingRows').addEventListener(event,e=>{syncMotionConflictChoices();scheduleProfileAutoSave(e)});
+for(const event of ['input','change'])$('#profileBindingRows').addEventListener(event,e=>{syncMotionConflictChoices();if(e.target.closest('.binding-row[data-trigger^="voice."]'))syncVoiceReleaseChoices();scheduleProfileAutoSave(e)});
 bind('adjustZonesBtn',openLiveZoneEditor);bind('saveLiveZonesBtn',saveLiveZones);bind('cancelLiveZonesBtn',cancelLiveZones);
 bind('sceneCaptureBtn',()=>updateScene('capture'));bind('sceneRematchBtn',()=>updateScene('rematch'));
 $('#sceneZoneSelect').addEventListener('change',e=>{scene.selected=e.target.value;syncSceneTools()});
