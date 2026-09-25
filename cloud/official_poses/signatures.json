@@ -1,0 +1,35 @@
+{
+  "schema": "motioncontrol.pose_signatures.v1",
+  "actions": {
+    "cross_knee_elbow": {
+      "revision": 1,
+      "sha256": "150d8eda82b5d219721b12e9393be00bc96f3c0ddbee623b6340e49bee1e0d0c",
+      "signature": "MEUCICF36LLLbS0opG/2zJBabTzKGDr4CrS72WwA9d7u5/GiAiEA+mvNANC94q6IZRaruibiltMJp75aZq/jWmObdlq653I="
+    },
+    "hands_cross": {
+      "revision": 1,
+      "sha256": "bc1db0dc0114fefdb969bd7db3d2db6e74407d91ddf77d52d219ef66bf199bf5",
+      "signature": "MEYCIQDvWP4A3+c8Tci88ZdYMIKp/TJs00CqBl7XNtYCwkDM3gIhAKc045cR7/K546UYGp+ZEs4tt82OXHPmdsndIDwbJq9E"
+    },
+    "hands_up": {
+      "revision": 1,
+      "sha256": "6f48dcd38864fec3f489ec3123c71122b494e43b7b146d8457c6620509f735fd",
+      "signature": "MEUCIH8EhWnuaTpSQVTQumSF3vdjJUSCIg/3mJPqbAj8wG33AiEAzBhsJnY04wLPL8uyc9QoToguha1pPbnTHAfHbSjDtJs="
+    },
+    "jumping_jack": {
+      "revision": 1,
+      "sha256": "00b086788d938c5744d4ecac52f9ea3388481496dcb0d907933d06711b45ca14",
+      "signature": "MEYCIQDG54BQOB8zhFbvXhtg9UriWjlSPPHlwTgnaZD7yA5GJAIhAJyaxtb71ypTIhF8m6QTRuDXyk8IyBSTJQ+DS1CcTWD0"
+    },
+    "side_step_jack": {
+      "revision": 1,
+      "sha256": "f8d62a2ce3400efc1b6bfc310133c403fc426fe611df46815242c52a5007593b",
+      "signature": "MEQCIBFNfmUkCMZoP1LIsirr2OLR6wybeNkxbY4kPuVfKflXAiA4UKd9eKU0s79nhGHdhTuWlcgPyPzTGREDEW+v8iDr9A=="
+    },
+    "squat": {
+      "revision": 1,
+      "sha256": "9dce61847978095d498b76feb0ab3c112e74442c66a2edc009945acf02d23289",
+      "signature": "MEYCIQDOV356zODz+3pBjU4O+e3kkZqeiR9isdcgHjss4Z8plQIhAMAjwbIRARF4hAs/WjU33+y9QLLkjKQwQTb5chDdJY3y"
+    }
+  }
+}
