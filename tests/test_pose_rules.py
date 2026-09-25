@@ -17,14 +17,14 @@ import math
 import pytest
 
 import pose_rule_reference as reference
-from pose_rule_frames import OFFICIAL, frames
+from pose_rule_frames import OFFICIAL_FILES, frames
 from motioncontrol_shared import pose_rules
 from motioncontrol_shared.pose_rules import RuleError, evaluate_rules, normalize_rule
 
 
 def official_rules() -> dict[str, dict]:
     rules = {}
-    for path in sorted(OFFICIAL.glob("*.json")):
+    for path in OFFICIAL_FILES:
         doc = json.loads(path.read_text(encoding="utf-8"))
         rules[doc["id"]] = normalize_rule(doc["rule"])
     return rules
@@ -76,7 +76,7 @@ def _pose(frame: dict) -> dict:
     return {name: {"x": x, "y": y, "score": 0.95} for name, (x, y) in frame.items()}
 
 
-@pytest.mark.parametrize("path", sorted(OFFICIAL.glob("*.json")), ids=lambda path: path.stem)
+@pytest.mark.parametrize("path", OFFICIAL_FILES, ids=lambda path: path.stem)
 def test_the_demo_shows_a_pose_the_rule_accepts(path):
     """示范图至少有一帧是规则认得出来的，也至少有一帧认不出来（起始姿势）。
 

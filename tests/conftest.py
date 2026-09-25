@@ -31,7 +31,7 @@ def official_pose_docs() -> list[dict]:
 
     folder = Path(__file__).resolve().parent.parent / "cloud" / "official_poses"
     return [normalize_action(json.loads(path.read_text(encoding="utf-8")))
-            for path in sorted(folder.glob("*.json"))]
+            for path in sorted(folder.glob("*.json")) if path.name != "signatures.json"]
 
 
 @pytest.fixture(autouse=True)

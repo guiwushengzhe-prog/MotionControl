@@ -15,6 +15,8 @@ from pathlib import Path
 from motioncontrol_shared.pose_rules import JOINTS
 
 OFFICIAL = Path(__file__).resolve().parent.parent / "cloud" / "official_poses"
+# 签过名之后同一个文件夹里还有 signatures.json，它是签名清单，不是动作。
+OFFICIAL_FILES = sorted(path for path in OFFICIAL.glob("*.json") if path.name != "signatures.json")
 SIZES = ((640, 480), (480, 640), (1280, 720), (720, 1280), (960, 960))
 SCORE_EDGES = (0.35, 0.36, 0.37, 0.38, 0.39, 0.40, 0.41, 0.42, 0.43, 0.44, 0.45, 0.46)
 
@@ -22,7 +24,7 @@ SCORE_EDGES = (0.35, 0.36, 0.37, 0.38, 0.39, 0.40, 0.41, 0.42, 0.43, 0.44, 0.45,
 def demo_frames() -> list[dict]:
     """官方动作示范里的每一帧，坐标还是原始的画面坐标。"""
     frames = []
-    for path in sorted(OFFICIAL.glob("*.json")):
+    for path in OFFICIAL_FILES:
         doc = json.loads(path.read_text(encoding="utf-8"))
         frames.extend(doc["demo"]["frames"])
     return frames
