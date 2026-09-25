@@ -76,7 +76,8 @@ function revealBindingRow(triggerKey){
   // 从「开始」页点过来的话，映射表所在的页签还藏着——藏着的东西滚不过去，
   // 也高亮不出来。先切过去再找。
   if(currentView!=='games')showView('games');
-  const row=document.querySelector(`.binding-row[data-trigger="${triggerKey}"]`);
+  // 没绑键的身体动作平时不在表里（见 shownBodyRows），点过来就是要绑它，现加一行。
+  const row=document.querySelector(`.binding-row[data-trigger="${triggerKey}"]`)||addBodyRow(triggerKey);
   if(!row){notice('这个动作还没出现在映射表里，刷新一下页面再试');return}
   row.closest('details')?.setAttribute('open','');
   row.scrollIntoView({behavior:'smooth',block:'center'});
@@ -664,6 +665,60 @@ function makeTypeSelect(binding){
   for(const type of Object.keys(ACTION_TYPE_LABELS)){if(!gameProfile.actions?.[type])continue;const o=document.createElement('option');o.value=type;o.textContent=ACTION_TYPE_LABELS[type];sel.appendChild(o)}
   sel.value=binding?.disabled?'':(binding?.action?.type||'');return sel;
 }
+// 键盘键位框：点进去按一下，就换成刚按的那个键。以前是普通文本框，原来写着 SPACE，
+// 想换成 D 一按就成了 SPACED，还存不进去。按住几个一起按是组合键（按住 CTRL 再按 W
+// 就是 CTRL+W），全部松开才算定下来——宏那边一提交就整条重画，按到一半就提交的话，
+// 手还没松框就没了。键名对的是电脑那边 profile_schema.KEYBOARD_KEYS 那一套，那套以外
+// 的键（小键盘、分号这些）按了只提示，原来的值不动。
+const KEY_CODE_NAMES={Space:'SPACE',Enter:'ENTER',NumpadEnter:'ENTER',Escape:'ESC',Tab:'TAB',
+  ShiftLeft:'SHIFT',ShiftRight:'SHIFT',ControlLeft:'CTRL',ControlRight:'CTRL',AltLeft:'ALT',AltRight:'ALT',MetaLeft:'WIN',MetaRight:'WIN',
+  Backspace:'BACKSPACE',Delete:'DELETE',Home:'HOME',End:'END',PageUp:'PAGEUP',PageDown:'PAGEDOWN',
+  ArrowLeft:'LEFT',ArrowUp:'UP',ArrowRight:'RIGHT',ArrowDown:'DOWN'};
+const KEY_MODIFIERS=['CTRL','SHIFT','ALT','WIN'];
+function keyNameFromCode(code){
+  if(/^Key[A-Z]$/.test(code))return code.slice(3);
+  if(/^Digit[0-9]$/.test(code))return code.slice(5);
+  if(/^F([1-9]|1[0-2])$/.test(code))return code;
+  return KEY_CODE_NAMES[code]||null;
+}
+// 提示贴在框下面。页顶那条通知栏在映射表、宏这里往往已经滚出屏幕了。
+function keyCaptureTip(input,text){
+  document.querySelector('.key-capture-tip')?.remove();
+  const tip=document.createElement('div');tip.className='key-capture-tip';tip.textContent=text;
+  const r=input.getBoundingClientRect();tip.style.left=`${r.left+window.scrollX}px`;tip.style.top=`${r.bottom+window.scrollY+4}px`;
+  document.body.appendChild(tip);setTimeout(()=>tip.remove(),1800);
+}
+function makeKeyCaptureInput(className,value=''){
+  const input=document.createElement('input');input.className=className+' key-capture';input.type='text';
+  // 只读才不会被输入法接走：开着中文输入法按 D，普通文本框会先弹候选框。
+  input.readOnly=true;input.value=value;input.placeholder='点这里，再按键';
+  input.title='点一下，再按想要的键；按住 CTRL 再按 W 就是 CTRL+W。浏览器自己占着的组合键（比如 CTRL+W 会关掉页面）录不进来';
+  let chord=[],before='';const held=new Set();
+  const settle=()=>{
+    held.clear();if(!chord.length)return;chord=[];
+    if(input.value!==before){input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}))}
+  };
+  input.addEventListener('keydown',e=>{
+    // 不往外传：F9 是全局急停，这里按 F9 是想绑 F9。
+    e.preventDefault();e.stopPropagation();if(e.repeat)return;
+    const name=keyNameFromCode(e.code);
+    if(!name){keyCaptureTip(input,`「${e.code.startsWith('Numpad')?'小键盘 '+e.key:e.key}」这个键还不支持，换一个`);return}
+    if(!chord.length)before=input.value;
+    held.add(e.code);
+    // 修饰键也看事件上的标志：远程桌面、按键精灵这类发来的 CTRL+S 可能只有带着
+    // ctrlKey 的 S，前面没有单独的一下 CTRL。
+    const flags=[['ctrlKey','CTRL'],['shiftKey','SHIFT'],['altKey','ALT'],['metaKey','WIN']].filter(([flag])=>e[flag]).map(([,key])=>key);
+    const adding=[...flags,name].filter((key,at,all)=>!chord.includes(key)&&all.indexOf(key)===at);
+    if(!adding.length)return;
+    if(chord.length+adding.length>4){keyCaptureTip(input,'组合键最多 4 个键');return}
+    chord.push(...adding);
+    input.value=[...KEY_MODIFIERS.filter(k=>chord.includes(k)),...chord.filter(k=>!KEY_MODIFIERS.includes(k))].join('+');
+  });
+  input.addEventListener('keyup',e=>{e.preventDefault();e.stopPropagation();held.delete(e.code);if(!held.size)settle()});
+  // 按 WIN 会弹开始菜单，松开那一下不一定回得到这里；焦点一走就按已经按下的算。
+  input.addEventListener('blur',settle);
+  return input;
+}
 function fillTargetControl(container,type,value=''){
   container.replaceChildren();if(!type)return;
   const meta=gameProfile.actions?.[type]||{};
@@ -702,7 +757,7 @@ function fillTargetControl(container,type,value=''){
     select.value=want||macroLibrary.items[0].id;
     container.appendChild(select);return;
   }
-  if(meta.free_text){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder=meta.placeholder||'例如 W / SPACE / CTRL+W';input.value=Array.isArray(value)?value.join('+'):(value||'');container.appendChild(input);return}
+  if(meta.free_text){container.appendChild(makeKeyCaptureInput('binding-target',Array.isArray(value)?value.join('+'):(value||'')));return}
   const select=document.createElement('select');select.className='binding-target';
   for(const target of meta.targets||[]){const o=document.createElement('option');o.value=target;o.textContent=TARGET_LABELS[target]||target;select.appendChild(o)}
   if(value&&[...select.options].some(o=>o.value===value))select.value=value;container.appendChild(select);
@@ -733,42 +788,86 @@ function fillBehaviorControl(container,trigger,type,value,macroId){
   const edgeDefault=trigger.group==='voice'||trigger.group==='poses';
   sel.value=trigger.group==='voice'?(['tap','hold','release'].includes(value)?value:'tap'):(value==='tap'||(!value&&edgeDefault)?'tap':'hold');container.appendChild(sel);
 }
+// 身体动作那一组只列这个游戏用着的：配置里绑了键的（默认就绑了原地踏步、小腿向后
+// 抬起两个），加上这次从动作库点进来的。其余的在下面「动作库」「自定义动作」里挑，
+// 点卡片上的「加到映射」就进来——十来行「不映射」堆在表里，要找的那一行反而看不见。
+// 列出来过的行在同一个游戏里一直留着：改成「不映射」那一下就消失，人会以为没改上。
+const shownBodyRows={profile:null,keys:new Set()};
+function isBodyTrigger(trigger){return trigger.group==='motions'||trigger.group==='poses'}
+function bodyRowWanted(trigger){
+  const binding=bindingFor(trigger);
+  return !!(binding&&!binding.disabled)||shownBodyRows.keys.has(trigger.key);
+}
+// 卡片上那个键位按钮：绑了写键，表里有这一行但没绑写「未映射」，表里还没有写「加到映射」。
+function libraryKeyLabel(triggerKey){
+  const label=triggerKeyLabel(triggerKey);
+  return label==='未映射'&&!shownBodyRows.keys.has(triggerKey)?'加到映射':label;
+}
+function buildBindingRow(trigger){
+  const binding=bindingFor(trigger),action=binding?.disabled?null:binding?.action;
+  const row=document.createElement('div');row.className='binding-row';row.dataset.trigger=trigger.key;
+  const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
+  if(trigger.group==='voice'){
+    const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=binding?.phrase||trigger.phrase||'';phrase.placeholder='例如：体感地图';phrase.title='说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);
+  }
+  const type=makeTypeSelect(binding);
+  const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
+  const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
+  const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'),action?.target||'');
+  type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
+  // 换了另一条宏，「跑一遍还是循环」要跟着那条宏重算——那一格写的必须是现在
+  // 选中这条的，否则界面说一套、实际跑另一套。
+  target.addEventListener('change',()=>{if(type.value==='macro')fillBehaviorControl(behavior,trigger,'macro',behavior.querySelector('.binding-behavior')?.value,pickedMacro())});
+  row.append(name,type,target,behavior);
+  row.querySelectorAll('input,select').forEach(control=>control.setAttribute('aria-label',trigger.name+' '+(control.className.includes('type')?'输出类型':'键位或触发方式')));
+  if(trigger.group==='motions'){const note=document.createElement('div');note.className='motion-conflict-note';note.hidden=true;row.appendChild(note)}
+  return row;
+}
+function syncBodyGroup(){
+  const details=document.querySelector('.binding-group[data-group="body"]');if(!details)return;
+  const hidden=profileTriggers().filter(t=>isBodyTrigger(t)&&!shownBodyRows.keys.has(t.key)).length;
+  details.querySelector('summary').textContent=`身体动作 · ${details.querySelectorAll('.binding-row').length} 项`;
+  const more=details.querySelector('.binding-group-more');more.hidden=!hidden;
+  more.querySelector('span').textContent=`还有 ${hidden} 个动作没放进来：在下面「动作库」「自定义动作」的卡片上点「加到映射」`;
+}
+// 从动作库、自定义动作、动作测试点过来，而表里还没有这一行：现加一行，不整表重画——
+// 重画会冲掉别的行里还没存的改动。
+function addBodyRow(triggerKey){
+  const trigger=profileTriggers().find(t=>t.key===triggerKey&&isBodyTrigger(t));
+  const rows=document.querySelector('.binding-group[data-group="body"] .binding-group-rows');
+  if(!trigger||!rows)return null;
+  const row=buildBindingRow(trigger);rows.appendChild(row);shownBodyRows.keys.add(trigger.key);
+  syncBodyGroup();syncMotionConflictChoices();
+  return row;
+}
 function renderProfileBindingRows(){
   const box=$('#profileBindingRows');if(!box)return;box.replaceChildren();
   if(!gameProfile.selected){box.innerHTML='<div class="profile-empty">还没有可编辑的游戏配置。</div>';return}
+  const profileId=gameProfile.selected.selected_id||gameProfile.selected.id;
+  if(shownBodyRows.profile!==profileId){shownBodyRows.profile=profileId;shownBodyRows.keys.clear()}
   const triggers=profileTriggers();
   const groups=[
     {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
-    {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手举过头不能同时映射',filter:t=>t.group==='motions'||t.group==='poses',open:true},
+    {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手举过头不能同时映射',filter:isBodyTrigger,open:true},
     {id:'voice',title:'本游戏口令',help:'只在这个游戏里生效，会跟着配置一起分享。说法不能和通用口令、内置口令重复。',filter:t=>t.group==='voice',open:false},
   ];
   for(const group of groups){
-    const items=triggers.filter(group.filter);if(!items.length)continue;
-    const details=document.createElement('details');details.className='binding-group';details.open=group.open;
+    const all=triggers.filter(group.filter);if(!all.length)continue;
+    const items=group.id==='body'?all.filter(bodyRowWanted):all;
+    const details=document.createElement('details');details.className='binding-group';details.dataset.group=group.id;details.open=group.open;
     const summary=document.createElement('summary');summary.textContent=`${group.title} · ${items.length} 项`;
     const help=document.createElement('div');help.className='binding-group-help';help.textContent=group.help;
     const rows=document.createElement('div');rows.className='binding-group-rows';
-    for(const trigger of items){
-      const binding=bindingFor(trigger),action=binding?.disabled?null:binding?.action;
-      const row=document.createElement('div');row.className='binding-row';row.dataset.trigger=trigger.key;
-      const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
-      if(trigger.group==='voice'){
-        const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=binding?.phrase||trigger.phrase||'';phrase.placeholder='例如：体感地图';phrase.title='说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);
-      }
-      const type=makeTypeSelect(binding);
-      const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
-      const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
-      const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'),action?.target||'');
-      type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
-      // 换了另一条宏，「跑一遍还是循环」要跟着那条宏重算——那一格写的必须是现在
-      // 选中这条的，否则界面说一套、实际跑另一套。
-      target.addEventListener('change',()=>{if(type.value==='macro')fillBehaviorControl(behavior,trigger,'macro',behavior.querySelector('.binding-behavior')?.value,pickedMacro())});
-      row.append(name,type,target,behavior);
-      row.querySelectorAll('input,select').forEach(control=>control.setAttribute('aria-label',trigger.name+' '+(control.className.includes('type')?'输出类型':'键位或触发方式')));
-      if(trigger.group==='motions'){const note=document.createElement('div');note.className='motion-conflict-note';note.hidden=true;row.appendChild(note)}
-      rows.appendChild(row);
-    }
+    for(const trigger of items)rows.appendChild(buildBindingRow(trigger));
     details.append(summary,help,rows);box.appendChild(details);
+    if(group.id==='body'){
+      for(const trigger of items)shownBodyRows.keys.add(trigger.key);
+      const more=document.createElement('div');more.className='binding-group-more';
+      const go=document.createElement('button');go.type='button';go.className='btn';go.textContent='去动作库';
+      go.addEventListener('click',()=>$('#poseLibraryPanel')?.scrollIntoView({behavior:'smooth',block:'start'}));
+      more.append(document.createElement('span'),go);details.appendChild(more);
+      syncBodyGroup();
+    }
   }
   syncMotionConflictChoices();
 }
@@ -845,6 +944,8 @@ async function resetProfileBindings(){
     const profile_id=gameProfile.selected.selected_id||gameProfile.selected.id;
     const data=await post('/api/game-profiles/overrides',{profile_id,overrides:{}});
     gameProfile.selected=data.profile;gameProfile.overrides={};
+    // 恢复默认就是回到默认那几行，这次手动加进来的没绑的动作一起收回动作库。
+    shownBodyRows.keys.clear();
     await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
     $('#profileSaveStatus').textContent='当前游戏已恢复默认';
   });
@@ -1351,7 +1452,7 @@ function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=do
   // Voice rows can be built before the action catalog arrives.  Gamepad falls
   // back to its own built-in key list, but keyboard is only free text because
   // the catalog says so, and without it the picker would come out empty.
-  if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){const input=document.createElement('input');input.className='binding-target';input.type='text';input.placeholder='例如 W / SPACE / CTRL+W';input.value=value||'';target.replaceChildren(input);return}
+  if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){target.replaceChildren(makeKeyCaptureInput('binding-target',value||''));return}
   fillTargetControl(target,type.value,value);
 };fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');for(const[value,label]of [['tap','点按'],['hold','持续按住'],['release','松开']]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';const syncBehavior=()=>{behavior.disabled=type.value==='system';if(behavior.disabled)behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phraseBox,type,target,behavior,remove);$('#voiceRows').appendChild(row)}
 function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=(row.querySelector('.binding-target')?.value||'').trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('每条口令都要填「说什么」和「输出什么」');const behavior=type==='system'?'tap':row.querySelector('.voice-behavior').value;const item={phrase,type,target,behavior},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
@@ -2203,7 +2304,7 @@ function renderCustomPoses() {
     const bound = document.createElement('button');
     bound.type = 'button';
     bound.className = 'custom-pose-key';
-    bound.textContent = triggerKeyLabel('pose.' + item.id);
+    bound.textContent = libraryKeyLabel('pose.' + item.id);
     bound.title = '点一下跳到上面的按键映射';
     bound.addEventListener('click', () => revealBindingRow('pose.' + item.id));
 
@@ -2251,7 +2352,7 @@ function paintCustomPoseScores() {
     row.classList.toggle('firing', active.has(id));
     // 键位标签跟着一起刷。上面改了绑定，这里得马上跟上，不然就是两处各说各的。
     const bound = row.querySelector('.custom-pose-key');
-    if (bound) bound.textContent = triggerKeyLabel('pose.' + id);
+    if (bound) bound.textContent = libraryKeyLabel('pose.' + id);
   }
 }
 
@@ -2371,7 +2472,7 @@ function paintPoseLibrary() {
     const item = poseLibrary.find(entry => entry.id === card.dataset.id);
     if (!item) continue;
     const bound = card.querySelector('.custom-pose-key');
-    const label = triggerKeyLabel(item.trigger);
+    const label = libraryKeyLabel(item.trigger);
     if (bound && bound.textContent !== label) bound.textContent = label;
     let warn = card.querySelector('.pose-library-warn');
     const text = triggerMapped(item.trigger) ? zoneYieldText(item.trigger) : '';
@@ -2507,14 +2608,7 @@ function macroStepTargetControl(step, others) {
     if (others.some(other => other.id === step.target)) select.value = step.target;
     return select;
   }
-  if (type === 'keyboard') {
-    const input = document.createElement('input');
-    input.className = 'macro-step-target';
-    input.type = 'text';
-    input.placeholder = '例如 W / SPACE / CTRL+W';
-    input.value = step.target || '';
-    return input;
-  }
+  if (type === 'keyboard') return makeKeyCaptureInput('macro-step-target', step.target || '');
   const select = document.createElement('select');
   select.className = 'macro-step-target';
   for (const key of MACRO_STEP_TARGETS[type] || []) {

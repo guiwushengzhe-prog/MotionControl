@@ -488,6 +488,15 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
 
 .voice-trigger-phrase { display: block; width: 100%; margin-top: 6px; }
 
+/* 键盘键位框是「点一下再按键」，不是打字：不要文字光标，免得人以为要一个个字母敲。 */
+.key-capture { cursor: pointer; caret-color: transparent; }
+
+.key-capture-tip { position: absolute; z-index: 50; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--surface-3); color: var(--warn); font-size: 12.5px; box-shadow: var(--shadow); pointer-events: none; }
+
+/* 身体动作组底下那一行：其余动作在动作库里，从那里加进来。 */
+.binding-group-more { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 8px 0 4px 18px; color: var(--text-3); font-size: 12.5px; }
+
 /* 从别处跳过来时高亮那一行。不闪一下的话，滚过去也不知道该看哪儿。 */
 .binding-row.just-found { outline: 2px solid var(--accent); outline-offset: 1px; }
 

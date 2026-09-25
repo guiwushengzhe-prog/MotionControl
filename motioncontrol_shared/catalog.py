@@ -17,7 +17,7 @@ import copy
 import json
 from pathlib import Path
 
-from .profile_schema import normalize_bindings
+from .profile_schema import normalize_bindings, with_default_bindings
 from .profile_versions import CATALOG_SCHEMA, SCHEMA
 
 
@@ -65,5 +65,5 @@ def load_profile(library_dir: Path, profile_id: str, catalog: dict | None = None
     profile = copy.deepcopy(data)
     profile["id"] = entry["id"]
     profile["name"] = str(profile.get("name") or entry["name"])
-    profile["bindings"] = normalize_bindings(profile.get("bindings"))
+    profile["bindings"] = with_default_bindings(normalize_bindings(profile.get("bindings")))
     return profile

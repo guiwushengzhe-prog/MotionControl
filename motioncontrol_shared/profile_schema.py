@@ -43,6 +43,21 @@ KEYBOARD_KEYS = (
 )
 TRIGGER_GROUPS = ("zones", "motions", "poses", "voice")
 
+# 每个游戏都先带着这两个：原地踏步往前走、小腿向后抬起往后退，不用人自己绑。
+# 游戏档里写了这两个的（包括写明不绑的）以游戏档为准。其余动作默认不绑，到界面的
+# 「动作库」里自己挑。
+DEFAULT_MOTION_BINDINGS = {
+    "march": {"action": {"type": "gamepad_axis", "target": "LS_UP", "behavior": "hold"}},
+    "calf_back": {"action": {"type": "gamepad_axis", "target": "LS_DOWN", "behavior": "hold"}},
+}
+# 游戏档里一个手柄输出都没有的，多半是不认手柄的键鼠游戏——推左摇杆没反应，
+# 走路后退就改按 W / S。
+DEFAULT_KEYBOARD_MOTION_BINDINGS = {
+    "march": {"action": {"type": "keyboard", "target": "W", "behavior": "hold"}},
+    "calf_back": {"action": {"type": "keyboard", "target": "S", "behavior": "hold"}},
+}
+_GAMEPAD_ACTION_TYPES = {"gamepad", "gamepad_trigger", "gamepad_axis"}
+
 _KEY_RE = re.compile(r"^[A-Z0-9_]+(?:\+[A-Z0-9_]+){0,3}$")
 
 
@@ -165,6 +180,24 @@ def normalize_bindings(bindings: dict | None) -> dict:
             # Poses default to edge-triggered above; holding is opt-in, the
             # same as it already was for the continuous motions.
             out[group][ident] = normalized
+    return out
+
+
+def with_default_bindings(bindings: dict) -> dict:
+    """给一份已经规范化的游戏档绑定补上默认走路、后退里它没写的那几个。
+
+    用手柄那套还是键盘那套，看这份游戏档自己有没有手柄输出。
+    """
+    out = copy.deepcopy(bindings)
+    uses_gamepad = any(
+        item.get("action", {}).get("type") in _GAMEPAD_ACTION_TYPES
+        for group in out.values() if isinstance(group, dict)
+        for item in group.values() if isinstance(item, dict)
+    )
+    defaults = DEFAULT_MOTION_BINDINGS if uses_gamepad else DEFAULT_KEYBOARD_MOTION_BINDINGS
+    motions = out.setdefault("motions", {})
+    for ident, binding in defaults.items():
+        motions.setdefault(ident, copy.deepcopy(binding))
     return out
 
 
