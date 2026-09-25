@@ -50,6 +50,18 @@ def _figure(base: dict | None = None, **moved: tuple[float, float]) -> dict:
     return points
 
 
+def _mirror(frame: dict) -> dict:
+    """左右对调：换另一边做同一个动作。正面图用，侧面图没有意义。"""
+    out = {}
+    for name, (x, y) in frame.items():
+        if name.startswith("left_"):
+            name = "right_" + name[5:]
+        elif name.startswith("right_"):
+            name = "left_" + name[6:]
+        out[name] = (round(1.0 - x, 4), y)
+    return out
+
+
 # 正面站立。躯干 0.28，大腿、小腿各 0.20，上臂 0.14，前臂 0.13。
 STAND = {
     "nose": (0.500, 0.100),
@@ -71,6 +83,27 @@ SIDE = {
     "left_knee": (0.505, 0.700), "right_knee": (0.495, 0.700),
     "left_ankle": (0.505, 0.900), "right_ankle": (0.495, 0.900),
 }
+
+# 双手抱头：手在脑后，手肘朝两边张开。提膝碰对侧肘就从这个姿势开始。
+HANDS_BEHIND_HEAD = _figure(STAND, left_elbow=(0.690, 0.160), right_elbow=(0.310, 0.160),
+                            left_wrist=(0.565, 0.105), right_wrist=(0.435, 0.105))
+
+# 抬左膝、右手肘去碰：上身往左膝那边倾、右肩压过来，右臂斜着压过身体，手肘落在
+# 左膝上；左膝抬过胯，小腿往外垂。左手一直抱着头，手肘朝外。
+CROSS_LEFT_KNEE = {
+    "nose": (0.550, 0.190),
+    "left_shoulder": (0.625, 0.265), "right_shoulder": (0.490, 0.275),
+    "left_elbow": (0.735, 0.205), "right_elbow": (0.560, 0.380),
+    "left_wrist": (0.615, 0.160), "right_wrist": (0.520, 0.240),
+    "left_hip": (0.555, 0.505), "right_hip": (0.455, 0.500),
+    "left_knee": (0.575, 0.395), "right_knee": (0.445, 0.700),
+    "left_ankle": (0.650, 0.545), "right_ankle": (0.440, 0.900),
+}
+
+# 右脚往旁边迈开，左脚不动；两手往两边抬到比肩稍高——再高就成了开合跳。
+SIDE_STEP_RIGHT = _figure(STAND, right_knee=(0.395, 0.695), right_ankle=(0.335, 0.885),
+                          left_elbow=(0.705, 0.190), right_elbow=(0.295, 0.190),
+                          left_wrist=(0.830, 0.155), right_wrist=(0.170, 0.155))
 
 LEGS_APART = dict(left_knee=(0.620, 0.690), right_knee=(0.380, 0.690),
                   left_ankle=(0.690, 0.880), right_ankle=(0.310, 0.880))
@@ -133,29 +166,18 @@ LIBRARY: tuple[dict, ...] = (
     },
     {
         "id": "side_step_jack", "group": "motion", "name": "侧步开合",
-        "how": "一脚往旁边迈开，两手侧平举，再收回",
+        "how": "一只脚往旁边迈开，同时两手往两边抬到肩高；收回来再换另一边",
         "passes_zones": HAND_ZONES + FOOT_ZONES, "sweeps_first": True,
         "frame_s": 0.50,
-        "frames": (STAND, _figure(STAND, left_elbow=(0.715, 0.225), right_elbow=(0.285, 0.225),
-                                  left_wrist=(0.850, 0.225), right_wrist=(0.150, 0.225),
-                                  **LEGS_APART)),
+        "frames": (STAND, SIDE_STEP_RIGHT, STAND, _mirror(SIDE_STEP_RIGHT)),
     },
     {
         "id": "cross_knee_elbow", "group": "motion", "name": "提膝碰对侧肘",
-        "how": "抬起一侧膝盖，用另一边的手肘去碰，左右交替",
+        "how": "双手抱头，抬起一侧膝盖，用另一边的手肘去碰，左右交替",
         # 手抱到头后时会扫过手区；膝盖抬起时脚有时往外甩，会碰到脚区。
         "passes_zones": HAND_ZONES + FOOT_ZONES, "sweeps_first": True,
         "frame_s": 0.50,
-        "frames": (
-            _figure(STAND, left_knee=(0.520, 0.540), left_ankle=(0.560, 0.720),
-                    right_elbow=(0.495, 0.470), right_wrist=(0.440, 0.360),
-                    left_elbow=(0.660, 0.150), left_wrist=(0.560, 0.090)),
-            STAND,
-            _figure(STAND, right_knee=(0.480, 0.540), right_ankle=(0.440, 0.720),
-                    left_elbow=(0.505, 0.470), left_wrist=(0.560, 0.360),
-                    right_elbow=(0.340, 0.150), right_wrist=(0.440, 0.090)),
-            STAND,
-        ),
+        "frames": (CROSS_LEFT_KNEE, HANDS_BEHIND_HEAD, _mirror(CROSS_LEFT_KNEE), HANDS_BEHIND_HEAD),
     },
     {
         "id": "hands_cross", "group": "pose", "name": "双手交叉",
