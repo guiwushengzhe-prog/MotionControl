@@ -125,8 +125,37 @@ def test_profile_voice_phrase_updates_one_registry_for_phone_and_desktop(tmp_pat
             'action': {'type': 'keyboard', 'target': 'SPACE', 'behavior': 'tap'},
         },
     }})
-    assert '体感跳跃' in service.grammar_phrases()
+    assert '跳跃' in service.grammar_phrases()
     assert '体感功能一' not in service.grammar_phrases()
-    result = service._match_and_execute('体感跳跃', enforce_wake=True)
+    assert '体感跳跃' in service.grammar_phrases()  # 旧版本说法继续兼容
+    result = service._match_and_execute('跳跃', enforce_wake=True)
     assert result['matched'] is True
     assert calls[0]['command_id'] == 'game.profile_slot_01'
+
+
+def test_a_game_profile_system_action_also_does_not_require_wake_word(tmp_path):
+    generated = tmp_path / 'config' / 'generated_voice'
+    generated.mkdir(parents=True)
+    (generated / 'voice_action_map.json').write_text(json.dumps({
+        '体感功能三': {
+            'id': 'game.profile_slot_03', 'label': '当前游戏功能3',
+            'kind': 'keyboard', 'default_target': 'F3',
+        },
+        '体感开始输出': {
+            'id': 'output.start', 'label': '开始输出',
+            'kind': 'system', 'default_target': 'OUTPUT.START',
+        },
+    }, ensure_ascii=False), encoding='utf-8')
+    calls = []
+    service = VoiceService(tmp_path, lambda action: calls.append(action) or {'executed': True})
+    service.configure_profile_bindings({'voice': {
+        'game.profile_slot_03': {
+            'phrase': '截图',
+            'action': {'type': 'system', 'target': 'ZONES.FREEZE', 'behavior': 'tap'},
+        },
+    }})
+
+    result = service._match_and_execute('截图', enforce_wake=True)
+    assert result['matched'] is True
+    assert calls[-1]['command_id'] == 'game.profile_slot_03'
+    assert service._match_and_execute('开始输出', enforce_wake=True)['reason'] == 'wake_word_required'

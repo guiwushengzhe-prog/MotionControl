@@ -149,6 +149,14 @@ function currentVoiceWakeWord(status=voice.status){
   const wake=String(status?.wake_word||'体感').trim();
   return wake||'体感';
 }
+function isGameVoiceKey(key){return String(key||'').replace(/^voice\./,'').startsWith('game.profile_slot_')}
+function normalizeGameVoicePhrase(value){
+  let phrase=String(value||'').trim();
+  for(const prefix of [currentVoiceWakeWord(),'体感']){
+    if(prefix&&phrase.startsWith(prefix)&&phrase.length>prefix.length)return phrase.slice(prefix.length).trim();
+  }
+  return phrase;
+}
 function renderVoiceGuide(status=voice.status){
   const wake=currentVoiceWakeWord(status),example=`${wake}地图`;
   const wakeHint=$('#voiceWakeWordHint');
@@ -157,8 +165,9 @@ function renderVoiceGuide(status=voice.status){
   if(wakeExample)wakeExample.textContent=example;
   document.querySelectorAll('.voice-prefix').forEach(item=>item.textContent=wake);
   document.querySelectorAll('.voice-trigger-phrase').forEach(input=>{
-    input.placeholder='完整口令';
-    input.title=`说出的完整口令，前面加「${wake}」`;
+    const game=isGameVoiceKey(input.closest('.binding-row')?.dataset.trigger);
+    input.placeholder=game?'例如：爬绳':'完整口令';
+    input.title=game?'直接说这句，不用唤醒词':`说出的完整口令，前面加「${wake}」`;
   });
 }
 /* 语音模型的词表里没有的字，写进口令就永远听不到——模型只是悄悄丢掉，不报错。所以
@@ -711,7 +720,8 @@ function voiceCommandPhrase(id){
   id=voiceCommandId(id);
   const row=document.querySelector(`.binding-row[data-trigger="voice.${id}"] .voice-trigger-phrase`);
   const binding=bindingsForDisplay()[`voice.${id}`];
-  return row?.value.trim()||binding?.phrase||voiceCatalog.find(item=>item.id===id)?.phrase||id;
+  const phrase=row?.value.trim()||binding?.phrase||voiceCatalog.find(item=>item.id===id)?.phrase||id;
+  return isGameVoiceKey(id)?normalizeGameVoicePhrase(phrase):phrase;
 }
 function voiceCommandName(id){
   id=voiceCommandId(id);
@@ -1011,7 +1021,8 @@ function buildBindingRow(trigger){
   const row=document.createElement('div');row.className='binding-row';row.dataset.trigger=trigger.key;
   const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
   if(trigger.group==='voice'){
-    const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=binding?.phrase||trigger.phrase||'';phrase.placeholder='例如：体感地图';phrase.title='说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);watchVoicePhrase(phrase);
+    const game=isGameVoiceKey(trigger.key);
+    const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=game?normalizeGameVoicePhrase(binding?.phrase||trigger.phrase||''):(binding?.phrase||trigger.phrase||'');phrase.placeholder=game?'例如：爬绳':'完整口令';phrase.title=game?'直接说这句，不用唤醒词':'说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);watchVoicePhrase(phrase);
   }
   const type=makeTypeSelect(action?{action}:binding);
   const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;fillTargetControl(target,type.value,action?.target??'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
@@ -1099,7 +1110,8 @@ function readProfileOverrides(){
       override.action.combo_stick_lead_ms=Math.max(0,Math.min(200,Number(comboLead.value)||0));
     }
     if(trigger.group==='voice'){
-      const phrase=row.querySelector('.voice-trigger-phrase')?.value.trim();
+      const rawPhrase=row.querySelector('.voice-trigger-phrase')?.value.trim();
+      const phrase=isGameVoiceKey(trigger.key)?normalizeGameVoicePhrase(rawPhrase):rawPhrase;
       if(!phrase)throw new Error(`${trigger.name} 还没有填写触发词`);
       override.phrase=phrase;
     }

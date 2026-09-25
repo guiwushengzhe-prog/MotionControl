@@ -75,19 +75,20 @@ def test_a_clash_that_arrives_by_switching_games_is_reported(tmp_path):
 
 
 def test_saving_shared_phrases_keeps_the_game_phrases(tmp_path):
-    """以前存一次通用口令，本游戏口令就退回「体感功能一」，要换一次游戏才回来。"""
+    """存一次通用口令，本游戏口令仍保持自己的免唤醒短语。"""
     voice = make_service(tmp_path)
     voice.configure_profile_bindings(JUMP_SLOT)
     voice.configure([shared("地图")])
-    assert "体感跳跃" in voice.grammar_phrases()
+    assert "跳跃" in voice.grammar_phrases()
 
 
 def test_switching_games_does_not_carry_a_phrase_over(tmp_path):
     voice = make_service(tmp_path)
     voice.configure_profile_bindings(JUMP_SLOT)
     voice.configure_profile_bindings({})
-    assert "体感跳跃" not in voice.grammar_phrases()
-    assert "体感功能一" in voice.grammar_phrases()
+    assert "跳跃" not in voice.grammar_phrases()
+    assert "功能一" in voice.grammar_phrases()
+    assert "体感功能一" in voice.grammar_phrases()  # 旧版本说法继续兼容
 
 
 def test_a_shared_phrase_that_used_to_be_shadowed_now_works(tmp_path):

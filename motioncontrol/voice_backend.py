@@ -366,8 +366,24 @@ class VoiceService:
                 self.last_error = f"语音命令注册表读取失败：{exc}"
         self._build_registry()
 
+    @staticmethod
+    def _is_game_profile_command(command_id: str) -> bool:
+        """本游戏口令按栏目免唤醒；栏目外的命令仍走唤醒词门禁。"""
+        return str(command_id or "").startswith(PROFILE_SLOT_PREFIX)
+
+    def _without_wake_word(self, phrase: str) -> str:
+        """去掉旧版本已经保存进本游戏口令的唤醒词前缀。"""
+        value = compact_text(str(phrase or ""))
+        for prefix in (self.wake_word, DEFAULT_WAKE_WORD):
+            prefix = compact_text(prefix)
+            if prefix and value.startswith(prefix) and value != prefix:
+                return value[len(prefix):]
+        return value
+
     def _commands_for(self, bindings: dict | None) -> list[dict]:
-        """Built-in commands with a game's phrases laid over them, wake word applied.
+        """Built-in commands with a game's phrases laid over them.
+
+        本游戏口令保留为不带唤醒词的短语；栏目外的内置命令仍带唤醒词。
 
         A list rather than a dict keyed by phrase: two commands given the same
         phrase must both stay visible, or the check that forbids it cannot see it.
@@ -380,17 +396,32 @@ class VoiceService:
             if command is None or not isinstance(binding, dict): continue
             phrase = str(binding.get("phrase", "")).strip()
             if phrase:
-                if not compact_text(phrase).startswith(compact_text(self.wake_word)): phrase = f"{self.wake_word}{phrase}"
+                if self._is_game_profile_command(command_id):
+                    phrase = self._without_wake_word(phrase)
+                elif not compact_text(phrase).startswith(compact_text(self.wake_word)):
+                    phrase = f"{self.wake_word}{phrase}"
                 command["phrase"] = phrase
             aliases = binding.get("synonyms", []); command["synonyms"] = []
             for item in aliases if isinstance(aliases, list) else []:
                 alias = str(item).strip()
                 if alias:
-                    if not compact_text(alias).startswith(compact_text(self.wake_word)): alias = f"{self.wake_word}{alias}"
+                    if self._is_game_profile_command(command_id):
+                        alias = self._without_wake_word(alias)
+                    elif not compact_text(alias).startswith(compact_text(self.wake_word)):
+                        alias = f"{self.wake_word}{alias}"
                     command["synonyms"].append(alias)
         for command in commands:
-            command["phrase"] = self._with_wake_word(str(command.get("phrase", "")))
-            command["synonyms"] = [self._with_wake_word(str(alias)) for alias in command.get("synonyms", []) or []]
+            if self._is_game_profile_command(command.get("id")):
+                command["phrase"] = self._without_wake_word(str(command.get("phrase", "")))
+                aliases = [self._without_wake_word(str(alias))
+                           for alias in command.get("synonyms", []) or []]
+                # 保留旧版本“唤醒词 + 本游戏口令”的语法别名；主短语仍显示为免唤醒写法。
+                if command["phrase"]:
+                    aliases.append(f"{self.wake_word}{command['phrase']}")
+                command["synonyms"] = list(dict.fromkeys(alias for alias in aliases if alias))
+            else:
+                command["phrase"] = self._with_wake_word(str(command.get("phrase", "")))
+                command["synonyms"] = [self._with_wake_word(str(alias)) for alias in command.get("synonyms", []) or []]
         return commands
 
     def _build_registry(self) -> None:
@@ -429,6 +460,11 @@ class VoiceService:
             label = "本游戏口令" if cid.startswith(PROFILE_SLOT_PREFIX) else "内置口令"
             for phrase in [command.get("phrase", ""), *(command.get("synonyms") or [])]:
                 claim(str(phrase), label, cid)
+                if (self._is_game_profile_command(cid)
+                        and not compact_text(str(phrase)).startswith(compact_text(self.wake_word))):
+                    # 兼容用户仍然说旧的“唤醒词 + 游戏口令”时，不能把同一句
+                    # 话同时留给通用口令。
+                    claim(f"{self.wake_word}{phrase}", label, cid)
         for index, mapping in enumerate(self.mappings):
             for phrase in [mapping["phrase"], *mapping.get("synonyms", [])]:
                 claim(f"{self.wake_word}{phrase}", "通用口令", f"mapping:{index}")
@@ -767,8 +803,17 @@ class VoiceService:
                 self.last_executed = False
                 self.last_error = str(exc)
                 return {"matched": True, "command": self.last_command, "ok": False, "message": str(exc)}
+        # 本游戏口令是独立的一栏，直接说配置的短语即可。先查注册表再做唤醒词门禁，
+        # 这样同名的通用口令和系统口令仍不会裸奔。
+        registry_command = self._phrase_index.get(got)
+        game_command_without_wake = (registry_command is not None and
+                                      self._is_game_profile_command(registry_command.get("id")))
+        if game_command_without_wake:
+            # 一句本游戏口令本身就是完整指令，不把之前单独说过的唤醒词窗口
+            # 留给下一句通用/系统口令。
+            self.wake_until = 0.0
         command = got
-        if enforce_wake:
+        if enforce_wake and not game_command_without_wake:
             now = time.monotonic()
             # Phone voice_text may still arrive as two utterances: "体感" ... "截图".
             # Keep the same short wake window for that compatibility path.
@@ -792,6 +837,10 @@ class VoiceService:
         registry_command = self._phrase_index.get(got)
         if registry_command is None and wake:
             registry_command = self._phrase_index.get(compact_text(f"{self.wake_word}{command}"))
+        if registry_command is None:
+            candidate = self._phrase_index.get(command)
+            if candidate is not None and self._is_game_profile_command(candidate.get("id")):
+                registry_command = candidate
         if registry_command is not None:
             return self._execute_command_action(registry_command, source_id=source_id)
 
