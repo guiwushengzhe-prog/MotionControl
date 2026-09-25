@@ -31,7 +31,7 @@ const BODY_ZONES = {leftHand:{body:'左手',button:'X',parts:['leftHandUpper','l
 // 现在读内核算好的 effective_bindings（见 bindingsForDisplay）——真会按下去的那份。
 function actionKeyText(action){
   if(!action)return null;
-  const type=String(action.type||''),target=String(action.target||'').toUpperCase();
+  const type=String(action.type||''),target=Array.isArray(action.target)?action.target.map(item=>String(item||'').toUpperCase()).filter(Boolean).join('+'):String(action.target||'').toUpperCase();
   if(!type||!target)return null;
   // 宏的编号对人没有意义，圈上和卡片上要写它的名字。
   if(type==='macro')return macroName(action.target);
@@ -137,6 +137,7 @@ const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',
 // The dispatcher rejects anything outside this set, so offer the list instead
 // of a free text field whose typos can only surface as a silent no-op in game.
 const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
+const GAMEPAD_TRIGGER_TARGETS=['LT','RT'];
 const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
 const SYSTEM_TARGET_NAMES=new Map([...VOICE_SYSTEM_TARGETS,['HEAD.CALIBRATE','开始校准']]);
 const voice={status:null};
@@ -734,7 +735,8 @@ function fillTargetControl(container,type,value='',comboLeadMs=80){
     const picker=document.createElement('div');picker.className='combo-picker';
     const combo=document.createElement('input');combo.type='hidden';
     const sync=()=>{combo.value=[...picker.querySelectorAll('input:checked')].map(box=>box.value).join('+')};
-    for(const key of [...(meta.targets||[]),...GAMEPAD_STICK_TARGETS]){
+    const comboTargets=meta.combo_targets||[...(meta.targets||[]),...GAMEPAD_STICK_TARGETS,...GAMEPAD_TRIGGER_TARGETS];
+    for(const key of [...new Set(comboTargets)]){
       const label=document.createElement('label');const box=document.createElement('input');
       box.type='checkbox';box.value=key;box.checked=chosen.has(key);box.addEventListener('change',sync);
       label.append(box,document.createTextNode(TARGET_LABELS[key]||key));picker.appendChild(label);

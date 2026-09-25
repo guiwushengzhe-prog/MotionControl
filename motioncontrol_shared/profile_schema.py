@@ -25,6 +25,7 @@ GAMEPAD_TRIGGERS = {"LT", "RT"}
 DEFAULT_COMBO_STICK_LEAD_MS = 80
 MIN_COMBO_STICK_LEAD_MS = 0
 MAX_COMBO_STICK_LEAD_MS = 200
+GAMEPAD_COMBO_TARGETS = GAMEPAD_BUTTONS | GAMEPAD_AXES | GAMEPAD_TRIGGERS
 MOUSE_BUTTONS = {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}
 MOUSE_WHEEL = {"SCROLL_UP", "SCROLL_DOWN"}
 ACTION_TYPES = {
@@ -93,14 +94,15 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         parts = [part for part in parts if part]
         if not parts:
             raise ValueError("Xbox 按键不能为空")
-        # Buttons and the left stick are separate channels on the pad, so a
-        # combo may mix them: "LB+LS_UP" holds the bumper and pushes the stick
-        # at the same time.  A lone direction still belongs to gamepad_axis.
-        invalid = [part for part in parts if part not in GAMEPAD_BUTTONS and part not in GAMEPAD_AXES]
+        # 手柄按键、左摇杆和扳机是三个独立通道，组合可以同时驱动它们。
+        # 单独的摇杆方向和扳机仍使用各自的动作类型，保持旧配置含义不变。
+        invalid = [part for part in parts if part not in GAMEPAD_COMBO_TARGETS]
         if invalid:
             raise ValueError("不支持的 Xbox 按键：" + ", ".join(sorted(set(invalid))))
         if len(parts) == 1 and parts[0] in GAMEPAD_AXES:
             raise ValueError("单独的摇杆方向请选择“Xbox 左摇杆”类型")
+        if len(parts) == 1 and parts[0] in GAMEPAD_TRIGGERS:
+            raise ValueError("单独的扳机请选择“Xbox 扳机”类型")
         target = parts[0] if len(parts) == 1 else parts
     elif action_type == "macro":
         # 宏编号是小写的。别的类型一律转大写（键名、按钮名本来就是大写），这里必须
@@ -262,7 +264,11 @@ def action_catalog() -> dict:
         "keyboard": {"free_text": True},
         "mouse_button": {"targets": sorted(MOUSE_BUTTONS)},
         "mouse_wheel": {"targets": sorted(MOUSE_WHEEL), "behavior": "tap"},
-        "gamepad": {"targets": sorted(GAMEPAD_BUTTONS), "allow_combo": True},
+        "gamepad": {
+            "targets": sorted(GAMEPAD_BUTTONS),
+            "combo_targets": sorted(GAMEPAD_COMBO_TARGETS),
+            "allow_combo": True,
+        },
         "gamepad_trigger": {"targets": sorted(GAMEPAD_TRIGGERS)},
         "gamepad_axis": {"targets": sorted(GAMEPAD_AXES)},
         # 目标不是固定的一组键，而是用户自己建的宏。界面要另外去宏库拿列表，

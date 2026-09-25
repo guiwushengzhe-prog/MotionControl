@@ -161,11 +161,56 @@ def test_voice_hold_and_release_cover_both_halves_of_a_mixed_combo(tmp_path):
 
 def test_a_lone_direction_still_belongs_to_the_axis_type():
     import pytest
-    from motioncontrol_shared.profile_schema import normalize_action
+    from motioncontrol_shared.profile_schema import action_catalog, normalize_action
     with pytest.raises(ValueError):
         normalize_action({'type': 'gamepad', 'target': 'LS_UP'})
     with pytest.raises(ValueError):
+        normalize_action({'type': 'gamepad', 'target': 'RT'})
+    with pytest.raises(ValueError):
         normalize_action({'type': 'gamepad', 'target': 'LB+NOPE'})
+    catalog = action_catalog()['gamepad']
+    assert set(catalog['combo_targets']) >= {'LB', 'LS_LEFT', 'LT', 'RT'}
+
+
+def test_gamepad_combo_holds_and_releases_buttons_stick_and_trigger(tmp_path):
+    from motioncontrol_shared.profile_schema import normalize_action
+
+    out, _mouse, _keyboard, pad = manager(tmp_path)
+    try:
+        out._combo_stick_lead = 0.0
+        action = normalize_action({
+            'type': 'gamepad', 'target': 'A+LB+LS_LEFT+RT', 'behavior': 'hold',
+        })
+        assert action['target'] == ['A', 'LB', 'LS_LEFT', 'RT']
+        out.set_action_holds([{'id': 'combo', 'action': action}])
+        assert set(pad.buttons) == {'A', 'LB'}
+        assert pad.left_stick == (-1.0, 0.0)
+        assert pad.triggers == (0.0, 1.0)
+
+        out.set_action_holds([])
+        assert pad.buttons == ()
+        assert pad.left_stick == (0.0, 0.0)
+        assert pad.triggers == (0.0, 0.0)
+    finally:
+        out.close()
+
+
+def test_voice_combo_with_trigger_uses_same_hold_and_release_path(tmp_path):
+    out, _mouse, _keyboard, pad = manager(tmp_path)
+    try:
+        out._combo_stick_lead = 0.0
+        out.execute_voice_action({
+            'type': 'gamepad', 'target': 'LB+RT', 'behavior': 'hold', 'source': 'voice',
+        })
+        assert pad.buttons == ('LB',)
+        assert pad.triggers == (0.0, 1.0)
+        out.execute_voice_action({
+            'type': 'gamepad', 'target': 'LB+RT', 'behavior': 'release', 'source': 'voice',
+        })
+        assert pad.buttons == ()
+        assert pad.triggers == (0.0, 0.0)
+    finally:
+        out.close()
 
 
 def test_a_mixed_combo_lets_the_button_lead_the_stick(tmp_path):

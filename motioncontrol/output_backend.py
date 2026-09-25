@@ -505,7 +505,7 @@ class VX360Gamepad:
         self._identified_user = added.pop()
         return self._identified_user
 
-    def set_merged_report(self, state: dict, names, motion_left=(0.0, 0.0)) -> None:
+    def set_merged_report(self, state: dict, names, motion_left=(0.0, 0.0), motion_triggers=(0.0, 0.0)) -> None:
         raw = state.get("raw_report")
         if raw is not None:
             self.report = XUSB_REPORT.from_buffer_copy(raw)
@@ -517,6 +517,14 @@ class VX360Gamepad:
                 setattr(self.report, field, round(value * (32768 if value < 0 else 32767)))
             self.report.bLeftTrigger = round(float(state.get("left_trigger", 0)) * 255)
             self.report.bRightTrigger = round(float(state.get("right_trigger", 0)) * 255)
+        # 合流时保留物理扳机，并让组合键的持续扳机取两者较大值。物理报告每次
+        # 都会重建，因此这里不能直接覆盖，否则用户扣住的扳机可能被体感动作松开。
+        physical_left = max(0.0, min(1.0, int(self.report.bLeftTrigger) / 255.0))
+        physical_right = max(0.0, min(1.0, int(self.report.bRightTrigger) / 255.0))
+        virtual_left = max(0.0, min(1.0, float(motion_triggers[0])))
+        virtual_right = max(0.0, min(1.0, float(motion_triggers[1])))
+        self.report.bLeftTrigger = round(max(physical_left, virtual_left) * 255)
+        self.report.bRightTrigger = round(max(physical_right, virtual_right) * 255)
         # 仅改有体感贡献的左轴；无贡献时保留物理报告的每一位。
         for field, motion in zip(("sThumbLX", "sThumbLY"), motion_left):
             if motion:
@@ -1020,8 +1028,27 @@ class OutputManager:
                 for sx, sy in self._left_stick_sources.values():
                     x += sx
                     y += sy
-            self._pad.set_merged_report(self._xinput_state or {}, names,
-                                        (max(-1.0, min(1.0, x)), max(-1.0, min(1.0, y))))
+            left_trigger = right_trigger = 0.0
+            if self.enabled:
+                # 手机传感器的扳机在物理手柄合流时沿用旧规则：物理报告自己提供，
+                # 这里只合并映射组合键和宏的扳机来源。
+                for source, (source_left, source_right) in self._trigger_sources.items():
+                    if source.startswith("mobile_sensor:"):
+                        continue
+                    left_trigger = max(left_trigger, float(source_left))
+                    right_trigger = max(right_trigger, float(source_right))
+            motion_left = (max(-1.0, min(1.0, x)), max(-1.0, min(1.0, y)))
+            motion_triggers = (left_trigger, right_trigger)
+            try:
+                self._pad.set_merged_report(self._xinput_state or {}, names,
+                                            motion_left, motion_triggers)
+            except TypeError as exc:
+                # 兼容旧的测试适配器和外部适配器，它们还只接受三参数报告。
+                # 生产 VX360Gamepad 使用上面的第四参数完成扳机合流。
+                try:
+                    self._pad.set_merged_report(self._xinput_state or {}, names, motion_left)
+                except TypeError:
+                    raise exc
         elif names or self._pad is not None:
             self._ensure_pad().set_buttons(names)
         self.last_buttons = names
@@ -1111,12 +1138,11 @@ class OutputManager:
             self.last_error = str(exc)
 
     @staticmethod
-    def _gamepad_parts(target) -> tuple[set[str], tuple[float, float] | None]:
-        """Split a gamepad target into held buttons and a left-stick vector.
+    def _gamepad_parts(target) -> tuple[set[str], tuple[float, float] | None, tuple[float, float] | None]:
+        """拆分手柄组合，返回按键、左摇杆向量和扳机强度。
 
-        Buttons and the stick are separate channels on the pad, so one combo can
-        drive both: "LB+LS_UP" holds the bumper and pushes the stick at once.
-        Several directions in one combo sum the same way separate sources do.
+        三个通道可以由一个组合同时驱动：``LB+LS_UP`` 会按住肩键并推左摇杆，
+        ``LB+RT`` 会同时按住肩键和右扳机。多个方向相加，多个扳机取较大强度。
         """
         if isinstance(target, (list, tuple, set)):
             parts = [str(item).strip().upper() for item in target]
@@ -1125,17 +1151,24 @@ class OutputManager:
         parts = [part for part in parts if part]
         if not parts:
             raise ValueError("Xbox 按键不能为空")
-        invalid = [part for part in parts if part not in XUSB_GAMEPAD_BUTTONS and part not in GAMEPAD_AXES]
+        invalid = [part for part in parts if part not in XUSB_GAMEPAD_BUTTONS and part not in GAMEPAD_AXES and part not in {"LT", "RT"}]
         if invalid:
             raise ValueError("不支持的 Xbox 按键：" + ", ".join(sorted(set(invalid))))
         buttons = {part for part in parts if part in XUSB_GAMEPAD_BUTTONS}
         stick = None
+        triggers = None
         for part in parts:
             if part in GAMEPAD_AXES:
                 ax, ay = GAMEPAD_AXES[part]
                 sx, sy = stick or (0.0, 0.0)
                 stick = (max(-1.0, min(1.0, sx + ax)), max(-1.0, min(1.0, sy + ay)))
-        return buttons, stick
+            elif part == "LT":
+                left, right = triggers or (0.0, 0.0)
+                triggers = (max(left, 1.0), right)
+            elif part == "RT":
+                left, right = triggers or (0.0, 0.0)
+                triggers = (left, max(right, 1.0))
+        return buttons, stick, triggers
 
     @staticmethod
     def _gamepad_targets(target) -> set[str]:
@@ -1201,10 +1234,12 @@ class OutputManager:
                         self.mouse.wheel(target, 1)
                     return
                 elif step_type == "gamepad":
-                    buttons, stick = self._gamepad_parts(target)
+                    buttons, stick, triggers = self._gamepad_parts(target)
                     held["buttons"] = buttons
                     if stick is not None and (not merge or self._xinput_motion_left_enabled):
                         held["stick"] = stick
+                    if triggers is not None:
+                        held["triggers"] = triggers
                 elif step_type == "gamepad_axis":
                     if merge and not self._xinput_motion_left_enabled:
                         return
@@ -1344,6 +1379,8 @@ class OutputManager:
                 self._keyboard_sources.pop(key, None)
             for key in [k for k in self._left_stick_sources if k.startswith(prefix)]:
                 self._left_stick_sources.pop(key, None)
+            for key in [k for k in self._trigger_sources if k.startswith(prefix)]:
+                self._trigger_sources.pop(key, None)
             for item in holds or []:
                 if not isinstance(item, dict):
                     continue
@@ -1356,13 +1393,15 @@ class OutputManager:
                     continue
                 source = prefix + ident
                 if action_type == "gamepad":
-                    buttons, stick = self._gamepad_parts(target)
+                    buttons, stick, triggers = self._gamepad_parts(target)
+                    lead_seconds = self._combo_lead_seconds(item.get("combo_stick_lead_ms"),
+                                                            self._combo_stick_lead)
                     # The stick half obeys the same merge rule as a plain axis
                     # hold: while a physical pad is merged it moves only when
                     # the user asked body motion to drive the left stick.
-                    self._hold_combo_locked(source, buttons, stick, allow_stick=not (
+                    self._hold_combo_locked(source, buttons, stick, triggers, allow_stick=not (
                         self._xinput_merge_active_locked() and not self._xinput_motion_left_enabled
-                    ))
+                    ), lead_seconds=lead_seconds)
                 elif action_type == "keyboard":
                     if self._xinput_merge_active_locked():
                         continue
@@ -1399,9 +1438,8 @@ class OutputManager:
     def set_action_holds(self, holds, source_group: str = "controls") -> dict:
         """Replace one trigger group's continuous outputs using the unified action schema.
 
-        Supported hold actions: keyboard, mouse_button, gamepad buttons, LT/RT and
-        left-stick cardinal directions. mouse_wheel is intentionally rejected because
-        a wheel is an impulse and must never run continuously while a zone is occupied.
+        支持键盘、鼠标按键，以及 Xbox 按键、左摇杆方向、LT/RT 的组合持续输出。
+        鼠标滚轮是瞬时动作，不能在区域持续占用时反复滚动。
         """
         prefix = str(source_group) + ":"
         with self._lock:
@@ -1425,10 +1463,10 @@ class OutputManager:
                     continue
                 source = prefix + ident
                 if action_type in {"gamepad", "gamepad_button", "xinput_button"}:
-                    buttons, stick = self._gamepad_parts(target)
+                    buttons, stick, triggers = self._gamepad_parts(target)
                     lead_seconds = self._combo_lead_seconds(action.get("combo_stick_lead_ms"),
                                                             self._combo_stick_lead)
-                    self._hold_combo_locked(source, buttons, stick, allow_stick=not (
+                    self._hold_combo_locked(source, buttons, stick, triggers, allow_stick=not (
                         self._xinput_merge_active_locked() and not self._xinput_motion_left_enabled
                     ), lead_seconds=lead_seconds)
                 elif action_type == "keyboard":
@@ -1540,18 +1578,25 @@ class OutputManager:
             milliseconds = fallback * 1000.0
         return max(MIN_COMBO_STICK_LEAD_MS, min(MAX_COMBO_STICK_LEAD_MS, milliseconds)) / 1000.0
 
-    def _hold_combo_locked(self, source: str, buttons: set[str], stick, *, allow_stick: bool,
+    def _hold_combo_locked(self, source: str, buttons: set[str], stick, triggers=None, *, allow_stick: bool,
                            lead_seconds: float | None = None) -> None:
-        """Hold a gamepad combo, letting the buttons lead the stick.
+        """持续写入手柄组合的三个通道，并让按键领先左摇杆。
 
-        Body triggers re-enter here every frame and rebuild their group from
-        scratch, so how long the button has led cannot be inferred from what is
-        currently applied -- it is remembered per source instead.  A voice latch
-        enters once and nothing re-enters for it, hence the catch-up timer.
+        身体触发器每帧重新构建整组输出，按键领先多久不能从当前输出倒推，必须按源
+        记录。语音持续按住只进入一次，因此用定时器补上摇杆。扳机不参与这个延迟，
+        按住组合时立即取 1.0，释放源时随同其他通道清零。
         """
         if buttons:
             self._button_sources[source] = buttons
+        else:
+            self._button_sources.pop(source, None)
+        if triggers is not None:
+            self._trigger_sources[source] = triggers
+        else:
+            self._trigger_sources.pop(source, None)
         if stick is None or not allow_stick:
+            self._cancel_combo_timers_locked(lambda key: key == source)
+            self._left_stick_sources.pop(source, None)
             self._combo_started.pop(source, None)
             return
         if not buttons:
@@ -1634,20 +1679,23 @@ class OutputManager:
 
     def tap_gamepad(self, button: str, duration: float = 0.10, source: str | None = None,
                     combo_stick_lead_ms=None) -> None:
-        buttons, stick = self._gamepad_parts(button)
+        buttons, stick, triggers = self._gamepad_parts(button)
         source = str(source).strip() if source else f"voice-{time.monotonic_ns()}"
         lead_seconds = self._combo_lead_seconds(combo_stick_lead_ms, self._combo_stick_lead)
         with self._lock:
             if not self.enabled:
                 return
             if buttons:
-                self._hold_combo_locked(source, buttons, stick, allow_stick=(
+                self._hold_combo_locked(source, buttons, stick, triggers, allow_stick=(
                     not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled
                 ), lead_seconds=lead_seconds)
             elif stick is not None and (not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled):
                 self._left_stick_sources[source] = stick
+            if triggers is not None:
+                self._trigger_sources[source] = triggers
             self._refresh_buttons_locked()
             self._refresh_left_stick_locked()
+            self._refresh_triggers_locked()
         # Keep a mixed tap alive long enough for the delayed stick half to be
         # observable. A normal tap remains within the existing 40..250 ms cap.
         try:
@@ -1661,8 +1709,10 @@ class OutputManager:
             self._cancel_combo_timers_locked(lambda key: key == source)
             self._button_sources.pop(source, None)
             self._left_stick_sources.pop(source, None)
+            self._trigger_sources.pop(source, None)
             self._refresh_buttons_locked()
             self._refresh_left_stick_locked()
+            self._refresh_triggers_locked()
 
     def tap_keyboard(self, combo: str, duration: float = 0.06, source: str | None = None) -> None:
         source = str(source).strip() if source else f"voice-keyboard-{time.monotonic_ns()}"
@@ -1750,13 +1800,14 @@ class OutputManager:
             if not self.enabled or (self._xinput_merge_active_locked() and not merge_allowed):
                 return {"executed": False, "reason": "输出已关闭或此体感输出未允许合流"}
             if action_type == "gamepad":
-                buttons, stick = self._gamepad_parts(target)
+                buttons, stick, triggers = self._gamepad_parts(target)
                 lead_seconds = self._combo_lead_seconds(combo_stick_lead_ms, self._combo_stick_lead)
-                self._hold_combo_locked(source, buttons, stick, allow_stick=(
+                self._hold_combo_locked(source, buttons, stick, triggers, allow_stick=(
                     not self._xinput_merge_active_locked() or self._xinput_motion_left_enabled
                 ), lead_seconds=lead_seconds)
                 self._refresh_buttons_locked()
                 self._refresh_left_stick_locked()
+                self._refresh_triggers_locked()
             elif action_type == "keyboard":
                 self._keyboard_sources[source] = self._combo_keys(target)
                 self._refresh_keyboard_locked()
@@ -1795,7 +1846,7 @@ class OutputManager:
             # is ever observable.
             release_duration = duration
             if action_type == "gamepad" and combo_stick_lead_ms is not None:
-                buttons, stick = self._gamepad_parts(target)
+                buttons, stick, _triggers = self._gamepad_parts(target)
                 if buttons and stick is not None:
                     release_duration = max(release_duration,
                                            self._combo_lead_seconds(combo_stick_lead_ms,
