@@ -4,6 +4,7 @@ import pytest
 
 from motioncontrol.control_kernel import ControlKernel
 from test_minimal_controls import KernelOutput, _standing_pose, _zone_feeder
+from conftest import apply_layout
 
 
 def lifted(side, *, knee=.10, ankle=.08, outward=0.0, stance=.0):
@@ -108,35 +109,11 @@ def test_noise_and_common_body_rise_are_not_marching(monkeypatch):
         kernel.close()
 
 
-def test_fixed_circle_stays_put_requires_outward_contact_and_accepts_foot_segment(monkeypatch):
+def test_wide_stance_march_inside_a_frozen_foot_zone_does_not_count_as_side_kick(monkeypatch):
     kernel = ControlKernel(KernelOutput())
     try:
         feed = _zone_feeder(kernel, monkeypatch)
-        zones = {'leftFoot': {'shape': 'circle', 'cx': .38, 'cy': .90, 'r': .012}}
-        kernel.configure_scene_layout({'zones': zones})
-        original = copy.deepcopy(kernel.fixed_zones)
-        feed(_standing_pose(), 20)
-        # 脚踝和脚尖都在圆外，但脚段实际穿过圆。
-        kick = lifted('left', outward=.06, ankle=.05 / .24)
-        kick['left_foot_index'] = {'x': .36, 'y': .90, 'score': .95}
-        feed(kick, 4)
-        assert kernel.zone_state['leftFoot']['pressed']
-        assert not kernel._point_in_circle(kick['left_ankle'], zones['leftFoot'])
-        assert not kernel._point_in_circle(kick['left_foot_index'], zones['leftFoot'])
-        feed(_standing_pose(), 4)
-        # 向外踢但未触圈时，不能越过可见边界触发。
-        feed(lifted('left', outward=.10, ankle=.08), 4)
-        assert not kernel.zone_state['leftFoot']['pressed']
-        assert kernel.fixed_zones == original
-    finally:
-        kernel.close()
-
-
-def test_wide_stance_march_inside_fixed_circle_does_not_count_as_side_kick(monkeypatch):
-    kernel = ControlKernel(KernelOutput())
-    try:
-        feed = _zone_feeder(kernel, monkeypatch)
-        kernel.configure_scene_layout({'zones': {'leftFoot': {'shape': 'circle', 'cx': .36, 'cy': .93, 'r': .035}}})
+        apply_layout(kernel, {'zones': {'leftFoot': {'shape': 'circle', 'cx': .36, 'cy': .93, 'r': .035}}})
         feed(lifted('left', knee=0, ankle=0, stance=.10), 20)
         for side in ('left', 'right', 'left'):
             feed(lifted(side, stance=.10), 5)
@@ -344,7 +321,7 @@ def test_a_pose_bound_to_hold_is_actually_held(monkeypatch):
     kernel = ControlKernel(output)
     try:
         feed = _zone_feeder(kernel, monkeypatch)
-        kernel.configure_scene_layout({'zones': {}, 'vertical_look': {'enabled': False}})
+        apply_layout(kernel, {'zones': {}, 'vertical_look': {'enabled': False}})
         kernel.configure_bindings({'poses': {'hands_cross': {
             'action': {'type': 'gamepad', 'target': ['LB', 'LS_UP'], 'behavior': 'hold'},
         }}})

@@ -2,6 +2,7 @@ import math
 
 from motioncontrol.hand_anchor import HandAnchorTracker, pose_with_hand_anchors
 from motioncontrol.control_kernel import ControlKernel, RUNTIME_BODY_ZONES
+from conftest import apply_layout
 
 
 def p(x, y, score=0.9, z=0.0):
@@ -112,7 +113,7 @@ def test_kernel_zones_consume_anchor_when_wrist_is_missing(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr("motioncontrol.control_kernel.time.monotonic", lambda: clock[0])
     try:
-        kernel.configure_scene_layout({
+        apply_layout(kernel, {
             "zones": {"leftHandUpper": {"shape": "circle", "cx": 0.20, "cy": 0.20, "r": 0.08}},
             "vertical_look": {"enabled": False},
         })

@@ -2,7 +2,7 @@
 
 The one thing that has to be global: user data now resolves through
 %LOCALAPPDATA%\\MotionControl rather than the program folder, so without this a
-test that constructs a GameProfileStore, a SceneLayoutManager or a VoiceService
+test that constructs a GameProfileStore, a ControlKernel or a VoiceService
 would read and overwrite the developer's own mappings, calibration and paired
 devices. Pointing MOTIONCONTROL_USER_DIR at a per-test directory makes that
 impossible rather than merely unlikely.
@@ -20,6 +20,22 @@ def isolated_user_data(tmp_path, monkeypatch):
     root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("MOTIONCONTROL_USER_DIR", str(root))
     return root
+
+
+def apply_layout(kernel, layout: dict) -> dict:
+    """旧测试里 ``configure_scene_layout`` 的替身：圆圈换成定住的框，上下视角设置照搬。
+
+    参考场景删了以后，固定在画面上的区域就是定住的跟随框；换法和升级时迁移旧场景
+    文件用的是同一个函数（legacy_scene_to_frozen），这里顺带把它也测到了。和原来
+    一样，没给上下视角设置就是关着。
+    """
+    from motioncontrol.control_kernel import legacy_scene_to_frozen
+
+    rects, vertical, _anchor = legacy_scene_to_frozen(layout)
+    kernel.configure_vertical_look(vertical if vertical else {"enabled": False})
+    if rects:
+        kernel.set_frozen_zones(rects)
+    return kernel.status()
 
 
 def official_pose_docs() -> list[dict]:

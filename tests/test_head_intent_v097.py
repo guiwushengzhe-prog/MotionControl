@@ -7,6 +7,7 @@ import pytest
 
 from motioncontrol.control_kernel import ControlKernel
 from motioncontrol.head_control import HeadController, HeadEstimate, IntentAxis
+from conftest import apply_layout
 
 
 class NumericEstimator:
@@ -104,7 +105,7 @@ def test_head_vertical_mode_uses_gate_temporary_pitch_center(tmp_path):
     kernel = ControlKernel(output)
     try:
         kernel.head_controller = _ready_controller(tmp_path)
-        kernel.configure_scene_layout({
+        apply_layout(kernel, {
             "zones": {"lookGate": {"cx": .2, "cy": .2, "r": .12}},
             "vertical_look": {"enabled": True, "source": "head", "deadzone": .05},
         })
@@ -130,7 +131,7 @@ def test_head_vertical_gate_exit_clears_center_and_output(tmp_path):
     kernel = ControlKernel(output)
     try:
         kernel.head_controller = _ready_controller(tmp_path)
-        kernel.configure_scene_layout({
+        apply_layout(kernel, {
             "zones": {"lookGate": {"cx": .2, "cy": .2, "r": .12}},
             "vertical_look": {"enabled": True, "source": "head", "deadzone": .05},
         })
@@ -150,7 +151,7 @@ def test_head_vertical_reentry_establishes_new_center(tmp_path):
     kernel = ControlKernel(output)
     try:
         kernel.head_controller = _ready_controller(tmp_path)
-        kernel.configure_scene_layout({
+        apply_layout(kernel, {
             "zones": {"lookGate": {"cx": .2, "cy": .2, "r": .12}},
             "vertical_look": {"enabled": True, "source": "head", "deadzone": .05},
         })

@@ -41,7 +41,6 @@ COPY_TREES = ("web", "game_profiles")
 # motion_mappings.json and voice_mappings.json exactly that way.
 CONFIG_FILES = (
     "voice_commands_v094.json",
-    "scene_layout.example.json",
 )
 
 # Configuration that belongs to the bundle, not to the repository: it points at

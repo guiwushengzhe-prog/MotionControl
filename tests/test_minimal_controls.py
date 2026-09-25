@@ -10,6 +10,7 @@ from motioncontrol.output_backend import OutputManager, XUSB_GAMEPAD_BUTTONS, GA
 from motioncontrol.control_kernel import ControlKernel
 from motioncontrol.voice_backend import VoiceService, compact_text
 from motioncontrol.sherpa_kws_backend import _spoken_command_candidates
+from conftest import apply_layout
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,12 +29,12 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩，本游戏 = 换游戏会变的，
     # 通用设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
-    for required in ['2.0', '开始', '本游戏', '通用设置', '站好并校准', '重新识别位置', '重设正前方', '紧急停止 · F9', '通用口令', '三维头姿（推荐）', '挪动区域', 'profileBindingRows']:
+    for required in ['2.0', '开始', '本游戏', '通用设置', '站好并校准', '恢复跟随', '重设正前方', '紧急停止 · F9', '通用口令', '三维头姿（推荐）', '挪动区域', 'profileBindingRows']:
         assert required in page
     assert '开始游戏控制' in app and '暂停游戏控制' in app
     for removed in ['开始 30 秒性能测试', '静止抖动测试', '实时性能数据', 'Lite / Full 对比结果', 'modelSelect']:
         assert removed not in page
-    for removed in ['hidden-compat', 'id="cameraBtn"', 'id="outputBtn"', 'id="sceneEditor"', 'saveProfileBindingsBtn', '<style>']:
+    for removed in ['hidden-compat', 'id="cameraBtn"', 'id="outputBtn"', 'id="sceneEditor"', 'id="fixedZonesMask"', 'id="sceneTools"', 'saveProfileBindingsBtn', '<style>']:
         assert removed not in page
     assert '<dialog' in page
     assert '上下视角待机' in page
@@ -79,24 +80,23 @@ def test_body_relative_zones_use_both_wrists_and_both_feet():
     assert 'detectForVideo' not in app
 
 
-def test_seventh_look_gate_exists_before_and_after_fixed_scene_capture():
+def test_seventh_look_gate_follows_and_freezes_like_the_other_zones():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     kernel_text = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
     assert 'data-zone="lookGate"' in page
     assert "lookGate:{label:'上下视角'" in app
-    assert 'state?.circle' in app and 'state?.rect' in app
+    assert 'state?.rect' in app
     assert 'rects["lookGate"]' in kernel_text
-    assert 'body_relative_provisional' in kernel_text
+    assert '"lookGate"' in kernel_text.split('FROZEN_ZONE_IDS = ')[1].split('\n')[0]
 
 
-def test_first_start_keeps_scene_capture_but_output_is_not_scene_gated():
+def test_first_start_no_longer_records_a_reference_scene():
+    """参考场景删了：开始游戏不再拍参考照片、不再问要不要切成固定区域。"""
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    assert 'ensureInitialSceneLayout' in app
-    assert "post('/api/scene/capture'" in app
+    assert 'ensureInitialSceneLayout' not in app
+    assert '/api/scene/' not in app
     assert 'await setOutput(!output.enabled)' in app
-    assert 'if(!output.enabled&&!(await ensureInitialSceneLayout()))' not in app
-    assert '固定区域不可用' in app
     assert 'inputStatus.handheld_connected' in app
 
 
@@ -494,7 +494,7 @@ def test_look_gate_captures_stable_body_relative_anchor_without_freezing_horizon
                 kernel.handle_pose_map('camera', pose, width=640, height=480)
 
         _stub_head_controller(kernel, pitch=-.9)
-        kernel.configure_scene_layout({
+        apply_layout(kernel, {
             'zones': {'lookGate': {'cx': .2, 'cy': .2, 'r': .15}},
             'vertical_look': {'enabled': True, 'point': 'right_wrist', 'range_y': .18, 'deadzone': .08},
         })
@@ -538,7 +538,7 @@ def test_optional_vertical_gate_exclusivity_pauses_only_horizontal_output():
     kernel = ControlKernel(output)
     try:
         _stub_head_controller(kernel, pitch=0.0)
-        kernel.configure_scene_layout({
+        apply_layout(kernel, {
             'zones': {'lookGate': {'cx': .2, 'cy': .2, 'r': .15}},
             'vertical_look': {'enabled': True, 'point': 'right_wrist', 'range_y': .18, 'deadzone': .08},
         })
@@ -811,23 +811,15 @@ def test_foot_and_hand_zones_do_not_overlap_each_other(monkeypatch):
         kernel.close()
 
 
-def test_switching_to_fixed_zones_needs_an_explicit_confirmation():
-    """Recording a scene is one-way: it leaves the follow zones behind.
-
-    Both entry points (the adjust button and the first computer-camera start)
-    funnel through ensureInitialSceneLayout, so the gate lives there.
-    """
+def test_adjusting_zones_freezes_them_first_and_can_be_undone():
+    """挪动区域先把跟随框定住（一直在动的东西没法拖）；取消回到点之前，恢复跟随随时能点。"""
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    assert 'id="fixedZonesMask"' in page
-    assert 'id="fixedZonesConfirm"' in page and 'id="fixedZonesCancel"' in page
-    assert '不再跟随身体' in page
-    assert 'function confirmFixedZones' in app
-    # The gate must sit before the capture call, and Esc must not confirm.
-    gate = app.index('if(!(await confirmFixedZones()))')
-    assert gate < app.index("post('/api/scene/capture'")
-    assert "layer.returnValue='cancel'" in app
-    assert "resolve(layer.returnValue==='confirm')" in app
+    assert 'id="followZonesBtn"' in page and 'id="zoneMoveHereBtn"' in page
+    opener = app[app.index('async function openFrozenZoneEditor()'):]
+    assert "post('/api/zones/freeze',{frozen:true})" in opener.split('\n}')[0]
+    cancel = app[app.index('async function cancelLiveZones()'):].split('\n}')[0]
+    assert "post('/api/zones/freeze',{frozen:false})" in cancel
 
 
 def test_start_script_detects_wireless_adb_devices_too():

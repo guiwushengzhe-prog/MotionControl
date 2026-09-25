@@ -52,8 +52,6 @@ VOICE_SYSTEM_TARGETS = {
     "HEAD.CENTER",
     "OUTPUT.START",
     "OUTPUT.STOP",
-    "SCENE.CAPTURE_REFERENCE",
-    "SCENE.REMATCH",
     # 录自定义动作。人站在镜头前几米外摆姿势，够不着鼠标——这三个按钮天生
     # 就该能用嘴按。不列在这里的话，界面上选得到、保存时却被校验器退回来。
     "POSE.RECORD",
@@ -64,7 +62,14 @@ VOICE_SYSTEM_TARGETS = {
     "ZONES.FREEZE_TOGGLE",
     "ZONES.FREEZE",
     "ZONES.FOLLOW",
+    "ZONES.MOVE_HERE",
     "OUTPUT.TOGGLE",
+}
+# 参考场景删掉以后，原来绑着「记录参考场景」「重新匹配场景」的口令改做「区域挪到我
+# 这里」——都是"让区域对上我现在的位置"。不认的话，存着旧写法的整份口令会被退回来。
+LEGACY_SYSTEM_TARGETS = {
+    "SCENE.CAPTURE_REFERENCE": "ZONES.MOVE_HERE",
+    "SCENE.REMATCH": "ZONES.MOVE_HERE",
 }
 
 # Motions drive one output each, so the richer action vocabulary that game
@@ -152,6 +157,7 @@ def normalize_voice_mappings(items) -> list[dict]:
         elif action_type == "keyboard":
             target = normalize_key_combo(target)
         elif action_type == "system":
+            target = LEGACY_SYSTEM_TARGETS.get(target, target)
             if target not in VOICE_SYSTEM_TARGETS:
                 raise ValueError(f"暂不支持的系统命令：{target}")
         else:

@@ -41,7 +41,7 @@ def test_a_shared_phrase_cannot_take_a_built_in_one(tmp_path):
     voice = make_service(tmp_path)
     voice.configure([shared("地图")])
     with pytest.raises(ValueError, match="内置口令"):
-        voice.configure([shared("地图"), shared("截图", "F12")])
+        voice.configure([shared("地图"), shared("挪动区域", "F12")])
     assert [item["phrase"] for item in voice.mappings] == ["地图"], "被拒的那次不该留下任何改动"
 
 
@@ -104,7 +104,7 @@ def test_old_shared_phrases_that_never_worked_are_dropped(tmp_path):
     path = user_path("voice_mappings")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"mappings": [
-        {"phrase": "截图", "type": "system", "target": "SCENE.CAPTURE_REFERENCE", "behavior": "tap"},
+        {"phrase": "挪动区域", "type": "system", "target": "ZONES.MOVE_HERE", "behavior": "tap"},
         shared("地图"),
     ]}, ensure_ascii=False), encoding="utf-8")
     voice = make_service(tmp_path)
@@ -123,3 +123,16 @@ def test_an_extra_stop_phrase_stops_and_cannot_double_as_a_shared_one(tmp_path):
     assert stops, "多加的急停没走急停那条路"
     with pytest.raises(ValueError, match="急停口令"):
         voice.configure([shared("停下")], emergency_stop_phrases=["体感停下"])
+
+
+def test_a_shared_phrase_still_pointing_at_the_removed_reference_scene_moves_the_zones(tmp_path):
+    """参考场景删了。原来绑着「记录参考场景」的通用口令改做「区域挪到我这里」，不整份退回。"""
+    path = user_path("voice_mappings")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mappings": [
+        {"phrase": "对位", "type": "system", "target": "SCENE.REMATCH", "behavior": "tap"},
+        shared("地图"),
+    ]}, ensure_ascii=False), encoding="utf-8")
+    voice = make_service(tmp_path)
+    assert [(item["phrase"], item["target"]) for item in voice.mappings] == [
+        ("对位", "ZONES.MOVE_HERE"), ("地图", "M")]

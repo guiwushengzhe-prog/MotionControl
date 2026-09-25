@@ -2,7 +2,9 @@
 
 进去就按：进框那一帧就按、出框那一帧就松，防误触那几条一条都不走，只留握拳控制鼠标
 的那只手不按。定住：框停在定住那一刻的位置，不再跟着人走，可以拖着改；存盘，重启
-还在。系统功能：区域、动作、姿势都能绑，触发那一下执行一次。
+还在。区域挪到我这里：定住的整组框按人现在的位置搬过来，拖过的大小不变——这是删掉
+参考场景之后，"摄像头碰歪了、人换了站位"的办法。系统功能：区域、动作、姿势都能绑，
+触发那一下执行一次。
 """
 
 from __future__ import annotations
@@ -12,7 +14,9 @@ import threading
 
 import pytest
 
-from motioncontrol.control_kernel import FROZEN_ZONE_MIN_SIZE, HAND_ENTER_DEPTH, ControlKernel
+from motioncontrol.control_kernel import (
+    FROZEN_ZONE_MIN_SIZE, HAND_ENTER_DEPTH, ControlKernel, legacy_scene_to_frozen,
+)
 from motioncontrol_shared.mapping_schema import normalize_voice_mappings
 from motioncontrol_shared.profile_schema import (
     BINDING_SYSTEM_TARGETS, action_catalog, normalize_action, normalize_bindings,
@@ -181,12 +185,133 @@ def test_a_frozen_flag_without_any_box_is_ignored(tmp_path, monkeypatch):
         again.close()
 
 
-def test_fixed_circles_cannot_be_frozen(kernel, monkeypatch):
+# ---------- 区域挪到我这里 ----------
+
+def test_moving_here_carries_the_dragged_boxes_along_with_the_body(kernel, monkeypatch):
     feed = _zone_feeder(kernel, monkeypatch)
     feed(standing(), 10)
-    kernel.configure_scene_layout({"zones": {"leftHand": {"shape": "circle", "cx": .2, "cy": .2, "r": .08}}})
-    result = kernel.freeze_zones(True)
-    assert not result["executed"] and "固定圆圈" in result["reason"]
+    kernel.freeze_zones(True)
+    kernel.update_frozen_zones({"headJump": {"x1": .45, "y1": .10, "x2": .55, "y2": .20}})
+    # 人往右挪了 0.1，又退后了一点（躯干变短到 0.8 倍，以胯为中心）。
+    moved = with_elbows(_standing_pose(dx=.10))
+    for name in ("left_shoulder", "right_shoulder"):
+        moved[name]["y"] = .64 - (.64 - .40) * .8
+    feed(moved, 3)
+    assert kernel.frozen_rects["headJump"] == {"x1": .45, "y1": .10, "x2": .55, "y2": .20}, "定住了就不跟着走"
+    result = kernel.move_zones_here()
+    assert result["executed"] and result["moved"]
+    jump = kernel.frozen_rects["headJump"]
+    # 胯中点从 (.50, .64) 到 (.60, .64)，比例 0.8：x 相对胯的 -.05 变成 -.04。
+    assert jump == pytest.approx({"x1": .56, "y1": .208, "x2": .64, "y2": .288}, abs=2e-3)
+
+
+def test_moving_here_keeps_edges_that_sit_on_the_image_border(kernel, monkeypatch):
+    feed = _zone_feeder(kernel, monkeypatch)
+    feed(standing(), 10)
+    kernel.freeze_zones(True)
+    before = dict(kernel.frozen_rects["leftHand"])
+    assert before["x1"] == 0.0 and before["y1"] == 0.0, "跟随的手区贴着画面左边和上边"
+    feed(with_elbows(_standing_pose(dx=.10)), 3)
+    kernel.move_zones_here()
+    after = kernel.frozen_rects["leftHand"]
+    assert after["x1"] == 0.0 and after["y1"] == 0.0
+    assert after["x2"] == pytest.approx(before["x2"] + .10, abs=2e-3)
+
+
+def test_moving_here_while_following_just_freezes_in_place(kernel, monkeypatch):
+    feed = _zone_feeder(kernel, monkeypatch)
+    feed(standing(), 10)
+    result = kernel.move_zones_here()
+    assert result["executed"] and kernel.zones_frozen and kernel.frozen_anchor is not None
+
+
+def test_moving_here_needs_to_see_the_body(kernel, monkeypatch):
+    feed = _zone_feeder(kernel, monkeypatch)
+    feed(standing(), 10)
+    kernel.freeze_zones(True)
+    kernel.handle_pose_map("camera", None, width=640, height=480)
+    result = kernel.move_zones_here()
+    assert not result["executed"] and "胯" in result["reason"]
+    assert kernel.zones_frozen, "没看清人就什么都不动"
+
+
+def test_the_body_anchor_survives_a_restart(kernel, monkeypatch):
+    feed = _zone_feeder(kernel, monkeypatch)
+    feed(standing(), 10)
+    kernel.freeze_zones(True)
+    anchor = dict(kernel.frozen_anchor)
+    again = ControlKernel(KernelOutput())
+    try:
+        assert again.frozen_anchor == anchor
+        assert again.status()["zones_anchor_known"] is True
+    finally:
+        again.close()
+
+
+# ---------- 旧版参考场景 ----------
+
+OLD_SCENE = {
+    "version": 2,
+    "zones": {
+        "leftHand": {"shape": "circle", "cx": .20, "cy": .20, "r": .08},
+        "rightHandUpper": {"shape": "circle", "cx": .80, "cy": .18, "r": .05},
+        "rightHandLower": {"shape": "circle", "cx": .82, "cy": .30, "r": .05},
+        "leftFoot": {"shape": "circle", "cx": .30, "cy": .85, "r": .06},
+    },
+    "vertical_look": {"enabled": True, "source": "hand", "range_y": .25, "deadzone": .05,
+                      "exclusive_axes": True, "body_motion_guard": True},
+    "pose": {name: {**point, "score": .95} for name, point in {
+        "left_shoulder": {"x": .42, "y": .40}, "right_shoulder": {"x": .58, "y": .40},
+        "left_hip": {"x": .45, "y": .64}, "right_hip": {"x": .55, "y": .64}}.items()},
+}
+
+
+def test_old_scene_circles_become_frozen_boxes():
+    rects, vertical, anchor = legacy_scene_to_frozen(OLD_SCENE)
+    assert rects["leftHand"] == {"x1": .12, "y1": .12, "x2": .28, "y2": .28}
+    assert rects["rightHand"]["x1"] < .77 and rects["rightHand"]["y2"] > .34, "旧的上下两个圈合成一个"
+    assert "headJump" in rects, "旧布局没有头顶区，按两手上圈的位置补一个"
+    assert vertical["range_y"] == .25
+    assert anchor == {"x": .50, "y": .64, "scale": .24}
+
+
+def _write_old_scene(photo=True):
+    from motioncontrol.user_paths import user_path
+
+    layout = user_path("scene_layout")
+    layout.parent.mkdir(parents=True, exist_ok=True)
+    layout.write_text(json.dumps(OLD_SCENE), encoding="utf-8")
+    if photo:
+        user_path("scene_reference").write_bytes(b"jpeg")
+    return layout
+
+
+def test_a_recorded_scene_is_migrated_once_on_upgrade():
+    layout = _write_old_scene()
+    first = ControlKernel(KernelOutput())
+    try:
+        status = first.status()
+        assert status["zones_frozen"] and status["zones_anchor_known"]
+        assert status["zones"]["leftFoot"]["rect"] == {"x1": .24, "y1": .79, "x2": .36, "y2": .91}
+        assert first.vertical_look["range_y"] == .25 and first.body_motion_guard_enabled is True
+        first.freeze_zones(False)
+    finally:
+        first.close()
+    assert layout.is_file(), "旧文件不删，留着用户自己处理"
+    again = ControlKernel(KernelOutput())
+    try:
+        assert not again.zones_frozen, "只迁移一次：恢复跟随以后不能又被旧文件定回去"
+    finally:
+        again.close()
+
+
+def test_a_scene_without_its_photo_was_never_active_and_is_not_migrated():
+    _write_old_scene(photo=False)
+    kernel = ControlKernel(KernelOutput())
+    try:
+        assert not kernel.zones_frozen
+    finally:
+        kernel.close()
 
 
 # ---------- 系统功能 ----------
@@ -239,3 +364,23 @@ def test_other_system_functions_go_to_the_handler_once(kernel, monkeypatch):
     feed(into(kernel, standing(), "leftHand", .12), 5)
     assert done.wait(2)
     assert calls == [("OUTPUT.TOGGLE", "zone.leftHand")]
+
+
+def test_move_here_is_a_system_function_for_bindings_and_voice():
+    assert normalize_action({"type": "system", "target": "ZONES.MOVE_HERE"})["target"] == "ZONES.MOVE_HERE"
+    rows = normalize_voice_mappings([{"phrase": "挪过来", "type": "system", "target": "ZONES.MOVE_HERE"}])
+    assert rows[0]["target"] == "ZONES.MOVE_HERE"
+
+
+def test_a_pose_bound_to_move_here_moves_the_frozen_boxes(kernel, monkeypatch):
+    feed = _zone_feeder(kernel, monkeypatch)
+    kernel.configure_zone_trigger_mode("simple")
+    kernel.configure_bindings({"zones": {"rightHand": {"action": {"type": "system", "target": "ZONES.MOVE_HERE"}}}})
+    feed(standing(), 10)
+    kernel.freeze_zones(True)
+    before = dict(kernel.frozen_rects["headJump"])
+    shifted = with_elbows(_standing_pose(dx=.05))
+    feed(shifted, 2)
+    feed(into(kernel, shifted, "rightHand", .12), 2)
+    assert kernel.frozen_rects["headJump"]["x1"] == pytest.approx(before["x1"] + .05, abs=2e-3)
+

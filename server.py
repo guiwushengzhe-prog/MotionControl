@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import mimetypes
 import os
@@ -37,7 +38,6 @@ from motioncontrol_shared.motion_conflicts import motion_conflict_payload, valid
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
 from motioncontrol_shared.model_share import ModelShare
 from motioncontrol.voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
-from motioncontrol.scene_layout import SceneLayoutManager
 from motioncontrol.discovery import DiscoveryResponder
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
 
@@ -68,7 +68,7 @@ MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
 MODEL_COMPAT_RELATIVE = Path("mediapipe") / "pose_landmarker_full_compatible_075.task"
 
 # User data moved out of the program folder in 2.0.x.  Run the one-time copy
-# before anything below constructs, because SceneLayoutManager, GameProfileStore
+# before anything below constructs, because ControlKernel, GameProfileStore
 # and VoiceService all read their files at import time -- migrating afterwards
 # would silently hand the user defaults on their first upgraded launch.
 _MIGRATED = migrate_legacy_user_data(ROOT)
@@ -79,9 +79,6 @@ print("用户数据目录：", user_data_root())
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
-SCENE = SceneLayoutManager(ROOT)
-if SCENE.session:
-    KERNEL.configure_scene_layout(SCENE.session)
 PROFILE_UPDATE_LOCK = threading.RLock()
 PROFILES = GameProfileStore(ROOT)
 KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
@@ -92,59 +89,6 @@ def _apply_effective_profile() -> dict:
     KERNEL.configure_bindings(profile.get("bindings", {}))
     VOICE.configure_profile_bindings(profile.get("bindings", {}))
     return profile
-
-
-def _scene_apply_current() -> dict:
-    if SCENE.session:
-        KERNEL.configure_scene_layout(SCENE.session)
-    status = SCENE.status()
-    bridge = globals().get("INPUT_BRIDGE")
-    payload_fn = globals().get("_phone_control_payload")
-    if bridge is not None and callable(payload_fn):
-        broadcaster = getattr(bridge, "broadcast_control_config", None)
-        if broadcaster is not None:
-            try:
-                broadcaster(payload_fn())
-            except Exception:
-                pass
-    return status
-
-
-def _scene_capture_with_frame(frame, purpose: str) -> dict:
-    # Scene authoring is deliberately low-frequency.  Use a recent multi-frame
-    # median pose here so one MediaPipe jump cannot place all seven regions in
-    # the wrong location.  Gameplay itself still uses the newest frame.
-    pose = KERNEL.stable_pose_snapshot(window_s=0.90, min_samples=6) or KERNEL.latest_pose
-    if purpose == "capture":
-        SCENE.capture_reference(frame, pose, KERNEL.zone_rects,
-                                vertical_preferences=KERNEL.vertical_look)
-    elif purpose == "rematch":
-        result = SCENE.rematch(frame, pose)
-        if not result.get("last_result", {}).get("ok"):
-            raise ValueError(result.get("last_result", {}).get("message") or "场景重新匹配失败")
-    else:
-        raise ValueError("unknown scene purpose")
-    return _scene_apply_current()
-
-
-def _scene_capture_local(purpose: str) -> dict:
-    frame = RUNTIME.camera.latest_frame()
-    if frame is None:
-        raise RuntimeError("当前电脑摄像头没有可用画面")
-    return _scene_capture_with_frame(frame, purpose)
-
-
-def _scene_snapshot_from_phone(jpeg: bytes, purpose: str, device_id: str) -> dict:
-    try:
-        import cv2
-        import numpy as np
-    except ImportError as exc:
-        raise RuntimeError("处理手机截图需要 OpenCV 与 NumPy") from exc
-    frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if frame is None:
-        raise ValueError("手机返回的 JPEG 无法解码")
-    result = _scene_capture_with_frame(frame, purpose)
-    return {"ok": True, "scene": result}
 
 
 def emergency_stop_all() -> dict:
@@ -222,6 +166,10 @@ def execute_system_target(target: str) -> dict | None:
         result = KERNEL.freeze_zones(frozen)
         result.pop("status", None)
         return result
+    if target == "ZONES.MOVE_HERE":
+        result = KERNEL.move_zones_here()
+        result.pop("status", None)
+        return result
     return None
 
 
@@ -293,14 +241,6 @@ def execute_voice_action(action: dict) -> dict:
                 "pose_capture": POSE_TIMER.arm(purpose="frame", delay_s=delay, pose_id=pose_id)}
     if target == "POSE.CANCEL":
         return {"executed": True, "pose_capture": POSE_TIMER.cancel()}
-    # Scene capture/rematch
-    if target in {"SCENE.CAPTURE_REFERENCE", "SCENE.REMATCH"}:
-        purpose = "capture" if target.endswith("CAPTURE_REFERENCE") else "rematch"
-        if RUNTIME.body_mode == "phone":
-            data = INPUT_BRIDGE.request_scene_snapshot(purpose)
-            return {"executed": True, **data}
-        data = _scene_capture_local(purpose)
-        return {"executed": True, "scene": data}
     return {"executed": False, "reason": f"不支持的系统语音命令：{target}"}
 
 
@@ -340,7 +280,6 @@ def _instance_id() -> str:
 
 
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
-INPUT_BRIDGE.configure_scene_snapshot_handler(_scene_snapshot_from_phone)
 
 def find_phone_web(root: Path) -> Path | None:
     """手机的网页包在哪：发布包里带着，开发时用隔壁仓库的构建产物。
@@ -375,7 +314,6 @@ def find_phone_web(root: Path) -> Path | None:
 
 def _phone_control_payload() -> dict:
     profile = PROFILES.effective_profile()
-    scene = SCENE.status()
     return {
         "type": "control_config_v1",
         "version": VERSION,
@@ -387,8 +325,10 @@ def _phone_control_payload() -> dict:
         # 绑定里的宏是按编号引用的，手机手上没有宏库就只能显示一串编号。带上名字和
         # 步数，圈上才写得出「三连击」。只在配置变化时推一次，不是实时数据。
         "macros": MACROS.status(),
-        "zones": scene.get("zones", {}),
-        "vertical_look": scene.get("vertical_look", {}),
+        # 固定圆圈（参考场景）删了以后这里一直是空的；区域的位置跟着触发状态一起推
+        # （runtime_zones），定住的框也在那里面。字段留着，旧手机照旧认。
+        "zones": {},
+        "vertical_look": copy.deepcopy(KERNEL.vertical_look),
         # The phone builds its own constrained grammar from this.  Sending it
         # keeps one list authoritative: a phrase added on the desktop is heard
         # by the phone microphone too, without shipping a new build.
@@ -1116,8 +1056,6 @@ class AdminHandler(_BaseHandler):
         if route == "/api/voice/commands":
             self._send_json(voice_command_catalog())
             return
-        if route == "/api/scene/status":
-            self._send_json({"version": VERSION, **SCENE.status()})
             return
         if route == "/api/macros":
             self._send_json({
@@ -1212,12 +1150,6 @@ class AdminHandler(_BaseHandler):
                 # request: the cloud is optional and the UI says so.
                 payload["error"] = str(exc)
             self._send_json(payload)
-            return
-        if route == "/api/scene/reference.jpg":
-            if not SCENE.reference_path.is_file():
-                self.send_error(404, "scene reference unavailable")
-                return
-            self._serve_file(SCENE.reference_path)
             return
         super().do_GET()
 
@@ -1599,7 +1531,8 @@ class AdminHandler(_BaseHandler):
             return
         # 区域触发方式（进去就按 / 防误触）；定住跟随框、恢复跟随、定住后拖过的框。
         # 只给本机，和量身一样。
-        if route in ("/api/zones/trigger-mode", "/api/zones/freeze", "/api/zones/frozen"):
+        if route in ("/api/zones/trigger-mode", "/api/zones/freeze", "/api/zones/frozen",
+                     "/api/zones/move-here", "/api/vertical-look"):
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "zone settings are loopback-only"}, 403)
                 return
@@ -1610,6 +1543,13 @@ class AdminHandler(_BaseHandler):
                     result = KERNEL.freeze_zones(body.get("frozen", True) is not False)
                     if not result.get("executed"):
                         raise ValueError(result.get("reason") or "没能定住")
+                elif route == "/api/zones/move-here":
+                    result = KERNEL.move_zones_here()
+                    if not result.get("executed"):
+                        raise ValueError(result.get("reason") or "没能挪过来")
+                elif route == "/api/vertical-look":
+                    # 上下视角的范围、死区等。原来存在参考场景里，现在归通用设置。
+                    KERNEL.configure_vertical_look(body)
                 else:
                     KERNEL.update_frozen_zones(body.get("rects"))
                 self._send_json({"ok": True, **RUNTIME.status()})
@@ -1687,26 +1627,6 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": True, "active": sorted(active), **data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **OUTPUT.status()}, 400)
-            return
-        if route in {"/api/scene/capture", "/api/scene/rematch", "/api/scene/layout"}:
-            if not self._is_loopback():
-                self._send_json({"ok": False, "error": "scene config is loopback-only"}, 403)
-                return
-            try:
-                if route == "/api/scene/layout":
-                    data = SCENE.update_reference_layout(body)
-                    _scene_apply_current()
-                    self._send_json({"ok": True, **data})
-                else:
-                    purpose = "capture" if route.endswith("capture") else "rematch"
-                    if RUNTIME.body_mode == "phone":
-                        data = INPUT_BRIDGE.request_scene_snapshot(purpose)
-                        self._send_json({"ok": True, **data, "scene": SCENE.status()})
-                    else:
-                        data = _scene_capture_local(purpose)
-                        self._send_json({"ok": True, **data})
-            except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **SCENE.status()}, 400)
             return
         if not route.startswith("/api/output/"):
             self._send_json({"ok": False, "error": "not found"}, 404)

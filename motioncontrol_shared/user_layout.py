@@ -82,6 +82,7 @@ PROGRAM_CONFIG_FILES = {
     "funasr_seaco_model_path.txt",
     "funasr_vad_model_path.txt",
     "voice_commands_v094.json",
+    # 参考场景已经删了，发布包里不再带这个示例；老版本装出去的那份还在，照样当程序文件。
     "scene_layout.example.json",
     # 发布用的网页包签名私钥放在哪。跟上面那几个模型路径同一类：指向本机一个
     # 文件，只有发布的人有，装了软件的玩家没有这个文件也一切正常。

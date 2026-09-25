@@ -159,15 +159,14 @@ def test_runtime_zone_snapshot_preserves_dynamic_rect_geometry_and_pressed_state
         kernel.close()
 
 
-def test_runtime_zone_snapshot_preserves_fixed_circle_geometry():
+def test_runtime_zone_snapshot_reports_frozen_zone_geometry():
     kernel = ControlKernel(FakeOutput())
     try:
-        circle = {"shape": "circle", "cx": 0.7, "cy": 0.4, "r": 0.1}
+        rect = {"x1": 0.6, "y1": 0.3, "x2": 0.8, "y2": 0.5}
+        kernel.set_frozen_zones({"rightHand": rect})
         with kernel._lock:
-            kernel.fixed_zones_enabled = True
-            kernel.fixed_zones["rightHand"] = circle
             kernel.zone_state["rightHand"]["pressed"] = True
-        assert kernel.runtime_zones()["rightHand"] == {"circle": circle, "pressed": True, "recognized": True}
+        assert kernel.runtime_zones()["rightHand"] == {"rect": rect, "pressed": True, "recognized": True}
     finally:
         kernel.close()
 

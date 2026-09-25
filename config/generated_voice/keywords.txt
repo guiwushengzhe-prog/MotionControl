@@ -1,8 +1,8 @@
 t ǐ g ǎn j ǐn j í t íng zh ǐ :2.00 #0.24 @体感紧急停止
 t ǐ g ǎn k āi sh ǐ sh ū ch ū :1.50 #0.38 @体感开始输出
 t ǐ g ǎn t íng zh ǐ sh ū ch ū :1.70 #0.30 @体感停止输出
-t ǐ g ǎn j ié t ú :1.70 #0.30 @体感截图
-t ǐ g ǎn ch óng x īn p ǐ p èi :1.70 #0.30 @体感重新匹配
+t ǐ g ǎn n uó d òng q ū y ù :1.70 #0.30 @体感挪动区域
+t ǐ g ǎn h uī f ù g ēn s uí :1.70 #0.30 @体感恢复跟随
 t ǐ g ǎn k āi sh ǐ j iào zh ǔn :1.70 #0.30 @体感开始校准
 t ǐ g ǎn sh è zh ì zh ōng x īn :1.70 #0.30 @体感设置中心
 t ǐ g ǎn g ōng n éng y ī :1.60 #0.33 @体感功能一

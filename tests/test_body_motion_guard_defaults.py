@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 from motioncontrol.control_kernel import ControlKernel
-from motioncontrol.scene_layout import SceneLayoutManager
+from conftest import apply_layout
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,27 +43,10 @@ def test_new_kernel_defaults_body_motion_guard_to_off():
         kernel.close()
 
 
-def test_missing_scene_field_falls_back_to_off(tmp_path):
-    manager = SceneLayoutManager(tmp_path)
-    manager.layout_path = tmp_path / "scene_layout.json"
-    manager.reference_path = tmp_path / "scene_reference.jpg"
-    manager.layout_path.write_text(
-        '{"version": 2, "zones": {}, "vertical_look": {"enabled": false}}',
-        encoding="utf-8",
-    )
-    manager.reference_path.write_bytes(b"reference")
-    manager._load()
-    assert manager.status()["vertical_look"]["body_motion_guard"] is False
-
-    manager.reference = {"zones": {}, "vertical_look": {"enabled": False}}
-    state = manager.update_reference_layout({
-        "zones": {}, "vertical_look": {"enabled": False},
-    })
-    assert state["vertical_look"]["body_motion_guard"] is False
-
+def test_missing_guard_field_falls_back_to_off():
     kernel = ControlKernel(Output())
     try:
-        kernel.configure_scene_layout({
+        apply_layout(kernel, {
             "zones": {}, "vertical_look": {"enabled": False},
         })
         assert kernel.body_motion_guard_enabled is False
@@ -71,10 +54,25 @@ def test_missing_scene_field_falls_back_to_off(tmp_path):
         kernel.close()
 
 
+def test_the_guard_setting_survives_a_restart():
+    """原来只存在参考场景文件里，没记录过场景的人每次重启都回到关。"""
+    kernel = ControlKernel(Output())
+    try:
+        kernel.configure_head(body_motion_guard=True, vertical_exclusive=True)
+    finally:
+        kernel.close()
+    again = ControlKernel(Output())
+    try:
+        assert again.body_motion_guard_enabled is True
+        assert again.vertical_look["exclusive_axes"] is True
+    finally:
+        again.close()
+
+
 def test_explicit_true_keeps_guard_with_vertical_look_disabled():
     kernel = ControlKernel(Output())
     try:
-        kernel.configure_scene_layout({
+        apply_layout(kernel, {
             "zones": {},
             "vertical_look": {"enabled": False, "body_motion_guard": True},
         })

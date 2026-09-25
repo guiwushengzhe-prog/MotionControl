@@ -36,7 +36,7 @@ def kernel(tmp_path, monkeypatch):
     return ControlKernel(Output())
 
 
-def test_off_is_accepted_without_a_saved_scene_layout(kernel):
+def test_off_is_accepted_and_saved_in_general_settings(kernel):
     """没定位过区域的玩家不会保存布局，开关不能只存在那里面。"""
     kernel.configure_head(vertical_look_source="off")
     assert kernel.vertical_look["enabled"] is False
@@ -45,7 +45,6 @@ def test_off_is_accepted_without_a_saved_scene_layout(kernel):
 
 def test_turning_it_off_hides_the_gate_zone(kernel):
     kernel.zone_rects["lookGate"] = (0.1, 0.1, 0.2, 0.2)
-    kernel.fixed_zones_enabled = False
 
     kernel.configure_head(vertical_look_source="hand")
     assert kernel._gate_available() is True, "开着的时候闸应该在"
@@ -54,9 +53,8 @@ def test_turning_it_off_hides_the_gate_zone(kernel):
     assert kernel._gate_available() is False, "关掉之后界面不该再画绿框"
 
 
-def test_off_is_also_honoured_for_a_fixed_scene(kernel):
-    kernel.fixed_zones_enabled = True
-    kernel.fixed_zones = {"lookGate": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}}
+def test_off_is_also_honoured_for_frozen_zones(kernel):
+    kernel.set_frozen_zones({"lookGate": {"x1": 0.1, "y1": 0.1, "x2": 0.3, "y2": 0.3}})
 
     kernel.configure_head(vertical_look_source="hand")
     assert kernel._gate_available() is True

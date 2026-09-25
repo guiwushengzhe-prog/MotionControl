@@ -7,12 +7,12 @@ const root = path.resolve(__dirname, '..');
 const artifacts = path.join(root, 'output', 'playwright', 'v2');
 fs.mkdirSync(artifacts, { recursive: true });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const zones = Object.fromEntries(['leftHand','rightHand','leftFoot','rightFoot','headJump','lookGate'].map((id,i)=>[id,{cx:.2+(i%3)*.25,cy:.25+Math.floor(i/3)*.35,r:.07}]));
+const zones = Object.fromEntries(['leftHand','rightHand','leftFoot','rightFoot','headJump','lookGate'].map((id,i)=>{const cx=.2+(i%3)*.25,cy=.25+Math.floor(i/3)*.35;return [id,{x1:cx-.07,x2:cx+.07,y1:cy-.07,y2:cy+.07}]}));
 const state = {
   selected:'game-a',saved:{},output:{enabled:false,mode:'mouse',mouse_available:true,mouse_speed_x:960,gamepad_gain:1.6},
   camera:false,source:'computer',phone:false,offline:false,failSource:true,failSave:false,failStop:false,failStart:false,
   saveDelay:0,saving:0,maxSaving:0,saveCalls:[],selectCalls:[],performanceCalls:0,failHead:false,
-  scene:{configured:true,zones,vertical_look:{source:'hand',range_y:.18,deadzone:.1,center_y:.5}},
+  zones:{rects:zones,frozen:false},
   head:{algorithm:'pnp',horizontal_algorithm:'classic',enabled:true,calibrated:true,sensitivity_x:58,sensitivity_y:46,deadzone:.1},
 };
 const commands=[
@@ -31,7 +31,7 @@ function profile(){
 function runtime(){
   return {body_mode:state.source,camera:{running:state.camera},kernel:{width:640,height:480,
     pose:state.camera?{nose:{x:.5,y:.25,score:1},left_shoulder:{x:.35,y:.4,score:1},right_shoulder:{x:.65,y:.4,score:1}}:null,
-    zones:Object.fromEntries(Object.entries(state.scene.zones).map(([id,circle])=>[id,{circle}])),head:state.head}};
+    zones:Object.fromEntries(Object.entries(state.zones.rects).map(([id,rect])=>[id,{rect}])),zones_frozen:state.zones.frozen,head:state.head}};
 }
 (async()=>{
   const browser=await chromium.launch({channel:'msedge',headless:true});
@@ -78,8 +78,9 @@ function runtime(){
         if(state.failSave)return fail('模拟磁盘写入失败');
         if(body.profile_id!==state.selected)return route.fulfill({status:409,json:{ok:false,error:'目标游戏不匹配'}});
         state.saved[body.profile_id]=body.overrides;return respond({profile:profile()});
-      case '/api/scene/status':return respond(state.scene);
-      case '/api/scene/layout':state.scene={configured:true,zones:body.zones,vertical_look:body.vertical_look};return respond(state.scene);
+      case '/api/zones/freeze':state.zones.frozen=body.frozen!==false;return respond(runtime());
+      case '/api/zones/frozen':state.zones.rects={...state.zones.rects,...body.rects};return respond(runtime());
+      case '/api/zones/move-here':state.zones.frozen=true;return respond(runtime());
       case '/api/head/config':
         if(state.failHead)return fail('模拟头控设置失败');
         Object.assign(state.head,body);return respond(runtime());
@@ -146,14 +147,18 @@ function runtime(){
     await page.locator('[data-view=play]').click();
     await page.locator('#adjustZonesBtn').click();
     await page.locator('#zoneEditBar').waitFor({state:'visible'});
-    const oldCx=state.scene.zones.leftHand.cx;
+    // 挪动区域先把跟随框定住；取消回到跟着走，框不变。
+    assert.equal(state.zones.frozen,true);
+    const oldX1=state.zones.rects.leftHand.x1;
     await page.locator('[data-zone=leftHand]').focus();await page.keyboard.press('ArrowLeft');
     await page.locator('#cancelLiveZonesBtn').click();
-    await page.locator('#zoneEditBar').waitFor({state:'hidden'});assert.equal(state.scene.zones.leftHand.cx,oldCx);
+    await page.locator('#zoneEditBar').waitFor({state:'hidden'});
+    assert.equal(state.zones.frozen,false);assert.equal(state.zones.rects.leftHand.x1,oldX1);
     await page.locator('#adjustZonesBtn').click();await page.locator('#zoneEditBar').waitFor({state:'visible'});
     await page.locator('[data-zone=leftHand]').focus();await page.keyboard.press('ArrowLeft');
     await page.locator('#saveLiveZonesBtn').click();await page.locator('#zoneEditBar').waitFor({state:'hidden'});
-    assert.ok(state.scene.zones.leftHand.cx>oldCx);
+    // 画面是镜像的：往屏幕左边挪，原始坐标变大。
+    assert.equal(state.zones.frozen,true);assert.ok(state.zones.rects.leftHand.x1>oldX1);
     await page.locator('#voiceCommandsBtn').click();assert.equal(await page.locator('#voiceCommandsMask').isVisible(),true);
     await page.keyboard.press('Escape');assert.equal(await page.locator('#voiceCommandsMask').isVisible(),false);
     await page.locator('#calBtn').click();

@@ -363,7 +363,7 @@ const EXTRAS = [
       return {
         target: '#viewer', say: '站到你平时玩的位置',
         hint: gripOnly ? `只量握拳：张开一次、握紧一次。${prepareHint}`
-          : `${s.sceneFixed ? '现在用的是固定区域；量完的是跟着身体走的那一套，握拳照样生效' : '全身进画面，脚也要拍到。接下来挥手、伸脚、跳一下'}。${prepareHint}`,
+          : `${s.zonesFrozen ? '区域现在定住了；量完的大小要点「恢复跟随」才用得上，握拳照样生效' : '全身进画面，脚也要拍到。接下来挥手、伸脚、跳一下'}。${prepareHint}`,
         choice: {label: '点这里，3 秒后开始', run: gripOnly ? 'zoneFitGripOnly' : 'zoneFitStart'},
       };
     },

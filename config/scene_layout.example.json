@@ -1,4 +1,0 @@
-{
-  "version": 1,
-  "note": "实际 scene_layout.json 与 scene_reference.jpg 会在第一次记录参考场景后自动生成。不要手工复制本示例覆盖用户布局。"
-}

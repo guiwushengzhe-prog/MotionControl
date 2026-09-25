@@ -20,18 +20,18 @@
     "default_target": "OUTPUT.STOP",
     "cooldown_ms": 700
   },
-  "体感截图": {
-    "id": "scene.capture",
-    "label": "截图/记录场景",
+  "体感挪动区域": {
+    "id": "zones.move_here",
+    "label": "区域挪到我这里",
     "kind": "system",
-    "default_target": "SCENE.CAPTURE_REFERENCE",
+    "default_target": "ZONES.MOVE_HERE",
     "cooldown_ms": 700
   },
-  "体感重新匹配": {
-    "id": "scene.rematch",
-    "label": "重新匹配场景",
+  "体感恢复跟随": {
+    "id": "zones.follow",
+    "label": "区域恢复跟随",
     "kind": "system",
-    "default_target": "SCENE.REMATCH",
+    "default_target": "ZONES.FOLLOW",
     "cooldown_ms": 700
   },
   "体感开始校准": {

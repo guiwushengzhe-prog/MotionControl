@@ -524,7 +524,6 @@ class InputBridge:
         self.output = output
         self.kernel = kernel
         self._voice_service = voice
-        self._scene_snapshot_handler = None
         self._control_config_provider = None
         self._lock = threading.RLock()
         self._peers: set[WebSocketPeer] = set()
@@ -558,10 +557,6 @@ class InputBridge:
     def configure_voice(self, voice) -> None:
         with self._lock:
             self._voice_service = voice
-
-    def configure_scene_snapshot_handler(self, handler) -> None:
-        with self._lock:
-            self._scene_snapshot_handler = handler
 
     def configure_control_config_provider(self, provider) -> None:
         """Provide the current PC-authoritative game/Zone configuration to phones."""
@@ -668,23 +663,6 @@ class InputBridge:
             return
         self.broadcast_game_output_state(exclude=peer)
         self._send_game_output_state(peer)
-
-    def request_scene_snapshot(self, purpose: str) -> dict:
-        purpose = str(purpose or "capture").strip().lower()
-        if purpose not in {"capture", "rematch"}:
-            raise ValueError("scene snapshot purpose must be capture or rematch")
-        with self._lock:
-            source_id = self._active_pose_source
-            peer = self._source_peers.get(source_id) if source_id else None
-        if peer is None:
-            raise RuntimeError("当前没有活动的手机姿态源")
-        peer.send_json({
-            "type": "scene_snapshot_request",
-            "purpose": purpose,
-            "max_width": 960,
-            "jpeg_quality": 88,
-        })
-        return {"ok": True, "pending": True, "purpose": purpose, "source_id": source_id}
 
     def configure_endpoint(self, host: str, port: int) -> None:
         with self._lock:
@@ -1228,47 +1206,6 @@ class InputBridge:
         except (ValueError, RuntimeError) as exc:
             self._send_error(peer, str(exc))
 
-    def _handle_scene_snapshot(self, peer: WebSocketPeer, message: dict) -> None:
-        if self._body_mode != "phone":
-            self._send_error(peer, "scene_snapshot 仅在手机身体源激活时有效")
-            return
-        device_id = str(message.get("device_id", "")).strip()
-        if not device_id:
-            self._send_error(peer, "scene_snapshot 缺少 device_id")
-            return
-        with self._lock:
-            active_pose = self._active_pose_source
-            owner = self._source_peers.get(active_pose) if active_pose else None
-            handler = self._scene_snapshot_handler
-        if active_pose != POSE_SOURCE_PREFIX + device_id or owner is not peer:
-            self._send_error(peer, "scene_snapshot 不是当前活动身体源")
-            return
-        purpose = str(message.get("purpose", "capture")).strip().lower()
-        if purpose not in {"capture", "rematch"}:
-            self._send_error(peer, "scene_snapshot purpose 无效")
-            return
-        encoded = str(message.get("jpeg_base64", "")).strip()
-        if not encoded:
-            self._send_error(peer, "scene_snapshot 缺少 jpeg_base64")
-            return
-        try:
-            jpeg = base64.b64decode(encoded, validate=True)
-        except Exception:
-            self._send_error(peer, "scene_snapshot JPEG base64 无效")
-            return
-        if not jpeg or len(jpeg) > 700 * 1024:
-            self._send_error(peer, "scene_snapshot JPEG 大小必须在 1 到 700KB")
-            return
-        if handler is None:
-            self._send_error(peer, "场景截图处理器未配置")
-            return
-        try:
-            result = handler(jpeg, purpose, device_id) or {}
-            peer.send_json({"type": "scene_snapshot_result", "purpose": purpose, **result})
-            self._accept_input(peer)
-        except Exception as exc:
-            self._send_error(peer, f"场景截图处理失败：{exc}")
-
     def handle_message(self, peer: WebSocketPeer, message: dict) -> None:
         try:
             if not isinstance(message, dict):
@@ -1288,8 +1225,6 @@ class InputBridge:
                 self._handle_voice_text(peer, message)
             elif message_type == "voice_command":
                 self._handle_voice_command(peer, message)
-            elif message_type == "scene_snapshot":
-                self._handle_scene_snapshot(peer, message)
             elif message_type == "game_output_control":
                 self._handle_game_output_control(peer, message)
             else:

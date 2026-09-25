@@ -53,6 +53,7 @@ BINDING_SYSTEM_TARGETS = {
     "ZONES.FREEZE_TOGGLE",  # 定住 / 恢复跟随，来回切
     "ZONES.FREEZE",         # 定住区域
     "ZONES.FOLLOW",         # 区域恢复跟随
+    "ZONES.MOVE_HERE",      # 区域挪到我这里：没定住就定住，定住了就整组搬到人现在的位置
     "HEAD.CENTER",          # 视角回正
     "OUTPUT.TOGGLE",        # 开始 / 停止输出，来回切
     "OUTPUT.START",

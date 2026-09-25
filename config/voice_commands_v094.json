@@ -51,20 +51,20 @@
       "default_target": "OUTPUT.STOP"
     },
     {
-      "id": "scene.capture",
-      "label": "截图/记录场景",
-      "phrase": "体感截图",
+      "id": "zones.move_here",
+      "label": "区域挪到我这里",
+      "phrase": "体感挪动区域",
       "profile": "safe_system",
       "kind": "system",
-      "default_target": "SCENE.CAPTURE_REFERENCE"
+      "default_target": "ZONES.MOVE_HERE"
     },
     {
-      "id": "scene.rematch",
-      "label": "重新匹配场景",
-      "phrase": "体感重新匹配",
+      "id": "zones.follow",
+      "label": "区域恢复跟随",
+      "phrase": "体感恢复跟随",
       "profile": "safe_system",
       "kind": "system",
-      "default_target": "SCENE.REMATCH"
+      "default_target": "ZONES.FOLLOW"
     },
     {
       "id": "head.calibrate",

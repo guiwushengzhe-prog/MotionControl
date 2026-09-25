@@ -253,6 +253,78 @@ def _normalize_frozen_rects(raw) -> dict[str, dict]:
     return out
 
 
+def _body_anchor(pose_map) -> dict | None:
+    """定住的框和人对齐用的参照：胯中点，和肩中点到胯中点的长度（画面比例）。
+
+    定住那一刻记一份；「区域挪到我这里」时按现在的人再量一份，两份一比就知道框该
+    平移多少、放大缩小多少。肩、胯看不清就是 None。
+    """
+    if not isinstance(pose_map, dict):
+        return None
+    points = [pose_map.get(name) for name in ("left_shoulder", "right_shoulder", "left_hip", "right_hip")]
+    if any(not isinstance(point, dict) or _score(point) < 0.42 for point in points):
+        return None
+    try:
+        ls, rs, lh, rh = ({"x": float(p["x"]), "y": float(p["y"])} for p in points)
+    except (KeyError, TypeError, ValueError):
+        return None
+    hip_x, hip_y = (lh["x"] + rh["x"]) / 2, (lh["y"] + rh["y"]) / 2
+    scale = math.hypot(hip_x - (ls["x"] + rs["x"]) / 2, hip_y - (ls["y"] + rs["y"]) / 2)
+    if not math.isfinite(scale) or scale < 0.02:
+        return None
+    return {"x": round(hip_x, 4), "y": round(hip_y, 4), "scale": round(scale, 4)}
+
+
+def _normalize_anchor(raw) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        anchor = {key: float(raw[key]) for key in ("x", "y", "scale")}
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in anchor.values()) or anchor["scale"] < 0.02:
+        return None
+    return anchor
+
+
+def _move_rects(rects: dict[str, dict], old: dict, new: dict) -> dict[str, dict]:
+    """把一组定住的框从 old 那个人搬到 new 那个人身上：平移、按躯干长度缩放。
+
+    贴着画面边的那条边（手区的外沿、上沿）还贴着画面边，不跟着挪进来。
+    """
+    ratio = new["scale"] / old["scale"]
+    moved: dict[str, dict] = {}
+    for name, rect in rects.items():
+        box = {}
+        for key, axis in (("x1", "x"), ("x2", "x"), ("y1", "y"), ("y2", "y")):
+            value = float(rect[key])
+            pinned = value <= 0.001 or value >= 0.999
+            box[key] = value if pinned else new[axis] + (value - old[axis]) * ratio
+        moved[name] = box
+    return _normalize_frozen_rects(moved)
+
+
+def legacy_scene_to_frozen(layout) -> tuple[dict[str, dict], dict, dict | None]:
+    """旧版「参考场景」（scene_layout.json）换成定住的框：(框, 上下视角设置, 身体参照)。
+
+    参考场景已经删了：它把六个圆圈钉在画面上，和「定住跟随框」是同一件事，还要拍
+    参考照片、做背景匹配。记录过的人升级后不能突然变回跟着走，所以圆圈换成外接的
+    方框、照样定住；文件里存着记录那一刻的骨架，拿来当身体参照，「区域挪到我这里」
+    照样能用。
+    """
+    data = layout if isinstance(layout, dict) else {}
+    rects: dict[str, dict] = {}
+    for name, circle in _canonical_fixed_zones(data.get("zones")).items():
+        try:
+            cx, cy, radius = float(circle["cx"]), float(circle["cy"]), float(circle["r"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        rects[name] = {"x1": cx - radius, "x2": cx + radius, "y1": cy - radius, "y2": cy + radius}
+    vertical = data.get("vertical_look")
+    return (_normalize_frozen_rects(rects), dict(vertical) if isinstance(vertical, dict) else {},
+            _body_anchor(data.get("pose")))
+
+
 def _finite(value: Any, default: float = 0.0) -> float:
     try:
         result = float(value)
@@ -295,21 +367,11 @@ def _rect_at(cx: float, cy: float, width_px: float, height_px: float, image_widt
     }
 
 
-def _enclose_rects(rects: list[dict]) -> dict | None:
-    """Return one camera-space rectangle containing the supplied rectangles."""
-    valid = [item for item in rects if isinstance(item, dict)]
-    if not valid:
-        return None
-    return {
-        "x1": _clamp(min(float(item.get("x1", 0.0)) for item in valid), 0.0, 1.0),
-        "x2": _clamp(max(float(item.get("x2", 1.0)) for item in valid), 0.0, 1.0),
-        "y1": _clamp(min(float(item.get("y1", 0.0)) for item in valid), 0.0, 1.0),
-        "y2": _clamp(max(float(item.get("y2", 1.0)) for item in valid), 0.0, 1.0),
-    }
-
-
 def _enclose_circles(circles: list[dict]) -> dict | None:
-    """Return one circle containing old per-side circles for migration."""
+    """Return one circle containing old per-side circles for migration.
+
+    只给 legacy_scene_to_frozen 用：旧版「参考场景」存的是圆圈，升级时换成定住的框。
+    """
     valid = []
     for item in circles:
         if not isinstance(item, dict):
@@ -342,7 +404,10 @@ def _enclose_circles(circles: list[dict]) -> dict | None:
 
 
 def _canonical_fixed_zones(zones: dict | None) -> dict:
-    """Normalize old six-zone layouts to the merged hand/head-jump schema."""
+    """Normalize old six-zone layouts to the merged hand/head-jump schema.
+
+    同上，只在把旧场景文件换成定住的框时用。
+    """
     source = zones if isinstance(zones, dict) else {}
     result: dict = {}
     for name in ("leftFoot", "rightFoot", "lookGate", "headJump"):
@@ -412,14 +477,14 @@ class ControlKernel:
         # 存在 general_settings.json 里，见 zone_fit.py。
         self.zone_fit = normalize_zone_fit(None)
         self.zone_fit_session: ZoneFitSession | None = None
-        self.fixed_zones: dict[str, dict] = {}
-        self.fixed_zones_enabled = False
         # 区域触发方式，见 ZONE_TRIGGER_MODES。存在 general_settings.json 里。
         self.zone_trigger_mode = DEFAULT_ZONE_TRIGGER_MODE
         # 定住的跟随框：定住那一刻的框，之后不再跟着人走，可以在界面上拖。存盘，
         # 重启还是定住的。只管跟随框；记录过参考场景的固定圆圈是另一套，不受它影响。
         self.zones_frozen = False
         self.frozen_rects: dict[str, dict] = {}
+        # 定住那一刻人站在哪（见 _body_anchor），「区域挪到我这里」按它搬框。
+        self.frozen_anchor: dict | None = None
         # Provisional head-jump target anchor.  It deliberately does not track
         # the nose frame by frame: a jump lifts the whole body, so a fast
         # follower carries the target upward and the nose can never enter it.
@@ -427,10 +492,7 @@ class ControlKernel:
         self.head_jump_prev: tuple[float, float, float] | None = None
         self.head_jump_torso_ref: float | None = None
         self.vertical_look = {
-            # Before the first fixed-scene capture we still expose a provisional
-            # body-relative lookGate so the six-region layout is visible and usable.
-            # The first reference capture replaces it with the fixed scene-space
-            # gate; later starts load that fixed gate without auto-rematching.
+            # lookGate 和别的区域一样跟着人走，定住时一起定住。
             # 默认关。上下视角这道闸抢的是右手，而手控鼠标默认就在用右手——两个
             # 一起开着，第一屏就会弹一条"绿框白放"的提示，而第一次打开的人根本
             # 不知道那个绿框是什么。要用它的人去打开，开了会存盘。
@@ -581,6 +643,7 @@ class ControlKernel:
         self.action_chain = HoldChain(DEFAULT_ACTION_CHAIN)
         self._general_raw: dict = {}
         self._load_general_settings()
+        self._migrate_scene_layout_locked()
         # 新玩家使用侧倾左右配左手上下；初次校准只保存头控档案时，重启仍保留该组合。
         if not isinstance(self._general_raw.get("hand_mouse"), dict) and (
             not self._head_profile_path().exists() or self.head_controller.config["horizontal_algorithm"] == "roll_tilt"
@@ -642,6 +705,8 @@ class ControlKernel:
             if source in {"hand", "head"}:
                 self.vertical_look["source"] = source
                 self.vertical_look["verticalLookSource"] = source
+            # 这几项原来只存在参考场景文件里，没记录过场景的人每次重启都回到默认。
+            self._apply_vertical_extras_locked(vertical)
 
         # Invalid or absent action-chain settings safely retain the disabled
         # default; user data is never written into the program directory.
@@ -658,9 +723,50 @@ class ControlKernel:
             # 存着"定住"却一个框都没有（文件被改坏了），当没定住：定住一堆空框等于
             # 区域全部失灵，而界面上看不出为什么。
             self.zones_frozen = bool(frozen.get("frozen")) and bool(rects)
+            self.frozen_anchor = _normalize_anchor(frozen.get("anchor"))
             if self.zones_frozen:
                 # 人还没进画面，框就已经在那儿了。
                 self.zone_rects = self._frozen_zone_rects_locked()
+
+    def _apply_vertical_extras_locked(self, vertical: dict) -> None:
+        """上下视角里除了开关、来源以外的那几项：暂停左右、身体动作保护、范围、死区。"""
+        if "exclusive_axes" in vertical:
+            self.vertical_look["exclusive_axes"] = bool(vertical["exclusive_axes"])
+        if "body_motion_guard" in vertical:
+            self.body_motion_guard_enabled = bool(vertical["body_motion_guard"])
+            self.vertical_look["body_motion_guard"] = self.body_motion_guard_enabled
+        for key, low, high in (("range_y", 0.06, 0.40), ("deadzone", 0.0, 0.35)):
+            if key in vertical:
+                try:
+                    self.vertical_look[key] = _clamp(float(vertical[key]), low, high)
+                except (TypeError, ValueError):
+                    pass
+
+    def _migrate_scene_layout_locked(self) -> None:
+        """记录过旧版「参考场景」的人：固定圆圈换成定住的框，只做一次。
+
+        参考场景已经删了（见 legacy_scene_to_frozen）。不迁移的话，这些人升级后区域
+        会悄悄变回跟着人走。已经有定住设置的、迁移过的都不动；参考照片不在了的，
+        旧版本身也不会加载那份布局，这里同样跳过。旧文件原样留着，不删用户的东西。
+        """
+        raw = getattr(self, "_general_raw", {})
+        if raw.get("scene_layout_migrated") or "zone_freeze" in raw:
+            return
+        layout_path, photo_path = self._user_file("scene_layout"), self._user_file("scene_reference")
+        try:
+            if not photo_path.is_file():
+                return
+            layout = json.loads(layout_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        rects, vertical, anchor = legacy_scene_to_frozen(layout)
+        self._general_raw["scene_layout_migrated"] = True
+        if rects:
+            self.frozen_rects, self.frozen_anchor, self.zones_frozen = rects, anchor, True
+            self.zone_rects = self._frozen_zone_rects_locked()
+        if vertical:
+            self._apply_vertical_extras_locked(vertical)
+        self._save_general_settings()
 
     def general_setting(self, key: str, default=None):
         """读一项不归内核管、但和它存在同一份文件里的设置。
@@ -687,11 +793,16 @@ class ControlKernel:
             "vertical_look": {
                 "enabled": bool(self.vertical_look.get("enabled", True)),
                 "source": str(self.vertical_look.get("source", "hand")),
+                "exclusive_axes": bool(self.vertical_look.get("exclusive_axes", False)),
+                "body_motion_guard": bool(self.body_motion_guard_enabled),
+                "range_y": float(self.vertical_look.get("range_y", 0.18)),
+                "deadzone": float(self.vertical_look.get("deadzone", 0.10)),
             },
             "action_chain": self.action_chain.config,
             "zone_trigger_mode": self.zone_trigger_mode,
             "zone_freeze": {"frozen": bool(self.zones_frozen),
-                            "rects": copy.deepcopy(self.frozen_rects)},
+                            "rects": copy.deepcopy(self.frozen_rects),
+                            "anchor": copy.deepcopy(self.frozen_anchor)},
         }
         temp = path.with_suffix(path.suffix + ".tmp")
         try:
@@ -935,49 +1046,34 @@ class ControlKernel:
                 self.vertical_look["body_motion_guard"] = self.body_motion_guard_enabled
                 if not self.body_motion_guard_enabled:
                     self._reset_body_motion_guard_locked()
+            if vertical_exclusive is not None or body_motion_guard is not None:
+                # 原来只存进参考场景文件，没记录过场景的人重启就丢。
+                self._save_general_settings()
             self.head = self.head_controller.status(time.monotonic())
             return self.status_locked(time.monotonic())
 
-    def configure_scene_layout(self, layout: dict | None) -> dict:
-        """Apply one fixed, camera-space session layout.
+    def configure_vertical_look(self, updates: dict | None) -> dict:
+        """上下视角的设置：开关、右手还是头部、暂停左右、身体动作保护、范围、死区。
 
-        The layout is already adapted by SceneLayoutManager. The kernel never
-        moves these circles with the player; they remain fixed until this
-        method is called again.
+        原来这几项跟着参考场景存，参考场景删了以后都在通用设置里。只改送来的那几项。
         """
+        updates = updates if isinstance(updates, dict) else {}
         with self._lock:
-            zones = (layout or {}).get("zones") if isinstance(layout, dict) else None
-            # Accept the previous four-hand-circle layout, but run only the
-            # two merged hand regions plus the two feet and head-jump region.
-            self.fixed_zones = _canonical_fixed_zones(zones)
-            self.fixed_zones_enabled = bool(self.fixed_zones)
-            vertical = (layout or {}).get("vertical_look") if isinstance(layout, dict) else None
-            if isinstance(vertical, dict):
-                raw_source = str(vertical.get("source", vertical.get("verticalLookSource", self.vertical_look.get("source", "hand")))).lower()
+            if "enabled" in updates:
+                self.vertical_look["enabled"] = bool(updates["enabled"])
+            raw_source = str(updates.get("source", updates.get("verticalLookSource", ""))).strip().lower()
+            if raw_source in {"hand", "head", "头部", "右手", "right_wrist"}:
                 source = "head" if raw_source in {"head", "头部"} else "hand"
-                self.vertical_look.update({
-                    "enabled": bool(vertical.get("enabled", True)),
-                    "gate_zone_id": str(vertical.get("gate_zone_id", "lookGate")),
-                    "point": str(vertical.get("point", "right_wrist")),
-                    "source": source,
-                    "verticalLookSource": source,
-                    "exclusive_axes": bool(vertical.get("exclusive_axes", self.vertical_look.get("exclusive_axes", False))),
-                    "body_motion_guard": bool(vertical.get("body_motion_guard", False)),
-                    "center_x": _clamp(vertical.get("center_x", 0.5), 0.0, 1.0),
-                    "center_y": _clamp(vertical.get("center_y", 0.5), 0.0, 1.0),
-                    "range_y": _clamp(vertical.get("range_y", 0.18), 0.05, 0.45),
-                    "deadzone": _clamp(vertical.get("deadzone", 0.10), 0.0, 0.35),
-                })
-                self.body_motion_guard_enabled = bool(self.vertical_look["body_motion_guard"])
-            else:
-                self.vertical_look["enabled"] = False
-            for state in self.zone_state.values():
-                state.update({"inside": 0, "outside": 0, "pressed": False, "deep_since": None})
+                self.vertical_look["source"] = source
+                self.vertical_look["verticalLookSource"] = source
+            self._apply_vertical_extras_locked(updates)
+            if not self.body_motion_guard_enabled:
+                self._reset_body_motion_guard_locked()
             self.vertical_gate_active = False
             self._reset_vertical_hand_locked()
             self.vertical_head_anchor_samples.clear()
             self._reset_vertical_head_locked()
-            self._safe_output(self.output.set_buttons, [], source="zones")
+            self._save_general_settings()
             return self.status_locked(time.monotonic())
 
     def handle_pose_message(self, source_id: str, message: dict) -> dict:
@@ -1209,14 +1305,13 @@ class ControlKernel:
 
     def _freeze_zones_locked(self) -> dict:
         """把跟随框定在现在的位置。已经定住了就什么都不改——之后拖过的不能被冲掉。"""
-        if self.fixed_zones_enabled:
-            return {"executed": False, "reason": "现在用的是固定圆圈，本来就不跟着人走"}
         if self.zones_frozen:
             return {"executed": True, "frozen": True}
         rects = _normalize_frozen_rects(self.zone_rects)
         if not rects:
             return {"executed": False, "reason": "还没看到人，没有框可以定住：先让头和双肩入镜"}
         self.frozen_rects = rects
+        self.frozen_anchor = _body_anchor(self.latest_pose)
         self.zones_frozen = True
         self._save_general_settings()
         return {"executed": True, "frozen": True, "zones": sorted(rects)}
@@ -1225,8 +1320,32 @@ class ControlKernel:
         if self.zones_frozen or self.frozen_rects:
             self.zones_frozen = False
             self.frozen_rects = {}
+            self.frozen_anchor = None
             self._save_general_settings()
         return {"executed": True, "frozen": False}
+
+    def _move_zones_here_locked(self) -> dict:
+        """「区域挪到我这里」：不用鼠标就能挪区域。
+
+        还跟着人走的时候，就是在现在的位置定住。已经定住的，整组框按人现在站的位置
+        平移、按远近缩放，拖过的大小和相对位置都保留——摄像头碰歪了、人换了站位，
+        站好说一声就对上了。
+        """
+        if not self.zones_frozen:
+            return self._freeze_zones_locked()
+        here = _body_anchor(self.latest_pose)
+        if here is None:
+            return {"executed": False, "reason": "没看清你站在哪：让头、双肩和胯都入镜再试"}
+        if self.frozen_anchor is None:
+            # 定住那一刻没看清人（只露了半身）：没有参照可比，只好从现在的位置重新定。
+            self.zones_frozen, self.frozen_rects = False, {}
+            self.zone_rects = {}
+            return {"executed": False, "reason": "定住时没看清你站在哪，已恢复跟随；站好后再说一次就定在这里"}
+        self.frozen_rects = _move_rects(self.frozen_rects, self.frozen_anchor, here)
+        self.frozen_anchor = here
+        self.zone_rects = self._frozen_zone_rects_locked()
+        self._save_general_settings()
+        return {"executed": True, "frozen": True, "moved": True}
 
     def _toggle_zone_freeze_locked(self) -> dict:
         return self._unfreeze_zones_locked() if self.zones_frozen else self._freeze_zones_locked()
@@ -1235,6 +1354,24 @@ class ControlKernel:
         with self._lock:
             result = self._freeze_zones_locked() if frozen else self._unfreeze_zones_locked()
             return {**result, "status": self.status_locked(time.monotonic())}
+
+    def move_zones_here(self) -> dict:
+        with self._lock:
+            result = self._move_zones_here_locked()
+            return {**result, "status": self.status_locked(time.monotonic())}
+
+    def set_frozen_zones(self, rects, anchor=None) -> dict:
+        """直接换一组定住的框（旧场景迁移、测试用）。一个能用的框都没有就是恢复跟随。"""
+        with self._lock:
+            normalized = _normalize_frozen_rects(rects)
+            if not normalized:
+                self._unfreeze_zones_locked()
+            else:
+                self.frozen_rects, self.zones_frozen = normalized, True
+                self.frozen_anchor = _normalize_anchor(anchor)
+                self.zone_rects = self._frozen_zone_rects_locked()
+                self._save_general_settings()
+            return self.status_locked(time.monotonic())
 
     def update_frozen_zones(self, rects) -> dict:
         """界面上拖完的框。只改送来的那几个，别的不动。"""
@@ -1747,58 +1884,28 @@ class ControlKernel:
     def _point_in_rect(point: dict | None, rect: dict | None) -> bool:
         return bool(point and rect and _score(point) >= 0.42 and rect["x1"] <= point["x"] <= rect["x2"] and rect["y1"] <= point["y"] <= rect["y2"])
 
-    @staticmethod
-    def _point_in_circle(point: dict | None, circle: dict | None) -> bool:
-        if not point or not circle or _score(point) < 0.42:
-            return False
-        try:
-            cx, cy, radius = float(circle["cx"]), float(circle["cy"]), float(circle["r"])
-        except (KeyError, TypeError, ValueError):
-            return False
-        return math.hypot(point["x"] - cx, point["y"] - cy) <= radius
-
-    def _foot_in_circle(self, pose_map: dict[str, dict], points: tuple[str, ...], circle: dict | None) -> bool:
-        if any(self._point_in_circle(pose_map.get(point), circle) for point in points):
-            return True
-        if not circle:
-            return False
-        # 圈位于脚踝与脚尖之间时，实际脚段已穿圈，不应漏掉。
-        for endpoint in points[1:]:
-            a, b = pose_map.get(points[0]), pose_map.get(endpoint)
-            if not a or not b or min(_score(a), _score(b)) < .42:
-                continue
-            dx, dy = b["x"] - a["x"], b["y"] - a["y"]
-            length2 = dx * dx + dy * dy
-            if length2 <= 1e-10:
-                continue
-            t = _clamp(((circle["cx"] - a["x"]) * dx + (circle["cy"] - a["y"]) * dy) / length2, 0.0, 1.0)
-            if self._point_in_circle({"x": a["x"] + t * dx, "y": a["y"] + t * dy, "score": min(_score(a), _score(b))}, circle):
-                return True
-        return False
-
     def _hand_reach_locked(self, pose_map: dict[str, dict], name: str, frame: dict | None) -> float | None:
         """手腕进了这只手的区域多深，量身那把尺；不在区域里是 None。
 
-        跟随的手区外沿、上沿是画面边，只看越过下沿、里沿各多少，取小的。固定圈按离
-        圈边多远算。
+        看越过每条边多少，取最小的。贴着画面边的那几条不算：跟随的手区外沿、上沿
+        就是画面边，手不可能从那边进来。定住后拖离了画面边的框，四条边都算。
         """
         wrist = pose_map.get(RUNTIME_BODY_ZONES[name]["points"][0])
-        if self.fixed_zones_enabled:
-            circle = self.fixed_zones.get(name)
-            if not self._point_in_circle(wrist, circle):
-                return None
-            if frame is None:
-                return math.inf
-            gap = float(circle["r"]) - math.hypot(wrist["x"] - float(circle["cx"]), wrist["y"] - float(circle["cy"]))
-            return gap / frame["ux"]
         rect = self.zone_rects.get(name)
         if not self._point_in_rect(wrist, rect):
             return None
         if frame is None:
             return math.inf
-        direction = frame["left_dir"] if name == "leftHand" else frame["right_dir"]
-        inner = rect["x1"] if direction > 0 else rect["x2"]
-        return min((rect["y2"] - wrist["y"]) / frame["uy"], direction * (wrist["x"] - inner) / frame["ux"])
+        depths = []
+        if rect["y2"] < 0.999:
+            depths.append((rect["y2"] - wrist["y"]) / frame["uy"])
+        if rect["y1"] > 0.001:
+            depths.append((wrist["y"] - rect["y1"]) / frame["uy"])
+        if rect["x1"] > 0.001:
+            depths.append((wrist["x"] - rect["x1"]) / frame["ux"])
+        if rect["x2"] < 0.999:
+            depths.append((rect["x2"] - wrist["x"]) / frame["ux"])
+        return min(depths) if depths else math.inf
 
     def _hand_points_for_mouse_locked(self) -> dict | None:
         """两只手各自使用自己的关节点，缺失时分别退回人体指尖判断。"""
@@ -1827,11 +1934,7 @@ class ControlKernel:
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
         previous_gate = bool(self.vertical_gate_active)
         self._update_feet_locked(pose_map, now)
-        if self.fixed_zones_enabled:
-            # Fixed zones live in raw camera normalized coordinates and never
-            # follow the body. Rects are generated only for legacy clients.
-            self.zone_rects = {}
-        elif self.zones_frozen:
+        if self.zones_frozen:
             # 定住了：用定住那一刻（或者之后在界面上拖过）的框，不再跟着人算。
             self.zone_rects = self._frozen_zone_rects_locked()
         else:
@@ -1850,13 +1953,7 @@ class ControlKernel:
                 points = ("left_wrist",)
             else:
                 points = RUNTIME_BODY_ZONES[name]["points"]
-            if self.fixed_zones_enabled:
-                circle = self.fixed_zones.get(name)
-                inside = any(self._point_in_circle(pose_map.get(point), circle) for point in points)
-                if name in ("leftFoot", "rightFoot"):
-                    inside = self._foot_in_circle(pose_map, points, circle)
-            else:
-                inside = any(self._point_in_rect(pose_map.get(point), self.zone_rects.get(name)) for point in points)
+            inside = any(self._point_in_rect(pose_map.get(point), self.zone_rects.get(name)) for point in points)
             if name in ("leftFoot", "rightFoot") and not simple:
                 # 固定圈与跟随区均须先实际接触，再确认是向外伸脚。
                 inside = inside and self._foot_outward(pose_map, "left" if name == "leftFoot" else "right")
@@ -2501,7 +2598,8 @@ class ControlKernel:
         target = str(target or "").strip().upper()
         zones = {"ZONES.FREEZE": self._freeze_zones_locked,
                  "ZONES.FOLLOW": self._unfreeze_zones_locked,
-                 "ZONES.FREEZE_TOGGLE": self._toggle_zone_freeze_locked}
+                 "ZONES.FREEZE_TOGGLE": self._toggle_zone_freeze_locked,
+                 "ZONES.MOVE_HERE": self._move_zones_here_locked}
         if target in zones:
             result = zones[target]()
             if not result.get("executed"):
@@ -2823,8 +2921,7 @@ class ControlKernel:
         for state in self.zone_state.values():
             state.update({"inside": 0, "outside": 0, "pressed": False, "deep_since": None})
         # 定住的框不靠人算，人走开了也还在原地，画面上照样画出来、照样能拖。
-        self.zone_rects = (self._frozen_zone_rects_locked()
-                           if self.zones_frozen and not self.fixed_zones_enabled else {})
+        self.zone_rects = self._frozen_zone_rects_locked() if self.zones_frozen else {}
         self.head_jump_anchor = None
         self.head_jump_prev = None
         self.head_jump_torso_ref = None
@@ -2889,8 +2986,6 @@ class ControlKernel:
         """
         if not bool(self.vertical_look.get("enabled")):
             return False
-        if self.fixed_zones_enabled:
-            return "lookGate" in self.fixed_zones
         return "lookGate" in self.zone_rects
 
     def runtime_zones_locked(self) -> dict:
@@ -2907,10 +3002,7 @@ class ControlKernel:
             recognized = bool(self.zone_state.get(name, {}).get("pressed", False))
             mapped = name not in RUNTIME_BODY_ZONES or bool(self._effective_binding_locked(f"zone.{name}"))
             state = {"pressed": recognized and mapped, "recognized": recognized}
-            if self.fixed_zones_enabled:
-                zones[name] = {"circle": copy.deepcopy(self.fixed_zones.get(name)), **state}
-            else:
-                zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), **state}
+            zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), **state}
         # Keep the old four identifiers in status for clients that have not yet
         # learned the merged names. They are aliases only; no second trigger is
         # evaluated or dispatched for them.
@@ -3008,14 +3100,15 @@ class ControlKernel:
             # 界面要靠它把 at 换算成"几秒前"。用服务端自己的钟，省得和浏览器对时。
             "now": round(now, 3),
             "action_chain": self.action_chain.status(),
-            "scene_mode": "fixed" if self.fixed_zones_enabled else "body_relative_provisional",
             "zone_fit": self._zone_fit_status_locked(now),
             # 哪些圈在给哪些动作让路。界面在绑键的地方照这个提醒。
             "zone_overlaps": self.zone_overlaps_locked(),
             "zone_yield_s": ZONE_YIELD_S,
             "zone_trigger_mode": self.zone_trigger_mode,
-            # 跟随框定住了没有。固定圆圈（scene_mode == fixed）时它不起作用。
-            "zones_frozen": bool(self.zones_frozen and not self.fixed_zones_enabled),
+            # 跟随框定住了没有；zones_anchor_known：定住时看清了人站在哪，「区域挪到我这里」
+            # 能按它把整组框搬过来。
+            "zones_frozen": bool(self.zones_frozen),
+            "zones_anchor_known": self.frozen_anchor is not None,
             "vertical_look": copy.deepcopy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),
             "body_motion_guard_enabled": bool(self.body_motion_guard_enabled),

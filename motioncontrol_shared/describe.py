@@ -55,8 +55,8 @@ VOICE_COMMAND_NAMES = {
     "system.emergency_stop": "紧急停止",
     "output.start": "开始输出",
     "output.stop": "停止输出",
-    "scene.capture": "截图/记录场景",
-    "scene.rematch": "重新匹配场景",
+    "zones.move_here": "区域挪到我这里",
+    "zones.follow": "区域恢复跟随",
     "head.calibrate": "开始头控校准",
     "head.center": "设置头控中心",
     # 录自定义动作。人站在镜头前几米外摆姿势，够不着鼠标——这三个按钮天生就该能用嘴按。
@@ -83,14 +83,13 @@ VOICE_SYSTEM_NAMES = {
     "HEAD.CENTER": "设置头控中心",
     "OUTPUT.START": "开始输出",
     "OUTPUT.STOP": "停止输出",
-    "SCENE.CAPTURE_REFERENCE": "记录场景参考图",
-    "SCENE.REMATCH": "重新匹配场景",
     "POSE.RECORD": "录一个新姿势",
     "POSE.ADD_FRAME": "给刚录的动作再加一个姿势",
     "POSE.CANCEL": "取消录制倒计时",
     "ZONES.FREEZE_TOGGLE": "定住区域 / 恢复跟随",
     "ZONES.FREEZE": "定住区域",
     "ZONES.FOLLOW": "区域恢复跟随",
+    "ZONES.MOVE_HERE": "区域挪到我这里",
     "OUTPUT.TOGGLE": "开始 / 停止输出",
 }
 
