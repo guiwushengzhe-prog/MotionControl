@@ -488,6 +488,10 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
 
 .voice-trigger-phrase { display: block; width: 100%; margin-top: 6px; }
 
+/* 口令里有模型认不出的字：就在输入框底下说。通用口令那一行是网格，占满整行。 */
+.voice-phrase-tip { display: block; grid-column: 1 / -1; margin-top: 4px; color: var(--warn); font-size: 12.5px; }
+.voice-phrase-tip[hidden] { display: none; }
+
 /* 键盘键位框是「点一下再按键」，不是打字：不要文字光标，免得人以为要一个个字母敲。 */
 .key-capture { cursor: pointer; caret-color: transparent; }
 

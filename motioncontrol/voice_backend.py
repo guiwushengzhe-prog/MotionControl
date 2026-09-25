@@ -46,6 +46,49 @@ def find_vosk_model(root: Path) -> Path | None:
     return None
 
 
+# 小模型的词表里单字不全：常用 3755 个汉字里有 670 个查不到单字，其中很多只以整词
+# 出现——「堡」只在「城堡」里、「啡」只在「咖啡」里。整词最长试到几个字。
+MAX_GRAMMAR_WORD_CHARS = 4
+
+
+def _is_cjk(char: str) -> bool:
+    return "一" <= char <= "鿿"
+
+
+def grammar_tokens(text: str, known: Callable[[str], bool]) -> tuple[list[str], list[str]]:
+    """把一句口令拆成模型词表里的词，返回 (词, 认不出的字)。
+
+    能按单字就按单字：这是 2026-08-28 对比实验验过的拆法，词表齐全的口令拆出来和
+    以前一模一样。某个字单独查不到，才试着把它和前后的字拼成词表里的整词。怎么拼
+    都拼不上的字进第二个列表——带着它的口令说多少遍都不会被听到。
+    """
+    text = compact_text(text)
+    if not text:
+        return [], []
+    if not any(_is_cjk(char) for char in text):
+        return ([text], []) if known(text) else ([], [text])
+    # best[i]：前 i 个字最好的拆法。先比认不出的字少，再比用的整词少。
+    best: list[tuple[int, int, list[str], list[str]] | None] = [None] * (len(text) + 1)
+    best[0] = (0, 0, [], [])
+    for start in range(len(text)):
+        if best[start] is None:
+            continue
+        missing, words, tokens, unheard = best[start]
+        for end in range(start + 1, min(len(text), start + MAX_GRAMMAR_WORD_CHARS) + 1):
+            piece = text[start:end]
+            if end == start + 1:
+                heard = known(piece)
+                candidate = (missing + (not heard), words, [*tokens, piece], unheard if heard else [*unheard, piece])
+            elif known(piece):
+                candidate = (missing, words + 1, [*tokens, piece], unheard)
+            else:
+                continue
+            if best[end] is None or candidate[:2] < best[end][:2]:
+                best[end] = candidate
+    _missing, _words, tokens, unheard = best[len(text)]
+    return tokens, list(dict.fromkeys(unheard))
+
+
 class VoskCommandRecognizer:
     """Streaming Vosk recognizer limited to the configured command phrases."""
 
@@ -70,24 +113,44 @@ class VoskCommandRecognizer:
                 f"语音模型路径含中文且无法镜像到纯英文路径：{model_path}。"
                 "请把 MotionControl 或模型放在不含中文的路径下，例如 C:/MotionControl。")
         self._model = Model(str(loadable))
+        self._known: dict[str, bool] = {}
         self.sample_rate = int(sample_rate)
-        # The small Chinese model grammar is character-token based.  The
-        # robustness run proved that unspaced whole phrases are discarded as
-        # unknown vocabulary, while parser-side compact_text safely rejoins it.
-        self.supported = [self._grammar_entry(item) for item in dict.fromkeys(phrases) if compact_text(item)]
+        # The small Chinese model grammar is word-token based and its words are
+        # mostly single characters.  The robustness run proved that unspaced
+        # whole phrases are discarded as unknown vocabulary, while parser-side
+        # compact_text safely rejoins the spaced tokens.
+        #
+        # \u8bcd\u8868\u91cc\u6ca1\u6709\u7684\u8bcd Vosk \u53ea\u662f\u6084\u6084\u4e22\u6389\uff0c\u4e0d\u62a5\u9519\uff1b\u5e26\u7740\u5b83\u7684\u53e3\u4ee4\u5c31\u6c38\u8fdc\u542c\u4e0d\u5230\u3002\u6240\u4ee5
+        # \u8fd9\u79cd\u53e3\u4ee4\u5e72\u8106\u4e0d\u8fdb grammar\uff0c\u8bb0\u5728 unheard \u91cc\u8ba9\u754c\u9762\u7167\u5b9e\u8bf4\u3002
+        self.supported: list[str] = []
         self.unsupported: list[str] = []
+        self.unheard: dict[str, list[str]] = {}
+        for item in dict.fromkeys(phrases):
+            if not compact_text(item):
+                continue
+            tokens, missing = self.tokens_for(item)
+            if missing:
+                self.unsupported.append(item)
+                self.unheard[item] = missing
+            else:
+                self.supported.append(" ".join(tokens))
+        self.supported = list(dict.fromkeys(self.supported))
         self.mode = "vosk_constrained_grammar"
         self._grammar = json.dumps([*self.supported, "[unk]"], ensure_ascii=False)
         self._recognizer = None
         self.last_partial = ""
         self.reset()
 
-    @staticmethod
-    def _grammar_entry(value: str) -> str:
-        text = str(value or "").strip()
-        if any("\u4e00" <= char <= "\u9fff" for char in text):
-            return " ".join(char for char in text if not char.isspace())
-        return text
+    def knows(self, word: str) -> bool:
+        """\u8fd9\u4e2a\u8bcd\u5728\u4e0d\u5728\u6a21\u578b\u8bcd\u8868\u91cc\u3002\u8001\u7248\u672c\u7684 vosk \u67e5\u4e0d\u4e86\uff0c\u5c31\u5f53\u90fd\u5728\uff0c\u548c\u4ee5\u524d\u4e00\u6837\u3002"""
+        cached = self._known.get(word)
+        if cached is None:
+            finder = getattr(self._model, "vosk_model_find_word", None)
+            cached = self._known[word] = finder is None or finder(word) >= 0
+        return cached
+
+    def tokens_for(self, phrase: str) -> tuple[list[str], list[str]]:
+        return grammar_tokens(phrase, self.knows)
 
     def accept(self, pcm16: bytes) -> dict[str, str] | None:
         if self._recognizer.AcceptWaveform(pcm16):
@@ -153,6 +216,8 @@ class VoiceService:
         self.recognizer_mode = "vosk_constrained_grammar"
         self.supported_count = 0
         self.unsupported: list[str] = []
+        # 口令 → 里面模型认不出的字。带着这些字的口令不进 grammar，永远听不到。
+        self.unheard: dict[str, list[str]] = {}
         self.last_partial = ""
         self.last_final = ""
         self.last_command: str | None = None
@@ -443,6 +508,28 @@ class VoiceService:
             phrases.extend(command.get("synonyms", []) or [])
         return [phrase for phrase in dict.fromkeys(phrases) if compact_text(phrase)]
 
+    def grammar_entries(self) -> list[str]:
+        """这台电脑实际交给模型的 grammar：每句口令已经按词表拆好、空格隔开。
+
+        手机用的是同一个模型，照这份建 grammar 就和电脑听到的一样。以前手机拿
+        grammar_phrases 自己逐字拆，「城堡」这种只能按整词认的口令电脑听得到、
+        手机听不到。电脑上没有模型时是空的，手机退回自己拆。
+        """
+        recognizer = self.recognizer
+        return list(recognizer.supported) if recognizer is not None else []
+
+    def check_phrases(self, phrases: list[str]) -> dict:
+        """界面上正在填的口令里，有没有模型认不出的字。"""
+        recognizer = self.recognizer
+        if recognizer is None:
+            return {"available": False, "results": []}
+        results = []
+        for phrase in phrases:
+            phrase = str(phrase or "").strip()
+            _tokens, missing = recognizer.tokens_for(phrase) if compact_text(phrase) else ([], [])
+            results.append({"phrase": phrase, "unheard": missing})
+        return {"available": True, "results": results}
+
     def _rebuild_recognizer(self) -> None:
         previous = self.recognizer
         self.recognizer = None
@@ -454,6 +541,7 @@ class VoiceService:
         self.recognizer_mode = "off"
         self.supported_count = 0
         self.unsupported = []
+        self.unheard = {}
         self.audio_ready = False
         self.model_path = find_vosk_model(self.root)
         if self.model_path is None:
@@ -464,6 +552,7 @@ class VoiceService:
             self.recognizer_mode = self.recognizer.mode
             self.supported_count = len(self.recognizer.supported)
             self.unsupported = list(self.recognizer.unsupported)
+            self.unheard = dict(self.recognizer.unheard)
             self.last_error = None
             self.audio_ready = True
         except Exception as exc:
@@ -873,6 +962,7 @@ class VoiceService:
             "recognizer_mode": self.recognizer_mode,
             "supported_count": self.supported_count,
             "unsupported": list(self.unsupported),
+            "unheard": [{"phrase": phrase, "chars": list(chars)} for phrase, chars in self.unheard.items()],
             "mappings": list(self.mappings),
             # 换了游戏、装了别人的配置，都可能带进来一句和通用口令同名的。存的时候
             # 拦得住，这两条路拦不住，只能照实告诉界面。

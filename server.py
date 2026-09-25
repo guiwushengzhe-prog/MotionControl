@@ -366,6 +366,9 @@ def _phone_control_payload() -> dict:
         # keeps one list authoritative: a phrase added on the desktop is heard
         # by the phone microphone too, without shipping a new build.
         "voice_phrases": VOICE.grammar_phrases(),
+        # 同一份口令按模型词表拆好的样子。新手机照这份建 grammar，和电脑听到的一模
+        # 一样；旧手机不认这个字段，照旧用上面那份自己逐字拆。
+        "voice_grammar": VOICE.grammar_entries(),
         # 电脑能被连到的所有地址，有线在前。手机自己试，谁答应用谁——地址一变
         # 就连不上，是这个项目里最常见的一种"坏了"。
         "server_candidates": INPUT_BRIDGE.server_candidates(),
@@ -1203,6 +1206,13 @@ class AdminHandler(_BaseHandler):
         body = self._body()
         if body is None:
             self._send_json({"ok": False, "error": "invalid json"}, 400)
+            return
+        if route == "/api/voice/check":
+            phrases = body.get("phrases", [])
+            if not isinstance(phrases, list):
+                self._send_json({"ok": False, "error": "phrases must be a list"}, 400)
+                return
+            self._send_json({"ok": True, **VOICE.check_phrases([str(item) for item in phrases[:200]])})
             return
         if route == "/api/voice/config":
             if not self._is_loopback():
