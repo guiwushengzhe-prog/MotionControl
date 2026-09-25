@@ -1,4 +1,9 @@
 // Offline browser checks: every service endpoint is simulated; no camera or output is opened.
+//
+// Windows 上用本机的 Edge；别的系统（或者想换浏览器）设 PW_CHROMIUM_PATH 指向一个
+// Chromium，例如：
+//   PW_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome \
+//   NODE_PATH=/opt/node22/lib/node_modules node tools/check_ui_v2.cjs
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -15,6 +20,11 @@ const state = {
   zones:{rects:zones,frozen:false},
   head:{algorithm:'pnp',horizontal_algorithm:'classic',enabled:true,calibrated:true,sensitivity_x:58,sensitivity_y:46,deadzone:.1},
 };
+// 动作库：程序自带两个，另外两个当作已经从官方动作库下载了。只给界面用得到的字段。
+const libraryItem=(id,name,group,source)=>({id,name,group,source,trigger:`${group==='pose'?'pose':'motion'}.${id}`,
+  how:'',revision:1,ratings:{intensity:2,recognition:4,difficulty:2},body_parts:{legs:3},demo:{frame_s:.5,frames:[]}});
+const poseLibrary=[libraryItem('march','原地踏步','motion','builtin'),libraryItem('calf_back','小腿向后抬起','motion','builtin'),
+  libraryItem('jumping_jack','开合跳','motion','cloud'),libraryItem('hands_up','双手举过头','motion','cloud')];
 const commands=[
   {id:'output.stop',phrase:'体感停止',label:'停止控制',system_fixed:true,kind:'system'},
   {id:'game.map',phrase:'打开地图',label:'地图',kind:'game',default_action:{type:'keyboard',target:'M'},effective_action:{type:'keyboard',target:'M'}},
@@ -34,8 +44,14 @@ function runtime(){
     zones:Object.fromEntries(Object.entries(state.zones.rects).map(([id,rect])=>[id,{rect}])),zones_frozen:state.zones.frozen,head:state.head}};
 }
 (async()=>{
-  const browser=await chromium.launch({channel:'msedge',headless:true});
+  const executablePath=process.env.PW_CHROMIUM_PATH;
+  const browser=await chromium.launch(executablePath?{executablePath,headless:true}:{channel:'msedge',headless:true});
   const page=await browser.newPage({viewport:{width:1366,height:768}});
+  // 新手教程第一次打开会盖一层遮罩，挡住所有点击。这里测的不是教程，当作看过了。
+  await page.addInitScript(()=>localStorage.setItem('motioncontrol_tutorial_v2',
+    JSON.stringify({done:[],skipped:[],seen:1,offered:true})));
+  // 键盘键位框是只读的按键录入框（app.js 的 makeKeyCaptureInput）：点进去，再按键。
+  const pressKeys=async(input,combo)=>{await input.click();await page.keyboard.press(combo)};
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.route('http://motioncontrol.test/**',async route=>{
     const request=route.request(),url=new URL(request.url()),endpoint=url.pathname;
@@ -63,6 +79,7 @@ function runtime(){
         state.output.enabled=false;return respond(state.output);
       case '/api/output/xinput':return respond({enabled:false,connected_users:[]});
       case '/api/output/actions':return respond({actions:{keyboard:{free_text:true},gamepad:{targets:['A','B','X','Y','LB']},mouse_button:{targets:['LEFT','RIGHT']}}});
+      case '/api/pose/library':return respond({library:poseLibrary,rating_names:{intensity:'运动强度',recognition:'识别度',difficulty:'上手难度'},body_part_names:{legs:'腿部'},cloud_names:{}});
       case '/api/voice/status':return respond({connected:false,model_ready:false,mappings:[]});
       case '/api/voice/commands':return respond({commands});
       case '/api/voice/config':return respond({mappings:body.mappings});
@@ -109,9 +126,10 @@ function runtime(){
     await page.getByText('模拟输出开启失败',{exact:true}).waitFor();state.failStart=false;
 
     await page.locator('[data-view=games]').click();
-    const row=page.locator('[data-trigger="zone.leftHand"]');
+    // 键位格自己也带 data-trigger（停住语音按住要知道是哪一行），只认整行。
+    const row=page.locator('.binding-row[data-trigger="zone.leftHand"]');
     await row.locator('.binding-type').selectOption('keyboard');
-    state.failSave=true;await row.locator('.binding-target').fill('CTRL+M');
+    state.failSave=true;await pressKeys(row.locator('.binding-target'),'Control+KeyM');
     await page.locator('#retryProfileSaveBtn').waitFor({state:'visible'});
     await page.locator('#profileSelect').selectOption('game-b');await page.locator('#profileApplyBtn').click();
     await page.waitForFunction(()=>!document.querySelector('#mappingFields').disabled);
@@ -119,8 +137,8 @@ function runtime(){
     state.failSave=false;await page.locator('#retryProfileSaveBtn').click();
     await page.waitForFunction(()=>document.querySelector('#profileSaveStatus').textContent==='已自动保存');
     state.saveDelay=600;
-    await row.locator('.binding-target').fill('CTRL+K');await delay(400);
-    await row.locator('.binding-target').fill('CTRL+L');
+    await pressKeys(row.locator('.binding-target'),'Control+KeyK');await delay(400);
+    await pressKeys(row.locator('.binding-target'),'Control+KeyL');
     await page.locator('#profileApplyBtn').click();
     await page.waitForFunction(()=>document.querySelector('#currentGameName').textContent==='示例游戏乙');
     assert.equal(state.saved['game-a']['zone.leftHand'].action.target,'CTRL+L');
@@ -130,13 +148,15 @@ function runtime(){
     assert.equal(await row.locator('.binding-target').inputValue(),'CTRL+L');
     await page.reload();await row.waitFor({state:'attached'});
     await page.locator('[data-view=games]').click();assert.equal(await row.locator('.binding-target').inputValue(),'CTRL+L');
-    const jumping=page.locator('[data-trigger="motion.jumping_jack"] .binding-type');
+    // 下载来的动作默认不在映射表里：在动作库卡片上点「加到映射」才进来。
+    for(const id of ['jumping_jack','hands_up'])await page.locator(`.pose-library-item[data-id="${id}"] .custom-pose-key`).click();
+    const jumping=page.locator('.binding-row[data-trigger="motion.jumping_jack"] .binding-type');
     await jumping.selectOption('gamepad');
-    assert.equal(await page.locator('[data-trigger="motion.hands_up"] .binding-type').isDisabled(),true);
+    assert.equal(await page.locator('.binding-row[data-trigger="motion.hands_up"] .binding-type').isDisabled(),true);
     await page.locator('#profileSaveStatus').getByText('已自动保存').waitFor();
     // A second client changed games: retain the draft, then explicitly restore its target.
     state.selected='game-b';
-    await row.locator('.binding-target').fill('CTRL+P');
+    await pressKeys(row.locator('.binding-target'),'Control+KeyP');
     await page.getByRole('button',{name:'重新选择本游戏并保存草稿'}).waitFor();
     assert.equal(state.selected,'game-b');
     await page.locator('#retryProfileSaveBtn').click();
@@ -173,6 +193,8 @@ function runtime(){
     assert.match(await page.locator('#mobileStatus').textContent(),/已连接/);
     state.source='computer';
     state.failHead=true;
+    // 头控细调收在「更多设置」里，展开才看得见、按得动。
+    await page.locator('.view-control-more > summary').click();
     await page.locator('#speedX').focus();await page.keyboard.press('ArrowRight');
     await page.locator('#retryHeadBtn').waitFor({state:'visible'});await delay(350);
     assert.equal(await page.locator('#speedX').inputValue(),'60');

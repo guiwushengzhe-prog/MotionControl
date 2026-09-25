@@ -517,7 +517,9 @@ function syncMotionConflictChoices(){
       for(const id of group.ids){if(id!==active[0])stateFor(id).blockedBy.add(active[0])}
     }
   }
-  for(const trigger of BASE_PROFILE_TRIGGERS.filter(item=>item.group==='motions')){
+  // 所有身体动作，包括从官方动作库下载的：开合跳、双手举过头都是下载来的，只看程序
+  // 自带的那两个，这里的互斥就形同虚设。
+  for(const trigger of profileTriggers().filter(item=>item.group==='motions')){
     const row=document.querySelector(`.binding-row[data-trigger="${trigger.key}"]`);if(!row)continue;
     const state=states.get(trigger.id)||{blockedBy:new Set(),conflictWith:new Set()};
     const select=row.querySelector('.binding-type');if(!select)continue;
