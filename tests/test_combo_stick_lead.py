@@ -82,3 +82,52 @@ def test_tap_combo_uses_the_same_lead_before_release(tmp_path):
         if worker.is_alive():
             worker.join(0.5)
         out.close()
+
+
+def test_replacing_combo_during_lead_does_not_apply_stale_stick(tmp_path):
+    out, _mouse, _keyboard, pad = manager(tmp_path)
+    first = [{
+        "id": "pose.climb",
+        "action": {"type": "gamepad", "target": ["LB", "LS_UP"], "combo_stick_lead_ms": 120},
+    }]
+    second = [{
+        "id": "pose.climb",
+        "action": {"type": "gamepad", "target": ["LB", "LS_LEFT"], "combo_stick_lead_ms": 120},
+    }]
+    try:
+        out.set_action_holds(first)
+        assert pad.left_stick == (0.0, 0.0)
+        time.sleep(0.04)
+        out.set_action_holds(second)
+        assert pad.left_stick == (0.0, 0.0)
+        deadline = time.monotonic() + 0.35
+        while pad.left_stick == (0.0, 0.0) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pad.left_stick == (-1.0, 0.0)
+    finally:
+        out.set_action_holds([])
+        out.close()
+
+
+def test_nonblocking_default_lead_releases_after_stick_arrives(tmp_path):
+    out, _mouse, _keyboard, pad = manager(tmp_path)
+    try:
+        out.execute_action({
+            "type": "gamepad",
+            "target": ["LB", "LS_UP"],
+            "duration": 0.01,
+            "nonblocking": True,
+        })
+        assert pad.buttons == ("LB",)
+        assert pad.left_stick == (0.0, 0.0)
+        deadline = time.monotonic() + 0.18
+        while pad.left_stick == (0.0, 0.0) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pad.left_stick == (0.0, 1.0)
+        deadline = time.monotonic() + 0.25
+        while pad.buttons and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pad.buttons == ()
+        assert pad.left_stick == (0.0, 0.0)
+    finally:
+        out.close()

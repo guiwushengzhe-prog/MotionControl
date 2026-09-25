@@ -748,6 +748,8 @@ class OutputManager:
         self._combo_stick_lead = DEFAULT_COMBO_STICK_LEAD_MS / 1000.0
         self._combo_timers: dict[str, threading.Timer] = {}
         self._combo_started: dict[str, float] = {}
+        self._combo_pending: dict[str, tuple[tuple[float, float], float]] = {}
+        self._combo_generation: dict[str, int] = {}
         self._xinput_reader = xinput_reader or XInputReader()
         self._xinput_merge_enabled = False
         self._xinput_motion_left_enabled = False
@@ -1558,9 +1560,11 @@ class OutputManager:
             return self.status()
 
     def _cancel_combo_timers_locked(self, predicate) -> None:
-        for key in [k for k in self._combo_started if predicate(k)]:
+        keys = set(self._combo_started) | set(self._combo_pending) | set(self._combo_timers)
+        for key in [k for k in keys if predicate(k)]:
+            self._combo_generation[key] = self._combo_generation.get(key, 0) + 1
             self._combo_started.pop(key, None)
-        for key in [k for k in self._combo_timers if predicate(k)]:
+            self._combo_pending.pop(key, None)
             timer = self._combo_timers.pop(key, None)
             if timer is not None:
                 timer.cancel()
@@ -1597,13 +1601,11 @@ class OutputManager:
         if stick is None or not allow_stick:
             self._cancel_combo_timers_locked(lambda key: key == source)
             self._left_stick_sources.pop(source, None)
-            self._combo_started.pop(source, None)
             return
         if not buttons:
+            self._cancel_combo_timers_locked(lambda key: key == source)
             self._left_stick_sources[source] = stick
             return
-        now = time.monotonic()
-        started = self._combo_started.setdefault(source, now)
         if lead_seconds is None:
             lead = self._combo_lead_seconds(None, self._combo_stick_lead)
         else:
@@ -1612,23 +1614,35 @@ class OutputManager:
                            min(MAX_COMBO_STICK_LEAD_MS / 1000.0, float(lead_seconds)))
             except (TypeError, ValueError):
                 lead = self._combo_lead_seconds(None, self._combo_stick_lead)
+        pending = (tuple(stick), lead)
+        if source in self._combo_pending and self._combo_pending[source] != pending:
+            self._cancel_combo_timers_locked(lambda key: key == source)
+        now = time.monotonic()
+        started = self._combo_started.setdefault(source, now)
         if now - started >= lead:
             self._left_stick_sources[source] = stick
+            self._combo_pending.pop(source, None)
             return
+        self._combo_pending[source] = pending
         if source not in self._combo_timers:
+            generation = self._combo_generation.get(source, 0) + 1
+            self._combo_generation[source] = generation
             timer = threading.Timer(
                 max(0.0, lead - (now - started)),
-                self._apply_delayed_stick, args=(source, stick),
+                self._apply_delayed_stick, args=(source, stick, lead, generation),
             )
             timer.daemon = True
             self._combo_timers[source] = timer
             timer.start()
 
-    def _apply_delayed_stick(self, source: str, stick) -> None:
+    def _apply_delayed_stick(self, source: str, stick, lead: float, generation: int) -> None:
         with self._lock:
+            if self._combo_generation.get(source) != generation:
+                return
             self._combo_timers.pop(source, None)
-            if source not in self._button_sources:
+            if source not in self._button_sources or self._combo_pending.get(source) != (tuple(stick), lead):
                 return  # Released while the button was still leading.
+            self._combo_pending.pop(source, None)
             self._left_stick_sources[source] = stick
             self._refresh_left_stick_locked()
             if self._xinput_merge_active_locked():
@@ -1845,7 +1859,7 @@ class OutputManager:
             # stick is scheduled to arrive, otherwise only the leading button
             # is ever observable.
             release_duration = duration
-            if action_type == "gamepad" and combo_stick_lead_ms is not None:
+            if action_type == "gamepad":
                 buttons, stick, _triggers = self._gamepad_parts(target)
                 if buttons and stick is not None:
                     release_duration = max(release_duration,
@@ -1858,6 +1872,7 @@ class OutputManager:
         self.last_value = 0.0
         self.last_x = 0.0
         self.last_y = 0.0
+        self._cancel_combo_timers_locked(lambda key: True)
         physical = {}
         if self._xinput_merge_active_locked() and self._xinput_source:
             physical[self._xinput_source] = set(self._xinput_state.get("buttons", set()) if self._xinput_state else set())
@@ -1884,6 +1899,7 @@ class OutputManager:
         if self._xinput_merge_active_locked() and not force_physical:
             self._clear_motion_locked()
             return
+        self._cancel_combo_timers_locked(lambda key: True)
         self.last_value = 0.0
         self.last_x = 0.0
         self.last_y = 0.0
