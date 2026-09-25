@@ -88,6 +88,10 @@ VOICE_SYSTEM_NAMES = {
     "POSE.RECORD": "录一个新姿势",
     "POSE.ADD_FRAME": "给刚录的动作再加一个姿势",
     "POSE.CANCEL": "取消录制倒计时",
+    "ZONES.FREEZE_TOGGLE": "定住区域 / 恢复跟随",
+    "ZONES.FREEZE": "定住区域",
+    "ZONES.FOLLOW": "区域恢复跟随",
+    "OUTPUT.TOGGLE": "开始 / 停止输出",
 }
 
 _AXIS_NAMES = {"LS_UP": "向上", "LS_DOWN": "向下", "LS_LEFT": "向左", "LS_RIGHT": "向右"}

@@ -201,6 +201,16 @@ HAND_BOTH_DWELL_S = 0.30
 ZONE_YIELD_S = 0.25
 ZONE_YIELD_GRACE_S = 0.30
 
+# 区域怎么算按下。guarded（防误触）：上面这些都用上。simple（进去就按）：关节进框
+# 那一帧就按、出框那一帧就松，脚不用往外抬、圈不给动作让路，只留一条——握拳控制
+# 鼠标的那只手，飞过哪个区域都不按。
+ZONE_TRIGGER_MODES = ("guarded", "simple")
+DEFAULT_ZONE_TRIGGER_MODE = "guarded"
+
+# 定住的跟随框：哪几个能定、编辑时最小多大（画面宽高的比例）。
+FROZEN_ZONE_IDS = ("leftHand", "rightHand", "leftFoot", "rightFoot", "headJump", "lookGate")
+FROZEN_ZONE_MIN_SIZE = 0.02
+
 # 下蹲、开合跳、提膝碰对侧肘这些动作的门槛跟着动作文件从云端下载，
 # 写在 cloud/official_poses/ 里，每个数字怎么来的见那里的 README。
 
@@ -212,6 +222,35 @@ def _fresh_step() -> dict:
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, float(value)))
+
+
+def _normalize_frozen_rects(raw) -> dict[str, dict]:
+    """定住的框整理成能直接用的样子：只认 FROZEN_ZONE_IDS，坐标夹进画面，太小的撑开。
+
+    存盘读回来的、界面上拖完送过来的都走这里。坏的那一个丢掉，别的照用。
+    """
+    out: dict[str, dict] = {}
+    if not isinstance(raw, dict):
+        return out
+    for name in FROZEN_ZONE_IDS:
+        rect = raw.get(name)
+        if not isinstance(rect, dict):
+            continue
+        try:
+            xs = sorted(_clamp(rect[key], 0.0, 1.0) for key in ("x1", "x2"))
+            ys = sorted(_clamp(rect[key], 0.0, 1.0) for key in ("y1", "y2"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in (*xs, *ys)):
+            continue
+        box = {}
+        for (low, high), (key_low, key_high) in ((xs, ("x1", "x2")), (ys, ("y1", "y2"))):
+            if high - low < FROZEN_ZONE_MIN_SIZE:
+                middle = _clamp((low + high) / 2, FROZEN_ZONE_MIN_SIZE / 2, 1 - FROZEN_ZONE_MIN_SIZE / 2)
+                low, high = middle - FROZEN_ZONE_MIN_SIZE / 2, middle + FROZEN_ZONE_MIN_SIZE / 2
+            box[key_low], box[key_high] = round(low, 4), round(high, 4)
+        out[name] = box
+    return out
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -375,6 +414,12 @@ class ControlKernel:
         self.zone_fit_session: ZoneFitSession | None = None
         self.fixed_zones: dict[str, dict] = {}
         self.fixed_zones_enabled = False
+        # 区域触发方式，见 ZONE_TRIGGER_MODES。存在 general_settings.json 里。
+        self.zone_trigger_mode = DEFAULT_ZONE_TRIGGER_MODE
+        # 定住的跟随框：定住那一刻的框，之后不再跟着人走，可以在界面上拖。存盘，
+        # 重启还是定住的。只管跟随框；记录过参考场景的固定圆圈是另一套，不受它影响。
+        self.zones_frozen = False
+        self.frozen_rects: dict[str, dict] = {}
         # Provisional head-jump target anchor.  It deliberately does not track
         # the nose frame by frame: a jump lifts the whole body, so a fast
         # follower carries the target upward and the nose can never enter it.
@@ -522,6 +567,9 @@ class ControlKernel:
         # 回调必须是"放下就走"的：它在控制线程、而且在锁里被调用，里面做任何可能
         # 阻塞的事（比如往 socket 写）都会卡住识别，表现出来是掉帧。
         self._trigger_listener = None
+        # 映射表里绑的「系统功能」里不归内核管的那些（开始/停止输出、视角回正）交给
+        # 它，server 装上。在单独的线程里调，不占控制线程、不在锁里。
+        self._system_action_handler = None
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -600,6 +648,19 @@ class ControlKernel:
         self.action_chain.configure(data.get("action_chain", DEFAULT_ACTION_CHAIN))
         # 量过身的区域。坏了、缺了都回到默认大小，不影响启动。
         self.zone_fit = normalize_zone_fit(data.get("zone_fit"))
+        mode = str(data.get("zone_trigger_mode", "")).strip().lower()
+        if mode in ZONE_TRIGGER_MODES:
+            self.zone_trigger_mode = mode
+        frozen = data.get("zone_freeze")
+        if isinstance(frozen, dict):
+            rects = _normalize_frozen_rects(frozen.get("rects"))
+            self.frozen_rects = rects
+            # 存着"定住"却一个框都没有（文件被改坏了），当没定住：定住一堆空框等于
+            # 区域全部失灵，而界面上看不出为什么。
+            self.zones_frozen = bool(frozen.get("frozen")) and bool(rects)
+            if self.zones_frozen:
+                # 人还没进画面，框就已经在那儿了。
+                self.zone_rects = self._frozen_zone_rects_locked()
 
     def general_setting(self, key: str, default=None):
         """读一项不归内核管、但和它存在同一份文件里的设置。
@@ -628,6 +689,9 @@ class ControlKernel:
                 "source": str(self.vertical_look.get("source", "hand")),
             },
             "action_chain": self.action_chain.config,
+            "zone_trigger_mode": self.zone_trigger_mode,
+            "zone_freeze": {"frozen": bool(self.zones_frozen),
+                            "rects": copy.deepcopy(self.frozen_rects)},
         }
         temp = path.with_suffix(path.suffix + ".tmp")
         try:
@@ -1119,6 +1183,71 @@ class ControlKernel:
         state["grip_measured_at_unix"] = self.zone_fit.get("grip_measured_at_unix")
         state["zones"] = copy.deepcopy(self.zone_fit["zones"])
         return state
+
+    # ---------- 区域触发方式、定住跟随框 ----------
+
+    def configure_zone_trigger_mode(self, mode: str) -> dict:
+        mode = str(mode or "").strip().lower()
+        if mode not in ZONE_TRIGGER_MODES:
+            raise ValueError("区域触发方式只能是「进去就按」或「防误触」")
+        with self._lock:
+            if mode != self.zone_trigger_mode:
+                self.zone_trigger_mode = mode
+                # 换方式时各区域的计时清零，免得带着上一种方式的半截状态。
+                for state in self.zone_state.values():
+                    state["deep_since"] = None
+                    state.pop("yield_until", None)
+                self._save_general_settings()
+            return self.status_locked(time.monotonic())
+
+    def _frozen_zone_rects_locked(self) -> dict[str, dict]:
+        rects = copy.deepcopy(self.frozen_rects)
+        for alias, canonical in ZONE_ALIASES.items():
+            if canonical in rects:
+                rects[alias] = copy.deepcopy(rects[canonical])
+        return rects
+
+    def _freeze_zones_locked(self) -> dict:
+        """把跟随框定在现在的位置。已经定住了就什么都不改——之后拖过的不能被冲掉。"""
+        if self.fixed_zones_enabled:
+            return {"executed": False, "reason": "现在用的是固定圆圈，本来就不跟着人走"}
+        if self.zones_frozen:
+            return {"executed": True, "frozen": True}
+        rects = _normalize_frozen_rects(self.zone_rects)
+        if not rects:
+            return {"executed": False, "reason": "还没看到人，没有框可以定住：先让头和双肩入镜"}
+        self.frozen_rects = rects
+        self.zones_frozen = True
+        self._save_general_settings()
+        return {"executed": True, "frozen": True, "zones": sorted(rects)}
+
+    def _unfreeze_zones_locked(self) -> dict:
+        if self.zones_frozen or self.frozen_rects:
+            self.zones_frozen = False
+            self.frozen_rects = {}
+            self._save_general_settings()
+        return {"executed": True, "frozen": False}
+
+    def _toggle_zone_freeze_locked(self) -> dict:
+        return self._unfreeze_zones_locked() if self.zones_frozen else self._freeze_zones_locked()
+
+    def freeze_zones(self, frozen: bool = True) -> dict:
+        with self._lock:
+            result = self._freeze_zones_locked() if frozen else self._unfreeze_zones_locked()
+            return {**result, "status": self.status_locked(time.monotonic())}
+
+    def update_frozen_zones(self, rects) -> dict:
+        """界面上拖完的框。只改送来的那几个，别的不动。"""
+        if not isinstance(rects, dict):
+            raise ValueError("rects 必须是对象")
+        with self._lock:
+            if not self.zones_frozen:
+                raise ValueError("区域没有定住：先定住，再拖")
+            merged = {**self.frozen_rects, **_normalize_frozen_rects(rects)}
+            self.frozen_rects = _normalize_frozen_rects(merged)
+            self.zone_rects = self._frozen_zone_rects_locked()
+            self._save_general_settings()
+            return self.status_locked(time.monotonic())
 
     def set_current_center(self) -> dict:
         """Compatibility boundary for the legacy "立即设置中心" endpoint.
@@ -1702,14 +1831,19 @@ class ControlKernel:
             # Fixed zones live in raw camera normalized coordinates and never
             # follow the body. Rects are generated only for legacy clients.
             self.zone_rects = {}
+        elif self.zones_frozen:
+            # 定住了：用定住那一刻（或者之后在界面上拖过）的框，不再跟着人算。
+            self.zone_rects = self._frozen_zone_rects_locked()
         else:
             self.zone_rects = self._compute_body_zones(pose_map, now)
         changed = False
+        simple = self.zone_trigger_mode == "simple"
         gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         overlaps = self.zone_overlaps_locked()
         frame = body_frame(pose_map, self.width, self.height)
-        hand_reach = {name: self._hand_reach_locked(pose_map, name, frame) for name in ("leftHand", "rightHand")}
+        hand_reach = {} if simple else {
+            name: self._hand_reach_locked(pose_map, name, frame) for name in ("leftHand", "rightHand")}
         for name in zone_names:
             state = self.zone_state.setdefault(name, {"inside": 0, "outside": 0, "pressed": False})
             if name == "lookGate":
@@ -1723,7 +1857,7 @@ class ControlKernel:
                     inside = self._foot_in_circle(pose_map, points, circle)
             else:
                 inside = any(self._point_in_rect(pose_map.get(point), self.zone_rects.get(name)) for point in points)
-            if name in ("leftFoot", "rightFoot"):
+            if name in ("leftFoot", "rightFoot") and not simple:
                 # 固定圈与跟随区均须先实际接触，再确认是向外伸脚。
                 inside = inside and self._foot_outward(pose_map, "left" if name == "leftFoot" else "right")
             if inside and self._hand_mouse_owns_zone(name):
@@ -1731,6 +1865,15 @@ class ControlKernel:
                 # be pressing whatever zone it flies through, so aiming would
                 # mash buttons.
                 inside = False
+            if simple:
+                # 进去就按：在框里就按着，出来就松，下面那些防误触一条都不走。
+                state["inside"] = state["inside"] + 1 if inside else 0
+                state["outside"] = 0 if inside else state["outside"] + 1
+                state["deep_since"] = None
+                if state["pressed"] != inside:
+                    state["pressed"] = inside
+                    changed = True
+                continue
             # 圈给动作让路：这个圈和一个会扫过它的动作都绑了键时，动作做着（或刚做
             # 完）就不按；那个动作在认出来之前就会先扫过圈的，平时也要待够
             # ZONE_YIELD_S 才按——举双手时手从两侧扫过手区，不让的话每举一次就误按
@@ -1804,7 +1947,8 @@ class ControlKernel:
             triggers = [trigger for trigger in pose_library.zone_crossers(zone)
                         if self._effective_binding_locked(trigger)]
             if triggers:
-                yields = zone != "headJump"
+                # 「进去就按」不让路：动作和圈都绑了键，做动作时扫过圈就一起按到。
+                yields = zone != "headJump" and self.zone_trigger_mode != "simple"
                 out[zone] = {"triggers": triggers, "yields": yields,
                              # 有动作会在认出来之前就先扫过这个圈：平时也要晚一点按。
                              "delay": yields and any(pose_library.sweeps_first(t) for t in triggers)}
@@ -2342,6 +2486,39 @@ class ControlKernel:
         with self._lock:
             self._trigger_listener = listener
 
+    def configure_system_action_handler(self, handler) -> None:
+        """装上执行系统功能的回调：handler(target, trigger)。见 _system_action_handler。"""
+        with self._lock:
+            self._system_action_handler = handler
+
+    def _run_system_action_locked(self, target, trigger: str) -> None:
+        """绑在区域、动作、姿势上的「系统功能」，触发那一下执行一次。
+
+        定住 / 恢复跟随就在这里做：定住的是这一帧刚算出来的框，放到别的线程去做就
+        晚了一两帧。别的交给 server。系统功能不看游戏控制开没开——「开始输出」
+        本来就是在没开的时候用的。
+        """
+        target = str(target or "").strip().upper()
+        zones = {"ZONES.FREEZE": self._freeze_zones_locked,
+                 "ZONES.FOLLOW": self._unfreeze_zones_locked,
+                 "ZONES.FREEZE_TOGGLE": self._toggle_zone_freeze_locked}
+        if target in zones:
+            result = zones[target]()
+            if not result.get("executed"):
+                self.last_error = str(result.get("reason") or "")
+            return
+        handler = self._system_action_handler
+        if handler is None:
+            return
+
+        def run() -> None:
+            try:
+                handler(target, trigger)
+            except Exception as exc:  # noqa: BLE001 - 系统功能失败不该拖垮控制
+                self.last_error = str(exc)
+
+        threading.Thread(target=run, name="system-action", daemon=True).start()
+
     def _trigger_brief_locked(self, trigger: str) -> dict:
         binding = self._effective_binding_locked(trigger)
         return {"id": trigger, "action": copy.deepcopy((binding or {}).get("action"))}
@@ -2462,6 +2639,10 @@ class ControlKernel:
                 # 停住一条语音按住：只在刚触发那一下做一次，本身不按任何键。
                 if trigger not in self.trigger_previous:
                     self._release_voice_hold_locked(action.get("target", ""))
+            elif action.get("type") == "system":
+                # 系统功能也是只在刚触发那一下做一次，不按游戏里的任何键。
+                if trigger not in self.trigger_previous:
+                    self._run_system_action_locked(action.get("target", ""), trigger)
             elif behavior == "tap":
                 if trigger not in self.trigger_previous:
                     action["source"] = f"trigger:{trigger}:{time.monotonic_ns()}"
@@ -2641,7 +2822,9 @@ class ControlKernel:
         self.hand_mouse_controller.reset()
         for state in self.zone_state.values():
             state.update({"inside": 0, "outside": 0, "pressed": False, "deep_since": None})
-        self.zone_rects = {}
+        # 定住的框不靠人算，人走开了也还在原地，画面上照样画出来、照样能拖。
+        self.zone_rects = (self._frozen_zone_rects_locked()
+                           if self.zones_frozen and not self.fixed_zones_enabled else {})
         self.head_jump_anchor = None
         self.head_jump_prev = None
         self.head_jump_torso_ref = None
@@ -2830,6 +3013,9 @@ class ControlKernel:
             # 哪些圈在给哪些动作让路。界面在绑键的地方照这个提醒。
             "zone_overlaps": self.zone_overlaps_locked(),
             "zone_yield_s": ZONE_YIELD_S,
+            "zone_trigger_mode": self.zone_trigger_mode,
+            # 跟随框定住了没有。固定圆圈（scene_mode == fixed）时它不起作用。
+            "zones_frozen": bool(self.zones_frozen and not self.fixed_zones_enabled),
             "vertical_look": copy.deepcopy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),
             "body_motion_guard_enabled": bool(self.body_motion_guard_enabled),

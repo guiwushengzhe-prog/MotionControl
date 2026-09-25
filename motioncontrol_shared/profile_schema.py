@@ -41,6 +41,22 @@ ACTION_TYPES = {
     # 按住，运行时什么都不做，和宏丢失一样。任何触发器（区域、动作、姿势、语音）
     # 都能绑它，永远是触发一次。
     "voice_release",
+    # 系统功能：不按游戏里的键，让本程序自己做一件事（定住区域、视角回正……）。
+    # target 必须在 BINDING_SYSTEM_TARGETS 里，电脑端按名字执行。永远是触发一次。
+    "system",
+}
+# 映射表里能选的系统功能。白名单：电脑端按名字执行，云端校验别人上传的配置也照这
+# 一份。语音那边另有一份（mapping_schema.VOICE_SYSTEM_TARGETS），两边都有的名字
+# 意思一样。录姿势、记录参考场景这类只列在语音里：身体正摆着要录的姿势，没法再用
+# 身体去按它。
+BINDING_SYSTEM_TARGETS = {
+    "ZONES.FREEZE_TOGGLE",  # 定住 / 恢复跟随，来回切
+    "ZONES.FREEZE",         # 定住区域
+    "ZONES.FOLLOW",         # 区域恢复跟随
+    "HEAD.CENTER",          # 视角回正
+    "OUTPUT.TOGGLE",        # 开始 / 停止输出，来回切
+    "OUTPUT.START",
+    "OUTPUT.STOP",
 }
 # 宏编号的写法。macro_schema 里有同一条规则，那边管宏库自己，这边管绑定引用它，
 # 两个入口都得认得同一种编号。
@@ -124,6 +140,10 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
             target = target[len("voice."):]
         if not _VOICE_COMMAND_ID_RE.match(target):
             raise ValueError(f"要停的语音口令不对：{target or '(空)'}")
+    elif action_type == "system":
+        target = str(raw_target).strip().upper()
+        if target not in BINDING_SYSTEM_TARGETS:
+            raise ValueError(f"不支持的系统功能：{target or '(空)'}")
     else:
         target = str(raw_target).strip().upper()
         if not target:
@@ -147,7 +167,7 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
     if behavior not in {"hold", "tap", "release"}:
         raise ValueError("动作方式必须为点按、持续按住或松开")
     # A wheel is an impulse by definition; allowing hold would create runaway scrolling.
-    if action_type in {"mouse_wheel", "voice_release"}:
+    if action_type in {"mouse_wheel", "voice_release", "system"}:
         behavior = "tap"
     out = {"type": action_type, "target": target, "behavior": behavior}
     # 只给同时含 Xbox 按键和左摇杆方向的组合保存领先时间；普通动作不带这
@@ -290,6 +310,7 @@ def action_catalog() -> dict:
         "macro": {"library": "macros"},
         # 目标是本游戏里设成"持续按住"的口令，界面从映射表自己的语音行里列。
         "voice_release": {"library": "voice_holds", "behavior": "tap"},
+        "system": {"targets": sorted(BINDING_SYSTEM_TARGETS), "behavior": "tap"},
     }
 
 

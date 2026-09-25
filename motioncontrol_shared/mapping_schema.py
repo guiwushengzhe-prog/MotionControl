@@ -59,6 +59,12 @@ VOICE_SYSTEM_TARGETS = {
     "POSE.RECORD",
     "POSE.ADD_FRAME",
     "POSE.CANCEL",
+    # 定住跟随框 / 恢复跟随、输出来回切。映射表里也能选（profile_schema 的
+    # BINDING_SYSTEM_TARGETS），名字相同意思相同。
+    "ZONES.FREEZE_TOGGLE",
+    "ZONES.FREEZE",
+    "ZONES.FOLLOW",
+    "OUTPUT.TOGGLE",
 }
 
 # Motions drive one output each, so the richer action vocabulary that game

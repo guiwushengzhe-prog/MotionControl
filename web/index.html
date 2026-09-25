@@ -17,7 +17,7 @@
 <section class="layout" data-panel="play" id="playPanel">
 <div class="play-main">
 <section class="card viewer-card">
-<div class="card-head"><h2 class="title">实时画面</h2><div class="card-tools"><button class="btn" id="adjustZonesBtn">挪动区域</button><button class="btn" id="overlayBtn">悬浮窗</button></div></div>
+<div class="card-head"><h2 class="title">实时画面</h2><div class="card-tools"><button class="btn" id="adjustZonesBtn" title="把跟着你走的框定住，再拖着改位置和大小">挪动区域</button><button class="btn" hidden="" id="followZonesBtn" title="区域现在定住了。点这里让它重新跟着你走">恢复跟随</button><button class="btn" id="overlayBtn">悬浮窗</button></div></div>
 <div class="viewer" id="viewer">
 <img alt="电脑摄像头预览" hidden="" id="cameraPreview"/>
 <canvas id="canvas"></canvas>
@@ -46,9 +46,9 @@
 </section>
 
 <section class="card zone-edit-bar" hidden="" id="zoneEditBar">
-<div class="card-head"><div><h2 class="title">挪动区域</h2><p class="card-sub">拖动圆圈调整位置，选中后可用方向键微调。调整期间体感输出暂停。</p></div></div>
+<div class="card-head"><div><h2 class="title">挪动区域</h2><p class="card-sub" id="zoneEditHint">拖动圆圈调整位置，选中后可用方向键微调。调整期间体感输出暂停。</p></div></div>
 <div class="scene-zone-tools" id="sceneTools"><label>正在编辑<select id="sceneZoneSelect"></select></label><label>区域大小 <span id="sceneRadiusValue">—</span><input id="sceneRadius" max="20" min="2.5" step="0.5" type="range"/></label><label>右手上下范围 <span id="sceneVerticalRangeValue">—</span><input id="sceneVerticalRange" max="40" min="6" step="1" type="range"/></label><label>右手中心死区 <span id="sceneVerticalDeadzoneValue">—</span><input id="sceneVerticalDeadzone" max="35" min="0" step="1" type="range"/></label><label>右手上下中心位置<input aria-label="右手上下中心位置" id="sceneVerticalCenter" max="100" min="0" step="1" type="range"/></label></div>
-<div class="settings-actions"><button class="btn" id="sceneRematchBtn">重新识别位置</button><button class="btn" id="sceneCaptureBtn">重新记录参考位置</button><span class="spacer"></span><button class="btn" id="cancelLiveZonesBtn">取消</button><button class="btn primary" id="saveLiveZonesBtn">保存区域</button></div><p class="statusline" id="sceneStatus" role="status"></p>
+<div class="settings-actions"><button class="btn" id="sceneRematchBtn">重新识别位置</button><button class="btn" id="sceneCaptureBtn">重新记录参考位置</button><button class="btn" hidden="" id="zoneEditFollowBtn">恢复跟随</button><span class="spacer"></span><button class="btn" id="cancelLiveZonesBtn">取消</button><button class="btn primary" id="saveLiveZonesBtn">保存区域</button></div><p class="statusline" id="sceneStatus" role="status"></p>
 </section>
 </div>
 
@@ -235,6 +235,18 @@
 <span class="statusline" id="handMouseSaveStatus" role="status"></span>
 </section>
 </details>
+</div>
+
+<div class="settings-section" id="zoneTriggerSettings">
+<h3 class="title">区域触发方式</h3>
+<p class="lede">手、脚、头进了画面上的框，怎么才算按下。所有游戏通用。</p>
+<label class="zone-trigger-mode">区域怎么算按下<select id="zoneTriggerMode"><option value="guarded">防误触</option><option value="simple">进去就按</option></select></label>
+<ul class="lede-list" id="zoneTriggerHelp">
+<li><b>防误触</b>：手要伸进去够深、停一小会儿才按，两只手一起扫进来要停更久；脚要真的抬起来往外伸；框和动作都绑了键时，做动作扫过框不按。</li>
+<li><b>进去就按</b>：进框那一帧就按，出框那一帧就松，别的都不管。反应最快，也最容易误按。</li>
+</ul>
+<p class="fineprint">两种方式下，握拳控制鼠标的那只手经过框都不会按。</p>
+<p class="statusline" id="zoneTriggerStatus" role="status"></p>
 </div>
 
 <div class="settings-section" id="zoneFitSettings">

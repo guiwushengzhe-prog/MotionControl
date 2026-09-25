@@ -89,7 +89,9 @@ function revealBindingRow(triggerKey){
 // 手部一块圈里有上下两个绑定，所以它的标注天然是两个键，写成 "Y / X"。
 function zoneKeyLabel(id,def){
   const all=bindingsForDisplay();
-  const ids=def.parts||[id];
+  // 内核按合并后的 zone.leftHand 这些分发，effective_bindings 里也是它；以前只查上下两个
+  // 旧编号，绑好了的手区在画面上照样写「未映射」。旧编号只在内核没报合并编号时兜底。
+  const ids=all['zone.'+id]?[id]:(def.parts||[id]);
   const texts=ids.map((one)=>{const b=all['zone.'+one];return b&&!b.disabled?actionKeyText(b.action):null;}).filter(Boolean);
   return texts.length?texts.join(' / '):'未映射';
 }
@@ -127,7 +129,7 @@ const MOTION_CONFLICT_GROUPS=[
   {ids:['jumping_jack','hands_up'],label:'开合跳与双手举过头'},
 ];
 const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',squat:'下蹲',hands_up:'双手举过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
-const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆',macro:'键盘宏',voice_release:'停住语音按住'};
+const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆',macro:'键盘宏',voice_release:'停住语音按住',system:'系统功能'};
 // 宏库。每一处映射的下拉都从这里取，所以只在增删改之后刷一次，不跟着状态轮询走。
 const macroLibrary={items:[],limits:null};
 function macroById(id){return macroLibrary.items.find(item=>item.id===String(id||'').toLowerCase())||null}
@@ -137,8 +139,11 @@ const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',
 // of a free text field whose typos can only surface as a silent no-op in game.
 const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
 const GAMEPAD_TRIGGER_TARGETS=['LT','RT'];
-const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
-const SYSTEM_TARGET_NAMES=new Map([...VOICE_SYSTEM_TARGETS,['HEAD.CALIBRATE','开始校准']]);
+// 映射表「系统功能」能选的，按这个顺序列。电脑那边 profile_schema.BINDING_SYSTEM_TARGETS
+// 是准，这里只管名字和顺序；那边没有的不列。
+const BINDING_SYSTEM_TARGETS=[['ZONES.FREEZE_TOGGLE','定住区域 / 恢复跟随'],['ZONES.FREEZE','定住区域'],['ZONES.FOLLOW','区域恢复跟随'],['HEAD.CENTER','视角回正'],['OUTPUT.TOGGLE','开始 / 停止输出'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出']];
+const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['OUTPUT.TOGGLE','开始 / 停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['ZONES.FREEZE','定住区域'],['ZONES.FOLLOW','区域恢复跟随'],['ZONES.FREEZE_TOGGLE','定住区域 / 恢复跟随'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
+const SYSTEM_TARGET_NAMES=new Map([...VOICE_SYSTEM_TARGETS,...BINDING_SYSTEM_TARGETS,['HEAD.CALIBRATE','开始校准']]);
 const voice={status:null};
 function currentVoiceWakeWord(status=voice.status){
   const wake=String(status?.wake_word||'体感').trim();
@@ -192,6 +197,12 @@ const overlay={win:null,canvas:null,ctx:null};
 const perfUi={previewBusy:false};
 const scene={status:{},zones:{},vertical:{},selected:''};
 let zoneEditMode=false,zoneEditBackup=null,liveZoneDrag=null;
+// 「挪动区域」有两种：记录过参考场景的是固定圆圈（scene.zones），没记录过的是把跟随框
+// 定住再拖（rectEdit）。框的坐标和内核一样是原始画面（没镜像）的比例。
+let zoneEditKind='circle';
+const RECT_EDIT_ZONE_IDS=['leftHand','rightHand','leftFoot','rightFoot','headJump','lookGate'];
+const RECT_EDIT_MIN=.02;
+const rectEdit={rects:{},backup:{},selected:'',wasFrozen:false};
 const LEGACY_ZONE_ALIASES={leftHand:['leftHandUpper','leftHandLower'],rightHand:['rightHandUpper','rightHandLower']};
 const SCENE_EDIT_ZONE_IDS=Object.keys(BODY_ZONES);
 let voiceCatalog=[];
@@ -262,19 +273,20 @@ function renderKernelZones(zones={}){
     if(def.gate&&!kernelState?.vertical_look?.enabled){el.style.display='none';continue}
     const active=!zoneEditMode&&!!state?.pressed;
     el.classList.toggle('active',active);
-    const editCircle=zoneEditMode?scene.zones?.[id]:null;
+    const editCircle=zoneEditMode&&zoneEditKind==='circle'?scene.zones?.[id]:null;
     const circle=editCircle||state?.circle;
     el.classList.toggle('circle-shape',!!circle&&!def.gate);
     el.querySelector('strong').textContent=def.gate?'上下视角':zoneKeyLabel(id,def);
     el.querySelector('small').textContent=def.gate?(active?'已开启':'左手放这里'):def.body;
     el.tabIndex=zoneEditMode?0:-1;
-    el.setAttribute('aria-label',def.body+'区域，方向键移动');
+    el.setAttribute('aria-label',def.body+(zoneEditKind==='rect'?'区域，方向键移动，Shift 加方向键改大小':'区域，方向键移动'));
     if(circle&&Number.isFinite(Number(circle.cx))&&Number.isFinite(Number(circle.cy))&&Number.isFinite(Number(circle.r))){
       const r=Number(circle.r),cx=Number(circle.cx),cy=Number(circle.cy);
       el.style.display='grid';el.style.left=((cx-r)*100)+'%';el.style.top=((cy-r)*100)+'%';el.style.width=(2*r*100)+'%';el.style.height=(2*r*100)+'%';
       continue;
     }
-    const rect=state?.rect;
+    const rect=zoneEditMode&&zoneEditKind==='rect'?rectEdit.rects[id]:state?.rect;
+    el.classList.toggle('selected',zoneEditMode&&zoneEditKind==='rect'&&rectEdit.selected===id);
     if(!rect){el.style.display='none';continue}
     el.style.display='grid';el.style.left=(rect.x1*100)+'%';el.style.top=(rect.y1*100)+'%';el.style.width=((rect.x2-rect.x1)*100)+'%';el.style.height=((rect.y2-rect.y1)*100)+'%';
   }
@@ -358,7 +370,7 @@ function renderKernelState(runtime,force=false){
   renderTriggerLive();
   renderRange();
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
-  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);
+  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);renderZoneFreeze(k);
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
@@ -540,6 +552,7 @@ function targetLabel(action){
   if(action.type==='macro')return macroName(action.target);
   if(action.type==='voice_release')return voiceCommandName(action.target);
   const t=String(action.target||'').toUpperCase();
+  if(action.type==='system')return SYSTEM_TARGET_NAMES.get(t)||t;
   if(action.type==='keyboard')return t;
   if(action.type==='gamepad'){const values=Array.isArray(action.target)?action.target: String(action.target||'').split('+');return values.map(v=>TARGET_LABELS[String(v).toUpperCase()]||String(v).toUpperCase()).join('+')}
   if(action.type==='gamepad_trigger')return t;
@@ -843,6 +856,14 @@ function fillTargetControl(container,type,value='',comboLeadMs=80,comboLeadExpli
     fillVoiceReleaseSelect(select,container.dataset.trigger||'',Array.isArray(value)?'':String(value||''));
     container.appendChild(select);return;
   }
+  if(type==='system'){
+    const select=document.createElement('select');select.className='binding-target';
+    const allowed=new Set(meta.targets||BINDING_SYSTEM_TARGETS.map(([id])=>id));
+    for(const[id,name]of BINDING_SYSTEM_TARGETS){if(!allowed.has(id))continue;const o=document.createElement('option');o.value=id;o.textContent=name;select.appendChild(o)}
+    const want=String(value||'').toUpperCase();
+    if(want&&[...select.options].some(o=>o.value===want))select.value=want;
+    container.appendChild(select);return;
+  }
   if(type==='macro'){
     const select=document.createElement('select');select.className='binding-target';
     if(!macroLibrary.items.length){
@@ -878,6 +899,7 @@ function fillBehaviorControl(container,trigger,type,value,macroId){
     span.dataset.value=mode;span.textContent=text;container.appendChild(span);return;
   }
   if(type==='voice_release'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='触发时停住一次';span.dataset.value='tap';container.appendChild(span);return}
+  if(type==='system'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='触发时执行一次';span.dataset.value='tap';container.appendChild(span);return}
   if(trigger.tapOnly||type==='mouse_wheel'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='进入时触发一次';span.dataset.value='tap';container.appendChild(span);return}
   if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='—';span.dataset.value='hold';container.appendChild(span);return}
   const sel=document.createElement('select');sel.className='binding-behavior';
@@ -996,7 +1018,7 @@ function readProfileOverrides(){
     const raw=String(row.querySelector('.binding-target')?.value||'').trim();
     const target=type==='macro'||type==='voice_release'?raw.toLowerCase():raw.toUpperCase();
     if(!target)throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:type==='voice_release'?`${trigger.name} 还没有选择要停住哪条口令`:`${trigger.name} 还没有选择具体键位`);
-    const behavior=trigger.tapOnly||type==='mouse_wheel'||type==='voice_release'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
+    const behavior=trigger.tapOnly||type==='mouse_wheel'||type==='voice_release'||type==='system'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
     const override={action:{type,target,behavior}};
     const comboLead=row.querySelector('.combo-lead-ms');
     if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden&&(comboLead.dataset.explicit==='1'||comboLead.dataset.touched==='1')){
@@ -1497,9 +1519,11 @@ async function ensureInitialSceneLayout(){
   if(scenePreparing)return false;
   try{
     const current=await api('/api/scene/status');renderSceneEditor(current);if(current?.configured)return true;
+    // 跟随框已经定住了：人要的就是它，不再问要不要改成固定圆圈。
+    if(kernelState?.zones_frozen)return false;
     // Recording a scene permanently leaves the body-relative zones behind, so
     // it must be a deliberate choice rather than a side effect of starting.
-    if(!(await confirmFixedZones())){notice('已取消。区域继续跟随身体，随时可以再点「挪动区域」。');return false}
+    if(!(await confirmFixedZones())){notice('已取消，区域继续跟随身体。想让框不动，点「挪动区域」把它定住再拖。');return false}
     scenePreparing=true;renderMainStatus();notice('首次使用：请站到正常游戏位置，正在自动定位 6 个体感区域…');
     if(!(await waitForPose(8000))){notice('还没识别到头和双肩。站到镜头前再点「开始游戏控制」，首次定位不需要全身入镜。');return false}
     const result=await post('/api/scene/capture',{});
@@ -1545,6 +1569,22 @@ function renderZoneFit(k=kernelState||{}){
   $('#zoneFitResetBtn').hidden=!fit.custom;
   $('#zoneFitGripBtn').hidden=!hands.length;
 }
+// 定住了没有、区域怎么算按下：电脑那边说了算，这里只照着画。
+function renderZoneFreeze(k=kernelState||{}){
+  const frozen=!!k.zones_frozen;
+  const follow=$('#followZonesBtn');if(follow)follow.hidden=!frozen||zoneEditMode;
+  const adjust=$('#adjustZonesBtn');
+  if(adjust){const text=frozen?'调整定住的区域':'挪动区域';if(adjust.textContent!==text)adjust.textContent=text}
+  const mode=$('#zoneTriggerMode');
+  if(mode&&k.zone_trigger_mode&&document.activeElement!==mode&&mode.value!==k.zone_trigger_mode)mode.value=k.zone_trigger_mode;
+}
+$('#zoneTriggerMode')?.addEventListener('change',e=>runAction(async()=>{
+  const status=$('#zoneTriggerStatus');
+  try{
+    renderKernelState(await post('/api/zones/trigger-mode',{mode:e.target.value}));
+    status.textContent=e.target.value==='simple'?'已改成进去就按':'已改成防误触';
+  }catch(error){status.textContent='没改成：'+error.message;renderZoneFreeze();throw error}
+}));
 async function centerHead(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('视角中心已更新。')}catch(e){notice('视角回正失败：'+(e?.message||e))}}
 
 function drawOverlayZones(octx,w,h,zones={}){
@@ -1719,25 +1759,102 @@ async function refreshScene(){try{renderSceneEditor(await api('/api/scene/status
 async function openLiveZoneEditor(){
   if(zoneEditMode)return;
   await setOutput(false);
-  if(!sceneConfigured&&!(await ensureInitialSceneLayout()))return;
+  // 没记录过参考场景：区域是跟着人走的框。先把它定在现在的位置再拖——一直在动的
+  // 东西没法拖。想让它重新跟着走，点「恢复跟随」。
+  if(!sceneConfigured){await openFrozenZoneEditor();return}
   renderSceneEditor(await api('/api/scene/status'));
   if(!sceneConfigured)throw new Error('尚未建立区域，请让头部和双肩入镜');
   zoneEditBackup={zones:structuredClone(scene.zones),vertical:structuredClone(scene.vertical)};
+  zoneEditKind='circle';setZoneEditBarKind('circle');
   zoneEditMode=true;viewer.classList.add('zone-editing');$('#zoneEditBar').hidden=false;
   renderKernelZones(kernelState?.zones||{});renderMainStatus();$('#sceneZoneSelect').focus();
 }
+function frozenRectsFrom(zones){
+  const out={};
+  for(const id of RECT_EDIT_ZONE_IDS){const r=zones?.[id]?.rect;if(r)out[id]={x1:+r.x1,y1:+r.y1,x2:+r.x2,y2:+r.y2}}
+  return out;
+}
+async function openFrozenZoneEditor(){
+  const wasFrozen=!!kernelState?.zones_frozen;
+  if(!wasFrozen)renderKernelState(await post('/api/zones/freeze',{frozen:true}));
+  const rects=frozenRectsFrom(kernelState?.zones);
+  if(!Object.keys(rects).length)throw new Error('还没看到人，没有框可以定住：先让头和双肩入镜');
+  Object.assign(rectEdit,{rects,backup:structuredClone(rects),wasFrozen});
+  if(!rects[rectEdit.selected])rectEdit.selected=Object.keys(rects)[0];
+  zoneEditKind='rect';setZoneEditBarKind('rect');
+  zoneEditMode=true;viewer.classList.add('zone-editing','rect-editing');$('#zoneEditBar').hidden=false;
+  renderKernelZones(kernelState?.zones||{});renderZoneFreeze();renderMainStatus();
+  document.querySelector(`.zone[data-zone="${rectEdit.selected}"]`)?.focus();
+  notice(wasFrozen?'拖框移动，拖四个角改大小，改完点「保存区域」。':'框已定住，不再跟着你走。拖框移动，拖四个角改大小，改完点「保存区域」。');
+}
+// 编辑栏上哪些东西只属于固定圆圈：大小滑块、右手上下视角那几项、重新识别 / 重新记录。
+function setZoneEditBarKind(kind){
+  const rect=kind==='rect';
+  $('#sceneTools').hidden=rect;$('#sceneRematchBtn').hidden=rect;$('#sceneCaptureBtn').hidden=rect;
+  $('#zoneEditFollowBtn').hidden=!rect;$('#sceneStatus').hidden=rect;
+  $('#zoneEditHint').textContent=rect
+    ?'区域已定住，不跟着人走。拖框移动，拖四个角改大小；点一下选中后，方向键移动，按住 Shift 再按方向键改大小。调整期间体感输出暂停。'
+    :'拖动圆圈调整位置，选中后可用方向键微调。调整期间体感输出暂停。';
+}
 function closeLiveZoneEditor(){
-  zoneEditMode=false;liveZoneDrag=null;zoneEditBackup=null;
-  viewer.classList.remove('zone-editing');$('#zoneEditBar').hidden=true;
-  renderKernelZones(kernelState?.zones||{});renderMainStatus();$('#adjustZonesBtn').focus();
+  zoneEditMode=false;liveZoneDrag=null;zoneEditBackup=null;zoneEditKind='circle';
+  viewer.classList.remove('zone-editing','rect-editing');$('#zoneEditBar').hidden=true;
+  renderKernelZones(kernelState?.zones||{});renderZoneFreeze();renderMainStatus();$('#adjustZonesBtn').focus();
+}
+// 显示用的框（镜像过的，左边就是屏幕左边）和原始坐标互换。拖的时候全在显示坐标里算。
+const rectToDisplay=r=>({left:1-r.x2,right:1-r.x1,top:r.y1,bottom:r.y2});
+const rectFromDisplay=d=>({x1:1-d.right,x2:1-d.left,y1:d.top,y2:d.bottom});
+function startRectDrag(e,el,id){
+  rectEdit.selected=id;
+  const corner=e.target?.closest?.('.zone-handle')?.dataset.corner||'';
+  const box=viewer.getBoundingClientRect();
+  const at={x:(e.clientX-box.left)/Math.max(1,box.width),y:(e.clientY-box.top)/Math.max(1,box.height)};
+  e.preventDefault();el.setPointerCapture?.(e.pointerId);
+  liveZoneDrag={id,pointerId:e.pointerId,corner,from:at,start:rectToDisplay(rectEdit.rects[id])};
+  renderKernelZones(kernelState?.zones||{});
+}
+function moveRectDrag(e){
+  const drag=liveZoneDrag,box=viewer.getBoundingClientRect();
+  const x=clamp((e.clientX-box.left)/Math.max(1,box.width),0,1),y=clamp((e.clientY-box.top)/Math.max(1,box.height),0,1);
+  const d={...drag.start};
+  if(!drag.corner){
+    // 整个框平移，碰到画面边就停。
+    const w=d.right-d.left,h=d.bottom-d.top;
+    d.left=clamp(drag.start.left+x-drag.from.x,0,1-w);d.right=d.left+w;
+    d.top=clamp(drag.start.top+y-drag.from.y,0,1-h);d.bottom=d.top+h;
+  }else{
+    if(drag.corner.includes('w'))d.left=clamp(x,0,d.right-RECT_EDIT_MIN);
+    if(drag.corner.includes('e'))d.right=clamp(x,d.left+RECT_EDIT_MIN,1);
+    if(drag.corner.includes('n'))d.top=clamp(y,0,d.bottom-RECT_EDIT_MIN);
+    if(drag.corner.includes('s'))d.bottom=clamp(y,d.top+RECT_EDIT_MIN,1);
+  }
+  rectEdit.rects[drag.id]=rectFromDisplay(d);
+  renderKernelZones(kernelState?.zones||{});
+}
+function nudgeRect(id,key,shift){
+  const r=rectEdit.rects[id];if(!r)return;
+  const d=rectToDisplay(r),step=.01;
+  const dx=key==='ArrowLeft'?-step:key==='ArrowRight'?step:0,dy=key==='ArrowUp'?-step:key==='ArrowDown'?step:0;
+  if(shift){
+    // Shift：往右、往下是变大，往左、往上是变小（动的是右边和下边）。
+    d.right=clamp(d.right+dx,d.left+RECT_EDIT_MIN,1);d.bottom=clamp(d.bottom+dy,d.top+RECT_EDIT_MIN,1);
+  }else{
+    const w=d.right-d.left,h=d.bottom-d.top;
+    d.left=clamp(d.left+dx,0,1-w);d.right=d.left+w;d.top=clamp(d.top+dy,0,1-h);d.bottom=d.top+h;
+  }
+  rectEdit.rects[id]=rectFromDisplay(d);renderKernelZones(kernelState?.zones||{});
 }
 function startLiveZoneDrag(e){
-  if(!zoneEditMode)return;const el=e.currentTarget,id=el?.dataset?.zone;if(!id||!scene.zones?.[id])return;
+  if(!zoneEditMode)return;const el=e.currentTarget,id=el?.dataset?.zone;
+  if(zoneEditKind==='rect'){if(id&&rectEdit.rects[id])startRectDrag(e,el,id);return}
+  if(!id||!scene.zones?.[id])return;
   scene.selected=id;$('#sceneZoneSelect').value=id;syncSceneTools();
   e.preventDefault();el.setPointerCapture?.(e.pointerId);liveZoneDrag={id,pointerId:e.pointerId};moveLiveZoneDrag(e);
 }
 function moveLiveZoneDrag(e){
-  if(!zoneEditMode||!liveZoneDrag)return;const z=scene.zones?.[liveZoneDrag.id];if(!z)return;
+  if(!zoneEditMode||!liveZoneDrag)return;
+  if(zoneEditKind==='rect'){if(e.pointerId===liveZoneDrag.pointerId)moveRectDrag(e);return}
+  const z=scene.zones?.[liveZoneDrag.id];if(!z)return;
   const rect=viewer.getBoundingClientRect(),r=Number(z.r)||.07;
   const displayX=clamp((e.clientX-rect.left)/Math.max(1,rect.width),0,1);
   const displayY=clamp((e.clientY-rect.top)/Math.max(1,rect.height),0,1);
@@ -1749,12 +1866,23 @@ function moveLiveZoneDrag(e){
 function endLiveZoneDrag(e){if(!liveZoneDrag)return;if(e?.pointerId!==undefined&&liveZoneDrag.pointerId!==e.pointerId)return;liveZoneDrag=null}
 async function saveLiveZones(){
   await setOutput(false);
+  if(zoneEditKind==='rect'){
+    renderKernelState(await post('/api/zones/frozen',{rects:rectEdit.rects}));
+    closeLiveZoneEditor();notice('区域已保存，会一直定在这里。想让它重新跟着你走，点「恢复跟随」。');return;
+  }
   const result=await post('/api/scene/layout',{zones:scene.zones,vertical_look:scene.vertical});
   renderSceneEditor(result,true);closeLiveZoneEditor();notice('体感区域已保存。');
 }
 async function cancelLiveZones(){
   // Capture/rematch updates the server immediately; restore the full saved layout on cancel.
   await setOutput(false);
+  if(zoneEditKind==='rect'){
+    // 这次是点「挪动区域」才定住的，取消就回到跟着走；本来就定住的，回到拖之前的样子。
+    renderKernelState(rectEdit.wasFrozen
+      ?await post('/api/zones/frozen',{rects:rectEdit.backup})
+      :await post('/api/zones/freeze',{frozen:false}));
+    closeLiveZoneEditor();notice(rectEdit.wasFrozen?'已取消区域调整。':'已取消，区域继续跟着你走。');return;
+  }
   if(zoneEditBackup){
     const result=await post('/api/scene/layout',{zones:zoneEditBackup.zones,vertical_look:zoneEditBackup.vertical});
     renderSceneEditor(result,true);
@@ -1762,6 +1890,13 @@ async function cancelLiveZones(){
   closeLiveZoneEditor();notice('已取消区域调整。');
 }
 
+// 定住的跟随框放开，重新跟着人走。拖过的大小位置不留：下次定住按那时的位置重新定。
+async function followZones(){
+  await setOutput(false);
+  renderKernelState(await post('/api/zones/freeze',{frozen:false}));
+  if(zoneEditMode&&zoneEditKind==='rect')closeLiveZoneEditor();
+  notice('区域恢复跟随，重新跟着你走。');
+}
 async function updateScene(purpose){
   await setOutput(false);
   const result=await post('/api/scene/'+purpose,{});
@@ -1874,14 +2009,18 @@ $('#customGameName').addEventListener('keydown',e=>{if(e.key==='Enter')void runA
 $('#customGameAppid').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(addCustomGame)});
 bind('retryProfileSaveBtn',retryProfileBindings);
 for(const event of ['input','change'])$('#profileBindingRows').addEventListener(event,e=>{syncMotionConflictChoices();if(e.target.closest('.binding-row[data-trigger^="voice."]'))syncVoiceReleaseChoices();scheduleProfileAutoSave(e)});
-bind('adjustZonesBtn',openLiveZoneEditor);bind('saveLiveZonesBtn',saveLiveZones);bind('cancelLiveZonesBtn',cancelLiveZones);
+bind('adjustZonesBtn',openLiveZoneEditor);bind('followZonesBtn',followZones);bind('zoneEditFollowBtn',followZones);bind('saveLiveZonesBtn',saveLiveZones);bind('cancelLiveZonesBtn',cancelLiveZones);
 bind('sceneCaptureBtn',()=>updateScene('capture'));bind('sceneRematchBtn',()=>updateScene('rematch'));
 $('#sceneZoneSelect').addEventListener('change',e=>{scene.selected=e.target.value;syncSceneTools()});
 document.querySelectorAll('.zone').forEach(el=>{
+  // 定住的框四个角上的把手，拖它改大小。只在编辑定住的框时显示（见 .rect-editing）。
+  for(const corner of ['nw','ne','sw','se']){const handle=document.createElement('span');handle.className='zone-handle';handle.dataset.corner=corner;handle.setAttribute('aria-hidden','true');el.appendChild(handle)}
   for(const [event,handler] of [['pointerdown',startLiveZoneDrag],['pointermove',moveLiveZoneDrag],['pointerup',endLiveZoneDrag],['pointercancel',endLiveZoneDrag]])el.addEventListener(event,handler);
   el.addEventListener('keydown',e=>{
     if(!zoneEditMode||!e.key.startsWith('Arrow'))return;
-    e.preventDefault();const z=scene.zones[el.dataset.zone];if(!z)return;
+    e.preventDefault();
+    if(zoneEditKind==='rect'){rectEdit.selected=el.dataset.zone;nudgeRect(el.dataset.zone,e.key,e.shiftKey);return}
+    const z=scene.zones[el.dataset.zone];if(!z)return;
     const amount=e.shiftKey?.02:.005;
     if(e.key==='ArrowLeft')z.cx+=amount;if(e.key==='ArrowRight')z.cx-=amount;
     if(e.key==='ArrowUp')z.cy-=amount;if(e.key==='ArrowDown')z.cy+=amount;

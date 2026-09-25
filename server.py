@@ -200,6 +200,39 @@ def voice_emergency_stop() -> dict:
     return result
 
 
+def execute_system_target(target: str) -> dict | None:
+    """语音和映射表都能用的那几个系统功能。不是这几个的返回 None，由调用方接着判断。
+
+    映射表里（区域、动作、姿势）绑的系统功能也走这里：内核在触发那一下调它（见
+    ControlKernel._run_system_action_locked），定住 / 恢复跟随内核自己就做了，到这
+    里来的是语音说的那几句。
+    """
+    target = str(target or "").strip().upper()
+    if target in {"OUTPUT.START", "OUTPUT.STOP", "OUTPUT.TOGGLE"}:
+        enabled = target == "OUTPUT.START" or (target == "OUTPUT.TOGGLE" and not OUTPUT.enabled)
+        result = OUTPUT.set_config(enabled=enabled)
+        _broadcast_game_output_state()
+        return {"executed": True, **result}
+    if target == "HEAD.CENTER":
+        KERNEL.set_current_center()
+        return {"executed": True}
+    if target in {"ZONES.FREEZE", "ZONES.FOLLOW", "ZONES.FREEZE_TOGGLE"}:
+        frozen = target == "ZONES.FREEZE" or (
+            target == "ZONES.FREEZE_TOGGLE" and not KERNEL.status().get("zones_frozen"))
+        result = KERNEL.freeze_zones(frozen)
+        result.pop("status", None)
+        return result
+    return None
+
+
+def _run_bound_system_action(target: str, trigger: str) -> None:
+    """内核那边区域、动作、姿势触发了系统功能。在内核开的线程里跑。"""
+    execute_system_target(target)
+
+
+KERNEL.configure_system_action_handler(_run_bound_system_action)
+
+
 def execute_voice_action(action: dict) -> dict:
     """Keep system voice commands at the local control-kernel boundary.
 
@@ -220,6 +253,10 @@ def execute_voice_action(action: dict) -> dict:
                 if isinstance(binding.get("action"), dict):
                     if binding["action"].get("type") == "voice_release":
                         return KERNEL.release_voice_hold(binding["action"].get("target", ""))
+                    if binding["action"].get("type") == "system":
+                        # 本游戏口令在映射表里选了「系统功能」。
+                        return execute_system_target(binding["action"].get("target", "")) or {
+                            "executed": False, "reason": "不支持的系统功能"}
                     mapped = dict(binding["action"])
                     mapped["source"] = action.get("source", "voice")
                     return OUTPUT.execute_voice_action(mapped)
@@ -227,19 +264,9 @@ def execute_voice_action(action: dict) -> dict:
                 return {"executed": False, "reason": "当前游戏未设置这条备用语音"}
         return OUTPUT.execute_voice_action(action)
     target = str(action.get("target", "")).strip().upper()
-    # Output start/stop
-    if target == "OUTPUT.START":
-        result = OUTPUT.set_config(enabled=True)
-        _broadcast_game_output_state()
-        return {"executed": True, **result}
-    if target == "OUTPUT.STOP":
-        result = OUTPUT.set_config(enabled=False)
-        _broadcast_game_output_state()
-        return {"executed": True, **result}
-    # Head center
-    if target == "HEAD.CENTER":
-        KERNEL.set_current_center()
-        return {"executed": True}
+    shared = execute_system_target(target)
+    if shared is not None:
+        return shared
     # Head calibrate (both naming conventions)
     if target in {"HEAD.CALIBRATE", SYSTEM_HEAD_CALIBRATION_START}:
         if not VOICE.source_is_active(action.get("voice_source_id")):
@@ -1566,6 +1593,25 @@ class AdminHandler(_BaseHandler):
                     KERNEL.cancel_zone_fit()
                 else:
                     KERNEL.reset_zone_fit()
+                self._send_json({"ok": True, **RUNTIME.status()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+            return
+        # 区域触发方式（进去就按 / 防误触）；定住跟随框、恢复跟随、定住后拖过的框。
+        # 只给本机，和量身一样。
+        if route in ("/api/zones/trigger-mode", "/api/zones/freeze", "/api/zones/frozen"):
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "zone settings are loopback-only"}, 403)
+                return
+            try:
+                if route == "/api/zones/trigger-mode":
+                    KERNEL.configure_zone_trigger_mode(body.get("mode", ""))
+                elif route == "/api/zones/freeze":
+                    result = KERNEL.freeze_zones(body.get("frozen", True) is not False)
+                    if not result.get("executed"):
+                        raise ValueError(result.get("reason") or "没能定住")
+                else:
+                    KERNEL.update_frozen_zones(body.get("rects"))
                 self._send_json({"ok": True, **RUNTIME.status()})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)

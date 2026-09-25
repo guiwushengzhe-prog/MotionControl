@@ -293,6 +293,18 @@ main { padding-top: 20px; }
 
 .zone-editing .zone { pointer-events: auto; cursor: grab; touch-action: none; }
 
+/* 定住的跟随框：四个角上的把手拖着改大小。放在框里面，贴着画面边的框也拖得到。 */
+.zone-handle { display: none; position: absolute; width: 16px; height: 16px; border-radius: 4px;
+  background: #fff; border: 2px solid #1b2330; box-shadow: 0 1px 4px rgba(0, 0, 0, .55); touch-action: none; }
+.rect-editing .zone-handle { display: block; }
+.zone-handle[data-corner="nw"] { left: 2px; top: 2px; cursor: nwse-resize; }
+.zone-handle[data-corner="se"] { right: 2px; bottom: 2px; cursor: nwse-resize; }
+.zone-handle[data-corner="ne"] { right: 2px; top: 2px; cursor: nesw-resize; }
+.zone-handle[data-corner="sw"] { left: 2px; bottom: 2px; cursor: nesw-resize; }
+.rect-editing .zone.selected { border-style: dashed; border-width: 3px; }
+.zone-trigger-mode { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; white-space: nowrap; }
+.zone-trigger-mode select { width: auto; min-width: 9em; flex: 0 1 auto; }
+
 .zone:focus { outline: 3px solid #fff; }
 
 .hint { position: absolute; left: 12px; bottom: 12px; padding: 6px 11px; border-radius: var(--radius-sm);
