@@ -1,0 +1,65 @@
+{
+  "schema": "motioncontrol.pose_action.v1",
+  "id": "hands_up",
+  "revision": 1,
+  "group": "motion",
+  "name": "双手举过头",
+  "how": "两只手一起举过头顶，单手不算",
+  "ratings": {"intensity": 1, "recognition": 5, "difficulty": 1},
+  "body_parts": {"shoulders": 3, "arms": 2},
+  "passes_zones": ["leftHand", "rightHand"],
+  "sweeps_first": true,
+  "debounce": [3, 4],
+  "risk_timing": [0.06, 0.095],
+  "demo": {
+    "frame_s": 0.6,
+    "frames": [
+      {
+        "nose": [0.5, 0.1],
+        "left_shoulder": [0.575, 0.22],
+        "right_shoulder": [0.425, 0.22],
+        "left_elbow": [0.6, 0.36],
+        "right_elbow": [0.4, 0.36],
+        "left_wrist": [0.61, 0.49],
+        "right_wrist": [0.39, 0.49],
+        "left_hip": [0.55, 0.5],
+        "right_hip": [0.45, 0.5],
+        "left_knee": [0.555, 0.7],
+        "right_knee": [0.445, 0.7],
+        "left_ankle": [0.56, 0.9],
+        "right_ankle": [0.44, 0.9]
+      },
+      {
+        "nose": [0.5, 0.1],
+        "left_shoulder": [0.575, 0.22],
+        "right_shoulder": [0.425, 0.22],
+        "left_elbow": [0.62, 0.09],
+        "right_elbow": [0.38, 0.09],
+        "left_wrist": [0.625, -0.04],
+        "right_wrist": [0.375, -0.04],
+        "left_hip": [0.55, 0.5],
+        "right_hip": [0.45, 0.5],
+        "left_knee": [0.555, 0.7],
+        "right_knee": [0.445, 0.7],
+        "left_ankle": [0.56, 0.9],
+        "right_ankle": [0.44, 0.9]
+      }
+    ]
+  },
+  "rule": {
+    "engine": 1,
+    "needs": [
+      {
+        "points": ["nose", "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist"],
+        "min_score": 0.42
+      }
+    ],
+    "when": [
+      "and",
+      ["<", ["y", "left_wrist"], ["-", ["y", "nose"], ["*", 0.06, ["torso"]]]],
+      ["<", ["y", "right_wrist"], ["-", ["y", "nose"], ["*", 0.06, ["torso"]]]],
+      ["<", ["y", "left_elbow"], ["+", ["y", "left_shoulder"], ["*", 0.08, ["torso"]]]],
+      ["<", ["y", "right_elbow"], ["+", ["y", "right_shoulder"], ["*", 0.08, ["torso"]]]]
+    ]
+  }
+}

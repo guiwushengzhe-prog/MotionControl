@@ -1,0 +1,72 @@
+{
+  "schema": "motioncontrol.pose_action.v1",
+  "id": "squat",
+  "revision": 1,
+  "group": "motion",
+  "name": "下蹲",
+  "how": "屁股往后坐，两个膝盖都弯下去",
+  "ratings": {"intensity": 3, "recognition": 4, "difficulty": 2},
+  "body_parts": {"legs": 5, "glutes": 4, "core": 2},
+  "passes_zones": [],
+  "debounce": [3, 4],
+  "risk_timing": [0.06, 0.095],
+  "blocks_steps": true,
+  "demo": {
+    "frame_s": 0.6,
+    "frames": [
+      {
+        "nose": [0.47, 0.1],
+        "left_shoulder": [0.505, 0.22],
+        "right_shoulder": [0.495, 0.22],
+        "left_elbow": [0.505, 0.36],
+        "right_elbow": [0.495, 0.36],
+        "left_wrist": [0.495, 0.49],
+        "right_wrist": [0.485, 0.49],
+        "left_hip": [0.505, 0.5],
+        "right_hip": [0.495, 0.5],
+        "left_knee": [0.505, 0.7],
+        "right_knee": [0.495, 0.7],
+        "left_ankle": [0.505, 0.9],
+        "right_ankle": [0.495, 0.9]
+      },
+      {
+        "nose": [0.44, 0.26],
+        "left_shoulder": [0.485, 0.37],
+        "right_shoulder": [0.475, 0.37],
+        "left_elbow": [0.42, 0.44],
+        "right_elbow": [0.41, 0.44],
+        "left_wrist": [0.31, 0.43],
+        "right_wrist": [0.3, 0.43],
+        "left_hip": [0.6, 0.62],
+        "right_hip": [0.59, 0.62],
+        "left_knee": [0.44, 0.7],
+        "right_knee": [0.43, 0.7],
+        "left_ankle": [0.505, 0.9],
+        "right_ankle": [0.495, 0.9]
+      }
+    ]
+  },
+  "rule": {
+    "engine": 1,
+    "needs": [
+      {
+        "points": ["left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle"],
+        "min_score": 0.42
+      }
+    ],
+    "when": [
+      "and",
+      ["<", ["angle", "left_hip", "left_knee", "left_ankle"], 145],
+      ["<", ["angle", "right_hip", "right_knee", "right_ankle"], 145],
+      [
+        "<",
+        [
+          "/",
+          ["+", ["-", ["y", "left_knee"], ["y", "left_hip"]], ["-", ["y", "right_knee"], ["y", "right_hip"]]],
+          2.0
+        ],
+        ["*", 0.84, ["torso"]]
+      ]
+    ]
+  }
+}

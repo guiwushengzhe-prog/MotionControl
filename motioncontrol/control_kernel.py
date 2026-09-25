@@ -37,7 +37,7 @@ from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
     foot_floor_y, foot_out, is_default, normalize_zone_fit,
 )
-from motioncontrol_shared import pose_library
+from motioncontrol_shared import pose_library, pose_rules
 
 
 def _user_recordings_dir():
@@ -116,14 +116,10 @@ BODY_MOTION_GUARD_VERSION = "C2.10"
 # Body-guard-only mirror of the existing action debounce semantics at 30 FPS.
 # This does not alter motion_active or any game/action trigger; it only prevents
 # the body guard from inheriting frame-rate-dependent activation times.
+# 从云端下载的动作各自在动作文件里带着这两个数（risk_timing）。
 BODY_MOTION_ACTION_RISK_TIMING = {
     "march": (0.000, 0.030),
     "calf_back": (0.060, 0.095),
-    "squat": (0.060, 0.095),
-    "hands_up": (0.060, 0.095),
-    "jumping_jack": (0.030, 0.060),
-    "side_step_jack": (0.030, 0.060),
-    "cross_knee_elbow": (0.030, 0.060),
 }
 
 # Head-jump anchor tuning.  The anchor exists so the target above the head can
@@ -205,18 +201,8 @@ HAND_BOTH_DWELL_S = 0.30
 ZONE_YIELD_S = 0.25
 ZONE_YIELD_GRACE_S = 0.30
 
-# 下蹲：两个膝角都弯过这个角度。录像里浅蹲到 133°/137°，站着 165° 以上。
-SQUAT_KNEE_ANGLE = 145
-
-# 开合跳、侧步开合：两脚分开到肩宽的这么多倍。录像里跳开时 1.05~1.46，站着 0.6~0.8。
-FEET_WIDE_SPAN = 1.0
-
-# 提膝碰对侧肘：膝盖和对侧手肘靠到这么近（按躯干长量）。录像里真碰的那几下
-# 在 0.37~0.88，旧的 0.72 漏掉一半。
-CROSS_KNEE_ELBOW_REACH = 0.95
-# 还没碰到但明显是在往对侧肘靠的提膝，不要在脚踝到峰值时误算成踏步。
-# 普通踏步的肘离膝更远；这个余量只覆盖一次未完成的碰肘动作。
-CROSS_KNEE_ELBOW_ATTEMPT_REACH = CROSS_KNEE_ELBOW_REACH + 0.18
+# 下蹲、开合跳、提膝碰对侧肘这些动作的门槛跟着动作文件从云端下载，
+# 写在 cloud/official_poses/ 里，每个数字怎么来的见那里的 README。
 
 
 def _fresh_step() -> dict:
@@ -448,20 +434,19 @@ class ControlKernel:
         self.motion_config: list[dict] = []
         self.motion_active: set[str] = set()
         self.motion_debounce = {
-            key: {"active": False, "on": 0, "off": 0}
-            for key in (
-                "march", "calf_back", "squat", "hands_up",
-                "jumping_jack", "side_step_jack", "cross_knee_elbow",
-            )
+            key: {"active": False, "on": 0, "off": 0} for key in ("march", "calf_back")
         }
         self.body_motion_action_risk: set[str] = set()
         self.body_motion_action_risk_debounce = {
-            key: {"active": False, "on_since": 0.0, "off_since": 0.0}
-            for key in (
-                "march", "calf_back", "squat", "hands_up",
-                "jumping_jack", "side_step_jack", "cross_knee_elbow",
-            )
+            key: {"active": False, "on_since": 0.0, "off_since": 0.0} for key in ("march", "calf_back")
         }
+        # 从云端下载的动作：编号 → 动作文件（含识别规则）。原地踏步、小腿向后抬起是
+        # 写在下面的代码，不在这里。见 configure_pose_actions。
+        self.pose_actions: dict[str, dict] = {}
+        self._motion_rules: dict[str, dict] = {}
+        self._motion_rule_order: list[str] = []
+        self._pose_rules: dict[str, dict] = {}
+        self._pose_rule_order: list[str] = []
         self.step = _fresh_step()
         # 脚：站着时的基准、最近 0.3 秒的样子、这一帧算出来的离地和往外。见 _update_feet_locked。
         self.foot_base: dict[str, float] | None = None
@@ -510,10 +495,10 @@ class ControlKernel:
         self.trigger_previous: set[str] = set()
         self.pose_active: set[str] = set()
         self.pose_confidence: dict[str, float] = {}
-        self.pose_debounce = {
-            key: {"active": False, "on": 0, "off": 0}
-            for key in ("hands_cross",)
-        }
+        # 下载的姿势（双手交叉……）装上时建条目，自己录的姿势第一次见到时建。
+        self.pose_debounce: dict[str, dict] = {}
+        # 默认装上动作库里已经登记的（电脑端启动时登记本机下载过的）。
+        self._install_pose_actions_locked(pose_library.registered().values())
         # 用户自己录的姿势。id 是运行时才知道的，所以去抖条目按需建。
         # 存取在 custom_poses.CustomPoseStore 里，由 server.py 装进来——内核不碰
         # 文件，这样测试里可以直接塞一个假的。
@@ -1920,6 +1905,48 @@ class ControlKernel:
             return math.nan
         return math.degrees(math.acos(_clamp((ux * vx + uy * vy) / denominator, -1.0, 1.0)))
 
+    # ---------- 从云端下载的动作 ----------
+
+    def configure_pose_actions(self, docs) -> None:
+        """换成这一批下载过的动作（校验过的动作文件）。没在这里面的就认不出来。"""
+        with self._lock:
+            self._install_pose_actions_locked(docs)
+            self._dispatch_controls_locked(time.monotonic())
+
+    def _install_pose_actions_locked(self, docs) -> None:
+        actions = {doc["id"]: doc for doc in docs}
+        motion_rules = {ident: doc["rule"] for ident, doc in actions.items() if doc["group"] == "motion"}
+        pose_rules_ = {ident: doc["rule"] for ident, doc in actions.items() if doc["group"] == "pose"}
+        # 先排好顺序：转圈的规则在这里就报错，不会等到某一帧才炸。
+        motion_order = pose_rules.evaluation_order(motion_rules)
+        pose_order = pose_rules.evaluation_order(pose_rules_)
+        removed = set(self.pose_actions) - set(actions)
+        self.pose_actions = actions
+        self._motion_rules, self._motion_rule_order = motion_rules, motion_order
+        self._pose_rules, self._pose_rule_order = pose_rules_, pose_order
+        for ident in removed:
+            # 删掉的动作：状态全部清掉，免得删的那一刻它正按着键。
+            self.motion_debounce.pop(ident, None)
+            self.body_motion_action_risk_debounce.pop(ident, None)
+            self.body_motion_action_risk.discard(ident)
+            self.motion_active.discard(ident)
+            self.motion_raw.pop(ident, None)
+            self.pose_debounce.pop(ident, None)
+            self.pose_active.discard(ident)
+            self.pose_confidence.pop(ident, None)
+        for ident in motion_rules:
+            self.motion_debounce.setdefault(ident, {"active": False, "on": 0, "off": 0})
+            self.body_motion_action_risk_debounce.setdefault(
+                ident, {"active": False, "on_since": 0.0, "off_since": 0.0})
+        for ident in pose_rules_:
+            self.pose_debounce.setdefault(ident, {"active": False, "on": 0, "off": 0})
+
+    def _motion_risk_timing(self, ident: str) -> tuple[float, float]:
+        if ident in BODY_MOTION_ACTION_RISK_TIMING:
+            return BODY_MOTION_ACTION_RISK_TIMING[ident]
+        on_s, off_s = self.pose_actions[ident]["risk_timing"]
+        return float(on_s), float(off_s)
+
     def _set_motion_debounced(self, ident: str, raw: bool, on_frames: int, off_frames: int) -> bool:
         state = self.motion_debounce[ident]
         if raw:
@@ -1989,50 +2016,26 @@ class ControlKernel:
         shoulder = _midpoint(pose_map["left_shoulder"], pose_map["right_shoulder"]) if self._points_good(pose_map, ("left_shoulder", "right_shoulder")) else None
         hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"]) if self._points_good(pose_map, ("left_hip", "right_hip")) else None
         torso = max(0.025, abs(hip["y"] - shoulder["y"])) if shoulder and hip else math.nan
-        hands_raw = squat_raw = calf_raw = march_raw = False
-        jumping_jack_raw = side_step_jack_raw = cross_knee_elbow_raw = False
-        # 双手举过头：两只手腕都高过鼻子、两个手肘抬到肩附近以上。试过换成动作库
-        # 模板（只比手臂方向），真人录像里 6 次只认出 1 次——举手时手肘是弯的，
-        # 每个人弯法不一样，一个标准姿势套不住；这条规则 6 次全认出，单手举不算。
-        if math.isfinite(torso) and self._points_good(pose_map, ("nose", "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist")):
-            hands_raw = (
-                pose_map["left_wrist"]["y"] < pose_map["nose"]["y"] - 0.06 * torso
-                and pose_map["right_wrist"]["y"] < pose_map["nose"]["y"] - 0.06 * torso
-                and pose_map["left_elbow"]["y"] < pose_map["left_shoulder"]["y"] + 0.08 * torso
-                and pose_map["right_elbow"]["y"] < pose_map["right_shoulder"]["y"] + 0.08 * torso
-            )
-        # 提膝碰对侧肘先算：同一次抬腿碰到了对侧手肘，就只算它，下面不再把这一下
-        # 算成踏步或小腿后抬。它不看手腕和脚踝——做的时候那两个常被挡住，抬起的
-        # 膝盖和对侧手肘却看得清。
-        knee_meets_elbow = {"left": False, "right": False}
-        knee_near_elbow = {"left": False, "right": False}
-        elbow_knee_good = math.isfinite(torso) and self._points_good(
-            pose_map,
-            ("left_hip", "right_hip", "left_elbow", "right_elbow", "left_knee", "right_knee"),
-            0.36,
-        )
-        if elbow_knee_good:
-            def body_distance(a: dict, b: dict) -> float:
-                dx = (float(a["x"]) - float(b["x"])) * self.width
-                dy = (float(a["y"]) - float(b["y"])) * self.height
-                return math.hypot(dx, dy) / max(1e-6, torso * self.height)
-
-            for side, other in (("left", "right"), ("right", "left")):
-                raised = float(pose_map[side + "_knee"]["y"]) < float(pose_map[side + "_hip"]["y"]) + 0.58 * torso
-                distance = body_distance(pose_map[side + "_knee"], pose_map[other + "_elbow"])
-                knee_meets_elbow[side] = raised and distance < CROSS_KNEE_ELBOW_REACH
-                knee_near_elbow[side] = raised and distance < CROSS_KNEE_ELBOW_ATTEMPT_REACH
-            cross_knee_elbow_raw = any(knee_meets_elbow.values())
+        calf_raw = march_raw = False
+        # 从云端下载的动作（下蹲、双手举过头、开合跳……）：规则是数据，交给规则引擎。
+        # 以前写死在这里的判断原样搬进了各自的规则，逐帧一致（tests/test_pose_rules.py）。
+        rules = pose_rules.evaluate_rules(self._motion_rules, pose_map, self.width, self.height,
+                                          self._motion_rule_order)
+        # 下面踏步那段要问两件事，动作文件自己声明：
+        #   blocks_steps —— 做着这个动作时不算踏步、不算小腿后抬（下蹲）；
+        #   claims_lift  —— 这一下抬腿要是碰上了它，就只算它（提膝碰对侧肘）。
+        # 它们不看手腕和脚踝——做的时候那两个常被挡住，抬起的膝盖和对侧手肘却看得清。
+        steps_blocked = any(rules[ident]["raw"] for ident in rules
+                            if self.pose_actions[ident].get("blocks_steps"))
+        lift_claimers = [ident for ident in rules if self.pose_actions[ident].get("claims_lift")]
+        lift_claimers_bound = [ident for ident in lift_claimers if self._motion_has_effective_binding_locked(ident)]
+        knee_meets_elbow = {side: any(rules[ident]["sides"][side] for ident in lift_claimers)
+                            for side in ("left", "right")}
+        knee_near_elbow = {side: any(rules[ident].get("attempts", {}).get(side, False) for ident in lift_claimers_bound)
+                           for side in ("left", "right")}
 
         leg_good = math.isfinite(torso) and self._points_good(pose_map, ("left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle"))
         if leg_good:
-            left_angle = self._angle_at(pose_map["left_hip"], pose_map["left_knee"], pose_map["left_ankle"])
-            right_angle = self._angle_at(pose_map["right_hip"], pose_map["right_knee"], pose_map["right_ankle"])
-            hip_knee = ((pose_map["left_knee"]["y"] - pose_map["left_hip"]["y"]) + (pose_map["right_knee"]["y"] - pose_map["right_hip"]["y"])) / 2.0
-            # 两个膝角都弯过 145° 就算蹲。以前是 135°，真人浅蹲到 137° 就认不出；
-            # 站着时膝角在 165° 以上。
-            squat_raw = left_angle < SQUAT_KNEE_ANGLE and right_angle < SQUAT_KNEE_ANGLE and hip_knee < 0.84 * torso
-
             def rise(side: str, other: str, joint: str) -> float:
                 """这一侧的膝或踝比另一侧高出多少个躯干，各自相对自己那边的髋量。"""
                 return ((pose_map[other + "_" + joint]["y"] - pose_map[other + "_hip"]["y"])
@@ -2054,7 +2057,7 @@ class ControlKernel:
             # 小腿后抬和提膝碰肘都没绑键的话，一步不用等脚抬到最高：抬起来稳住一下
             # 就算。等到最高是为了和那两个分开，没绑的动作不需要分。
             wait_for_peak = (self._motion_has_effective_binding_locked("calf_back")
-                             or self._motion_has_effective_binding_locked("cross_knee_elbow"))
+                             or bool(lift_claimers_bound))
 
             def step_done(side: str, other: str) -> bool:
                 """这只脚是不是刚走完一步。
@@ -2095,7 +2098,7 @@ class ControlKernel:
                 lift["min_shin"] = min(lift["min_shin"], shin(side))
                 lift["prev"] = raised
                 lift["crossed"] = lift["crossed"] or knee_meets_elbow[side]
-                if self._motion_has_effective_binding_locked("cross_knee_elbow"):
+                if lift_claimers_bound:
                     # 记录“正在做提膝碰肘但还没碰到”的整次抬腿，避免它在峰值
                     # 处落入踏步兜底。普通踏步的肘部距离超过这层余量，不受影响。
                     lift["cross_attempt"] = lift.get("cross_attempt", False) or knee_near_elbow[side]
@@ -2105,7 +2108,7 @@ class ControlKernel:
                 if (lift["crossed"] or lift.get("cross_attempt", False)
                         or calf_like(lift["peak_ankle"], lift["peak_knee"], lift["min_shin"])):
                     return False
-                return not squat_raw and not self._foot_outward(pose_map, side)
+                return not steps_blocked and not self._foot_outward(pose_map, side)
 
             left_step = step_done("left", "right")
             right_step = step_done("right", "left")
@@ -2115,7 +2118,7 @@ class ControlKernel:
                 return (calf_like(rise(side, other, "ankle"), rise(side, other, "knee"), shin(side))
                         and not (lift and lift["crossed"]))
 
-            calf_raw = not squat_raw and (calf_side("left", "right") or calf_side("right", "left"))
+            calf_raw = not steps_blocked and (calf_side("left", "right") or calf_side("right", "left"))
 
             def step_event(side: str) -> None:
                 # 第一步就算走起来了。以前要左右交替才开始，第一步永远不算，人得踏
@@ -2144,57 +2147,14 @@ class ControlKernel:
                 # 一次未完成碰肘动作也要取消已有的短暂踏步保持，不能在放腿后又补出
                 # 一个踏步状态。
                 self.step["active_until"] = 0.0
-            march_raw = (not squat_raw and not calf_raw and not cross_attempting
+            march_raw = (not steps_blocked and not calf_raw and not cross_attempting
                          and now < self.step["active_until"])
-
-            # Wider, body-relative poses are intentionally detected from a
-            # small group of joints instead of one fragile wrist/ankle point.
-            # The state becomes a normal configurable trigger below; game
-            # profiles decide whether it is unused, held or tapped.
-            upper_good = self._points_good(
-                pose_map,
-                ("left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist"),
-                0.38,
-            )
-            if upper_good:
-                ls, rs = pose_map["left_shoulder"], pose_map["right_shoulder"]
-                lh, rh = pose_map["left_hip"], pose_map["right_hip"]
-                la, ra = pose_map["left_ankle"], pose_map["right_ankle"]
-                lw, rw = pose_map["left_wrist"], pose_map["right_wrist"]
-                left_ankle_lat = self._lateral_coordinate(la, ls, rs)
-                right_ankle_lat = self._lateral_coordinate(ra, ls, rs)
-                foot_span = right_ankle_lat - left_ankle_lat
-                left_wrist_lat = self._lateral_coordinate(lw, ls, rs)
-                right_wrist_lat = self._lateral_coordinate(rw, ls, rs)
-                wrist_span = right_wrist_lat - left_wrist_lat
-                # 两脚分开到肩宽的 1.0 倍。以前是 1.42，真人开合跳跳开时只有
-                # 1.05~1.46 倍，大多认不出；站着是 0.6~0.8 倍。
-                feet_wide = foot_span > FEET_WIDE_SPAN
-                arms_overhead = (
-                    float(lw["y"]) < float(ls["y"]) - 0.28 * torso
-                    and float(rw["y"]) < float(rs["y"]) - 0.28 * torso
-                )
-                arms_sideways = (
-                    wrist_span > 1.72
-                    and max(float(lw["y"]), float(rw["y"])) < float(hip["y"]) - 0.08 * torso
-                    and min(float(lw["y"]), float(rw["y"])) > float(shoulder["y"]) - 0.48 * torso
-                )
-                jumping_jack_raw = feet_wide and arms_overhead
-                side_step_jack_raw = feet_wide and arms_sideways and not jumping_jack_raw
-
         else:
             self.step.clear()
             self.step.update(_fresh_step())
 
-        raw_motion = {
-            "march": march_raw,
-            "calf_back": calf_raw,
-            "squat": squat_raw,
-            "hands_up": hands_raw,
-            "jumping_jack": jumping_jack_raw,
-            "side_step_jack": side_step_jack_raw,
-            "cross_knee_elbow": cross_knee_elbow_raw,
-        }
+        raw_motion = {"march": march_raw, "calf_back": calf_raw}
+        raw_motion.update({ident: result["raw"] for ident, result in rules.items()})
         self.motion_raw = dict(raw_motion)
         risk = set()
         for ident, raw in raw_motion.items():
@@ -2207,7 +2167,7 @@ class ControlKernel:
                     {"active": False, "on_since": 0.0, "off_since": 0.0}
                 )
                 continue
-            on_s, off_s = BODY_MOTION_ACTION_RISK_TIMING[ident]
+            on_s, off_s = self._motion_risk_timing(ident)
             if self._set_body_motion_action_risk_timed(ident, raw, now, on_s, off_s):
                 risk.add(ident)
         self.body_motion_action_risk = risk
@@ -2215,11 +2175,10 @@ class ControlKernel:
         active = set()
         if self._set_motion_debounced("march", march_raw, 1, 2): active.add("march")
         if self._set_motion_debounced("calf_back", calf_raw, 3, 4): active.add("calf_back")
-        if self._set_motion_debounced("squat", squat_raw, 3, 4): active.add("squat")
-        if self._set_motion_debounced("hands_up", hands_raw, 3, 4): active.add("hands_up")
-        if self._set_motion_debounced("jumping_jack", jumping_jack_raw, 2, 3): active.add("jumping_jack")
-        if self._set_motion_debounced("side_step_jack", side_step_jack_raw, 2, 3): active.add("side_step_jack")
-        if self._set_motion_debounced("cross_knee_elbow", cross_knee_elbow_raw, 2, 3): active.add("cross_knee_elbow")
+        for ident, result in rules.items():
+            on_frames, off_frames = self.pose_actions[ident]["debounce"]
+            if self._set_motion_debounced(ident, result["raw"], on_frames, off_frames):
+                active.add(ident)
         changed = active != self.motion_active
         self.motion_active = active
         if changed:
@@ -2255,53 +2214,19 @@ class ControlKernel:
 
     def _update_cross_poses_locked(self, pose_map: dict[str, dict], now: float) -> None:
         active: set[str] = set()
-        confidence = {"hands_cross": 0.0}
+        confidence = {ident: 0.0 for ident in self._pose_rules}
 
         torso_good = self._points_good(pose_map, ("left_shoulder", "right_shoulder", "left_hip", "right_hip"), 0.45)
         if torso_good:
-            ls, rs = pose_map["left_shoulder"], pose_map["right_shoulder"]
-            lh, rh = pose_map["left_hip"], pose_map["right_hip"]
-            shoulder_mid = _midpoint(ls, rs)
-            hip_mid = _midpoint(lh, rh)
-            torso = max(0.025, abs(float(hip_mid["y"]) - float(shoulder_mid["y"])))
-
-            # Hands crossed: real video shows wrist identity/occlusion jitter near
-            # the crossing point. Use the forearm-X geometry plus chest location,
-            # instead of requiring both wrists to sit deeply on the opposite side.
-            hands_good = self._points_good(
-                pose_map,
-                ("left_elbow", "right_elbow", "left_wrist", "right_wrist"),
-                0.44,
-            )
-            hands_raw = False
-            if hands_good:
-                le, re = pose_map["left_elbow"], pose_map["right_elbow"]
-                lw, rw = pose_map["left_wrist"], pose_map["right_wrist"]
-                left_lat = self._lateral_coordinate(lw, ls, rs)
-                right_lat = self._lateral_coordinate(rw, ls, rs)
-                le_lat = self._lateral_coordinate(le, ls, rs)
-                re_lat = self._lateral_coordinate(re, ls, rs)
-                y_mid = (float(lw["y"]) + float(rw["y"])) * 0.5
-                chest_low = float(hip_mid["y"]) + 0.10 * torso
-                chest_high = float(shoulder_mid["y"]) - 0.18 * torso
-                vertical_close = abs(float(lw["y"]) - float(rw["y"])) <= 0.55 * torso
-                wrist_gap = abs(left_lat - right_lat)
-                forearms_point_inward = (left_lat - le_lat) > 0.10 and (right_lat - re_lat) < -0.10
-                crossed_order = left_lat > right_lat + 0.07
-                near_center = abs(left_lat) < 0.72 and abs(right_lat) < 0.72
-                hands_raw = (
-                    forearms_point_inward
-                    and crossed_order
-                    and near_center
-                    and wrist_gap < 0.72
-                    and chest_high <= y_mid <= chest_low
-                    and vertical_close
-                )
-                cross_depth = max(0.0, min(1.0, (left_lat - right_lat - 0.07) / 0.52))
-                confidence["hands_cross"] = round(0.58 + 0.38 * cross_depth, 3) if hands_raw else round(0.30 * cross_depth, 3)
-
-            if self._set_pose_debounced("hands_cross", hands_raw):
-                active.add("hands_cross")
+            # 从云端下载的姿势（双手交叉……）。规则是数据，交给规则引擎；以前写死在这
+            # 里的双手交叉原样搬进了它的规则，连置信度都逐帧一致。
+            rules = pose_rules.evaluate_rules(self._pose_rules, pose_map, self.width, self.height,
+                                              self._pose_rule_order)
+            for ident, result in rules.items():
+                confidence[ident] = float(result.get("score", float(result["raw"])))
+                on_frames, off_frames = self.pose_actions[ident]["debounce"]
+                if self._set_pose_debounced(ident, result["raw"], on_frames, off_frames):
+                    active.add(ident)
         else:
             for ident in self.pose_debounce:
                 self._set_pose_debounced(ident, False)
@@ -2353,7 +2278,7 @@ class ControlKernel:
             # 到下次松开才生效——用户会以为没保存。代价是改完设置要重新摆一下，
             # 那是符合预期的。
             for ident in list(self.pose_debounce):
-                if ident != "hands_cross":
+                if ident not in self._pose_rules:
                     self.pose_debounce.pop(ident, None)
             self._dispatch_controls_locked(time.monotonic())
 

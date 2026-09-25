@@ -1,34 +1,39 @@
-"""动作库：内置的身体动作，每个都有名字、怎么做、火柴人示范。
+"""动作库：每个动作都有名字、怎么做、火柴人示范、星级，以及它会扫过哪些圈。
 
 新手不用自己录，打开就能看到"这个动作长什么样"，照着做，直接绑键。
 
-## 怎么认
+## 内置的两个，和从云端下载的
 
-全部由 control_kernel 里的规则认，示范只是给人看的。试过把"静态"的几个换成录制
-模板（和自定义动作同一套比对，只比肢体方向），2026-09-25 拿真人录像回放：双手
-举过头 6 次只认出 1 次，提膝碰对侧肘做和不做时的相似度搅在一起。一个标准姿势套
-不住每个人的做法——举手时手肘弯成什么样、脚分多开，人人不同；而正对镜头时，往前
-往后的动作在画面上只是"变短"，方向几乎不变。录制模板适合录你自己，不适合当所有人
-的标准。
+程序自带的只有**原地踏步**和**小腿向后抬起**。它俩要跟着一次抬脚从抬起看到落下
+（抬到多高、膝盖动没动），是写在 control_kernel 里的代码，写在这里的只有给人看的
+那部分。
+
+别的动作都在云端的**官方动作库**里（仓库里的 cloud/official_poses/），用户下载了才有。
+下载回来的是一份动作文件：名字、怎么做、示范、星级，外加**识别规则**——规则是数据，
+由 pose_rules 解释，不是代码（为什么见 pose_rules 的说明）。没下载的动作在这台电脑
+上看不到，也认不出来。
+
+所以这里的"当前有哪些动作"是运行时决定的：内置两个，加上宿主登记进来的
+（``register``）。电脑端登记本机装了的，云端登记全部官方动作。名字、会扫过哪些圈
+这些查询都按这份登记来答。
+
+## 星级
+
+每个动作三项星级，都是 1~5 星：运动强度、识别度（在镜头前认得准不准）、上手难度。
+另外按部位打星：腿部、臀部、核心、手臂、肩背，只列用得上的部位。星级是给人挑动作
+用的，不影响识别。
 
 ## 会扫过哪些圈
 
-``passes_zones`` 是做这个动作时身体会经过的跟随区域（同一批录像里量出来的）。
-举双手时手从两侧往上走，正好扫过两边的手区；这躲不开——"侧挥手进手区"和"两手从
-侧面举过头"走的是同一条路。两边都绑了键时，动作做着的时候那几个圈不按；
-``sweeps_first`` 的（动作认出来之前就先扫过圈的）圈平时还要晚一点按（见
-control_kernel 的 ZONE_YIELD_S）。界面在绑键时提醒一句。头顶区不在让的范围：开合
-跳本身就是在跳，让它晚按等于跳不起来，只提醒。
+``passes_zones`` 是做这个动作时身体会经过的跟随区域（真人录像里量出来的）。举双手时
+手从两侧往上走，正好扫过两边的手区；这躲不开。两边都绑了键时，动作做着的时候那几个
+圈不按；``sweeps_first`` 的（动作认出来之前就先扫过圈的）圈平时还要晚一点按（见
+control_kernel 的 ZONE_YIELD_S）。头顶区不在让的范围，只提醒。
 
 ## 触发名不变
 
 每个动作的触发名还是原来的（motion.hands_up、pose.hands_cross……），已有的按键映射、
 别人分享的配置都不用迁移。
-
-## 名字只在这里写
-
-describe.py 和 motion_conflicts.py 的中文名都从这里取；web/app.js 那份由
-tests/test_describe.py 断言和这里一致。
 
 ## 坐标
 
@@ -38,10 +43,30 @@ tests/test_describe.py 断言和这里一致。
 
 from __future__ import annotations
 
+import json
+import math
+import re
+from collections.abc import Mapping
+
+from .pose_rules import RuleError, normalize_rule
 from .pose_template import PREVIEW_BONES, PREVIEW_POINTS
+
+SCHEMA = "motioncontrol.pose_action.v1"
 
 HAND_ZONES = ("leftHand", "rightHand")
 FOOT_ZONES = ("leftFoot", "rightFoot")
+ZONES = HAND_ZONES + FOOT_ZONES + ("headJump",)
+
+RATING_NAMES = {"intensity": "运动强度", "recognition": "识别度", "difficulty": "上手难度"}
+BODY_PART_NAMES = {"legs": "腿部", "glutes": "臀部", "core": "核心", "arms": "手臂", "shoulders": "肩背"}
+STARS = (1, 5)
+
+# 官方动作的编号。custom 开头的留给自己录的动作（custom_poses 发的是 custom1、custom2……），
+# 两边都走 pose.<id>，撞上了就分不清是谁。
+ACTION_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
+MAX_NAME_LEN = 12
+MAX_HOW_LEN = 60
+MAX_FRAMES = 8
 
 
 def _figure(base: dict | None = None, **moved: tuple[float, float]) -> dict:
@@ -50,30 +75,8 @@ def _figure(base: dict | None = None, **moved: tuple[float, float]) -> dict:
     return points
 
 
-def _mirror(frame: dict) -> dict:
-    """左右对调：换另一边做同一个动作。正面图用，侧面图没有意义。"""
-    out = {}
-    for name, (x, y) in frame.items():
-        if name.startswith("left_"):
-            name = "right_" + name[5:]
-        elif name.startswith("right_"):
-            name = "left_" + name[6:]
-        out[name] = (round(1.0 - x, 4), y)
-    return out
-
-
-# 正面站立。躯干 0.28，大腿、小腿各 0.20，上臂 0.14，前臂 0.13。
-STAND = {
-    "nose": (0.500, 0.100),
-    "left_shoulder": (0.575, 0.220), "right_shoulder": (0.425, 0.220),
-    "left_elbow": (0.600, 0.360), "right_elbow": (0.400, 0.360),
-    "left_wrist": (0.610, 0.490), "right_wrist": (0.390, 0.490),
-    "left_hip": (0.550, 0.500), "right_hip": (0.450, 0.500),
-    "left_knee": (0.555, 0.700), "right_knee": (0.445, 0.700),
-    "left_ankle": (0.560, 0.900), "right_ankle": (0.440, 0.900),
-}
-
 # 侧面站立，脸朝画面左边。两边的点错开一点，看得出是两条腿。
+# 躯干 0.28，大腿、小腿各 0.20，上臂 0.14，前臂 0.13。
 SIDE = {
     "nose": (0.470, 0.100),
     "left_shoulder": (0.505, 0.220), "right_shoulder": (0.495, 0.220),
@@ -84,34 +87,12 @@ SIDE = {
     "left_ankle": (0.505, 0.900), "right_ankle": (0.495, 0.900),
 }
 
-# 双手抱头：手在脑后，手肘朝两边张开。提膝碰对侧肘就从这个姿势开始。
-HANDS_BEHIND_HEAD = _figure(STAND, left_elbow=(0.690, 0.160), right_elbow=(0.310, 0.160),
-                            left_wrist=(0.565, 0.105), right_wrist=(0.435, 0.105))
-
-# 抬左膝、右手肘去碰：上身往左膝那边倾、右肩压过来，右臂斜着压过身体，手肘落在
-# 左膝上；左膝抬过胯，小腿往外垂。左手一直抱着头，手肘朝外。
-CROSS_LEFT_KNEE = {
-    "nose": (0.550, 0.190),
-    "left_shoulder": (0.625, 0.265), "right_shoulder": (0.490, 0.275),
-    "left_elbow": (0.735, 0.205), "right_elbow": (0.560, 0.380),
-    "left_wrist": (0.615, 0.160), "right_wrist": (0.520, 0.240),
-    "left_hip": (0.555, 0.505), "right_hip": (0.455, 0.500),
-    "left_knee": (0.575, 0.395), "right_knee": (0.445, 0.700),
-    "left_ankle": (0.650, 0.545), "right_ankle": (0.440, 0.900),
-}
-
-# 右脚往旁边迈开，左脚不动；两手往两边抬到比肩稍高——再高就成了开合跳。
-SIDE_STEP_RIGHT = _figure(STAND, right_knee=(0.395, 0.695), right_ankle=(0.335, 0.885),
-                          left_elbow=(0.705, 0.190), right_elbow=(0.295, 0.190),
-                          left_wrist=(0.830, 0.155), right_wrist=(0.170, 0.155))
-
-LEGS_APART = dict(left_knee=(0.620, 0.690), right_knee=(0.380, 0.690),
-                  left_ankle=(0.690, 0.880), right_ankle=(0.310, 0.880))
-
-LIBRARY: tuple[dict, ...] = (
+BUILTIN: tuple[dict, ...] = (
     {
         "id": "march", "group": "motion", "name": "原地踏步",
         "how": "左右脚轮流抬起来，像原地走路。抬第一步就算",
+        "ratings": {"intensity": 2, "recognition": 5, "difficulty": 1},
+        "body_parts": {"legs": 3, "glutes": 1, "core": 1},
         "passes_zones": (),
         "frame_s": 0.32,
         "frames": (
@@ -126,72 +107,186 @@ LIBRARY: tuple[dict, ...] = (
     {
         "id": "calf_back", "group": "motion", "name": "小腿向后抬起",
         "how": "膝盖不动，一只脚往后抬到膝盖那么高，左右脚都行",
+        "ratings": {"intensity": 2, "recognition": 4, "difficulty": 2},
+        "body_parts": {"legs": 3, "glutes": 1},
         # 脚是在动作认出来之后才碰到脚区的：做着的时候不按就够了，平时不用晚按。
         "passes_zones": FOOT_ZONES, "sweeps_first": False,
         "frame_s": 0.55,
         "frames": (SIDE, _figure(SIDE, left_knee=(0.515, 0.700), left_ankle=(0.660, 0.600))),
     },
-    {
-        "id": "squat", "group": "motion", "name": "下蹲",
-        "how": "屁股往后坐，两个膝盖都弯下去",
-        "passes_zones": (),
-        "frame_s": 0.60,
-        "frames": (
-            SIDE,
-            _figure(SIDE,
-                    nose=(0.440, 0.260), left_shoulder=(0.485, 0.370), right_shoulder=(0.475, 0.370),
-                    left_elbow=(0.420, 0.440), right_elbow=(0.410, 0.440),
-                    left_wrist=(0.310, 0.430), right_wrist=(0.300, 0.430),
-                    left_hip=(0.600, 0.620), right_hip=(0.590, 0.620),
-                    left_knee=(0.440, 0.700), right_knee=(0.430, 0.700)),
-        ),
-    },
-    {
-        "id": "hands_up", "group": "motion", "name": "双手举过头",
-        "how": "两只手一起举过头顶，单手不算",
-        # 手从两侧往上抬，还没举到头顶（动作还没认出来）就先扫过了手区。
-        "passes_zones": HAND_ZONES, "sweeps_first": True,
-        "frame_s": 0.60,
-        "frames": (STAND, _figure(STAND, left_elbow=(0.620, 0.090), right_elbow=(0.380, 0.090),
-                                  left_wrist=(0.625, -0.040), right_wrist=(0.375, -0.040))),
-    },
-    {
-        "id": "jumping_jack", "group": "motion", "name": "开合跳",
-        "how": "跳起来两脚分开、两手举过头，再合上",
-        "passes_zones": HAND_ZONES + ("headJump",), "sweeps_first": True,
-        "frame_s": 0.45,
-        "frames": (STAND, _figure(STAND, left_elbow=(0.660, 0.100), right_elbow=(0.340, 0.100),
-                                  left_wrist=(0.720, -0.010), right_wrist=(0.280, -0.010),
-                                  **LEGS_APART)),
-    },
-    {
-        "id": "side_step_jack", "group": "motion", "name": "侧步开合",
-        "how": "一只脚往旁边迈开，同时两手往两边抬到肩高；收回来再换另一边",
-        "passes_zones": HAND_ZONES + FOOT_ZONES, "sweeps_first": True,
-        "frame_s": 0.50,
-        "frames": (STAND, SIDE_STEP_RIGHT, STAND, _mirror(SIDE_STEP_RIGHT)),
-    },
-    {
-        "id": "cross_knee_elbow", "group": "motion", "name": "提膝碰对侧肘",
-        "how": "双手抱头，抬起一侧膝盖，用另一边的手肘去碰，左右交替",
-        # 手抱到头后时会扫过手区；膝盖抬起时脚有时往外甩，会碰到脚区。
-        "passes_zones": HAND_ZONES + FOOT_ZONES, "sweeps_first": True,
-        "frame_s": 0.50,
-        "frames": (CROSS_LEFT_KNEE, HANDS_BEHIND_HEAD, _mirror(CROSS_LEFT_KNEE), HANDS_BEHIND_HEAD),
-    },
-    {
-        "id": "hands_cross", "group": "pose", "name": "双手交叉",
-        "how": "两只小臂在胸前交叉成 X",
-        "passes_zones": (),
-        "frame_s": 0.60,
-        "frames": (STAND, _figure(STAND, left_elbow=(0.620, 0.380), right_elbow=(0.380, 0.380),
-                                  left_wrist=(0.455, 0.300), right_wrist=(0.545, 0.300))),
-    },
 )
+BUILTIN_IDS = frozenset(entry["id"] for entry in BUILTIN)
 
-BY_ID = {entry["id"]: entry for entry in LIBRARY}
-MOTION_NAMES = {entry["id"]: entry["name"] for entry in LIBRARY if entry["group"] == "motion"}
-POSE_NAMES = {entry["id"]: entry["name"] for entry in LIBRARY if entry["group"] == "pose"}
+
+# --- 官方动作文件 ------------------------------------------------------------
+
+def _stars(value, what: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not STARS[0] <= value <= STARS[1]:
+        raise ValueError(f"{what}要是 {STARS[0]}~{STARS[1]} 星的整数")
+    return value
+
+
+def _number(value, low: float, high: float, what: str) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)):
+        raise ValueError(f"{what}必须是数字")
+    if not low <= float(value) <= high:
+        raise ValueError(f"{what}要在 {low} 到 {high} 之间")
+    return float(value)
+
+
+def normalize_action(raw) -> dict:
+    """校验一份官方动作文件。云端发布前、电脑端安装前各跑一遍，同一套规则。"""
+    if not isinstance(raw, dict):
+        raise ValueError("动作文件必须是一个对象")
+    if raw.get("schema") != SCHEMA:
+        raise ValueError("动作文件的格式版本不认识")
+    ident = str(raw.get("id", ""))
+    if not ACTION_ID_RE.match(ident) or ident.startswith("custom"):
+        raise ValueError(f"动作编号不对：{ident or '(空)'}")
+    if ident in BUILTIN_IDS:
+        raise ValueError(f"「{ident}」是程序自带的动作，不能从云端装")
+    revision = raw.get("revision")
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+        raise ValueError("revision 必须是正整数")
+    group = raw.get("group")
+    if group not in ("motion", "pose"):
+        raise ValueError("group 只能是 motion 或 pose")
+    name = " ".join(str(raw.get("name", "")).split())
+    how = " ".join(str(raw.get("how", "")).split())
+    if not name or len(name) > MAX_NAME_LEN:
+        raise ValueError(f"名字要有，最多 {MAX_NAME_LEN} 个字")
+    if not how or len(how) > MAX_HOW_LEN:
+        raise ValueError(f"「怎么做」要有，最多 {MAX_HOW_LEN} 个字")
+
+    ratings_raw = raw.get("ratings")
+    if not isinstance(ratings_raw, dict) or set(ratings_raw) != set(RATING_NAMES):
+        raise ValueError("星级要有且只有：" + "、".join(RATING_NAMES.values()))
+    ratings = {key: _stars(ratings_raw[key], RATING_NAMES[key]) for key in RATING_NAMES}
+    parts_raw = raw.get("body_parts")
+    if not isinstance(parts_raw, dict) or not parts_raw:
+        raise ValueError("至少要写一个锻炼部位")
+    unknown = sorted(set(parts_raw) - set(BODY_PART_NAMES))
+    if unknown:
+        raise ValueError("不认识的锻炼部位：" + "、".join(unknown))
+    body_parts = {key: _stars(parts_raw[key], BODY_PART_NAMES[key]) for key in BODY_PART_NAMES if key in parts_raw}
+
+    zones = raw.get("passes_zones", [])
+    if not isinstance(zones, list) or any(zone not in ZONES for zone in zones):
+        raise ValueError("passes_zones 里有不认识的区域")
+
+    debounce = raw.get("debounce")
+    if (not isinstance(debounce, list) or len(debounce) != 2
+            or any(not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 10 for n in debounce)):
+        raise ValueError("debounce 要写成 [按下要几帧, 松开要几帧]，各 1~10")
+
+    demo = raw.get("demo")
+    if not isinstance(demo, dict):
+        raise ValueError("要有示范")
+    frames_raw = demo.get("frames")
+    if not isinstance(frames_raw, list) or not 2 <= len(frames_raw) <= MAX_FRAMES:
+        raise ValueError(f"示范要有 2~{MAX_FRAMES} 帧，才看得出在动")
+    frames = []
+    for frame in frames_raw:
+        if not isinstance(frame, dict) or set(frame) != set(PREVIEW_POINTS):
+            raise ValueError("示范的每一帧都要把 13 个点画全")
+        points = {}
+        for joint in PREVIEW_POINTS:
+            xy = frame[joint]
+            if not isinstance(xy, list) or len(xy) != 2:
+                raise ValueError("示范里的点要写成 [x, y]")
+            points[joint] = [_number(xy[0], -1.0, 2.0, "示范坐标"), _number(xy[1], -1.0, 2.0, "示范坐标")]
+        frames.append(points)
+
+    try:
+        rule = normalize_rule(raw.get("rule"))
+    except RuleError as exc:
+        raise ValueError(f"识别规则不对：{exc}") from None
+
+    out = {
+        "schema": SCHEMA, "id": ident, "revision": revision, "group": group,
+        "name": name, "how": how, "ratings": ratings, "body_parts": body_parts,
+        "passes_zones": list(zones), "debounce": list(debounce),
+        "demo": {"frame_s": _number(demo.get("frame_s", 0.5), 0.1, 3.0, "每帧时长"), "frames": frames},
+        "rule": rule,
+    }
+    if zones:
+        out["sweeps_first"] = bool(raw.get("sweeps_first", False))
+    if group == "motion":
+        timing = raw.get("risk_timing")
+        if not isinstance(timing, list) or len(timing) != 2:
+            raise ValueError("身体动作要写 risk_timing：[认定要多久, 放下要多久]，单位秒")
+        out["risk_timing"] = [_number(timing[0], 0.0, 1.0, "risk_timing"), _number(timing[1], 0.0, 1.0, "risk_timing")]
+        out["claims_lift"] = bool(raw.get("claims_lift", False))
+        out["blocks_steps"] = bool(raw.get("blocks_steps", False))
+        if out["claims_lift"] and not rule.get("sides"):
+            raise ValueError("claims_lift 的动作要左右分开认（sides）：踏步要知道是哪只脚")
+    elif raw.get("claims_lift") or raw.get("blocks_steps") or "risk_timing" in raw:
+        raise ValueError("claims_lift、blocks_steps、risk_timing 只对身体动作有意义")
+    return out
+
+
+def canonical_bytes(doc: dict) -> bytes:
+    """签名签的就是这串字节。云端原样发出去，电脑端对着它验签，再解析。"""
+    return json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+# --- 登记 -------------------------------------------------------------------
+
+_registered: dict[str, dict] = {}
+
+
+def register(docs) -> None:
+    """换掉整份登记：电脑端给本机装了的，云端给全部官方动作。都要先过 normalize_action。"""
+    _registered.clear()
+    for doc in docs:
+        _registered[doc["id"]] = doc
+
+
+def registered() -> dict[str, dict]:
+    return dict(_registered)
+
+
+def _entry_from_doc(doc: dict) -> dict:
+    return {
+        "id": doc["id"], "group": doc["group"], "name": doc["name"], "how": doc["how"],
+        "ratings": doc["ratings"], "body_parts": doc["body_parts"],
+        "passes_zones": tuple(doc["passes_zones"]), "sweeps_first": doc.get("sweeps_first", False),
+        "frame_s": doc["demo"]["frame_s"],
+        "frames": tuple({name: tuple(xy) for name, xy in frame.items()} for frame in doc["demo"]["frames"]),
+        "source": "cloud", "revision": doc["revision"],
+    }
+
+
+def entries() -> list[dict]:
+    """现在有的动作：内置的在前，登记进来的按登记顺序。"""
+    return [{**entry, "source": "builtin"} for entry in BUILTIN] + [_entry_from_doc(doc) for doc in _registered.values()]
+
+
+def get(ident: str) -> dict | None:
+    return next((entry for entry in entries() if entry["id"] == ident), None)
+
+
+class _Names(Mapping):
+    """某一组动作的 编号 → 名字。跟着登记走，不是导入那一刻的快照。"""
+
+    def __init__(self, group: str):
+        self.group = group
+
+    def _table(self) -> dict[str, str]:
+        return {entry["id"]: entry["name"] for entry in entries() if entry["group"] == self.group}
+
+    def __getitem__(self, key):
+        return self._table()[key]
+
+    def __iter__(self):
+        return iter(self._table())
+
+    def __len__(self):
+        return len(self._table())
+
+
+MOTION_NAMES = _Names("motion")
+POSE_NAMES = _Names("pose")
 
 
 def trigger_of(entry: dict) -> str:
@@ -200,18 +295,17 @@ def trigger_of(entry: dict) -> str:
 
 def zone_crossers(zone: str) -> tuple[str, ...]:
     """做起来会扫过这个圈的那些动作的触发名。"""
-    return tuple(trigger_of(entry) for entry in LIBRARY if zone in entry["passes_zones"])
+    return tuple(trigger_of(entry) for entry in entries() if zone in entry["passes_zones"])
 
 
 def sweeps_first(trigger: str) -> bool:
     """这个动作是不是在认出来之前就先扫过圈。是的话圈平时也要晚一点按。"""
-    entry = BY_ID.get(trigger.split(".", 1)[-1])
+    entry = get(trigger.split(".", 1)[-1])
     return bool(entry and entry.get("sweeps_first"))
 
 
-def _demo(entry: dict) -> dict:
+def demo_payload(frames, frame_s: float) -> dict:
     """示范的几帧，按所有帧一起的外接框缩到 0~1——各帧单独缩的话人会一跳一跳的。"""
-    frames = entry["frames"]
     xs = [x for frame in frames for name, (x, _y) in frame.items() if name in PREVIEW_POINTS]
     ys = [y for frame in frames for name, (_x, y) in frame.items() if name in PREVIEW_POINTS]
     left, top = min(xs), min(ys)
@@ -225,18 +319,30 @@ def _demo(entry: dict) -> dict:
              "bones": [list(bone) for bone in PREVIEW_BONES]}
             for frame in frames
         ],
-        "frame_s": float(entry.get("frame_s", 0.5)),
+        "frame_s": float(frame_s),
     }
 
 
-def library_payload() -> list[dict]:
-    """给界面的：名字、怎么做、示范、会扫过哪些圈。云端将来也能用它画同样的火柴人。"""
-    return [{
+def entry_payload(entry: dict) -> dict:
+    """给界面的一个动作：名字、怎么做、示范、星级、会扫过哪些圈、从哪来。"""
+    return {
         "id": entry["id"],
         "trigger": trigger_of(entry),
         "group": entry["group"],
         "name": entry["name"],
         "how": entry["how"],
+        "ratings": dict(entry["ratings"]),
+        "body_parts": dict(entry["body_parts"]),
         "passes_zones": list(entry["passes_zones"]),
-        "demo": _demo(entry),
-    } for entry in LIBRARY]
+        "source": entry.get("source", "builtin"),
+        "revision": entry.get("revision", 0),
+        "demo": demo_payload(entry["frames"], entry.get("frame_s", 0.5)),
+    }
+
+
+def doc_payload(doc: dict) -> dict:
+    return entry_payload(_entry_from_doc(doc))
+
+
+def library_payload() -> list[dict]:
+    return [entry_payload(entry) for entry in entries()]

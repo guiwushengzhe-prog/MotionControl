@@ -1,0 +1,100 @@
+{
+  "schema": "motioncontrol.pose_action.v1",
+  "id": "cross_knee_elbow",
+  "revision": 1,
+  "group": "motion",
+  "name": "提膝碰对侧肘",
+  "how": "双手抱头，抬起一侧膝盖，用另一边的手肘去碰，左右交替",
+  "ratings": {"intensity": 3, "recognition": 3, "difficulty": 3},
+  "body_parts": {"core": 5, "legs": 3, "glutes": 2, "shoulders": 1},
+  "passes_zones": ["leftHand", "rightHand", "leftFoot", "rightFoot"],
+  "sweeps_first": true,
+  "debounce": [2, 3],
+  "risk_timing": [0.03, 0.06],
+  "claims_lift": true,
+  "demo": {
+    "frame_s": 0.5,
+    "frames": [
+      {
+        "nose": [0.55, 0.19],
+        "left_shoulder": [0.625, 0.265],
+        "right_shoulder": [0.49, 0.275],
+        "left_elbow": [0.735, 0.205],
+        "right_elbow": [0.56, 0.38],
+        "left_wrist": [0.615, 0.16],
+        "right_wrist": [0.52, 0.24],
+        "left_hip": [0.555, 0.505],
+        "right_hip": [0.455, 0.5],
+        "left_knee": [0.575, 0.395],
+        "right_knee": [0.445, 0.7],
+        "left_ankle": [0.65, 0.545],
+        "right_ankle": [0.44, 0.9]
+      },
+      {
+        "nose": [0.5, 0.1],
+        "left_shoulder": [0.575, 0.22],
+        "right_shoulder": [0.425, 0.22],
+        "left_elbow": [0.69, 0.16],
+        "right_elbow": [0.31, 0.16],
+        "left_wrist": [0.565, 0.105],
+        "right_wrist": [0.435, 0.105],
+        "left_hip": [0.55, 0.5],
+        "right_hip": [0.45, 0.5],
+        "left_knee": [0.555, 0.7],
+        "right_knee": [0.445, 0.7],
+        "left_ankle": [0.56, 0.9],
+        "right_ankle": [0.44, 0.9]
+      },
+      {
+        "nose": [0.45, 0.19],
+        "right_shoulder": [0.375, 0.265],
+        "left_shoulder": [0.51, 0.275],
+        "right_elbow": [0.265, 0.205],
+        "left_elbow": [0.44, 0.38],
+        "right_wrist": [0.385, 0.16],
+        "left_wrist": [0.48, 0.24],
+        "right_hip": [0.445, 0.505],
+        "left_hip": [0.545, 0.5],
+        "right_knee": [0.425, 0.395],
+        "left_knee": [0.555, 0.7],
+        "right_ankle": [0.35, 0.545],
+        "left_ankle": [0.56, 0.9]
+      },
+      {
+        "nose": [0.5, 0.1],
+        "left_shoulder": [0.575, 0.22],
+        "right_shoulder": [0.425, 0.22],
+        "left_elbow": [0.69, 0.16],
+        "right_elbow": [0.31, 0.16],
+        "left_wrist": [0.565, 0.105],
+        "right_wrist": [0.435, 0.105],
+        "left_hip": [0.55, 0.5],
+        "right_hip": [0.45, 0.5],
+        "left_knee": [0.555, 0.7],
+        "right_knee": [0.445, 0.7],
+        "left_ankle": [0.56, 0.9],
+        "right_ankle": [0.44, 0.9]
+      }
+    ]
+  },
+  "rule": {
+    "engine": 1,
+    "sides": true,
+    "needs": [
+      {
+        "points": ["left_hip", "right_hip", "left_elbow", "right_elbow", "left_knee", "right_knee"],
+        "min_score": 0.36
+      }
+    ],
+    "when": [
+      "and",
+      ["<", ["y", "{side}_knee"], ["+", ["y", "{side}_hip"], ["*", 0.58, ["torso"]]]],
+      ["<", ["dist", "{side}_knee", "{other}_elbow"], 0.95]
+    ],
+    "attempt": [
+      "and",
+      ["<", ["y", "{side}_knee"], ["+", ["y", "{side}_hip"], ["*", 0.58, ["torso"]]]],
+      ["<", ["dist", "{side}_knee", "{other}_elbow"], ["+", 0.95, 0.18]]
+    ]
+  }
+}

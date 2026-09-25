@@ -7,6 +7,7 @@ overlapping pose cannot produce two game outputs.
 
 from __future__ import annotations
 
+from collections import ChainMap
 from collections.abc import Mapping
 
 from . import pose_library
@@ -20,7 +21,8 @@ MOTION_CONFLICT_GROUPS: tuple[tuple[str, ...], ...] = (
 )
 
 # 名字只在动作库里写一份。以前这里把 hands_up 叫「双手过头」，界面叫「双手举过头」。
-MOTION_DISPLAY_NAMES = {**pose_library.MOTION_NAMES, **pose_library.POSE_NAMES}
+# 跟着动作库的登记走：下载的动作是运行时才有的。
+MOTION_DISPLAY_NAMES = ChainMap(pose_library.MOTION_NAMES, pose_library.POSE_NAMES)
 
 
 def _normalise_id(value) -> str:

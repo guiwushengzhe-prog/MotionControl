@@ -46,9 +46,10 @@ ZONE_RUNTIME_ALIASES = {
     "rightHandLower": "rightHand",
 }
 
-# 内置身体动作的名字只在动作库里写一份。
-MOTION_NAMES = dict(pose_library.MOTION_NAMES)
-POSE_NAMES = dict(pose_library.POSE_NAMES)
+# 身体动作的名字只在动作库里写一份。不复制：从云端下载的动作是运行时才登记进来的，
+# 导入那一刻复制下来的表里没有它们。
+MOTION_NAMES = pose_library.MOTION_NAMES
+POSE_NAMES = pose_library.POSE_NAMES
 
 VOICE_COMMAND_NAMES = {
     "system.emergency_stop": "紧急停止",

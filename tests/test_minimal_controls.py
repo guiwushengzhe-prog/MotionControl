@@ -104,11 +104,15 @@ def test_four_motion_rules_and_settings_exist():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     kernel = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
-    for action in ['march','calf_back','squat','hands_up']:
+    for action in ['march','calf_back']:
         assert action in kernel and action in server
-    assert 'left_angle < SQUAT_KNEE_ANGLE' in kernel
+    # 下蹲、双手举过头的识别规则跟着动作从云端下载，写在官方动作文件里。
+    official = ROOT / 'cloud' / 'official_poses'
+    squat = (official / 'squat.json').read_text(encoding='utf-8')
+    hands_up = (official / 'hands_up.json').read_text(encoding='utf-8')
+    assert '["angle", "left_hip", "left_knee", "left_ankle"], 145' in squat
+    assert '["<", ["y", "left_wrist"], ["-", ["y", "nose"], ["*", 0.06, ["torso"]]]]' in hands_up
     assert 'CALF_LIFT_ANKLE_RISE' in kernel and 'CALF_LIFT_KNEE_SHARE' in kernel
-    assert 'pose_map["left_wrist"]["y"] < pose_map["nose"]["y"] - 0.06 * torso' in kernel
     assert 'active_until' in kernel
     assert '/api/motion/config' in server
     assert '/api/motion/state' in server
