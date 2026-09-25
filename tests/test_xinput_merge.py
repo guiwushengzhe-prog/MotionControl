@@ -60,6 +60,18 @@ class Pad:
         pass
 
 
+class FourArgPad(Pad):
+    """支持生产合流报告的扳机合并参数，便于验证取大规则。"""
+
+    def set_merged_report(self, state, names, motion_left=(0.0, 0.0), motion_triggers=(0.0, 0.0)):
+        self.set_buttons(names)
+        self.left_stick = tuple(max(-1.0, min(1.0, state.get(key, 0) + motion))
+                                for key, motion in zip(('left_x', 'left_y'), motion_left))
+        self.right_stick = (state.get('right_x', 0), state.get('right_y', 0))
+        self.triggers = tuple(max(state.get(key, 0), motion)
+                              for key, motion in zip(('left_trigger', 'right_trigger'), motion_triggers))
+
+
 def _state(**overrides):
     value = {
         "user_index": 0,
@@ -136,6 +148,34 @@ def test_motion_chord_releases_without_releasing_physical_same_button(tmp_path):
         reader.state = None
         assert _wait_until(lambda: not out.xinput_status()["connected"])
         assert set(out._pad.buttons) == set()
+    finally:
+        out.close()
+
+
+def test_mixed_combo_merges_trigger_by_max_and_releases_on_source_change(tmp_path):
+    reader = FakeReader(_state(buttons={'A'}, left_trigger=0.25, right_trigger=0.4))
+    out = OutputManager(tmp_path, xinput_reader=reader)
+    out._pad = FourArgPad()
+    out.configure_xinput_merge(enabled=True, user=0, motion_left_enabled=False)
+    try:
+        assert _wait_until(lambda: out.xinput_status()['connected'])
+        out.set_config(enabled=True)
+        out.set_action_holds([{
+            'id': 'combo',
+            'action': {'type': 'gamepad', 'target': 'LB+LS_LEFT+RT'},
+        }])
+        assert set(out._pad.buttons) == {'A', 'LB'}
+        # 体感左摇杆仍受合流开关限制，物理摇杆不被覆盖；扳机则取物理与组合的较大值。
+        assert out._pad.left_stick == (_state()['left_x'], _state()['left_y'])
+        assert out._pad.triggers == (0.25, 1.0)
+
+        reader.state = _state(buttons={'B'}, left_trigger=0.7, right_trigger=0.2)
+        assert _wait_until(lambda: set(out._pad.buttons) == {'B', 'LB'})
+        assert out._pad.triggers == (0.7, 1.0)
+
+        out.set_action_holds([])
+        assert set(out._pad.buttons) == {'B'}
+        assert out._pad.triggers == (0.7, 0.2)
     finally:
         out.close()
 

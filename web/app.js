@@ -31,7 +31,7 @@ const BODY_ZONES = {leftHand:{body:'左手',button:'X',parts:['leftHandUpper','l
 // 现在读内核算好的 effective_bindings（见 bindingsForDisplay）——真会按下去的那份。
 function actionKeyText(action){
   if(!action)return null;
-  const type=String(action.type||''),target=String(action.target||'').toUpperCase();
+  const type=String(action.type||''),target=Array.isArray(action.target)?action.target.map(item=>String(item||'').toUpperCase()).filter(Boolean).join('+'):String(action.target||'').toUpperCase();
   if(!type||!target)return null;
   // 宏的编号对人没有意义，圈上和卡片上要写它的名字。
   if(type==='macro')return macroName(action.target);
@@ -135,6 +135,7 @@ const TARGET_LABELS={LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键 1',
 // The dispatcher rejects anything outside this set, so offer the list instead
 // of a free text field whose typos can only surface as a silent no-op in game.
 const GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT'];
+const GAMEPAD_TRIGGER_TARGETS=['LT','RT'];
 const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['SCENE.CAPTURE_REFERENCE','记录参考场景'],['SCENE.REMATCH','重新匹配场景'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
 const SYSTEM_TARGET_NAMES=new Map([...VOICE_SYSTEM_TARGETS,['HEAD.CALIBRATE','开始校准']]);
 const voice={status:null};
@@ -721,7 +722,7 @@ function makeKeyCaptureInput(className,value=''){
   input.addEventListener('blur',settle);
   return input;
 }
-function fillTargetControl(container,type,value=''){
+function fillTargetControl(container,type,value='',comboLeadMs=80,comboLeadExplicit=false){
   container.replaceChildren();if(!type)return;
   const meta=gameProfile.actions?.[type]||{};
   if(type==='gamepad'){
@@ -735,16 +736,22 @@ function fillTargetControl(container,type,value=''){
     const chosen=new Set(raw.split('+').map(part=>part.trim().toUpperCase()).filter(Boolean));
     const picker=document.createElement('div');picker.className='combo-picker';
     const combo=document.createElement('input');combo.type='hidden';
-    const sync=()=>{combo.value=[...picker.querySelectorAll('input:checked')].map(box=>box.value).join('+')};
-    for(const key of [...(meta.targets||[]),...GAMEPAD_STICK_TARGETS]){
+    const hasStick=()=>[...picker.querySelectorAll('input:checked')].some(box=>GAMEPAD_STICK_TARGETS.includes(box.value));
+    const sync=()=>{combo.value=[...picker.querySelectorAll('input:checked')].map(box=>box.value).join('+');if(select.value==='__combo__')leadBox.hidden=!hasStick()};
+    const comboTargets=meta.combo_targets||[...(meta.targets||[]),...GAMEPAD_STICK_TARGETS,...GAMEPAD_TRIGGER_TARGETS];
+    for(const key of [...new Set(comboTargets)]){
       const label=document.createElement('label');const box=document.createElement('input');
       box.type='checkbox';box.value=key;box.checked=chosen.has(key);box.addEventListener('change',sync);
       label.append(box,document.createTextNode(TARGET_LABELS[key]||key));picker.appendChild(label);
     }
-    sync();
-    const update=()=>{const isCombo=select.value==='__combo__';select.className=isCombo?'binding-gamepad-select':'binding-target';combo.className=isCombo?'binding-target':'';picker.hidden=!isCombo};
+    const leadBox=document.createElement('label');leadBox.className='combo-lead-box';leadBox.textContent='按键领先摇杆';
+    const lead=document.createElement('input');lead.type='range';lead.className='combo-lead-ms';lead.min='0';lead.max='200';lead.step='5';lead.value=String(Math.max(0,Math.min(200,Number(comboLeadMs)||0)));
+    lead.dataset.explicit=comboLeadExplicit?'1':'0';
+    const leadValue=document.createElement('span');leadValue.className='combo-lead-value';leadValue.textContent=`${lead.value} 毫秒`;
+    lead.addEventListener('input',()=>{lead.dataset.touched='1';leadValue.textContent=`${lead.value} 毫秒`});leadBox.append(lead,leadValue);
+    const update=()=>{const isCombo=select.value==='__combo__';select.className=isCombo?'binding-gamepad-select':'binding-target';combo.className=isCombo?'binding-target':'';picker.hidden=!isCombo;leadBox.hidden=!isCombo||!hasStick()};
     select.value=[...select.options].some(o=>o.value===raw)?raw:'__combo__';
-    select.addEventListener('change',update);update();container.append(select,picker,combo);return;
+    sync();select.addEventListener('change',update);update();container.append(select,picker,combo,leadBox);return;
   }
   if(type==='macro'){
     const select=document.createElement('select');select.className='binding-target';
@@ -813,10 +820,10 @@ function buildBindingRow(trigger){
     const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=binding?.phrase||trigger.phrase||'';phrase.placeholder='例如：体感地图';phrase.title='说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);
   }
   const type=makeTypeSelect(binding);
-  const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'');
+  const target=document.createElement('div');target.className='binding-target-box';fillTargetControl(target,type.value,action?.target||'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
   const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
   const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'),action?.target||'');
-  type.addEventListener('change',()=>{fillTargetControl(target,type.value,'');fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
+  type.addEventListener('change',()=>{fillTargetControl(target,type.value,'',80);fillBehaviorControl(behavior,trigger,type.value,trigger.group==='voice'?'tap':'hold',pickedMacro());syncMotionConflictChoices()});
   // 换了另一条宏，「跑一遍还是循环」要跟着那条宏重算——那一格写的必须是现在
   // 选中这条的，否则界面说一套、实际跑另一套。
   target.addEventListener('change',()=>{if(type.value==='macro')fillBehaviorControl(behavior,trigger,'macro',behavior.querySelector('.binding-behavior')?.value,pickedMacro())});
@@ -886,6 +893,10 @@ function readProfileOverrides(){
     if(!target)throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:`${trigger.name} 还没有选择具体键位`);
     const behavior=trigger.tapOnly||type==='mouse_wheel'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
     const override={action:{type,target,behavior}};
+    const comboLead=row.querySelector('.combo-lead-ms');
+    if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden&&(comboLead.dataset.explicit==='1'||comboLead.dataset.touched==='1')){
+      override.action.combo_stick_lead_ms=Math.max(0,Math.min(200,Number(comboLead.value)||0));
+    }
     if(trigger.group==='voice'){
       const phrase=row.querySelector('.voice-trigger-phrase')?.value.trim();
       if(!phrase)throw new Error(`${trigger.name} 还没有填写触发词`);

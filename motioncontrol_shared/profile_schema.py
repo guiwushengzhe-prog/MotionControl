@@ -20,6 +20,12 @@ GAMEPAD_BUTTONS = {
 }
 GAMEPAD_AXES = {"LS_UP", "LS_DOWN", "LS_LEFT", "LS_RIGHT"}
 GAMEPAD_TRIGGERS = {"LT", "RT"}
+# Xbox 混合组合（按键 + 左摇杆）的按键领先时间。这个字段属于游戏动作，
+# 不写入旧配置时仍按原来的约 80 毫秒处理。
+DEFAULT_COMBO_STICK_LEAD_MS = 80
+MIN_COMBO_STICK_LEAD_MS = 0
+MAX_COMBO_STICK_LEAD_MS = 200
+GAMEPAD_COMBO_TARGETS = GAMEPAD_BUTTONS | GAMEPAD_AXES | GAMEPAD_TRIGGERS
 MOUSE_BUTTONS = {"LEFT", "RIGHT", "MIDDLE", "X1", "X2"}
 MOUSE_WHEEL = {"SCROLL_UP", "SCROLL_DOWN"}
 ACTION_TYPES = {
@@ -88,14 +94,15 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         parts = [part for part in parts if part]
         if not parts:
             raise ValueError("Xbox 按键不能为空")
-        # Buttons and the left stick are separate channels on the pad, so a
-        # combo may mix them: "LB+LS_UP" holds the bumper and pushes the stick
-        # at the same time.  A lone direction still belongs to gamepad_axis.
-        invalid = [part for part in parts if part not in GAMEPAD_BUTTONS and part not in GAMEPAD_AXES]
+        # 手柄按键、左摇杆和扳机是三个独立通道，组合可以同时驱动它们。
+        # 单独的摇杆方向和扳机仍使用各自的动作类型，保持旧配置含义不变。
+        invalid = [part for part in parts if part not in GAMEPAD_COMBO_TARGETS]
         if invalid:
             raise ValueError("不支持的 Xbox 按键：" + ", ".join(sorted(set(invalid))))
         if len(parts) == 1 and parts[0] in GAMEPAD_AXES:
             raise ValueError("单独的摇杆方向请选择“Xbox 左摇杆”类型")
+        if len(parts) == 1 and parts[0] in GAMEPAD_TRIGGERS:
+            raise ValueError("单独的扳机请选择“Xbox 扳机”类型")
         target = parts[0] if len(parts) == 1 else parts
     elif action_type == "macro":
         # 宏编号是小写的。别的类型一律转大写（键名、按钮名本来就是大写），这里必须
@@ -128,7 +135,24 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
     # A wheel is an impulse by definition; allowing hold would create runaway scrolling.
     if action_type == "mouse_wheel":
         behavior = "tap"
-    return {"type": action_type, "target": target, "behavior": behavior}
+    out = {"type": action_type, "target": target, "behavior": behavior}
+    # 只给同时含 Xbox 按键和左摇杆方向的组合保存领先时间；普通动作不带这
+    # 个字段，保持旧配置的规范化结果和云端文档兼容。接受旧实验字段 lead_ms
+    # 作为读取别名，写回时统一为 combo_stick_lead_ms。
+    if action_type == "gamepad" and isinstance(target, list):
+        parts = set(target)
+        if parts & GAMEPAD_BUTTONS and parts & GAMEPAD_AXES:
+            raw_lead = action.get("combo_stick_lead_ms", action.get("lead_ms"))
+            if raw_lead is not None:
+                try:
+                    number = float(raw_lead)
+                except (TypeError, ValueError):
+                    raise ValueError("Xbox 组合领先时间必须是 0 到 200 毫秒") from None
+                if not number == number or number in {float("inf"), float("-inf")}:
+                    raise ValueError("Xbox 组合领先时间必须是 0 到 200 毫秒")
+                out["combo_stick_lead_ms"] = int(round(max(
+                    MIN_COMBO_STICK_LEAD_MS, min(MAX_COMBO_STICK_LEAD_MS, number))))
+    return out
 
 
 def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
@@ -240,7 +264,11 @@ def action_catalog() -> dict:
         "keyboard": {"free_text": True},
         "mouse_button": {"targets": sorted(MOUSE_BUTTONS)},
         "mouse_wheel": {"targets": sorted(MOUSE_WHEEL), "behavior": "tap"},
-        "gamepad": {"targets": sorted(GAMEPAD_BUTTONS), "allow_combo": True},
+        "gamepad": {
+            "targets": sorted(GAMEPAD_BUTTONS),
+            "combo_targets": sorted(GAMEPAD_COMBO_TARGETS),
+            "allow_combo": True,
+        },
         "gamepad_trigger": {"targets": sorted(GAMEPAD_TRIGGERS)},
         "gamepad_axis": {"targets": sorted(GAMEPAD_AXES)},
         # 目标不是固定的一组键，而是用户自己建的宏。界面要另外去宏库拿列表，
