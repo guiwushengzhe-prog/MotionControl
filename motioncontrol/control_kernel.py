@@ -2121,9 +2121,14 @@ class ControlKernel:
             calf_raw = not steps_blocked and (calf_side("left", "right") or calf_side("right", "left"))
 
             def step_event(side: str) -> None:
-                # 第一步就算走起来了。以前要左右交替才开始，第一步永远不算，人得踏
-                # 两三步才动。
-                self.step["active_until"] = now + MARCH_HOLD_S
+                # 恢复旧版的交替门控：单腿挪动只记住这一侧，不直接开始前进；
+                # 只有相反脚在 0.10~1.50 秒内也完成一次抬脚，才续上踏步。
+                # 脚下缘的测量、站姿基准和峰值分类仍沿用当前版本，避免把已修好的
+                # 斜手机位、脚跟脚尖和提膝碰肘问题一起回退。
+                previous = self.step["last_side"]
+                gap = now - self.step["last_at"]
+                if previous and side != previous and 0.10 <= gap <= 1.50:
+                    self.step["active_until"] = now + MARCH_HOLD_S
                 self.step["last_side"], self.step["last_at"] = side, now
             if left_step:
                 step_event("L")

@@ -24,15 +24,15 @@ def with_elbows(pose, *, left=(.40, .55), right=(.60, .55)):
 
 @pytest.mark.parametrize('stance', [0.0, .10])
 def test_small_alternating_march_is_detected_without_foot_buttons(monkeypatch, stance):
-    """第一步就算走起来了。以前要左右交替才开始，人得踏两三步才动。"""
+    """单脚第一步只记节奏，左右交替后才开始前进。"""
     kernel = ControlKernel(KernelOutput())
     try:
         feed = _zone_feeder(kernel, monkeypatch)
         rest = lifted('left', knee=0, ankle=0, stance=stance)
         feed(rest, 20)
-        for side in ('left', 'right', 'left', 'right'):
+        for index, side in enumerate(('left', 'right', 'left', 'right')):
             feed(lifted(side, stance=stance), 5)
-            assert 'march' in kernel.motion_active
+            assert ('march' in kernel.motion_active) == (index > 0)
             assert not kernel.zone_state['leftFoot']['pressed']
             assert not kernel.zone_state['rightFoot']['pressed']
             feed(rest, 4)
@@ -85,14 +85,17 @@ def test_side_kick_does_not_move_the_neutral_foot_anchor(monkeypatch):
 
 
 def test_noise_and_common_body_rise_are_not_marching(monkeypatch):
-    """第一步就算数之后，挡误触发的只剩抬起的门槛：晃一下、整个人起伏、一帧的
-    跳点都不能算一步。"""
+    """晃一下、整个人起伏、一帧跳点和同一条腿反复抬起都不能启动踏步。"""
     kernel = ControlKernel(KernelOutput())
     try:
         feed = _zone_feeder(kernel, monkeypatch)
         feed(_standing_pose(), 15)
         for side in ('left', 'right') * 3:
             feed(lifted(side, knee=.04, ankle=.03), 4)
+            assert 'march' not in kernel.motion_active
+        for _ in range(3):
+            feed(lifted('left'), 5)
+            feed(_standing_pose(), 4)
             assert 'march' not in kernel.motion_active
         for dy in (-.03, -.05, 0.0):
             feed(_standing_pose(dy=dy), 4)
@@ -154,6 +157,9 @@ def test_a_crossed_foot_does_not_press_the_foot_zone(monkeypatch):
         feed(_standing_pose(), 50)
         assert 'march' not in kernel.motion_active, '停下来之后不该还在走'
         feed(lifted('right'), 5)
+        assert 'march' not in kernel.motion_active, '只有一只脚完成动作不能启动踏步'
+        feed(_standing_pose(), 4)
+        feed(lifted('left'), 5)
         assert 'march' in kernel.motion_active
     finally:
         kernel.close()
@@ -230,6 +236,10 @@ def test_a_real_step_ankle_rises_less_than_calf_lift(monkeypatch):
         feed(_standing_pose(), 20)
         for rise in (.10, .22, .25, .18):
             feed(lifted('left', knee=.04, ankle=rise), 1)
+        assert 'march' not in kernel.motion_active
+        feed(_standing_pose(), 4)
+        for rise in (.10, .22, .25, .18):
+            feed(lifted('right', knee=.04, ankle=rise), 1)
         assert 'march' in kernel.motion_active
         assert 'calf_back' not in kernel.motion_active
     finally:
@@ -243,6 +253,10 @@ def test_a_knee_lift_is_a_step_not_calf_lift(monkeypatch):
         feed = _zone_feeder(kernel, monkeypatch)
         feed(_standing_pose(), 20)
         feed(lifted('left', knee=.30, ankle=.30), 6)
+        assert 'march' not in kernel.motion_active
+        assert 'calf_back' not in kernel.motion_active
+        feed(_standing_pose(), 4)
+        feed(lifted('right', knee=.30, ankle=.30), 6)
         assert 'march' in kernel.motion_active
         assert 'calf_back' not in kernel.motion_active
     finally:
@@ -265,12 +279,15 @@ def test_swaying_on_the_spot_is_neither(monkeypatch):
 
 
 def test_a_small_step_counts(monkeypatch):
-    """小的那几步脚踝只抬 0.07~0.09，以前认不出来，走着走着就断。"""
+    """小的交替步脚踝只抬 0.07~0.09，第二步后仍能开始前进。"""
     kernel = ControlKernel(KernelOutput())
     try:
         feed = _zone_feeder(kernel, monkeypatch)
         feed(_standing_pose(), 20)
         feed(lifted('left', knee=0, ankle=.09), 3)
+        assert 'march' not in kernel.motion_active
+        feed(_standing_pose(), 4)
+        feed(lifted('right', knee=0, ankle=.09), 3)
         assert 'march' in kernel.motion_active
     finally:
         kernel.close()
@@ -380,6 +397,11 @@ def test_a_small_step_counts_when_the_camera_sees_the_feet_at_different_heights(
         step = lifted('left', knee=.02, ankle=.08)
         step['right_ankle']['y'] -= offset
         feed(step, 4)
+        assert 'march' not in kernel.motion_active
+        feed(rest, 4)
+        step = lifted('right', knee=.02, ankle=.08)
+        step['right_ankle']['y'] -= offset
+        feed(step, 4)
         assert 'march' in kernel.motion_active
     finally:
         kernel.close()
@@ -395,6 +417,9 @@ def test_the_standing_reference_follows_a_new_stance(monkeypatch):
         wide = lifted('left', knee=0, ankle=0, stance=.05)
         feed(wide, 60)
         feed(lifted('left', stance=.05), 5)
+        assert 'march' not in kernel.motion_active
+        feed(wide, 4)
+        feed(lifted('right', stance=.05), 5)
         assert 'march' in kernel.motion_active
         assert not kernel.zone_state['leftFoot']['pressed']
     finally:

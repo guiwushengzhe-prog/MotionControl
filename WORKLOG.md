@@ -528,3 +528,11 @@
 - 提示：`POST /api/voice/check` 给输入框用；本游戏口令、通用口令（含急停）、唤醒词三处输入框底下写「「笛」语音认不出，这句说了也听不到，换个说法」。换游戏、装别人配置带进来的，在语音页顶上一行汇总（`status.unheard`）。
 - 手机：控制配置多一个 `voice_grammar`（电脑实际交给模型的那份，已拆好词）。F:\MC-switch 的 main.ts 把它和原来的 `voice_phrases` 一起交给原生层，NativeAudioPlugin 有 grammar 就照原样用、没有就退回逐字拆。旧手机只认 `voice_phrases`，那份没变；新网页热更到旧 APK 上，旧 APK 只读 phrases，照旧能用。
 - 验证：1149 passed、3 skipped；真实模型下「体感爬绳」→「体 感 爬 绳」、「体感城堡」→「体 感 城堡」、「体感吹笛」报「笛」。手机 tsc、21 个 vitest 通过；release APK（2.2.0，MotionControl 证书）已覆盖安装到 ELI-AN00，网页包已重签。未做真人说话验收。
+
+## 2026-09-25：恢复踏步左右交替门控，避免单腿挪动误触
+
+- 在独立工作树 `F:\MotionControl-App-march-fix`（分支 `codex/march-fix`）修改，`F:\MC-main` 和正在运行的服务未改动。
+- 恢复昨天之前的踏步节奏：单腿完成一次抬脚只记录最近一侧；相反脚在 0.10～1.50 秒内完成后才开始或续上前进。脚下缘、站姿基准、脚跟脚尖和提膝碰肘分类保留当前版本。
+- 回归测试覆盖单腿重复有效抬脚不触发，以及左右交替后正常触发；README 已同步行为说明。
+- 验证：`python -m pytest -q tests/test_march_foot_separation.py tests/test_control_kernel.py tests/test_minimal_controls.py tests/test_default_motion_bindings.py tests/test_body_motion_guard_defaults.py tests/test_body_motion_head_guard.py tests/test_motion_conflicts.py tests/test_pose_rules.py` 为 149 passed；`compileall`、`git diff --check` 通过。
+- 尚未重启当前服务，也未做真人摄像头或游戏内验收。
