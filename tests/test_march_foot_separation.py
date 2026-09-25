@@ -71,12 +71,12 @@ def test_side_kick_does_not_move_the_neutral_foot_anchor(monkeypatch):
         feed = _zone_feeder(kernel, monkeypatch)
         rest = _standing_pose()
         feed(rest, 20)
-        neutral = kernel.foot_neutral['left']
+        neutral = kernel.foot_base['left']
 
         # 脚还没离地，但已经向侧面滑出；这是录像里曾让 neutral 追随目标的过渡段。
         for outward in (.08, .16, .24):
             feed(lifted('left', knee=0, ankle=0, outward=outward), 1)
-        assert kernel.foot_neutral['left'] == pytest.approx(neutral)
+        assert kernel.foot_base['left'] == pytest.approx(neutral)
 
         feed(lifted('left', outward=.24), 5)
         assert kernel.zone_state['leftFoot']['pressed']
@@ -343,5 +343,100 @@ def test_a_pose_bound_to_hold_is_actually_held(monkeypatch):
             kernel.pose_active = set()
             kernel._dispatch_controls_locked(0.0)
         assert 'pose.hands_cross' not in output.holds
+    finally:
+        kernel.close()
+
+
+# --- 脚的下缘和站立基准（真人录像 pose-20260925-003039 / 020232 里看到的几种情形） ---
+
+
+def test_pelvis_tilting_during_a_side_kick_is_not_a_step(monkeypatch):
+    """左脚往外伸时骨盆一歪，右脚相对自己的胯就"抬高"了。两只脚的下缘其实一样
+    高，右脚一直踩在地上，不能算成迈了一步。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        for tilt, outward in ((.010, .02), (.020, .04), (.025, .06), (.025, .08)):
+            pose = _standing_pose()
+            pose['left_hip']['y'] -= tilt          # 伸脚那一侧的胯往上提
+            pose['left_ankle']['x'] -= outward     # 左脚贴地往外滑
+            feed(pose, 3)
+            assert 'march' not in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+def test_a_small_step_counts_when_the_camera_sees_the_feet_at_different_heights(monkeypatch):
+    """手机斜着放，站着时右脚在画面上就比左脚高一截（录像里 0.05 个躯干）。
+    左脚那一步本身抬了 0.08，比的时候要先扣掉这一截，不然只剩 0.03，认不出来。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        offset = .05 * .24
+        rest = lifted('left', knee=0, ankle=0)
+        rest['right_ankle']['y'] -= offset
+        feed(rest, 20)
+        step = lifted('left', knee=.02, ankle=.08)
+        step['right_ankle']['y'] -= offset
+        feed(step, 4)
+        assert 'march' in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+def test_the_standing_reference_follows_a_new_stance(monkeypatch):
+    """站宽了、挪了位置，站稳一秒左右基准就跟过去。以前只在第一次站好时记一下，
+    之后原地抬脚都像是往外伸脚：踏步认不出、脚区反倒被踩到。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        wide = lifted('left', knee=0, ankle=0, stance=.05)
+        feed(wide, 60)
+        feed(lifted('left', stance=.05), 5)
+        assert 'march' in kernel.motion_active
+        assert not kernel.zone_state['leftFoot']['pressed']
+    finally:
+        kernel.close()
+
+
+def test_the_foot_zone_sits_on_the_heel_and_toe_line(monkeypatch):
+    """地面线按脚跟、脚尖算。脚踝离地还有一截，按脚踝算的话脚区整体偏高。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        ankle_only = _standing_pose()
+        feed(ankle_only, 5)
+        high = kernel.zone_rects['leftFoot']['y2']
+        with_feet = _standing_pose()
+        for side, x in (('left', .46), ('right', .54)):
+            with_feet[side + '_heel'] = {'x': x, 'y': .97, 'score': .95}
+            with_feet[side + '_foot_index'] = {'x': x, 'y': .975, 'score': .95}
+        kernel.zone_rects = {}
+        feed(with_feet, 5)
+        assert kernel.zone_rects['leftFoot']['y2'] == pytest.approx(high + .025, abs=1e-6)
+    finally:
+        kernel.close()
+
+
+def test_a_low_side_kick_with_the_toe_lifted_presses_the_foot_zone(monkeypatch):
+    """录像里左脚往外伸得低：脚踝只比另一只高一点，但整只脚都离地了、往外也
+    够远。按脚的下缘比高低，这一下要按下去。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        rest = _standing_pose()
+        for side, x in (('left', .46), ('right', .54)):
+            rest[side + '_heel'] = {'x': x, 'y': .97, 'score': .95}
+            rest[side + '_foot_index'] = {'x': x - .01 if side == 'left' else x + .01, 'y': .975, 'score': .95}
+        feed(rest, 20)
+        kick = copy.deepcopy(rest)
+        for part in ('ankle', 'heel', 'foot_index'):
+            kick['left_' + part]['x'] -= .16
+            kick['left_' + part]['y'] -= .02
+        feed(kick, 6)
+        assert kernel.zone_state['leftFoot']['pressed']
+        assert 'march' not in kernel.motion_active
     finally:
         kernel.close()

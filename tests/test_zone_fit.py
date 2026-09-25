@@ -317,3 +317,30 @@ def test_cancelling_changes_nothing(isolated_user_data):
         assert is_default(kernel.zone_fit)
     finally:
         kernel.close()
+
+
+def test_fit_and_runtime_measure_the_foot_from_its_lowest_point():
+    """量身量"脚离地多高"、运行时摆脚区的地面线，都按脚踝、脚跟、脚尖里最低的
+    那个点。以前都按脚踝：脚踝离地还有一截，量出来的框整体偏高。"""
+    from motioncontrol.zone_fit import foot_floor_y
+
+    pose = person(**OUT)
+    for side, (x, y) in (("left", OUT["left_ankle"]), ("right", REST["right_ankle"])):
+        pose[f"{side}_heel"] = {"x": x, "y": y + 0.03, "score": 0.95}
+        pose[f"{side}_foot_index"] = {"x": x + 0.01, "y": y + 0.035, "score": 0.95}
+    frame = body_frame(pose, W, H)
+    session = ZoneFitSession({}, 0.0)
+    out, lift = session._foot_sample(pose, frame, "leftFoot")
+    # 伸出去的左脚下缘在 0.84+0.035，站着的右脚下缘在 0.90+0.035。
+    assert lift == pytest.approx((0.935 - 0.875) / frame["uy"])
+    assert foot_floor_y(pose) == pytest.approx(0.935)
+
+    kernel = ControlKernel(Output())
+    try:
+        kernel.width, kernel.height = W, H
+        rects = kernel._compute_body_zones(pose, 0.0)
+        fit = kernel.zone_fit["zones"]["leftFoot"]
+        bottom = 0.935 - (fit["lift"] - fit["half_h"]) * frame["torso_px"] / H
+        assert rects["leftFoot"]["y2"] == pytest.approx(bottom)
+    finally:
+        kernel.close()

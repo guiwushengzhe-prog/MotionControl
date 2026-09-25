@@ -84,9 +84,18 @@ def kernel_with_hand_mouse(**config):
     return kernel, output
 
 
-def feed(kernel, pose, frames=1):
+def feed(kernel, pose, frames=1, clock=None):
     for _ in range(frames):
+        if clock is not None:
+            clock[0] += 1 / 30
         kernel.handle_pose_map("hand-mouse-test", pose, width=640, height=480)
+
+
+def fake_clock(monkeypatch):
+    """手区要待够 HAND_DWELL_S 才按，测区域的这几条得让帧之间真的隔开时间。"""
+    clock = [1000.0]
+    monkeypatch.setattr("motioncontrol.control_kernel.time.monotonic", lambda: clock[0])
+    return clock
 
 
 # --- output ownership -----------------------------------------------------
@@ -139,22 +148,25 @@ def test_status_is_exposed_for_the_ui():
 # --- zone suppression -----------------------------------------------------
 
 
-def test_steering_hand_stops_pressing_its_own_zones():
+def test_steering_hand_stops_pressing_its_own_zones(monkeypatch):
+    clock = fake_clock(monkeypatch)
     kernel, _output = kernel_with_hand_mouse(hand="right")
     kernel.configure_bindings({"zones": {
         "rightHand": {"action": {"type": "gamepad", "target": "B"}},
     }})
 
     # Open hand parked in the zone: it presses, as it always did.
-    feed(kernel, body(wrist=(0.75, 0.28), spread=0.7), frames=3)
+    # body() 里左手也举在左手区：两只手同时在框里，要待够 HAND_BOTH_DWELL_S。
+    feed(kernel, body(wrist=(0.75, 0.28), spread=0.7), frames=12, clock=clock)
     assert kernel.zone_state["rightHand"]["pressed"] is True
 
     # Same place, fist closed: steering now, so the button must let go.
-    feed(kernel, body(wrist=(0.75, 0.28), spread=0.2), frames=3)
+    feed(kernel, body(wrist=(0.75, 0.28), spread=0.2), frames=3, clock=clock)
     assert kernel.zone_state["rightHand"]["pressed"] is False
 
 
-def test_the_other_hand_keeps_its_zones():
+def test_the_other_hand_keeps_its_zones(monkeypatch):
+    clock = fake_clock(monkeypatch)
     kernel, _output = kernel_with_hand_mouse(hand="right")
     kernel.configure_bindings({"zones": {
         "leftHand": {"action": {"type": "gamepad", "target": "Y"}},
@@ -162,7 +174,7 @@ def test_the_other_hand_keeps_its_zones():
     pose = body(hand="right", wrist=(0.75, 0.28), spread=0.2)
     pose["left_wrist"] = p(0.25, 0.28)   # parked in the left zone
 
-    feed(kernel, pose, frames=3)
+    feed(kernel, pose, frames=4, clock=clock)
 
     assert kernel.hand_mouse_controller.engaged is True
     assert kernel.zone_state["leftHand"]["pressed"] is True
@@ -190,7 +202,8 @@ def test_look_gate_belongs_to_the_left_hand():
     assert kernel._hand_mouse_owns_zone("lookGate") is False
 
 
-def test_nothing_is_suppressed_while_disabled():
+def test_nothing_is_suppressed_while_disabled(monkeypatch):
+    clock = fake_clock(monkeypatch)
     output = _Output()
     kernel = ControlKernel(output)
     # 手控鼠标默认开着，关掉它才是这条要钉的情形：关掉之后握拳不该再压住区域按键。
@@ -198,7 +211,7 @@ def test_nothing_is_suppressed_while_disabled():
     kernel.configure_bindings({"zones": {
         "rightHand": {"action": {"type": "gamepad", "target": "B"}},
     }})
-    feed(kernel, body(wrist=(0.75, 0.28), spread=0.1), frames=3)
+    feed(kernel, body(wrist=(0.75, 0.28), spread=0.1), frames=12, clock=clock)
     assert kernel.hand_mouse_controller.engaged is False
     assert kernel.zone_state["rightHand"]["pressed"] is True
 

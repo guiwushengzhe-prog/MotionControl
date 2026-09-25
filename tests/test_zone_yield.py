@@ -33,7 +33,8 @@ def test_without_the_motion_bound_the_zone_is_as_fast_as_before(monkeypatch):
     try:
         feed = _zone_feeder(kernel, monkeypatch)
         feed(standing(), 10)
-        feed(reach_left(), 2)
+        # 不用等让路那 ZONE_YIELD_S；只是手区本身要待够 HAND_DWELL_S（30 帧/秒约 3 帧）。
+        feed(reach_left(), 4)
         assert kernel.zone_state["leftHand"]["pressed"]
         assert kernel.status()["zone_overlaps"] == {}
     finally:

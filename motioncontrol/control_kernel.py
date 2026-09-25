@@ -34,8 +34,8 @@ from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseCo
 from motioncontrol.pose_recorder import PoseRecorder
 from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.zone_fit import (
-    HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, is_default,
-    normalize_zone_fit,
+    HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
+    foot_floor_y, foot_out, is_default, normalize_zone_fit,
 )
 from motioncontrol_shared import pose_library
 
@@ -165,12 +165,40 @@ CALF_LIFT_KNEE_MAX = 0.15
 # 到 -0.34），提膝时小腿垂在膝盖下面（+0.28 到 +0.41）。
 CALF_LIFT_SHIN_MAX = 0.15
 
-# 原地踏步：脚踝比另一只高出 0.07 个躯干算抬起来了，落到 0.04 以下算放下。录像
+# 原地踏步：一只脚比另一只高出 0.07 个躯干算抬起来了，落到 0.04 以下算放下。录像
 # 里小的那几步 0.07~0.09、大的到 0.29，站着晃最多 0.055。走完一步之后 0.8 秒内
-# 没有下一步就停。
+# 没有下一步就停。高出多少按脚的下缘直接比（见 _update_feet_locked），不再各自
+# 相对自己那边的胯量：侧踢、换重心时骨盆一歪，站着那只脚相对胯就"抬高"了，
+# 真人录像里左脚往外伸，右脚被算成迈了一步。
 MARCH_LIFT_START = 0.07
 MARCH_LIFT_END = 0.04
 MARCH_HOLD_S = 0.80
+
+# 两只脚站着时的基准（见 _update_feet_locked）：高低差、各自往外多远。手机斜着
+# 放时，站着的两只脚在画面上本来就差一截（录像里右脚高 0.05），不扣掉的话一只脚
+# 的每一步都显得小。基准只在两脚着地、0.3 秒里没怎么动时往现在的样子挪：侧踢
+# 前脚贴地往外滑的那一段不能挪，挪了伸脚就够不着门槛。换了站位，一秒左右跟上。
+FOOT_STILL_S = 0.30
+FOOT_STILL_OUT = 0.03       # 这段时间里每只脚横向最多晃多少（量身那把横向尺子）
+FOOT_STILL_LIFT = 0.03      # 两脚高低差最多变多少（躯干）
+FOOT_GROUNDED_LIFT = 0.035  # 离基准这么近算两脚着地
+FOOT_FIRST_BASE_LIFT = 0.10 # 还没有基准时，高低差在这以内才当是站着
+FOOT_FIRST_BASE_S = 1.0     # 一直没站稳过，就拿这么长一段的中位数先当基准
+FOOT_BASE_FOLLOW_S = 0.8
+# 脚区要"确实往外抬了脚"：下缘离地至少这么多（躯干）、往外离站着的位置至少这么
+# 多（横向尺子，和量身的 out 同一把）。只贴地往外滑、站宽一点、另一只脚在动，
+# 都不算。
+FOOT_ZONE_LIFT = 0.04
+FOOT_ZONE_OUT = 0.12
+
+# 手区防误触：手腕越过框的下沿、里沿至少 HAND_ENTER_DEPTH（量身那把尺），连续待
+# 够 HAND_DWELL_S 才按；另一只手这时也在自己框里，多半是两只手一起往上举、从两边
+# 扫过去，要待够 HAND_BOTH_DWELL_S。松开还是原来那样快，挥手连按不受影响。真人
+# 录像：举双手时手臂扫过手区，左右手原来一共按了 24 次，改完 4 次；挥手 12 下
+# 按出 10 下，没按出的是进框不到 0.07 秒的两下。
+HAND_ENTER_DEPTH = 0.04
+HAND_DWELL_S = 0.07
+HAND_BOTH_DWELL_S = 0.30
 
 # 圈给动作让路（只在两边都绑了键时）：圈要待够这么久才按，做那个动作时、做完之后
 # 这么久之内都不按。录像里举双手扫过手区大多 0.1~0.3 秒，算上动作认出来之前那几帧。
@@ -435,7 +463,10 @@ class ControlKernel:
             )
         }
         self.step = _fresh_step()
-        self.foot_neutral: dict[str, float] = {}
+        # 脚：站着时的基准、最近 0.3 秒的样子、这一帧算出来的离地和往外。见 _update_feet_locked。
+        self.foot_base: dict[str, float] | None = None
+        self.foot_history: list[tuple[float, float, float, float]] = []
+        self.feet: dict[str, dict[str, float]] | None = None
         self.last_motion_emit = 0.0
 
         # Head estimation keeps observing frames, but strong exercise motion
@@ -892,7 +923,7 @@ class ControlKernel:
             else:
                 self.vertical_look["enabled"] = False
             for state in self.zone_state.values():
-                state.update({"inside": 0, "outside": 0, "pressed": False})
+                state.update({"inside": 0, "outside": 0, "pressed": False, "deep_since": None})
             self.vertical_gate_active = False
             self._reset_vertical_hand_locked()
             self.vertical_head_anchor_samples.clear()
@@ -1570,12 +1601,10 @@ class ControlKernel:
                 gate_w, gate_h, iw, ih,
             )
             rects["lookGate"] = self._smooth_rect(self.zone_rects.get("lookGate"), gate_rect)
-        la, ra = pose_map.get("left_ankle"), pose_map.get("right_ankle")
-        if la and ra and max(_score(la), _score(ra)) >= 0.4:
-            visible = [item for item in (la, ra) if _score(item) >= 0.4]
-            floor_y = max(item["y"] for item in visible)
-            # 自动脚区保留可见边界，稍减离地间隙以容纳浅侧踢。
-            # 原地抬脚由下方身体相对的向外伸脚证据排除，不能仅靠离地。
+        # 地面线按脚的下缘（脚踝、脚跟、脚尖里最低的点），和量身量离地高度用的是同一个。
+        floor_y = foot_floor_y(pose_map)
+        if floor_y is not None:
+            # 原地抬脚由 _foot_outward 的向外伸脚证据排除，不能仅靠离地。
             # 默认：中心在胯外 0.64、离地 0.335 个躯干，宽 1.00、高 0.60 个躯干。
             for name, side_hip, direction in (("leftFoot", lh, left_dir), ("rightFoot", rh, right_dir)):
                 foot = fit[name]
@@ -1633,6 +1662,30 @@ class ControlKernel:
                 return True
         return False
 
+    def _hand_reach_locked(self, pose_map: dict[str, dict], name: str, frame: dict | None) -> float | None:
+        """手腕进了这只手的区域多深，量身那把尺；不在区域里是 None。
+
+        跟随的手区外沿、上沿是画面边，只看越过下沿、里沿各多少，取小的。固定圈按离
+        圈边多远算。
+        """
+        wrist = pose_map.get(RUNTIME_BODY_ZONES[name]["points"][0])
+        if self.fixed_zones_enabled:
+            circle = self.fixed_zones.get(name)
+            if not self._point_in_circle(wrist, circle):
+                return None
+            if frame is None:
+                return math.inf
+            gap = float(circle["r"]) - math.hypot(wrist["x"] - float(circle["cx"]), wrist["y"] - float(circle["cy"]))
+            return gap / frame["ux"]
+        rect = self.zone_rects.get(name)
+        if not self._point_in_rect(wrist, rect):
+            return None
+        if frame is None:
+            return math.inf
+        direction = frame["left_dir"] if name == "leftHand" else frame["right_dir"]
+        inner = rect["x1"] if direction > 0 else rect["x2"]
+        return min((rect["y2"] - wrist["y"]) / frame["uy"], direction * (wrist["x"] - inner) / frame["ux"])
+
     def _hand_points_for_mouse_locked(self) -> dict | None:
         """两只手各自使用自己的关节点，缺失时分别退回人体指尖判断。"""
         return self.latest_hands
@@ -1659,7 +1712,7 @@ class ControlKernel:
 
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
         previous_gate = bool(self.vertical_gate_active)
-        self._update_foot_neutral(pose_map)
+        self._update_feet_locked(pose_map, now)
         if self.fixed_zones_enabled:
             # Fixed zones live in raw camera normalized coordinates and never
             # follow the body. Rects are generated only for legacy clients.
@@ -1670,6 +1723,8 @@ class ControlKernel:
         gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         overlaps = self.zone_overlaps_locked()
+        frame = body_frame(pose_map, self.width, self.height)
+        hand_reach = {name: self._hand_reach_locked(pose_map, name, frame) for name in ("leftHand", "rightHand")}
         for name in zone_names:
             state = self.zone_state.setdefault(name, {"inside": 0, "outside": 0, "pressed": False})
             if name == "lookGate":
@@ -1702,13 +1757,29 @@ class ControlKernel:
                     state["yield_until"] = now + ZONE_YIELD_GRACE_S
                 if now < state.get("yield_until", 0.0):
                     inside = False
+            # 手区：进够深、待够久才按，见 HAND_ENTER_DEPTH。待了多久只看手腕在哪：握拳
+            # 控制把这只手占住的那几帧（握拳读数常常一闪一闪）不把计时清零，按不按
+            # 仍由上面那几条管。
+            ready = True
+            if name in hand_reach:
+                depth = hand_reach[name]
+                if depth is not None and depth >= HAND_ENTER_DEPTH:
+                    if state.get("deep_since") is None:
+                        state["deep_since"] = now
+                else:
+                    state["deep_since"] = None
+                # 另一只手正握拳控制鼠标的话，它停在那儿不是在往上举，不算。
+                other = "rightHand" if name == "leftHand" else "leftHand"
+                both = hand_reach[other] is not None and not self._hand_mouse_owns_zone(other)
+                dwell = HAND_BOTH_DWELL_S if both else HAND_DWELL_S
+                ready = state.get("deep_since") is not None and now - state["deep_since"] >= dwell
             if inside:
                 if state["inside"] == 0:
                     state["entered_at"] = now
                 state["inside"] += 1
                 state["outside"] = 0
                 settled = not (overlap and overlap["delay"]) or now - state.get("entered_at", now) >= ZONE_YIELD_S
-                if not state["pressed"] and state["inside"] >= 2 and settled:
+                if not state["pressed"] and state["inside"] >= 2 and settled and ready:
                     state["pressed"] = True
                     changed = True
             else:
@@ -1768,38 +1839,73 @@ class ControlKernel:
 
     # ---------- four existing motion rules ----------
 
-    def _foot_relative(self, pose_map: dict[str, dict], side: str) -> tuple[float, float] | None:
-        names = ("left_shoulder", "right_shoulder", "left_hip", "right_hip", "left_ankle", "right_ankle")
-        if not self._points_good(pose_map, names):
-            return None
-        shoulder = _midpoint(pose_map["left_shoulder"], pose_map["right_shoulder"])
-        hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"])
-        scale = abs(hip["y"] - shoulder["y"])
-        if scale < .025:
-            return None
-        direction = 1.0 if pose_map[side + "_shoulder"]["x"] > shoulder["x"] else -1.0
-        other = "right" if side == "left" else "left"
-        ankle, side_hip = pose_map[side + "_ankle"], pose_map[side + "_hip"]
-        lateral = direction * (ankle["x"] - side_hip["x"]) * self.width / (scale * self.height)
-        rise = (pose_map[other + "_ankle"]["y"] - ankle["y"]) / scale
-        return lateral, rise
+    def _update_feet_locked(self, pose_map: dict[str, dict], now: float) -> None:
+        """这一帧两只脚各离地多高、往外离站着的位置多远，存进 self.feet。
 
-    def _update_foot_neutral(self, pose_map: dict[str, dict]) -> None:
-        # 只在第一次拿到有效站姿时记录基准。若每一帧都在双脚尚未明显离地时
-        # 更新，侧踢开始前的横向过渡会把 neutral 一路推向目标脚，最后
-        # ``lateral - neutral`` 反而达不到脚圈的门槛。
-        for side in ("left", "right"):
-            relative = self._foot_relative(pose_map, side)
-            if (relative is not None and abs(relative[1]) < .035
-                    and side not in self.foot_neutral):
-                self.foot_neutral[side] = relative[0]
+        离地：两只脚的下缘直接比高低（躯干），再扣掉站着时本来就有的那点差。往外：
+        和量身同一把横向尺子，减去站着时的位置。踏步和脚区都读这一份。
+
+        站着的基准只在两脚着地、最近 FOOT_STILL_S 里没怎么动时才往现在挪（见
+        FOOT_STILL_*）。以前是第一次站好时记一下就再也不动：人挪了位置、站宽了，
+        基准就一直是错的。
+        """
+        self.feet = None
+        frame = body_frame(pose_map, self.width, self.height)
+        if frame is None:
+            return
+        torso = abs(frame["hip"]["y"] - frame["shoulder"]["y"])
+        bottoms = {side: foot_bottom_y(pose_map, side) for side in ("left", "right")}
+        outs = {side: foot_out(pose_map, frame, side) for side in ("left", "right")}
+        if torso < .025 or None in bottoms.values() or None in outs.values():
+            return
+        # 左脚比右脚高多少。右脚的就是它的相反数。
+        diff = (bottoms["right"] - bottoms["left"]) / torso
+        history = self.foot_history
+        history.append((now, diff, outs["left"], outs["right"]))
+        while now - history[0][0] > FOOT_FIRST_BASE_S:
+            history.pop(0)
+        recent = [item for item in history if now - item[0] <= FOOT_STILL_S]
+        still = (
+            now - recent[0][0] >= FOOT_STILL_S * 0.6
+            and max(item[1] for item in recent) - min(item[1] for item in recent) <= FOOT_STILL_LIFT
+            and all(max(item[k] for item in recent) - min(item[k] for item in recent) <= FOOT_STILL_OUT
+                    for k in (2, 3))
+        )
+        base = self.foot_base
+        if base is None and still and abs(diff) <= FOOT_FIRST_BASE_LIFT:
+            base = self.foot_base = {"diff": diff, "left": outs["left"], "right": outs["right"], "at": now}
+        elif base is None and now - history[0][0] >= FOOT_FIRST_BASE_S * 0.8:
+            # 一上来就在踏步，一直没站稳：左右交替抬脚时两边各抬一半，最近一秒的
+            # 中位数就落在站着的地方。之后一站稳就按上面那条慢慢修正。
+            base = self.foot_base = {
+                "diff": statistics.median(item[1] for item in history),
+                "left": statistics.median(item[2] for item in history),
+                "right": statistics.median(item[3] for item in history),
+                "at": now,
+            }
+        elif still and base is not None and abs(diff - base["diff"]) <= FOOT_GROUNDED_LIFT:
+            follow = _clamp((now - base["at"]) / FOOT_BASE_FOLLOW_S, 0.0, 1.0)
+            for key, value in (("diff", diff), ("left", outs["left"]), ("right", outs["right"])):
+                base[key] += follow * (value - base[key])
+        # 还没站稳过一次就不报：没有基准时，手机斜放带来的那点高低差会被当成抬脚，
+        # 真人录像里一开头就凭空多出一步。
+        if base is None:
+            return
+        base["at"] = now
+        lift = diff - base["diff"]
+        self.feet = {
+            "lift": {"left": lift, "right": -lift},
+            "out": {side: outs[side] - base[side] for side in ("left", "right")},
+        }
+
+    def _foot_lift(self, side: str) -> float | None:
+        return self.feet["lift"][side] if self.feet else None
 
     def _foot_outward(self, pose_map: dict[str, dict], side: str) -> bool:
-        relative = self._foot_relative(pose_map, side)
-        if relative is None:
+        """这只脚确实往外抬起来了：离地、而且往外离开了站着的位置。"""
+        if not self.feet:
             return False
-        lateral, rise = relative
-        return rise > .05 and lateral - self.foot_neutral.get(side, 0.0) > .16
+        return self.feet["lift"][side] >= FOOT_ZONE_LIFT and self.feet["out"][side] >= FOOT_ZONE_OUT
 
     def _points_good(self, pose_map: dict[str, dict], names: tuple[str, ...], minimum: float = 0.42) -> bool:
         return all(name in pose_map and _score(pose_map[name]) >= minimum for name in names)
@@ -1961,26 +2067,33 @@ class ControlKernel:
                 时，等脚踝抬到最高、不再往上的那一刻再定：这一下碰到了对侧手肘就是
                 提膝碰肘，抬到膝盖那么高就是小腿后抬，都不是才算一步。
                 """
+                # 抬没抬起、落没落下看脚的下缘（见 MARCH_LIFT_START）；抬得像不像小腿
+                # 后抬，还是看相对胯的脚踝和膝盖，那几个门槛是照它量的。
                 ankle = rise(side, other, "ankle")
                 knee = rise(side, other, "knee")
+                raised = self._foot_lift(side)
                 key = side + "_lift"
+                if raised is None:
+                    # 脚看不清，或者人还没站稳过一次：这一帧不算抬也不算落。
+                    self.step[key] = None
+                    return False
                 lift = self.step.get(key)
                 if lift is None:
-                    if ankle < MARCH_LIFT_START:
+                    if raised < MARCH_LIFT_START:
                         return False
                     lift = self.step[key] = {"peak_ankle": ankle, "peak_knee": knee, "min_shin": shin(side),
-                                             "prev": ankle, "since": now, "done": False,
+                                             "prev": raised, "since": now, "done": False,
                                              "crossed": False, "cross_attempt": False}
                     rising = True
                 else:
-                    if ankle < MARCH_LIFT_END:
+                    if raised < MARCH_LIFT_END:
                         self.step[key] = None
                         return False
-                    rising = ankle > lift["prev"] + 0.01
+                    rising = raised > lift["prev"] + 0.01
                 lift["peak_ankle"] = max(lift["peak_ankle"], ankle)
                 lift["peak_knee"] = max(lift["peak_knee"], knee)
                 lift["min_shin"] = min(lift["min_shin"], shin(side))
-                lift["prev"] = ankle
+                lift["prev"] = raised
                 lift["crossed"] = lift["crossed"] or knee_meets_elbow[side]
                 if self._motion_has_effective_binding_locked("cross_knee_elbow"):
                     # 记录“正在做提膝碰肘但还没碰到”的整次抬腿，避免它在峰值
@@ -2572,7 +2685,7 @@ class ControlKernel:
     def _clear_body_outputs_locked(self) -> None:
         self.hand_mouse_controller.reset()
         for state in self.zone_state.values():
-            state.update({"inside": 0, "outside": 0, "pressed": False})
+            state.update({"inside": 0, "outside": 0, "pressed": False, "deep_since": None})
         self.zone_rects = {}
         self.head_jump_anchor = None
         self.head_jump_prev = None
@@ -2593,7 +2706,9 @@ class ControlKernel:
         for state in self.pose_debounce.values():
             state.update({"active": False, "on": 0, "off": 0})
         self.trigger_previous.clear()
-        self.foot_neutral.clear()
+        self.foot_base = None
+        self.foot_history.clear()
+        self.feet = None
         self.step.clear()
         self.step.update(_fresh_step())
         self.head_controller.reset_tracking()

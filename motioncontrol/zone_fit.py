@@ -152,6 +152,36 @@ def body_frame(pose_map: dict[str, dict] | None, width: int, height: int) -> dic
     }
 
 
+# 脚的"下缘"：脚踝、脚跟、脚尖里画面上最低的那个点。地面线、量身量的离地高度、运行时
+# 判定脚离没离地，全按它算。以前三处都只看脚踝：脚踝本身离地还有一截，地面线就整体
+# 偏高，脚区跟着偏高，伸脚时脚尖脚跟到了、脚踝却够不着。
+FOOT_PARTS = ("ankle", "heel", "foot_index")
+
+
+def foot_bottom_y(pose_map: dict[str, dict] | None, side: str) -> float | None:
+    ys = [float(point["y"]) for part in FOOT_PARTS
+          if (point := (pose_map or {}).get(f"{side}_{part}")) and _score(point) >= MIN_POINT_SCORE]
+    return max(ys) if ys else None
+
+
+def foot_floor_y(pose_map: dict[str, dict] | None) -> float | None:
+    """地面线：看得见的脚里，下缘更低的那只。"""
+    ys = [y for side in ("left", "right") if (y := foot_bottom_y(pose_map, side)) is not None]
+    return max(ys) if ys else None
+
+
+def foot_out(pose_map: dict[str, dict] | None, frame: dict, side: str) -> float | None:
+    """脚往外离同侧胯多远，横向尺子。脚踝看不清就用脚跟。"""
+    pose_map = pose_map or {}
+    ankle = next((point for part in ("ankle", "heel")
+                  if (point := pose_map.get(f"{side}_{part}")) and _score(point) >= MIN_POINT_SCORE), None)
+    hip = pose_map.get(f"{side}_hip")
+    if ankle is None or not hip:
+        return None
+    direction = frame["left_dir"] if side == "left" else frame["right_dir"]
+    return direction * (ankle["x"] - hip["x"]) / frame["ux"]
+
+
 def normalize_zone_fit(raw: Any) -> dict:
     """存盘的那份整理成能直接用的样子。缺的、坏的一律回到默认值，不报错：
     这份数丢了最坏也就是框回到默认大小，不该让程序起不来。"""
@@ -388,18 +418,13 @@ class ZoneFitSession:
         )
 
     def _foot_sample(self, pose_map: dict, frame: dict, zone: str) -> tuple[float, float] | None:
+        # 往外多远、离地多高，和运行时摆脚区、判定脚离地用的是同一组函数。
         side = "left" if zone == "leftFoot" else "right"
-        ankle = self._ankle(pose_map, side)
-        feet = [point for point in (self._ankle(pose_map, "left"), self._ankle(pose_map, "right")) if point]
-        hip = pose_map.get(f"{side}_hip")
-        if ankle is None or not feet or not hip:
+        out = foot_out(pose_map, frame, side)
+        floor_y, bottom_y = foot_floor_y(pose_map), foot_bottom_y(pose_map, side)
+        if out is None or floor_y is None or bottom_y is None:
             return None
-        floor_y = max(point["y"] for point in feet)
-        direction = frame["left_dir"] if side == "left" else frame["right_dir"]
-        return (
-            direction * (ankle["x"] - hip["x"]) / frame["ux"],
-            (floor_y - ankle["y"]) / frame["uy"],
-        )
+        return out, (floor_y - bottom_y) / frame["uy"]
 
     def _measure_stand(self, pose_map: dict, frame: dict, now: float) -> None:
         sample = {"at": now, "nose_y": frame["nose"]["y"], "uy": frame["uy"]}

@@ -259,16 +259,23 @@ def test_recommended_layout_uses_actual_image_side_when_pose_is_horizontally_mir
     assert zones["lookGate"]["cx"] > 0.50
 
 
-def test_merged_zones_do_not_trigger_at_rest_and_use_intended_limbs():
+def test_merged_zones_do_not_trigger_at_rest_and_use_intended_limbs(monkeypatch):
     output = FakeOutput()
     kernel = ControlKernel(output)
+    # 手区要待够 HAND_DWELL_S，脚要先站稳一下才有站立基准：帧之间得真的隔开时间。
+    clock = [0.0]
+    monkeypatch.setattr("motioncontrol.control_kernel.time.monotonic", lambda: clock[0])
+
+    def step(current):
+        clock[0] += 1 / 30
+        return kernel.handle_pose_map("test", current, width=640, height=480)
     try:
         base = pose()
         zones, vertical = SceneLayoutManager._initial_layout(base, None)
         kernel.configure_scene_layout({"zones": zones, "vertical_look": vertical})
         _prepare_v093_head_for_scene_test(kernel)
-        for _ in range(3):
-            state = kernel.handle_pose_map("test", base, width=640, height=480)
+        for _ in range(12):
+            state = step(base)
         assert state["buttons"] == []
         assert state["head"]["vertical_gate_active"] is False
 
@@ -286,8 +293,8 @@ def test_merged_zones_do_not_trigger_at_rest_and_use_intended_limbs():
             # Clear prior zone debounce/state between isolated checks.
             for zs in kernel.zone_state.values():
                 zs.update({"inside": 0, "outside": 0, "pressed": False})
-            for _ in range(2):
-                state = kernel.handle_pose_map("test", p, width=640, height=480)
+            for _ in range(4):
+                state = step(p)
             assert button in state["buttons"], (zone_id, point_name, state["buttons"])
     finally:
         kernel.close()

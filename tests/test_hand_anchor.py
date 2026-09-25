@@ -105,9 +105,12 @@ class _Output:
         pass
 
 
-def test_kernel_zones_consume_anchor_when_wrist_is_missing():
+def test_kernel_zones_consume_anchor_when_wrist_is_missing(monkeypatch):
     output = _Output()
     kernel = ControlKernel(output)
+    # 手区要待够 HAND_DWELL_S 才按，所以帧之间得真的隔开时间。
+    clock = [0.0]
+    monkeypatch.setattr("motioncontrol.control_kernel.time.monotonic", lambda: clock[0])
     try:
         kernel.configure_scene_layout({
             "zones": {"leftHandUpper": {"shape": "circle", "cx": 0.20, "cy": 0.20, "r": 0.08}},
@@ -118,8 +121,9 @@ def test_kernel_zones_consume_anchor_when_wrist_is_missing():
             "index": (0.21, 0.20, 0.8),
             "pinky": (0.20, 0.21, 0.8),
         })
-        state = kernel.handle_pose_map("hand-anchor-test", pose, width=640, height=480)
-        state = kernel.handle_pose_map("hand-anchor-test", pose, width=640, height=480)
+        for _ in range(4):
+            clock[0] += 1 / 30
+            state = kernel.handle_pose_map("hand-anchor-test", pose, width=640, height=480)
         assert state["hand_anchor_version"] == "hand-anchor-v1"
         assert state["hand_anchors"]["left"]["wrist_observed"] is False
         assert state["zones"]["leftHandUpper"]["pressed"] is True
