@@ -123,7 +123,8 @@ class IntentRecordingSession:
     # ---------- 每一帧 ----------
 
     def update(self, now: float, pose_map: dict | None, width: int, height: int,
-               zone_inside: dict[str, bool], active_triggers: set[str]) -> None:
+               zone_inside: dict[str, bool], active_triggers: set[str], *,
+               sample_at: float | None = None) -> None:
         if not self.active:
             return
         if self.state == "preparing":
@@ -141,7 +142,7 @@ class IntentRecordingSession:
         step = self.steps[self.index]
         label = self.index if self.step_phase in {"doing", "settle"} else -1
         if pose_map and len(self.frames) < MAX_FRAMES:
-            self.frames.append(self._frame(now, pose_map, width, height, label))
+            self.frames.append(self._frame(now, pose_map, width, height, label, sample_at))
         entered = self._rising_zones(now, zone_inside)
         started = self._rising_triggers(now, active_triggers)
         if self.step_phase == "ready":
@@ -166,8 +167,9 @@ class IntentRecordingSession:
         if now - self.phase_since >= SETTLE_S:
             self._next(now)
 
-    def _frame(self, now: float, pose_map: dict, width: int, height: int, label: int) -> dict:
-        return {
+    def _frame(self, now: float, pose_map: dict, width: int, height: int, label: int,
+               sample_at: float | None = None) -> dict:
+        frame = {
             "t": round(now - self.origin, 4), "w": int(width), "h": int(height), "step": label,
             "pose": {
                 name: [round(float(point.get("x", 0.0)), 5), round(float(point.get("y", 0.0)), 5),
@@ -175,6 +177,11 @@ class IntentRecordingSession:
                 for name, point in pose_map.items() if isinstance(point, dict)
             },
         }
+        # t 是电脑收到这一帧的时刻，c 是认出它的时刻（手机来的帧才有，见
+        # ControlKernel.pose_sample_at）。回放时 t 管判断等了多久，c 管速度。
+        if sample_at is not None and abs(sample_at - now) >= 0.0005:
+            frame["c"] = round(sample_at - self.origin, 4)
+        return frame
 
     def _rising_zones(self, now: float, zone_inside: dict[str, bool]) -> set[str]:
         entered = set()

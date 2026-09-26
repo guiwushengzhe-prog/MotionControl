@@ -117,6 +117,53 @@ def _clamp01(value: float) -> float:
     return 0.0 if value <= 0.0 else 1.0 if value >= 1.0 else value
 
 
+# 用最近这么久里到得最快的那一帧定基准。
+CLOCK_WINDOW_S = 2.0
+# 换过来的时刻最多比收到时早这么多，再早就不信了。
+CLOCK_MAX_LAG_S = 0.5
+
+
+class CaptureClock:
+    """把手机「认出这一帧」的时刻换到电脑的钟上，算速度用。
+
+    电脑收到的时刻里混着 WiFi 的抖动：几帧挤在一起到，速度就算大了；隔一阵才到，
+    又算小了。而判定靠的正是「别的肢体动得多快」「这只手停没停住」。手机每帧带着
+    自己的时间（按电脑的钟对过），它和真实时刻只差一段延迟。最近两秒里到得最快的
+    那一帧，延迟最接近真实的最小值，拿它当基准：
+
+        换过来的时刻 = 手机时间 + 最近两秒里（收到时刻 − 手机时间）的最小值
+
+    所以两边的钟对得准不准无所谓，只用前后两帧的差。手机时间倒退或者一下跳了一秒
+    以上（重连后重新对钟），从头来。
+    """
+
+    def __init__(self) -> None:
+        self._offsets: deque[tuple[float, float]] = deque()   # (收到时刻, 收到 − 手机时间)，最小值在最前
+        self._last_captured: float | None = None
+        self._last: float | None = None
+
+    def reset(self) -> None:
+        self._offsets.clear()
+        self._last_captured = None
+        self._last = None
+
+    def map(self, captured_s: float, arrival: float) -> float:
+        if self._last_captured is not None and not 0.0 < captured_s - self._last_captured < 1.0:
+            self.reset()
+        self._last_captured = captured_s
+        offset = arrival - captured_s
+        while self._offsets and arrival - self._offsets[0][0] > CLOCK_WINDOW_S:
+            self._offsets.popleft()
+        while self._offsets and self._offsets[-1][1] >= offset:
+            self._offsets.pop()
+        self._offsets.append((arrival, offset))
+        mapped = max(captured_s + self._offsets[0][1], arrival - CLOCK_MAX_LAG_S)
+        if self._last is not None:
+            mapped = max(mapped, self._last)
+        self._last = mapped = min(mapped, arrival)
+        return mapped
+
+
 class Kinematics:
     """最近一小段里几个关键点相对胯在哪、动得多快，还有胯本身动得多快。
 

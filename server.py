@@ -89,6 +89,20 @@ except Exception as exc:
     # 记住选择本身；没有 ViGEm 驱动时仍让页面显示上次模式，并把原因留给状态栏。
     OUTPUT.mode = _saved_output_mode
     OUTPUT.last_error = str(exc)
+
+
+def _remember_output_mode() -> None:
+    """视角输出现在是什么就记什么，下次启动照旧。
+
+    不只看页面上那个下拉框：打开物理手柄合流会自己切到手柄；没装驱动时选了手柄，
+    建虚拟手柄那一步报错，但模式已经切过去了，页面上显示的也是手柄。记的要和
+    页面上看到的一样。
+    """
+    mode = str(getattr(OUTPUT, "mode", "") or "")
+    if mode in {"mouse", "gamepad"} and KERNEL.general_setting("output_mode") != mode:
+        KERNEL.remember_general_setting("output_mode", mode)
+
+
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
 PROFILE_UPDATE_LOCK = threading.RLock()
 PROFILES = GameProfileStore(ROOT)
@@ -1828,25 +1842,29 @@ class AdminHandler(_BaseHandler):
             return
         try:
             if route == "/api/output/config":
-                data = OUTPUT.set_config(
-                    mode=body.get("mode"),
-                    enabled=body.get("enabled") if "enabled" in body else None,
-                    mouse_speed_x=body.get("mouse_speed_x"),
-                    mouse_speed_y=body.get("mouse_speed_y"),
-                    gamepad_gain=body.get("gamepad_gain"),
-                    xinput_merge_enabled=(body.get("xinput_merge_enabled") if "xinput_merge_enabled" in body else None),
-                    xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
-                    physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
-                )
-                if body.get("mode") in {"mouse", "gamepad"}:
-                    KERNEL.remember_general_setting("output_mode", body["mode"])
+                try:
+                    data = OUTPUT.set_config(
+                        mode=body.get("mode"),
+                        enabled=body.get("enabled") if "enabled" in body else None,
+                        mouse_speed_x=body.get("mouse_speed_x"),
+                        mouse_speed_y=body.get("mouse_speed_y"),
+                        gamepad_gain=body.get("gamepad_gain"),
+                        xinput_merge_enabled=(body.get("xinput_merge_enabled") if "xinput_merge_enabled" in body else None),
+                        xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
+                        physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
+                    )
+                finally:
+                    _remember_output_mode()
                 _broadcast_game_output_state()
             elif route == "/api/output/xinput":
-                data = OUTPUT.configure_xinput_merge(
-                    enabled=body.get("enabled") if "enabled" in body else None,
-                    motion_left_enabled=body.get("motion_left_enabled"),
-                    user=(body.get("user") if "user" in body else body.get("physical_xinput_user")) if ("user" in body or "physical_xinput_user" in body) else _UNSET,
-                )
+                try:
+                    data = OUTPUT.configure_xinput_merge(
+                        enabled=body.get("enabled") if "enabled" in body else None,
+                        motion_left_enabled=body.get("motion_left_enabled"),
+                        user=(body.get("user") if "user" in body else body.get("physical_xinput_user")) if ("user" in body or "physical_xinput_user" in body) else _UNSET,
+                    )
+                finally:
+                    _remember_output_mode()
             elif route == "/api/output/frame":
                 OUTPUT.apply(float(body.get("x", 0.0)), float(body.get("y", 0.0)))
                 data = OUTPUT.status()

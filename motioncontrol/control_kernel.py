@@ -36,8 +36,8 @@ from motioncontrol.intent_recording import (
     IntentRecordingSession, IntentRecordingStore, build_steps,
 )
 from motioncontrol.zone_arbiter import (
-    JUMP_ZONES, TAIL_S, Kinematics, SnippetBank, ZoneArbiter, ZoneInput, fresh_zone_state,
-    zone_phase_for_display,
+    CLOCK_MAX_LAG_S, JUMP_ZONES, TAIL_S, CaptureClock, Kinematics, SnippetBank, ZoneArbiter, ZoneInput,
+    fresh_zone_state, zone_phase_for_display,
 )
 from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.zone_fit import (
@@ -551,6 +551,11 @@ class ControlKernel:
         # 「智能」判定：最近一小段手脚动得多快、每个框的判断状态机、录的数据。
         self.zone_kin = Kinematics()
         self.zone_arbiter = ZoneArbiter()
+        # 这一帧是什么时候认出来的（电脑的钟）。手机来的帧照手机自己的时间换算，
+        # 不用收到的时刻：WiFi 一抖，几帧挤在一起到，速度就算错了。只给算速度和录制
+        # 用；判断等了多久、按下的时机仍然看收到的时刻。电脑自己的摄像头是 None。
+        self.capture_clock = CaptureClock()
+        self.pose_sample_at: float | None = None
         # 录的动作算出来的冲突：{触发名: {框: {"hits": 扫过几次, "reps": 做了几次}}}。
         # 录过的动作以它为准（哪怕一次都没扫过），没录过的才看动作文件的 passes_zones。
         # 由 intent_library 在后台算好装进来，见 configure_zone_learning。
@@ -1117,9 +1122,11 @@ class ControlKernel:
         world_pose = self.world_pose_map_from_message(message)
         width = int(message.get("width") or 640)
         height = int(message.get("height") or 480)
+        captured = message.get("captured_at_ms")
         return self.handle_pose_map(
             source_id, pose_map, width=width, height=height,
             world_pose=world_pose, hands=self.hand_map_from_message(message),
+            captured_at_ms=captured if isinstance(captured, (int, float)) and not isinstance(captured, bool) else None,
         )
 
     def handle_pose_map(
@@ -1131,6 +1138,7 @@ class ControlKernel:
         height: int = 480,
         world_pose: dict[str, dict] | list[dict] | None = None,
         hands: dict[str, list[dict]] | None = None,
+        captured_at_ms: float | None = None,
     ) -> dict:
         now = time.monotonic()
         with self._lock:
@@ -1144,6 +1152,11 @@ class ControlKernel:
                 self.active_body_source = source_id
                 self.head_controller.reset_tracking()
                 self.pose_history.clear()
+                self.capture_clock.reset()
+            if captured_at_ms is not None and math.isfinite(float(captured_at_ms)):
+                self.pose_sample_at = self.capture_clock.map(float(captured_at_ms) / 1000.0, now)
+            else:
+                self.pose_sample_at = None
             self.body_last_at = now
             self.width = max(1, int(width))
             self.height = max(1, int(height))
@@ -1305,13 +1318,21 @@ class ControlKernel:
         with self._lock:
             self._intent_listener = listener
 
+    def _pose_sample_time_locked(self, now: float) -> float:
+        """这一帧算速度用的时刻：手机来的用换算好的认出时刻，别的就是现在。"""
+        sample = self.pose_sample_at
+        if sample is None or not now - CLOCK_MAX_LAG_S <= sample <= now:
+            return now
+        return sample
+
     def _update_intent_recording_locked(self, pose_map, now: float) -> None:
         session = self.intent_session
         if session is None or not session.active:
             return
         zone_inside = {name: bool(self.zone_state.get(name, {}).get("raw_inside")) for name in RUNTIME_BODY_ZONES}
         active = {f"motion.{ident}" for ident in self.motion_active} | {f"pose.{ident}" for ident in self.pose_active}
-        session.update(now, pose_map, self.width, self.height, zone_inside, active)
+        session.update(now, pose_map, self.width, self.height, zone_inside, active,
+                       sample_at=self._pose_sample_time_locked(now))
         self._finish_intent_if_done_locked()
 
     def _finish_intent_if_done_locked(self) -> None:
@@ -2099,7 +2120,7 @@ class ControlKernel:
         gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         frame = body_frame(pose_map, self.width, self.height)
-        self.zone_kin.update(pose_map, frame, now)
+        self.zone_kin.update(pose_map, frame, self._pose_sample_time_locked(now))
         actions = self._bound_action_triggers_locked()
         conflicts = {} if simple else self.zone_conflicts_locked(actions)
         busy = {trigger for trigger in actions if self._motion_busy_locked(trigger)}

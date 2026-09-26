@@ -131,6 +131,8 @@ def replay_segment(kernel, segment: Segment, on_frame=None) -> list[dict]:
         now = BASE_T + float(frame.get("t", 0.0))
         with kernel._lock:
             kernel.width, kernel.height = int(frame.get("w") or 640), int(frame.get("h") or 480)
+            # 手机录的帧另带认出时刻，速度照它算，和实时一样。
+            kernel.pose_sample_at = BASE_T + float(frame["c"]) if "c" in frame else None
             kernel._process_pose_locked(pose_map or None, now)
             row = {"t": now, "step": int(frame.get("step", -1)),
                    "inside": {zone: bool(kernel.zone_state[zone].get("raw_inside")) for zone in ZONES},
