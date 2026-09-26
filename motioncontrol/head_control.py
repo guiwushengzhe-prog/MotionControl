@@ -135,7 +135,7 @@ HORIZONTAL_ALGORITHM_VERSIONS = {
     "frozen22": "v5.1-fixed22-stable-units",
     "gesture_v188": "v5.1-consensus-shared-calibration",
     "roll_tilt": "roll-tilt-v1",
-    "head_responsive": "head-responsive-v3",
+    "head_responsive": "head-responsive-v4",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
     "gesture_v153": "个性化 PnP（灵敏）",
@@ -3997,6 +3997,7 @@ class HeadController:
             "responsive_yaw_deadzone": self._responsive_head.yaw_threshold if responsive else None,
             "responsive_tilt_stop_deg": self._responsive_head.tilt_stop_threshold if responsive else None,
             "responsive_yaw_stop": self._responsive_head.yaw_stop_threshold if responsive else None,
+            "responsive_return_brake": self._responsive_head.return_brake if responsive else None,
             "runtime_neutral_pending": self._runtime_neutral_pending,
             "runtime_neutral_epoch": self._runtime_neutral_epoch,
             "runtime_neutral_at": self._runtime_neutral_at,
@@ -4064,7 +4065,7 @@ class HeadController:
             "available_horizontal_algorithms": list(HORIZONTAL_ALGORITHMS),
             "horizontal_algorithm_labels": dict(HORIZONTAL_ALGORITHM_LABELS),
             "horizontal_algorithm_label": HORIZONTAL_ALGORITHM_LABELS[policy_name],
-            "horizontal_behavior": ("侧倾或转脸时持续转向，回正停止，快速反向立即切换" if policy_name == "head_responsive"
+            "horizontal_behavior": ("侧倾或转脸时持续转向，快速回正加强制动，进入另一侧才换向" if policy_name == "head_responsive"
                                     else "向左肩或右肩倾斜时持续转向，头回正立即停止" if policy_name == "roll_tilt"
                                     else "转动时移动，偏头停住时停止，回到中心短暂停稳后重新触发"),
             "active_pitch_estimator": self._effective_estimator_algorithm(),

@@ -96,6 +96,55 @@ def test_head_real_calibration_noise_preserves_a_usable_stop_range():
     assert at(-.3, 0., 1.16) == 0
 
 
+@pytest.mark.parametrize('source', ['tilt', 'yaw'])
+@pytest.mark.parametrize('direction', [-1, 1])
+@pytest.mark.parametrize('fps', [16, 30, 60])
+def test_fast_return_brakes_more_than_slow_return_without_reverse(source, direction, fps):
+    def at(c, degrees, now):
+        return head_value(c, direction * degrees if source == 'tilt' else 0.,
+                          direction * degrees / 18 if source == 'yaw' else 0., now)
+    def returning(duration):
+        c = ResponsiveHeadControl()
+        at(c, 14., 1.)
+        count = max(1, round(duration * fps))
+        values = [at(c, 14. - 6. * i / count, 1. + duration * i / count)
+                  for i in range(1, count + 1)]
+        assert all(value * direction >= 0 for value in values)
+        return c, values[-1]
+    slow, slow_value = returning(.6)
+    fast, fast_value = returning(.1)
+    assert 0 <= fast_value * direction < slow_value * direction * .5
+    assert fast.return_brake > slow.return_brake
+    assert at(fast, 0., 1.15) == 0.
+    assert at(fast, -3.3 if source == 'tilt' else -4.2, 1.18) == 0.
+    assert at(fast, -8., 1.21) * direction < 0  # 进入另一侧才立即换向。
+
+
+@pytest.mark.parametrize('source', ['tilt', 'yaw'])
+def test_return_braking_does_not_treat_calibration_jitter_as_a_return(source):
+    c = ResponsiveHeadControl()
+    for index in range(90):
+        degrees = 12. + .1 * math.sin(index)
+        value = head_value(c, degrees if source == 'tilt' else 0.,
+                           degrees / 18 if source == 'yaw' else 0., 1. + index / 30)
+        assert value > 0
+        assert c.return_brake == pytest.approx(0., abs=1e-10)
+
+
+def test_return_braking_cannot_hand_control_to_a_weaker_opposite_signal():
+    c = ResponsiveHeadControl()
+    assert head_value(c, -14., .26, 1.) < 0
+    assert head_value(c, -8., .26, 1.02) <= 0
+    assert c.source == 'tilt'
+    assert c.return_brake > .8
+    # 保持偏转仍持续转向；帧中断或信号缺失会清除回正历史。
+    assert head_value(c, -8., .26, 1.06) < -.15
+    assert head_value(c, -8., .26, 2.) < -.15
+    assert c.return_brake == 0
+    assert head_value(c, math.nan, math.nan, 2.04) == 0
+    assert head_value(c, -8., 0., 2.08) < -.15
+
+
 def full_head(tmp_path, monkeypatch):
     c = HeadController(tmp_path / 'head.json')
     c.configure(horizontal_algorithm='head_responsive')
@@ -117,6 +166,19 @@ def test_full_head_does_not_reintroduce_slew_or_return_delay(tmp_path, monkeypat
     assert not c.status()['yaw_return_latched']
     c.configure(invert_x=True)
     assert c.update(eyes(8.), 640, 480, now=1.12)[0] < 0
+
+
+@pytest.mark.parametrize('invert', [False, True])
+def test_full_head_return_braking_preserves_the_actual_output_direction(tmp_path, monkeypatch, invert):
+    c = full_head(tmp_path, monkeypatch)
+    c.configure(invert_x=invert)
+    direction = -1 if invert else 1
+    assert c.update(eyes(14.), 640, 480, now=1.)[0] * direction > .3
+    value = c.update(eyes(8.), 640, 480, now=1.05)[0]
+    assert 0 <= value * direction < .1
+    assert c.status()['responsive_return_brake'] > .6
+    assert c.update(eyes(0.), 640, 480, now=1.1)[0] == 0
+    assert c.update(eyes(-8.), 640, 480, now=1.15)[0] * direction < 0
 
 
 def test_full_head_yaw_and_tilt_can_work_independently(tmp_path, monkeypatch):

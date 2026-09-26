@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import mimetypes
 import os
 import socket
@@ -80,6 +81,13 @@ print("用户数据目录：", user_data_root())
 
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
+_OUTPUT_SPEED_FIELDS = ("mouse_speed_x", "mouse_speed_y", "gamepad_gain")
+_saved_output_speed = KERNEL.general_setting("output_speed", {})
+if isinstance(_saved_output_speed, dict):
+    # 分项忽略损坏值；先恢复倍率，避免虚拟手柄驱动不可用时跳过恢复。
+    OUTPUT.set_config(**{key: value for key, value in _saved_output_speed.items()
+                         if key in _OUTPUT_SPEED_FIELDS and type(value) in (int, float)
+                         and math.isfinite(value)})
 # 输出模式属于用户偏好，跟着程序重启保留；没有旧记录时才使用原来的鼠标默认值。
 _saved_output_mode = str(KERNEL.general_setting("output_mode", "mouse") or "mouse").strip().lower()
 if _saved_output_mode not in {"mouse", "gamepad"}:
@@ -102,6 +110,12 @@ def _remember_output_mode() -> None:
     mode = str(getattr(OUTPUT, "mode", "") or "")
     if mode in {"mouse", "gamepad"} and KERNEL.general_setting("output_mode") != mode:
         KERNEL.remember_general_setting("output_mode", mode)
+
+
+def _remember_output_speed() -> None:
+    speed = {key: getattr(OUTPUT, key) for key in _OUTPUT_SPEED_FIELDS}
+    if KERNEL.general_setting("output_speed") != speed:
+        KERNEL.remember_general_setting("output_speed", speed)
 
 
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
@@ -1874,6 +1888,8 @@ class AdminHandler(_BaseHandler):
                     )
                 finally:
                     _remember_output_mode()
+                    if any(key in body for key in _OUTPUT_SPEED_FIELDS):
+                        _remember_output_speed()
                 _broadcast_game_output_state()
             elif route == "/api/output/xinput":
                 try:
