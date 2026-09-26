@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -171,6 +173,151 @@ class VoskCommandRecognizer:
         self._recognizer = None
 
 
+class WindowsSpeechRecognizer:
+    """Feed PCM16 to Windows' installed speech recognizer through PowerShell.
+
+    ``System.Speech`` is the Windows speech engine already installed with the
+    Chinese Windows language pack.  Keeping it in a small child process avoids
+    loading a second .NET runtime into the Python service and gives phone audio
+    and the local microphone exactly the same recognition path.
+    """
+
+    mode = "windows_system_speech"
+
+    def __init__(self, helper_path: Path, phrases: list[str], sample_rate: int = 16_000) -> None:
+        if os.name != "nt":
+            raise RuntimeError("Windows 系统语音识别只能在 Windows 上使用")
+        if not helper_path.is_file():
+            raise RuntimeError(f"Windows 系统语音脚本不存在：{helper_path}")
+        self.sample_rate = int(sample_rate)
+        self.supported = [str(item) for item in dict.fromkeys(phrases) if compact_text(item)]
+        self.unsupported: list[str] = []
+        self.last_partial = ""
+        self._events: queue.Queue[dict] = queue.Queue()
+        self._write_lock = threading.Lock()
+        self._closed = False
+        self._ready = threading.Event()
+        self._startup_error: str | None = None
+        phrases_json = json.dumps(self.supported, ensure_ascii=False, separators=(",", ":"))
+        phrases_b64 = base64.b64encode(phrases_json.encode("utf-8")).decode("ascii")
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        self._process = subprocess.Popen(
+            [
+                "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-File", str(helper_path),
+                "-PhrasesBase64", phrases_b64, "-SampleRate", str(self.sample_rate),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            creationflags=creationflags,
+        )
+        self._stdout_thread = threading.Thread(target=self._read_events, name="windows-speech-events", daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread = threading.Thread(target=self._drain_stderr, name="windows-speech-errors", daemon=True)
+        self._stderr_thread.start()
+        if not self._ready.wait(8.0):
+            self.close()
+            raise RuntimeError("Windows 系统语音识别启动超时")
+        if self._startup_error:
+            error = self._startup_error
+            self.close()
+            raise RuntimeError(error)
+
+    def _read_events(self) -> None:
+        stream = self._process.stdout
+        if stream is None:
+            self._startup_error = "Windows 系统语音识别没有返回结果流"
+            self._ready.set()
+            return
+        try:
+            for raw in iter(stream.readline, b""):
+                try:
+                    event = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                kind = str(event.get("kind", ""))
+                if kind == "ready":
+                    self._ready.set()
+                elif kind == "error" and not self._ready.is_set():
+                    self._startup_error = str(event.get("message", "Windows 系统语音识别启动失败"))
+                    self._ready.set()
+                elif kind in {"partial", "final"}:
+                    self._events.put(event)
+        finally:
+            if not self._ready.is_set():
+                self._startup_error = self._startup_error or "Windows 系统语音识别进程已退出"
+                self._ready.set()
+
+    def _drain_stderr(self) -> None:
+        stream = self._process.stderr
+        if stream is not None:
+            try:
+                stream.read()
+            except OSError:
+                pass
+
+    def accept(self, pcm16: bytes) -> dict[str, str] | None:
+        if self._closed or self._process.poll() is not None:
+            raise RuntimeError("Windows 系统语音识别进程已退出")
+        with self._write_lock:
+            if self._process.stdin is None:
+                raise RuntimeError("Windows 系统语音识别输入流不可用")
+            try:
+                self._process.stdin.write(pcm16)
+                self._process.stdin.flush()
+            except (BrokenPipeError, OSError) as exc:
+                raise RuntimeError("Windows 系统语音识别输入流已断开") from exc
+        event = None
+        while True:
+            try:
+                event = self._events.get_nowait()
+            except queue.Empty:
+                break
+        if event is None:
+            return None
+        kind = str(event.get("kind", ""))
+        text = str(event.get("text", "")).strip()
+        if kind == "partial":
+            self.last_partial = text
+            return {"kind": "partial", "text": text}
+        self.last_partial = ""
+        return {"kind": "final", "text": text}
+
+    def reset(self) -> None:
+        # The helper owns one continuous recognition stream. A source switch
+        # rebuilds the helper, so no in-process reset is necessary here.
+        self.last_partial = ""
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        process = getattr(self, "_process", None)
+        if process is None:
+            return
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+
+
 from motioncontrol.ascii_model_path import resolve_loadable_model_path
 from motioncontrol.user_paths import user_path
 from motioncontrol_shared.text_norm import compact_text
@@ -212,8 +359,8 @@ class VoiceService:
         self._catalog: list[dict] = []
         self._profile_bindings: dict = {}
         self._phrase_index: dict[str, dict] = {}
-        self.recognizer: VoskCommandRecognizer | None = None
-        self.recognizer_mode = "vosk_constrained_grammar"
+        self.recognizer: WindowsSpeechRecognizer | VoskCommandRecognizer | None = None
+        self.recognizer_mode = "windows_system_speech"
         self.supported_count = 0
         self.unsupported: list[str] = []
         # 口令 → 里面模型认不出的字。带着这些字的口令不进 grammar，永远听不到。
@@ -579,12 +726,12 @@ class VoiceService:
         self.unsupported = []
         self.unheard = {}
         self.audio_ready = False
+        # 语音识别由 Windows 已安装的中文语音引擎完成。Vosk 路径仍然保留给
+        # 旧的模型下载接口，但不再决定电脑或手机音频是否可用。
         self.model_path = find_vosk_model(self.root)
-        if self.model_path is None:
-            self.last_error = "未找到 Vosk 中文模型；请放入 models/vosk-model-small-cn-0.22"
-            return
+        helper_path = self.root / "tools" / "windows_speech_helper.ps1"
         try:
-            self.recognizer = VoskCommandRecognizer(self.model_path, self.grammar_phrases(), self.sample_rate)
+            self.recognizer = WindowsSpeechRecognizer(helper_path, self.grammar_phrases(), self.sample_rate)
             self.recognizer_mode = self.recognizer.mode
             self.supported_count = len(self.recognizer.supported)
             self.unsupported = list(self.recognizer.unsupported)
@@ -592,6 +739,7 @@ class VoiceService:
             self.last_error = None
             self.audio_ready = True
         except Exception as exc:
+            self.recognizer_mode = "off"
             self.last_error = str(exc)
             self.audio_ready = False
 
@@ -627,7 +775,7 @@ class VoiceService:
         self.device_id = device_id
         self.source_kind = source_kind
         self.connected = True
-        self.audio_ready = source_kind == "computer" and self.recognizer is not None and self.model_path is not None
+        self.audio_ready = self.recognizer is not None
         if changed:
             self.audio_bytes = 0
             self.last_rms = 0.0
@@ -657,6 +805,20 @@ class VoiceService:
             self.last_audio_at = time.monotonic()
             result = self._match_and_execute(text, source_id=str(source_id), enforce_wake=True)
             return self.status(), result
+
+    def accept_phone_audio(
+        self,
+        source_id: str,
+        device_id: str,
+        pcm16: bytes,
+    ) -> tuple[dict, dict | None, dict | None]:
+        """Feed phone PCM to the same Windows recognizer used by the PC mic."""
+        with self._lock:
+            if self.source_kind == "computer":
+                return self.status(), None, {"matched": False, "reason": "computer_voice_source_active"}
+            self._activate_locked(str(source_id), str(device_id), "phone")
+            event, result = self._ingest_pcm_locked(str(source_id), pcm16)
+            return self.status(), event, result
 
     def accept_phone_command(self, source_id: str, device_id: str, command_id: str, phrase: str = "") -> tuple[dict, dict | None]:
         """Execute a phone KWS command by stable command_id.
@@ -703,7 +865,7 @@ class VoiceService:
         if len(pcm16) > MAX_AUDIO_FRAME_BYTES:
             raise ValueError("单个音频帧过大")
         if self.recognizer is None or not self.audio_ready:
-            raise RuntimeError(self.last_error or "Vosk 受限语法未就绪")
+            raise RuntimeError(self.last_error or "Windows 系统语音识别未就绪")
         self.audio_bytes += len(pcm16)
         self.last_audio_at = time.monotonic()
         self.last_rms = self._pcm_rms(pcm16)
@@ -722,7 +884,6 @@ class VoiceService:
     def ingest(self, pcm16: bytes) -> dict:
         """Compatibility helper for a local test or an older caller."""
         with self._lock:
-            self.model_path = find_vosk_model(self.root)
             if self.recognizer is None:
                 self._rebuild_recognizer()
             self._activate_locked("computer_microphone", "computer", "computer")
@@ -900,7 +1061,6 @@ class VoiceService:
     def start_local_microphone(self) -> dict:
         self.stop_local_microphone()
         with self._lock:
-            self.model_path = find_vosk_model(self.root)
             if self.recognizer is None:
                 self._rebuild_recognizer()
             if self.recognizer is None:
@@ -1003,11 +1163,16 @@ class VoiceService:
 
     def status(self) -> dict:
         now = time.monotonic()
-        alive = bool(self.source_kind == "computer" and self.connected and self.last_audio_at and now - self.last_audio_at < VOICE_TIMEOUT_SECONDS)
+        alive = bool(self.connected and self.last_audio_at and now - self.last_audio_at < VOICE_TIMEOUT_SECONDS)
+        display_model_path = (
+            "Windows 系统语音识别"
+            if self.recognizer_mode == "windows_system_speech"
+            else (str(self.model_path) if self.model_path else None)
+        )
         result = {
             "available": self.recognizer is not None,
-            "model_ready": bool(self.recognizer is not None and self.model_path is not None),
-            "model_path": str(self.model_path) if self.model_path else None,
+            "model_ready": bool(self.recognizer is not None),
+            "model_path": display_model_path,
             "recognizer_mode": self.recognizer_mode,
             "supported_count": self.supported_count,
             "unsupported": list(self.unsupported),
@@ -1037,7 +1202,7 @@ class VoiceService:
             "audio_alive": alive,
             "stream_alive": alive,
         }
-        if self.source_kind == "computer":
+        if self.source_kind in {"computer", "phone"}:
             result.update({
                 "bytes_received": self.audio_bytes,
                 "rms": round(self.last_rms, 1),

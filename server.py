@@ -255,6 +255,61 @@ VOICE.configure_profile_bindings(PROFILES.effective_profile().get("bindings", {}
 DISCOVERY: DiscoveryResponder | None = None
 
 
+def _saved_audio_source() -> str:
+    """读取上次选择的音频来源；旧配置没有时默认电脑麦克风。"""
+    try:
+        value = str(KERNEL.general_setting("audio_source", "computer") or "").strip().lower()
+    except Exception:
+        value = "computer"
+    return value if value in {"computer", "phone"} else "computer"
+
+
+AUDIO_SOURCE = _saved_audio_source()
+
+
+def _set_audio_source(source: str, *, start: bool = True) -> dict:
+    """独立切换语音来源，不触碰身体（摄像头/姿态）来源。"""
+    global AUDIO_SOURCE
+    source = str(source or "").strip().lower()
+    if source not in {"computer", "phone"}:
+        raise ValueError("audio_source must be computer or phone")
+    # The bridge gates incoming phone frames from this same persisted choice;
+    # keep it synchronized even when the recognizer is already on that source.
+    INPUT_BRIDGE.set_audio_mode(source)
+    active_kind = VOICE.status().get("source_kind")
+    AUDIO_SOURCE = source
+    KERNEL.remember_general_setting("audio_source", source)
+    if source == "computer":
+        if start:
+            if active_kind == "computer":
+                return VOICE.status()
+            try:
+                return VOICE.start_local_microphone()
+            except Exception as exc:
+                return {**VOICE.status(), "last_error": str(exc)}
+        # 只恢复下拉选择时不提前打开麦克风，也要释放上一次的手机源。
+        VOICE.stop_local_microphone()
+        if VOICE.status().get("source_kind") == "phone":
+            VOICE.disconnect()
+        return VOICE.status()
+    # 手机麦克风由手机输入通道接入；切换到它时释放电脑本地麦克风。
+    if active_kind == "phone":
+        return VOICE.status()
+    VOICE.stop_local_microphone()
+    VOICE.disconnect()
+    return VOICE.status()
+
+
+def _audio_payload() -> dict:
+    voice = VOICE.status()
+    active = voice.get("source_kind")
+    return {
+        "audio_source": AUDIO_SOURCE,
+        "audio_mode": active or "waiting",
+        "voice": voice,
+    }
+
+
 def _instance_id() -> str:
     """这台电脑的标识，随机生成一次后存下来。
 
@@ -1024,6 +1079,7 @@ class AdminHandler(_BaseHandler):
             if brief not in {"1", "true", "yes"}:
                 data["runtime"] = RUNTIME.status()
             data["version"] = VERSION
+            data.update(_audio_payload())
             self._send_json(data)
             return
         if route == "/api/kernel/status":
@@ -1445,29 +1501,39 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "input source is loopback-only"}, 403)
                 return
             try:
+                # 音频下拉可以单独保存/切换，不能因为保存音频而重启摄像头。
+                if "source" not in body and "audio_source" in body:
+                    voice_data = _set_audio_source(body.get("audio_source"))
+                    self._send_json({"ok": True, **RUNTIME.status(), **_audio_payload(),
+                                     "voice": voice_data})
+                    return
                 source = str(body.get("source", "")).strip().lower()
                 enabled = bool(body.get("enabled", True))
+                if source not in {"computer", "phone"}:
+                    raise ValueError("身体来源必须是 computer 或 phone")
+                voice_data = None
+                if "audio_source" in body:
+                    voice_data = _set_audio_source(body.get("audio_source"), start=enabled)
+                elif enabled and AUDIO_SOURCE == "computer" and VOICE.status().get("source_kind") != "computer":
+                    # 兼容旧客户端：它只发身体来源时，补齐已保存的电脑麦克风。
+                    voice_data = _set_audio_source(AUDIO_SOURCE)
+                elif not enabled:
+                    voice_data = _set_audio_source(AUDIO_SOURCE, start=False)
                 # Close the mobile gate before stopping/starting the body source.
                 # This keeps a phone frame from racing a source transition.
                 INPUT_BRIDGE.set_body_mode("computer")
                 INPUT_BRIDGE.clear_mobile_sources()
-                VOICE.stop_local_microphone()
-                VOICE.disconnect()
                 # Audio remains usable if the body model or camera cannot start.
                 # Each input reports its own readiness; a body failure is still an error.
-                if enabled and source == "computer":
-                    try:
-                        voice_data = VOICE.start_local_microphone()
-                    except Exception as exc:
-                        voice_data = {**VOICE.status(), "last_error": str(exc)}
-                else:
-                    voice_data = VOICE.status()
                 if enabled:
                     data = RUNTIME.set_source(source, start_computer=True)
                 else:
                     data = RUNTIME.stop_body()
                 INPUT_BRIDGE.set_body_mode(source if enabled else "computer")
-                self._send_json({"ok": True, **data, "voice": voice_data})
+                audio_data = _audio_payload()
+                if voice_data is not None:
+                    audio_data["voice"] = voice_data
+                self._send_json({"ok": True, **data, **audio_data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status(), "voice": VOICE.status()}, 400)
             return
@@ -1768,6 +1834,9 @@ def main():
     MODEL_PATH = resolve_full_model(MODEL_ROOT)
     RUNTIME.configure_model(MODEL_PATH)
     INPUT_BRIDGE.configure_endpoint(args.host, args.port)
+    # 启动时恢复两种独立输入：身体来源只决定姿态，音频来源只决定语音。
+    INPUT_BRIDGE.set_body_mode(RUNTIME.body_mode)
+    _set_audio_source(AUDIO_SOURCE, start=False)
     _enable_default_xinput_merge()
     print(f"MotionControl 2.0 · body zones + motions + voice · v{VERSION}")
     print("Model root:", MODEL_ROOT or "NOT FOUND")

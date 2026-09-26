@@ -96,7 +96,7 @@ function zoneKeyLabel(id,def){
   return texts.length?texts.join(' / '):'未映射';
 }
 
-let currentPoseMap=null, kernelState=null, sourceMode='computer', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false;
+let currentPoseMap=null, kernelState=null, sourceMode='computer', audioSource='computer', audioMode='waiting', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 // 摄像头的完整状态和最近一次扫描结果。新手教学要按这些判断「这台电脑现在能开什么」。
 let cameraInfo=null;const cameraScan={state:'idle',count:0,error:''};
 // 急停真的被按了几次。教学的最后一步要认的是急停，不是随便哪种关掉输出。
@@ -445,6 +445,21 @@ function renderKernelState(runtime,force=false){
 }
 function renderInputStatus(status){
   inputStatus=status||{};
+  const modeSource=['computer','phone'].includes(status.audio_mode)?status.audio_mode:null;
+  audioSource=status.audio_source||modeSource||audioSource||'computer';
+  audioMode=status.audio_mode||'waiting';
+  const audioSelect=$('#audioSource');
+  if(audioSelect&&document.activeElement!==audioSelect)audioSelect.value=audioSource;
+  const audioStatus=$('#audioStatus');
+  if(audioStatus){
+    const voice=status.voice||{};
+    if(audioSource==='phone'){
+      audioStatus.textContent=audioMode==='phone'&&voice.connected?'音频：手机麦克风已连接':'音频：手机麦克风，等待手机';
+    }else{
+      audioStatus.textContent=audioMode==='computer'&&voice.connected?'音频：电脑麦克风已启用':'音频：电脑麦克风未就绪';
+    }
+    audioStatus.className='statusline '+(audioMode===audioSource&&voice.connected?'':'warn');
+  }
   const connected=!!(status.mobile_pose_connected||status.handheld_connected);
   for(const id of ['mobileStatus','phonePill']){
     $('#'+id).textContent=connected?(status.mobile_pose_connected?'手机摄像头已连接':'手机手持端已连接'):'手机未连接';
@@ -1573,7 +1588,8 @@ async function emergencyStop(){
 async function setSource(source,enabled=true){
   await setOutput(false);
   const epoch=++kernelEpoch;
-  const result=await post('/api/input/source',{source,enabled});
+  const selectedAudio=$('#audioSource')?.value||audioSource||'computer';
+  const result=await post('/api/input/source',{source,enabled,audio_source:selectedAudio});
   if(epoch!==kernelEpoch)throw new Error('操作已中断');
   if(enabled&&source==='computer'&&!result.camera?.running){
     // 没有摄像头的电脑在这里是死路：报一句"无法打开"然后没有下文。所以失败时
@@ -1966,6 +1982,13 @@ document.querySelectorAll('[data-view],[data-go]').forEach(el=>el.addEventListen
 bind('mainActionBtn',handleMainAction);
 bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
 bind('sourceStopBtn',()=>setSource(sourceMode,false));
+$('#audioSource').addEventListener('change',e=>runAction(async()=>{
+  const value=e.target.value;
+  const result=await post('/api/input/source',{audio_source:value});
+  audioSource=result.audio_source||value;audioMode=result.audio_mode||'waiting';
+  renderInputStatus(result);
+  notice(value==='phone'?'已选择手机麦克风，等待手机连接':'已选择电脑麦克风');
+}));
 bind('overlayBtn',toggleOverlay);
 for(const [id,key] of [['handMouseEnabled','enabled'],['handMouseSensitivity','sensitivity'],['handMouseDeadzone','deadzone'],['handMouseClose','fist_close'],['handMouseOpen','fist_open'],['handMouseCurlClose','curl_close'],['handMouseCurlOpen','curl_open']]){
   $('#'+id).addEventListener('change',e=>void saveHandMouseFields({[key]:key==='enabled'?e.target.checked:Number(e.target.value)}));

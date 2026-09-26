@@ -149,13 +149,15 @@
 <div class="settings-pair">
 <div class="settings-section">
 <h3 class="title">输入来源</h3>
-<p class="lede">选画面来自电脑还是手机，再点连接。下次打开会记住。</p>
+<p class="lede">分别选择画面和音频来自电脑还是手机，再点连接。下次打开会记住。</p>
 <div class="controls">
 <label>摄像头来源<select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></label>
 <label id="cameraDeviceRow">使用的摄像头<select id="cameraDevice"></select></label>
+<label>音频来源<select id="audioSource"><option value="computer">电脑麦克风</option><option value="phone">手机麦克风</option></select></label>
 </div>
 <div class="settings-actions" id="cameraScanRow"><button class="btn" id="cameraScanBtn">扫描摄像头</button><span class="fineprint" id="cameraScanStatus">有多个摄像头（外接、采集卡、虚拟摄像头）时，在这里切换。</span></div>
 <div class="pill bad" id="mobileStatus">手机未连接</div>
+<p class="statusline" id="audioStatus">音频：正在检查…</p>
 <p class="fineprint" id="phonePerf"></p>
 <div class="settings-actions"><button class="btn primary" id="sourceStartBtn">连接并开始识别</button><button class="btn" id="sourceStopBtn">停止识别</button></div><p class="fineprint" id="modelStatus"></p>
 <details id="phoneGuide"><summary>手机连不上怎么办</summary><p class="fineprint">在手机上打开 MotionControl，选「固定摄像头」，点「连接并开始」，它会自己找到这台电脑。第一次要授权、加载模型，几十秒都正常；之后几秒就能连上。</p><p class="fineprint">连不上的话检查两点：手机和电脑在<b>同一个 Wi-Fi</b>；或者插上数据线，并在手机上打开「<b>USB 网络共享</b>」，只插线不打开是连不上的。</p><div class="statusline" id="usbTetherStatus"></div><label>可用连接地址<select id="phoneWsUrl"></select></label><div class="settings-actions"><button class="btn" id="copyPhoneUrlBtn">复制地址</button></div></details>

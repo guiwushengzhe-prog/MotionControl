@@ -26,6 +26,7 @@ LANDMARK_COORDINATE_ABS_LIMIT = 10.0
 POSE_SOURCE_PREFIX = "mobile_pose:"
 SENSOR_SOURCE_PREFIX = "mobile_sensor:"
 VOICE_SOURCE_PREFIX = "mobile_voice:"
+VOICE_AUDIO_MAX_BYTES = 256 * 1024
 
 # Compact mobile camera protocols.  Phones still run MediaPipe locally and the
 # bridge expands packed landmarks back to the canonical 33-point pose.  Keep
@@ -442,6 +443,45 @@ def _validate_voice_text(message: dict) -> None:
         raise ValueError("voice_text confidence must be between 0 and 1")
 
 
+def _validate_voice_audio(message: dict) -> bytes:
+    """Validate and decode one phone PCM audio frame.
+
+    The wire format is deliberately explicit so a camera frame cannot be
+    mistaken for audio: 16 kHz, mono, little-endian signed 16-bit PCM and a
+    strict base64 payload.  A frame is kept below the WebSocket message limit
+    and the recognizer's own input limit.
+    """
+    if message.get("type") != "voice_audio" or message.get("role") != "camera":
+        raise ValueError("voice_audio requires role=camera")
+    if not isinstance(message.get("device_id"), str) or not message["device_id"].strip():
+        raise ValueError("device_id must be a non-empty string")
+    if not _is_int(message.get("sequence")) or message["sequence"] < 0:
+        raise ValueError("sequence must be an integer >= 0")
+    if not _is_number(message.get("captured_at_ms")):
+        raise ValueError("captured_at_ms must be a number")
+    sample_rate = message.get("sample_rate", message.get("sampleRate"))
+    if not _is_int(sample_rate) or sample_rate != 16_000:
+        raise ValueError("voice_audio sample_rate must be 16000")
+    channels = message.get("channels", message.get("channel_count", 1))
+    if not _is_int(channels) or channels != 1:
+        raise ValueError("voice_audio channels must be 1")
+    encoding = str(message.get("encoding", message.get("format", ""))).strip().lower()
+    if encoding != "pcm16le":
+        raise ValueError("voice_audio encoding must be pcm16le")
+    encoded = message.get("audio_base64", message.get("pcm_base64"))
+    if not isinstance(encoded, str) or not encoded.strip():
+        raise ValueError("voice_audio 缺少 base64 音频")
+    try:
+        pcm16 = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("voice_audio base64 无效") from None
+    if not pcm16 or len(pcm16) % 2:
+        raise ValueError("voice_audio 必须是非空偶数字节 PCM16")
+    if len(pcm16) > VOICE_AUDIO_MAX_BYTES:
+        raise ValueError("voice_audio 单帧过大")
+    return pcm16
+
+
 def _canonical_sensor_control(control: str) -> str:
     value = str(control).strip().upper()
     canonical = SENSOR_BUTTON_ALIASES.get(value)
@@ -544,6 +584,20 @@ class InputBridge:
         self._last_trigger_held: list[dict] = []
         # The phone is the usual body source whether or not a kernel is wired in.
         self._body_mode = "phone"
+        remembered_audio = "computer"
+        if kernel is not None:
+            try:
+                remembered_audio = kernel.general_setting("audio_source", "computer")
+            except (AttributeError, TypeError):
+                remembered_audio = "computer"
+        remembered_audio = str(remembered_audio or "").strip().lower()
+        if remembered_audio not in {"computer", "phone"}:
+            remembered_audio = "computer"
+        # audio_mode and audio_source are kept as the same persisted choice;
+        # the duplicate names make the bridge status compatible with callers
+        # that describe this setting as either a mode or a source.
+        self._audio_mode = remembered_audio
+        self._audio_source = remembered_audio
         # 最近一次因为"来源选的是电脑"而丢掉手机画面的时刻。界面靠它把这件事说
         # 出来：两边都显示正常、什么都不动，是最难查的一种坏法。
         self._phone_ignored_at = 0.0
@@ -558,6 +612,19 @@ class InputBridge:
         with self._lock:
             self._voice_service = voice
 
+    @property
+    def audio_source(self) -> str:
+        with self._lock:
+            return self._audio_source
+
+    @property
+    def audio_mode(self) -> str:
+        with self._lock:
+            return self._audio_mode
+
+    def configure_scene_snapshot_handler(self, handler) -> None:
+        with self._lock:
+            self._scene_snapshot_handler = handler
     def configure_control_config_provider(self, provider) -> None:
         """Provide the current PC-authoritative game/Zone configuration to phones."""
         with self._lock:
@@ -682,12 +749,22 @@ class InputBridge:
                     _, was_active = self._clear_source_locked(source_id)
                     if was_active:
                         cleared.append(source_id)
-                for source_id in list(self._voice_sources):
-                    owner, _ = self._clear_source_locked(source_id)
-                    if owner is not None:
-                        owner.source_ids.discard(source_id)
         for source_id in cleared:
             self._broadcast_pose_state(source_id, False, "source_switch")
+
+    def set_audio_mode(self, mode: str) -> None:
+        """Select the independent audio source and remember it for restart."""
+        mode = str(mode).strip().lower()
+        if mode not in {"computer", "phone"}:
+            raise ValueError("audio mode must be computer or phone")
+        with self._lock:
+            self._audio_mode = mode
+            self._audio_source = mode
+        if self.kernel is not None:
+            try:
+                self.kernel.remember_general_setting("audio_source", mode)
+            except (AttributeError, TypeError, OSError):
+                pass
 
     def clear_mobile_sources(self) -> None:
         cleared: list[str] = []
@@ -859,6 +936,8 @@ class InputBridge:
             ]
             latest_pose = self._latest_pose
             active_pose_source = self._active_pose_source
+            audio_mode = self._audio_mode
+            audio_source = self._audio_source
             host = self._host
             port = self._port
         pose_age = round(max(0.0, (now - latest_pose["received_at"]) * 1000)) if latest_pose else None
@@ -871,6 +950,8 @@ class InputBridge:
             "phone_ignored": bool(self._phone_ignored_at
                                   and now - self._phone_ignored_at < 2.0),
             "body_mode": self._body_mode,
+            "audio_mode": audio_mode,
+            "audio_source": audio_source,
             "phone_ws_urls": self.phone_ws_urls(),
             "mobile_pose_connected": any(item["connected"] for item in pose_sources),
             "mobile_pose_age_ms": pose_age,
@@ -1030,11 +1111,6 @@ class InputBridge:
                 old_owner, _ = self._clear_source_locked(old_source)
                 if old_owner is not None:
                     old_owner.source_ids.discard(old_source)
-                old_voice = self._active_voice_source
-                if old_voice and old_voice != VOICE_SOURCE_PREFIX + device_id:
-                    old_voice_owner, _ = self._clear_source_locked(old_voice)
-                    if old_voice_owner is not None:
-                        old_voice_owner.source_ids.discard(old_voice)
                 switched_from = old_source
             activated = self._active_pose_source != source_id
             if activated:
@@ -1069,9 +1145,6 @@ class InputBridge:
                 "coordinates_mirrored": bool(message["coordinates_mirrored"]),
             }
             self._pose_sources[source_id] = state
-            voice_source = VOICE_SOURCE_PREFIX + device_id
-            if voice_source in self._voice_sources:
-                self._voice_sources[voice_source]["received_at"] = received_at
             if pose_count:
                 self._pose_frames_with_people += 1
             self._latest_pose = {"message": forwarded, "received_at": received_at, "source_id": source_id, "pose_count": pose_count}
@@ -1134,6 +1207,57 @@ class InputBridge:
                 "recenter": recenter,
             }
         self._accept_input(peer)
+
+    def _handle_voice_audio(self, peer: WebSocketPeer, message: dict) -> None:
+        pcm16 = _validate_voice_audio(message)
+        device_id = message["device_id"].strip()
+        source_id = VOICE_SOURCE_PREFIX + device_id
+        received_at = time.monotonic()
+        with self._lock:
+            # The phone may keep its microphone stream alive while the user
+            # changes the desktop selector. Do not let those stale frames
+            # silently take over a computer microphone selection.
+            if self._audio_mode != "phone":
+                return
+            if self._active_voice_source and self._active_voice_source != source_id:
+                old_source = self._active_voice_source
+                old_owner, _ = self._clear_source_locked(old_source)
+                if old_owner is not None:
+                    old_owner.source_ids.discard(old_source)
+            self._active_voice_source = source_id
+            self._source_peers[source_id] = peer
+            peer.source_ids.add(source_id)
+            state = self._voice_sources.setdefault(source_id, {"device_id": device_id})
+            state.update({
+                "device_id": device_id,
+                "received_at": received_at,
+                "sequence": int(message["sequence"]),
+            })
+        voice = self._voice_service
+        if voice is None:
+            self._send_error(peer, "本地语音解析器未配置")
+            return
+        try:
+            _, event, result = voice.accept_phone_audio(source_id, device_id, pcm16)
+            # Only recognition events and command matches go back to the phone;
+            # ordinary PCM frames therefore do not create a response flood.
+            if event or result:
+                event = event if isinstance(event, dict) else {}
+                payload = {
+                    "type": "voice_result",
+                    "device_id": device_id,
+                    "sequence": int(message["sequence"]),
+                    "kind": str(event.get("kind", "match" if result else "status")),
+                    "partial": str(event.get("text", "")) if event.get("kind") == "partial" else "",
+                    "final": str(event.get("text", "")) if event.get("kind") == "final" else "",
+                }
+                if result is not None:
+                    payload["matched"] = bool(result.get("matched", False))
+                    payload["result"] = dict(result)
+                peer.send_json(payload)
+            self._accept_input(peer)
+        except (ValueError, RuntimeError) as exc:
+            self._send_error(peer, str(exc))
 
     def _handle_voice_text(self, peer: WebSocketPeer, message: dict) -> None:
         _validate_voice_text(message)
@@ -1221,6 +1345,8 @@ class InputBridge:
                 self._handle_pose_features(peer, message)
             elif message_type == "sensor_frame":
                 self._handle_sensor(peer, message)
+            elif message_type == "voice_audio":
+                self._handle_voice_audio(peer, message)
             elif message_type == "voice_text":
                 self._handle_voice_text(peer, message)
             elif message_type == "voice_command":

@@ -42,6 +42,11 @@ COPY_TREES = ("web", "game_profiles")
 CONFIG_FILES = (
     "voice_commands_v094.json",
 )
+# The Windows speech bridge is a runtime helper rather than a Python import, so
+# the import-graph copier would otherwise leave it out of portable releases.
+RUNTIME_FILES = (
+    "tools/windows_speech_helper.ps1",
+)
 
 # Configuration that belongs to the bundle, not to the repository: it points at
 # paths *inside* the release.  The repo's copies point at a developer's machine
@@ -122,6 +127,13 @@ def plan(target: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
         source = ROOT / "config" / name
         if source.is_file():
             destination = app / "config" / name
+            copies.append((source, destination))
+            wanted.add(destination)
+
+    for relative in RUNTIME_FILES:
+        source = ROOT / relative
+        if source.is_file():
+            destination = app / relative
             copies.append((source, destination))
             wanted.add(destination)
 
