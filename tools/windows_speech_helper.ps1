@@ -14,9 +14,13 @@ function Send-Event([hashtable]$Event) {
 
 try {
     Add-Type -AssemblyName System.Speech
-    Add-Type -TypeDefinition @"
+    $speechAssembly = [System.Speech.Recognition.SpeechRecognitionEngine].Assembly.Location
+    Add-Type -ReferencedAssemblies $speechAssembly -TypeDefinition @"
 using System;
+using System.Globalization;
 using System.IO;
+using System.Speech.Recognition;
+using System.Threading;
 
 public sealed class MotionControlPcmStream : Stream
 {
@@ -31,9 +35,23 @@ public sealed class MotionControlPcmStream : Stream
     public override long Position { get { return position; } set { position = value; } }
     public override int Read(byte[] buffer, int offset, int count)
     {
-        int read = inner.Read(buffer, offset, count);
-        if (read > 0) position += read;
-        return read;
+        // PowerShell's redirected stdin can report a short read followed by
+        // zero while the writer is between 100 ms PCM frames.  System.Speech
+        // treats that transient zero as end-of-stream and exits.  Keep the
+        // stream alive until the parent closes it.
+        int total = 0;
+        while (total < count)
+        {
+            int read = inner.Read(buffer, offset + total, count - total);
+            if (read > 0)
+            {
+                total += read;
+                position += read;
+                continue;
+            }
+            Thread.Sleep(10);
+        }
+        return total;
     }
     public override long Seek(long offset, SeekOrigin origin)
     {
@@ -45,6 +63,74 @@ public sealed class MotionControlPcmStream : Stream
     public override void Flush() { }
     public override void SetLength(long value) { throw new NotSupportedException(); }
     public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+}
+
+// PowerShell script-block event handlers run on SpeechRecognitionEngine's
+// worker thread.  PowerShell 5.1 can throw ScriptBlock.GetContextFromTLS on
+// that thread and silently kill the recognizer.  Keep the callbacks in CLR
+// code so recognition events are independent of the PowerShell runspace.
+public sealed class MotionControlSpeechSink : IDisposable
+{
+    private readonly SpeechRecognitionEngine engine;
+    private readonly ManualResetEventSlim completed;
+
+    public MotionControlSpeechSink(SpeechRecognitionEngine speechEngine, ManualResetEventSlim done)
+    {
+        engine = speechEngine;
+        completed = done;
+        engine.SpeechRecognized += OnRecognized;
+        engine.SpeechHypothesized += OnHypothesized;
+        engine.RecognizeCompleted += OnCompleted;
+    }
+
+    private static string Escape(string value)
+    {
+        return (value ?? string.Empty)
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\r", "\\r")
+            .Replace("\n", "\\n");
+    }
+
+    private static void WriteEvent(string kind, string text, double? confidence = null)
+    {
+        string json = "{\"kind\":\"" + Escape(kind) + "\",\"text\":\"" + Escape(text) + "\"";
+        if (confidence.HasValue)
+            json += ",\"confidence\":" + confidence.Value.ToString("R", CultureInfo.InvariantCulture);
+        Console.WriteLine(json + "}");
+        Console.Out.Flush();
+    }
+
+    private static void WriteError(string message)
+    {
+        Console.WriteLine("{\"kind\":\"error\",\"message\":\"" + Escape(message) + "\"}");
+        Console.Out.Flush();
+    }
+
+    private void OnRecognized(object sender, SpeechRecognizedEventArgs args)
+    {
+        WriteEvent("final", args.Result == null ? string.Empty : args.Result.Text,
+            args.Result == null ? (double?)null : args.Result.Confidence);
+    }
+
+    private void OnHypothesized(object sender, SpeechHypothesizedEventArgs args)
+    {
+        WriteEvent("partial", args.Result == null ? string.Empty : args.Result.Text);
+    }
+
+    private void OnCompleted(object sender, RecognizeCompletedEventArgs args)
+    {
+        if (args.Error != null)
+            WriteError(args.Error.Message);
+        completed.Set();
+    }
+
+    public void Dispose()
+    {
+        engine.SpeechRecognized -= OnRecognized;
+        engine.SpeechHypothesized -= OnHypothesized;
+        engine.RecognizeCompleted -= OnCompleted;
+    }
 }
 "@
     $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($PhrasesBase64))
@@ -85,25 +171,12 @@ public sealed class MotionControlPcmStream : Stream
     $audioStream = New-Object -TypeName MotionControlPcmStream -ArgumentList ([Console]::OpenStandardInput())
     $engine.SetInputToAudioStream($audioStream, $format)
     $completed = New-Object System.Threading.ManualResetEventSlim($false)
-    $engine.add_SpeechRecognized({
-        param($sender, $event)
-        Send-Event @{ kind = "final"; text = [string]$event.Result.Text; confidence = [double]$event.Result.Confidence }
-    })
-    $engine.add_SpeechHypothesized({
-        param($sender, $event)
-        Send-Event @{ kind = "partial"; text = [string]$event.Result.Text }
-    })
-    $engine.add_RecognizeCompleted({
-        param($sender, $event)
-        if ($null -ne $event.Error) {
-            Send-Event @{ kind = "error"; message = [string]$event.Error.Message }
-        }
-        $completed.Set()
-    })
+    $sink = New-Object -TypeName MotionControlSpeechSink -ArgumentList $engine, $completed
 
     Send-Event @{ kind = "ready"; culture = $recognizerInfo.Culture.Name }
     $engine.RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Multiple)
     $completed.Wait()
+    $sink.Dispose()
     $engine.Dispose()
     $audioStream.Dispose()
 }
