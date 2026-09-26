@@ -356,7 +356,9 @@ def test_voice_parser_requires_wake_word_for_phone_and_clears_source(tmp_path):
     status, result = service.accept_phone_text('mobile_voice:phone-a', 'phone-a', '攻击')
     assert result['reason'] == 'wake_word_required'
     assert not calls
-    assert 'bytes_received' not in status and 'rms' not in status
+    # 手机现在也能直接送声音过来（voice_audio），状态里就有了音量那几项。只送文字的
+    # 时候它们得是 0：不能让界面以为收到过声音。
+    assert status.get('bytes_received', 0) == 0 and status.get('rms', 0) == 0
     status, result = service.accept_phone_text('mobile_voice:phone-a', 'phone-a', '体感 攻击')
     deadline = time.time() + 1
     while not calls and time.time() < deadline:
@@ -369,7 +371,12 @@ def test_voice_parser_requires_wake_word_for_phone_and_clears_source(tmp_path):
     assert service.status()['connected'] is False
 
 
-def test_voice_text_bridge_accepts_only_active_phone_body_source_and_releases_on_switch():
+def test_phone_voice_follows_the_audio_source_not_the_camera():
+    """手机认好的语音看「音频来源」，不看摄像头来源。
+
+    两个是分开选的：电脑摄像头 + 手机麦克风是正常的搭法，这时手机上说的话要算数；
+    换摄像头也不该把手机麦克风断掉。音频来源改回电脑麦克风，手机说的就不算了。
+    """
     from motioncontrol.input_bridge import InputBridge
 
     class FakeVoice:
@@ -416,15 +423,20 @@ def test_voice_text_bridge_accepts_only_active_phone_body_source_and_releases_on
     try:
         bridge.set_body_mode('phone')
         bridge.handle_message(peer, message)
+        assert voice.accepted == [], '音频来源默认是电脑麦克风'
+        assert any('电脑麦克风' in str(item.get('message')) for item in peer.errors), '要告诉手机为什么不算'
+        bridge.set_audio_mode('phone')
+        bridge.handle_message(peer, message)
         assert voice.accepted == [('mobile_voice:phone-a', 'phone-a', '体感 攻击', .9)]
         bridge.set_body_mode('computer')
-        assert voice.disconnected == ['mobile_voice:phone-a']
+        assert voice.disconnected == [], '换摄像头不断手机麦克风'
         bridge.handle_message(peer, message)
-        assert len(voice.accepted) == 1
-        sensor_message = dict(message, role='sensor')
-        bridge.set_body_mode('phone')
-        bridge.handle_message(peer, sensor_message)
-        assert len(voice.accepted) == 1
+        assert len(voice.accepted) == 2, '电脑摄像头 + 手机麦克风'
+        bridge.handle_message(peer, dict(message, role='sensor'))
+        assert len(voice.accepted) == 2, '手柄那条连接送来的不算'
+        bridge.set_audio_mode('computer')
+        bridge.handle_message(peer, message)
+        assert len(voice.accepted) == 2
     finally:
         bridge.close()
 

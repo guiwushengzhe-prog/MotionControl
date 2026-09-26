@@ -1259,18 +1259,25 @@ class InputBridge:
         except (ValueError, RuntimeError) as exc:
             self._send_error(peer, str(exc))
 
+    def _phone_voice_refused(self, peer: WebSocketPeer) -> bool:
+        """手机认好的语音（voice_text / voice_command）只在音频来源选了手机麦克风时才收。
+
+        音频来源和摄像头来源是分开选的，「电脑摄像头 + 手机麦克风」也是正常的搭法。
+        这里以前看的是身体来源，还要求说话的手机就是当摄像头的那台——这么搭的时候
+        手机上说什么都被丢掉。现在和手机直接送声音（voice_audio）看同一个开关。
+        """
+        if self.kernel is not None and self._audio_mode != "phone":
+            self._send_error(peer, "音频来源选的是电脑麦克风，手机上说的话不生效")
+            return True
+        return False
+
     def _handle_voice_text(self, peer: WebSocketPeer, message: dict) -> None:
         _validate_voice_text(message)
-        if self.kernel is not None and self._body_mode != "phone":
-            self._send_error(peer, "voice_text 仅在手机身体源激活时有效")
+        if self._phone_voice_refused(peer):
             return
         device_id = message["device_id"].strip()
         source_id = VOICE_SOURCE_PREFIX + device_id
         with self._lock:
-            active_pose = self._active_pose_source
-            if active_pose and active_pose != POSE_SOURCE_PREFIX + device_id:
-                self._send_error(peer, "voice_text 不是当前身体源")
-                return
             if self._active_voice_source and self._active_voice_source != source_id:
                 self._clear_source_locked(self._active_voice_source)
             self._active_voice_source = source_id
@@ -1294,8 +1301,7 @@ class InputBridge:
 
     def _handle_voice_command(self, peer: WebSocketPeer, message: dict) -> None:
         """v0.9.6: phone normally sends only stable command_id; phrase is optional compatibility metadata."""
-        if self.kernel is not None and self._body_mode != "phone":
-            self._send_error(peer, "voice_command 仅在手机身体源激活时有效")
+        if self._phone_voice_refused(peer):
             return
         device_id = str(message.get("device_id", "")).strip()
         if not device_id:
@@ -1308,10 +1314,6 @@ class InputBridge:
         phrase = str(message.get("phrase", "")).strip()
         source_id = VOICE_SOURCE_PREFIX + device_id
         with self._lock:
-            active_pose = self._active_pose_source
-            if active_pose and active_pose != POSE_SOURCE_PREFIX + device_id:
-                self._send_error(peer, "voice_command 不是当前身体源")
-                return
             if self._active_voice_source and self._active_voice_source != source_id:
                 self._clear_source_locked(self._active_voice_source)
             self._active_voice_source = source_id

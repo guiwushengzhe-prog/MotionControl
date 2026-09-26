@@ -61,6 +61,18 @@ def test_target_game_conflict_and_legacy_request_compatibility(tmp_path):
     assert released == ["phone"]
 
 
+def lift_functions(namespace, *names):
+    """把 server.py 里模块级的几个函数也照 make_handler 的办法拿出来。
+
+    路由切音频来源时调的是 _set_audio_source，不是直接调 VOICE：拿真的那份来测，
+    它「麦克风打不开也不报错」的那一层才测得到。
+    """
+    tree = ast.parse((Path(__file__).parents[1] / "server.py").read_text(encoding="utf-8"))
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    assert sorted(node.name for node in functions) == sorted(names)
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "server.py", "exec"), namespace)
+
+
 @pytest.mark.parametrize("failed_input", ["body", "voice"])
 def test_body_and_voice_start_independently(failed_input):
     attempted, replies = [], []
@@ -70,11 +82,15 @@ def test_body_and_voice_start_independently(failed_input):
             raise RuntimeError(name + " unavailable")
         return {"running": True}
     namespace = {
-        "INPUT_BRIDGE": SimpleNamespace(set_body_mode=lambda mode: None, clear_mobile_sources=lambda: None),
+        "INPUT_BRIDGE": SimpleNamespace(set_body_mode=lambda mode: None, clear_mobile_sources=lambda: None,
+                                        set_audio_mode=lambda mode: None),
         "VOICE": SimpleNamespace(stop_local_microphone=lambda: None, disconnect=lambda: None,
-                                 start_local_microphone=lambda: start("voice"), status=lambda: {}),
+                                 start_local_microphone=lambda device=None: start("voice"), status=lambda: {}),
         "RUNTIME": SimpleNamespace(set_source=lambda *a, **kw: start("body"), status=lambda: {}),
+        "KERNEL": SimpleNamespace(remember_general_setting=lambda key, value: None),
+        "AUDIO_SOURCE": "computer", "AUDIO_DEVICE": None,
     }
+    lift_functions(namespace, "_set_audio_source", "_audio_payload")
     request = make_handler(namespace)
     request.path = "/api/input/source"
     request._body = lambda: {"source": "computer", "enabled": True}
