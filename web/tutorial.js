@@ -108,6 +108,8 @@ const HAND = {left: '左手', right: '右手'};
 // 每一句都把结果带上（→ 视角左转）：只说「头往左肩歪」的话，人会以为还在配合校准，
 // 意识不到歪头本身就是在转视角。
 const HEAD_MOVES = {
+  head_responsive: {left: '向左侧倾或转脸 → 视角左转', right: '向右侧倾或转脸 → 视角右转', back: side => `快速向${side}侧倾或转脸 → 视角${side}转`,
+    hint: '保持侧倾或转脸；回正停止', more: '再侧倾或转脸多一点', done: '✓ 侧倾或转脸就能转视角'},
   roll_tilt: {left: '头往左肩歪 → 视角左转', right: '头往右肩歪 → 视角右转', back: side => `回正，再往${side}肩歪 → 视角${side}转`,
     hint: '脸还朝着屏幕，歪住别动', more: '再歪大一点', done: '✓ 歪头就能转视角'},
   head_turn: {left: '向左转头 → 视角左转', right: '向右转头 → 视角右转', back: side => `回正，再向${side}转头 → 视角${side}转`,

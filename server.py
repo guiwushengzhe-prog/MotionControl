@@ -1737,13 +1737,15 @@ class AdminHandler(_BaseHandler):
             return
         # 区域触发方式（智能 / 进去就按）；定住跟随框、恢复跟随、定住后拖过的框。
         # 只给本机，和量身一样。
-        if route in ("/api/zones/trigger-mode", "/api/zones/freeze", "/api/zones/frozen",
+        if route in ("/api/march/config", "/api/zones/trigger-mode", "/api/zones/freeze", "/api/zones/frozen",
                      "/api/zones/move-here", "/api/vertical-look"):
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "zone settings are loopback-only"}, 403)
                 return
             try:
-                if route == "/api/zones/trigger-mode":
+                if route == "/api/march/config":
+                    KERNEL.configure_march_algorithm(body.get("algorithm", ""))
+                elif route == "/api/zones/trigger-mode":
                     KERNEL.configure_zone_trigger_mode(body.get("mode", ""))
                 elif route == "/api/zones/freeze":
                     result = KERNEL.freeze_zones(body.get("frozen", True) is not False)

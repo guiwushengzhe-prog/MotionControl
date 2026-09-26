@@ -40,6 +40,7 @@ from motioncontrol.zone_arbiter import (
     fresh_zone_state, zone_phase_for_display,
 )
 from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
+from motioncontrol.responsive_march import ResponsiveMarch
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
     foot_floor_y, foot_out, is_default, normalize_zone_fit,
@@ -592,6 +593,8 @@ class ControlKernel:
         self._pose_rules: dict[str, dict] = {}
         self._pose_rule_order: list[str] = []
         self.step = _fresh_step()
+        self.march_algorithm = "legacy"
+        self._responsive_march = ResponsiveMarch()
         # 脚：站着时的基准、最近 0.3 秒的样子、这一帧算出来的离地和往外。见 _update_feet_locked。
         self.foot_base: dict[str, float] | None = None
         self.foot_history: list[tuple[float, float, float, float]] = []
@@ -729,6 +732,8 @@ class ControlKernel:
         # 的是 LocalControlRuntime 和 NativeCameraService。原样留着，别的地方
         # 通过 remember_general_setting 存的东西才不会被下一次写盘抹掉。
         self._general_raw = dict(data)
+        if data.get("march_algorithm") in {"legacy", "responsive"}:
+            self.march_algorithm = data["march_algorithm"]
         hand_mouse = data.get("hand_mouse")
         if isinstance(hand_mouse, dict):
             try:
@@ -841,6 +846,7 @@ class ControlKernel:
             },
             "action_chain": self.action_chain.config,
             "zone_trigger_mode": self.zone_trigger_mode,
+            "march_algorithm": self.march_algorithm,
             "zone_freeze": {"frozen": bool(self.zones_frozen),
                             "rects": copy.deepcopy(self.frozen_rects),
                             "anchor": copy.deepcopy(self.frozen_anchor)},
@@ -1465,6 +1471,21 @@ class ControlKernel:
                         state.update(pressed=True, phase="pressed", inside=1)
                 self._save_general_settings()
             return self.status_locked(time.monotonic())
+
+    def configure_march_algorithm(self, algorithm: str) -> dict:
+        if algorithm not in {"legacy", "responsive"}:
+            raise ValueError("请选择旧版踏步或新版灵敏踏步")
+        with self._lock:
+            self.march_algorithm = algorithm
+            self.step = _fresh_step()
+            self._responsive_march.reset()
+            self.motion_active.discard("march")
+            self.motion_raw["march"] = False
+            self.motion_debounce["march"].update(active=False, on=0, off=0)
+            self._save_general_settings()
+            now = time.monotonic()
+            self._dispatch_controls_locked(now)
+            return self.status_locked(now)
 
     def _frozen_zone_rects_locked(self) -> dict[str, dict]:
         rects = copy.deepcopy(self.frozen_rects)
@@ -2307,6 +2328,7 @@ class ControlKernel:
                 "frozen_rects": self.frozen_rects,
                 "frozen_anchor": self.frozen_anchor,
                 "zone_trigger_mode": self.zone_trigger_mode,
+                "march_algorithm": self.march_algorithm,
                 "vertical_look": self.vertical_look,
                 "hand_mouse": dict(self.hand_mouse_controller.config),
                 "action_chain": self.action_chain.config,
@@ -2656,9 +2678,27 @@ class ControlKernel:
                 self.step["active_until"] = 0.0
             march_raw = (not steps_blocked and not calf_raw and not cross_attempting
                          and now < self.step["active_until"])
+            if self.march_algorithm == "responsive":
+                calf_in_progress = any(
+                    # 新版不等峰值，因此对已经明显接近小腿后抬的轨迹提前让路。
+                    # 真实踏步的脚踝峰值低于 0.30；该记录中的未完整后抬为 0.40。
+                    (calf_like(lift["peak_ankle"], lift["peak_knee"], lift["min_shin"])
+                     or (lift["peak_ankle"] > .35 and lift["min_shin"] < .22
+                         and lift["peak_knee"] < min(.35 * lift["peak_ankle"], .10)))
+                    for side in ("left", "right")
+                    if (lift := self.step.get(side + "_lift"))
+                )
+                excluded = {side for side in ("left", "right")
+                            if self._foot_outward(pose_map, side) or knee_meets_elbow[side] or knee_near_elbow[side]}
+                march_raw = self._responsive_march.update(
+                    self.feet["lift"] if self.feet else None, now,
+                    excluded=excluded, blocked=steps_blocked or calf_raw or calf_in_progress or cross_attempting,
+                    jumping=jumping,
+                )
         else:
             self.step.clear()
             self.step.update(_fresh_step())
+            self._responsive_march.reset()
 
         raw_motion = {"march": march_raw, "calf_back": calf_raw}
         raw_motion.update({ident: result["raw"] for ident, result in rules.items()})
@@ -2680,7 +2720,8 @@ class ControlKernel:
         self.body_motion_action_risk = risk
 
         active = set()
-        if self._set_motion_debounced("march", march_raw, 1, 2): active.add("march")
+        march_off_frames = 1 if self.march_algorithm == "responsive" else 2
+        if self._set_motion_debounced("march", march_raw, 1, march_off_frames): active.add("march")
         if self._set_motion_debounced("calf_back", calf_raw, 3, 4): active.add("calf_back")
         for ident, result in rules.items():
             on_frames, off_frames = self.pose_actions[ident]["debounce"]
@@ -3227,6 +3268,7 @@ class ControlKernel:
             state.update({"active": False, "on": 0, "off": 0})
         self.trigger_previous.clear()
         self.foot_base = None
+        self._responsive_march.reset()
         self.foot_history.clear()
         self.feet = None
         self.step.clear()
@@ -3402,6 +3444,7 @@ class ControlKernel:
             # 没录过的动作误按框攒够了次数：界面提示去「录我的动作」。
             "zone_misfire_hint": self.zone_misfire_hint_locked(now),
             "zone_trigger_mode": self.zone_trigger_mode,
+            "march_algorithm": self.march_algorithm,
             # 跟随框定住了没有；zones_anchor_known：定住时看清了人站在哪，「区域挪到我这里」
             # 能按它把整组框搬过来。
             "zones_frozen": bool(self.zones_frozen),

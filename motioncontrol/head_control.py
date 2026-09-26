@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .roll_tilt_control import RollTiltControl, TILT_SPAN_DEG, eye_line_tilt
+from .responsive_head_control import ResponsiveHeadControl
 
 
 # 校准参考不能追随动作；仅在明确的安静事件后采纳一次运行参考，默认值待真人验证。
@@ -126,7 +127,7 @@ PITCH_INTENT_STOP_VELOCITY = 0.026
 # Their v5 versions below share the same movement/return semantics, but use
 # distinct signal evidence. The removed classic mode aliases to gesture_v153.
 
-HORIZONTAL_ALGORITHMS = ("gesture_v153", "frozen22", "gesture_v188", "roll_tilt")
+HORIZONTAL_ALGORITHMS = ("gesture_v153", "frozen22", "gesture_v188", "roll_tilt", "head_responsive")
 V153_POLICIES = frozenset(("gesture_v153", "gesture_v188"))
 FROZEN22_POLICIES = frozenset(("frozen22",))
 HORIZONTAL_ALGORITHM_VERSIONS = {
@@ -134,12 +135,14 @@ HORIZONTAL_ALGORITHM_VERSIONS = {
     "frozen22": "v5.1-fixed22-stable-units",
     "gesture_v188": "v5.1-consensus-shared-calibration",
     "roll_tilt": "roll-tilt-v1",
+    "head_responsive": "head-responsive-v1",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
     "gesture_v153": "个性化 PnP（灵敏）",
     "frozen22": "固定特征 2D（独立）",
     "gesture_v188": "多信号融合（稳健）",
     "roll_tilt": "侧倾转向（实验）",
+    "head_responsive": "侧倾＋转脸（新版灵敏）",
 }
 
 
@@ -2336,6 +2339,7 @@ class HeadController:
         self.profile_path = profile_path
         self.config = dict(DEFAULT_CONFIG)
         self._tilt_control = RollTiltControl()
+        self._responsive_head = ResponsiveHeadControl()
         self.tilt_angle = math.nan
         self.center_tilt = math.nan
         self.noise_tilt = 0.0
@@ -2541,6 +2545,7 @@ class HeadController:
 
     def _reset_filters(self) -> None:
         self._tilt_control.reset()
+        self._responsive_head.reset()
         self._runtime_neutral_samples = []
         self._yaw_filter.reset()
         self._pitch_filter.reset()
@@ -2836,7 +2841,7 @@ class HeadController:
                 self._apply_policy_model()
                 self.calibrated = reusable
                 fixed_needs_center = value in FROZEN22_POLICIES and not self.frozen22_calibration_valid
-                tilt_needs_center = value == "roll_tilt" and not math.isfinite(self.center_tilt)
+                tilt_needs_center = value in {"roll_tilt", "head_responsive"} and not math.isfinite(self.center_tilt)
                 self.center_pending = not reusable or fixed_needs_center or tilt_needs_center
                 if not reusable:
                     self.center_quality = "未校准"
@@ -3666,7 +3671,7 @@ class HeadController:
             policy in FROZEN22_POLICIES and self.calibrated and not self.calibrating
             and self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
         )
-        tilt_available = bool(policy == "roll_tilt" and self.calibrated and not self.calibrating
+        tilt_available = bool(policy in {"roll_tilt", "head_responsive"} and self.calibrated and not self.calibrating
                               and math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt))
         if not estimate.valid and not fixed_yaw_available and not tilt_available:
             self.last_error = estimate.error
@@ -3807,7 +3812,7 @@ class HeadController:
             self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
         )
         sign = -1.0 if self.config["invert_x"] else 1.0
-        if policy == "roll_tilt":
+        if policy in {"roll_tilt", "head_responsive"}:
             raw_x = sign * (self.tilt_angle - self.center_tilt) / TILT_SPAN_DEG if (
                 math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt)) else 0.0
             intent_raw_x = raw_x
@@ -3840,7 +3845,18 @@ class HeadController:
             start_x *= self.personal_pnp_far_depth_ratio ** PERSONAL_PNP_FAR_START_POWER
 
         self._runtime_raw_x, self._runtime_intent_raw_x, self._runtime_span_x = raw_x, intent_raw_x, span_x
-        if policy == "roll_tilt":
+        if policy == "head_responsive":
+            yaw = (control_yaw - self.center_yaw) / span_x if estimate.valid and estimate.confidence >= .6 else math.nan
+            vx = sign * self._responsive_head.update(
+                self.tilt_angle, yaw, now, center_tilt=self.center_tilt,
+                noise_tilt=self.noise_tilt, noise_yaw=self.noise_yaw,
+                yaw_span=span_x, deadzone=float(self.config["deadzone"]),
+            ) if math.isfinite(self.center_tilt) else 0.0
+            raw_x = intent_raw_x = sign * self._responsive_head.raw
+            self._runtime_raw_x = self._runtime_intent_raw_x = raw_x
+            self._last_intent_drive = vx
+            self._last_evidence_scale = 1.0 if self._responsive_head.source != "none" else 0.0
+        elif policy == "roll_tilt":
             vx = sign * self._tilt_control.update(
                 self.tilt_angle, now, center=self.center_tilt, noise=self.noise_tilt,
                 deadzone=float(self.config["deadzone"]),
@@ -3879,6 +3895,8 @@ class HeadController:
         self.yaw_intent_state = self._x_intent_v153.state
         if policy == "roll_tilt":
             self.yaw_intent_state = self._tilt_control.state
+        elif policy == "head_responsive":
+            self.yaw_intent_state = self._responsive_head.state
         self.yaw_velocity = float(self._x_intent_v153.velocity)
         self.yaw_acceleration = float(self._x_intent_v153.acceleration)
         if estimate.valid:
@@ -3912,7 +3930,7 @@ class HeadController:
         dt = _clamp(now - self._last_update, 0.0, 0.08) if self._last_update else 1.0 / 30.0
         self._last_update = now
         self._base_output_x = 0.0
-        self.output_x = self._slew(self.output_x, target_x, dt)
+        self.output_x = target_x if policy == "head_responsive" else self._slew(self.output_x, target_x, dt)
         self.output_y = self._slew(self.output_y, target_y, dt)
         return self.output_x / 100.0, self.output_y / 100.0
 
@@ -3920,12 +3938,13 @@ class HeadController:
         """Describe the controller stage, not whether the OS received a mouse event."""
         policy = self.config["horizontal_algorithm"]
         fixed = policy in FROZEN22_POLICIES
-        tilt = policy == "roll_tilt"
+        responsive = policy == "head_responsive"
+        tilt = policy in {"roll_tilt", "head_responsive"}
         frame_valid = bool(
             self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
         ) if fixed else bool(self.raw.valid)
         if tilt:
-            frame_valid = math.isfinite(self.tilt_angle)
+            frame_valid = math.isfinite(self.tilt_angle) or (responsive and self.raw.valid and self.raw.confidence >= .6)
         ready = bool(self.calibrated and (not fixed or self.frozen22_calibration_valid)
                      and (not tilt or math.isfinite(self.center_tilt)))
         if not self.config["enabled"]:
@@ -3972,8 +3991,10 @@ class HeadController:
             "raw_tilt_deg": self.tilt_angle if math.isfinite(self.tilt_angle) else None,
             "center_tilt_deg": self.center_tilt if math.isfinite(self.center_tilt) else None,
             "noise_tilt_deg": self.noise_tilt,
-            "tilt_state": self._tilt_control.state,
-            "tilt_deadzone_deg": self._tilt_control.threshold,
+            "tilt_state": self._responsive_head.state if responsive else self._tilt_control.state,
+            "tilt_deadzone_deg": self._responsive_head.tilt_threshold if responsive else self._tilt_control.threshold,
+            "responsive_head_source": self._responsive_head.source if responsive else None,
+            "responsive_yaw_deadzone": self._responsive_head.yaw_threshold if responsive else None,
             "runtime_neutral_pending": self._runtime_neutral_pending,
             "runtime_neutral_epoch": self._runtime_neutral_epoch,
             "runtime_neutral_at": self._runtime_neutral_at,
@@ -3989,9 +4010,9 @@ class HeadController:
             "horizontal_block_message": message,
             "raw_yaw_units": yaw_unit,
             "raw_pitch_units": yaw_unit,
-            "horizontal_signal_source": "eye_line" if tilt else "frozen22" if fixed else self.config["algorithm"],
-            "horizontal_signal_value": active_value if math.isfinite(active_value) else None,
-            "horizontal_signal_units": "degrees" if tilt else "degree_like" if fixed else yaw_unit,
+            "horizontal_signal_source": self._responsive_head.source if responsive else "eye_line" if tilt else "frozen22" if fixed else self.config["algorithm"],
+            "horizontal_signal_value": self._responsive_head.raw if responsive else active_value if math.isfinite(active_value) else None,
+            "horizontal_signal_units": "normalized" if responsive else "degrees" if tilt else "degree_like" if fixed else yaw_unit,
             "intent_drive_x": round(float(self._last_intent_drive), 6),
             "evidence_scale_x": round(float(self._last_evidence_scale), 6),
             "target_output_x": round(float(self._last_target_x), 6),
@@ -4029,9 +4050,9 @@ class HeadController:
         horizontal_calibrated = bool(
             self.calibrated
             and (policy_name not in FROZEN22_POLICIES or self.frozen22_calibration_valid)
-            and (policy_name != "roll_tilt" or math.isfinite(self.center_tilt))
+            and (policy_name not in {"roll_tilt", "head_responsive"} or math.isfinite(self.center_tilt))
         )
-        yaw_latched = policy_name != "roll_tilt" and bool(getattr(self._x_intent_v153, "return_latched", False))
+        yaw_latched = policy_name not in {"roll_tilt", "head_responsive"} and bool(getattr(self._x_intent_v153, "return_latched", False))
         horizontal_version = HORIZONTAL_ALGORITHM_VERSIONS[policy_name]
         return {
             **self._horizontal_diagnostics(),
@@ -4041,7 +4062,8 @@ class HeadController:
             "available_horizontal_algorithms": list(HORIZONTAL_ALGORITHMS),
             "horizontal_algorithm_labels": dict(HORIZONTAL_ALGORITHM_LABELS),
             "horizontal_algorithm_label": HORIZONTAL_ALGORITHM_LABELS[policy_name],
-            "horizontal_behavior": ("向左肩或右肩倾斜时持续转向，头回正立即停止" if policy_name == "roll_tilt"
+            "horizontal_behavior": ("侧倾或转脸时持续转向，回正停止，快速反向立即切换" if policy_name == "head_responsive"
+                                    else "向左肩或右肩倾斜时持续转向，头回正立即停止" if policy_name == "roll_tilt"
                                     else "转动时移动，偏头停住时停止，回到中心短暂停稳后重新触发"),
             "active_pitch_estimator": self._effective_estimator_algorithm(),
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
@@ -4337,7 +4359,7 @@ class HeadController:
         self.calibrated = True
         self.center_pending = bool(
             (policy in FROZEN22_POLICIES and not self.frozen22_calibration_valid)
-            or (policy == "roll_tilt" and not math.isfinite(self.center_tilt))
+            or (policy in {"roll_tilt", "head_responsive"} and not math.isfinite(self.center_tilt))
         )
         self.calibration_from_last_session = True
         self._saved_calibration = saved

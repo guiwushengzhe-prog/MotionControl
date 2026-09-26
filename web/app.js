@@ -369,6 +369,8 @@ function renderKernelState(runtime,force=false){
   paintPoseCountdown(runtime?.pose_capture);
   renderTriggerLive();
   renderRange();
+  const marchSelect=$('#marchAlgorithm');
+  if(marchSelect&&!marchSelect.disabled&&document.activeElement!==marchSelect)marchSelect.value=k.march_algorithm==='responsive'?'responsive':'legacy';
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
   currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);renderZoneFreeze(k);renderIntent(k);renderMisfireHint(k);paintZoneConflictNotes();
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
@@ -398,7 +400,7 @@ function renderKernelState(runtime,force=false){
   }
   if(Number.isFinite(hs.output_x)){
     const usesHand=hs.hand_mouse?.enabled&&['left','right'].includes(hs.hand_mouse?.config?.horizontal_hand);
-    const method=usesHand?'握拳':hs.horizontal_algorithm==='roll_tilt'?'侧倾':'转头';
+    const method=usesHand?'握拳':hs.horizontal_algorithm==='head_responsive'?'侧倾＋转脸':hs.horizontal_algorithm==='roll_tilt'?'侧倾':'转头';
     const horizontalCalibrated=usesHand||(hs.horizontal_calibrated??hs.calibrated);
     $('#headStatus').textContent=!usesHand&&hs.enabled===false?'左右视角已关闭':horizontalCalibrated?(!usesHand&&guardBlocked?'身体动作中 · 左右视角已稳定':`${method} · 左右 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说「体感开始校准」';
   }
@@ -412,8 +414,8 @@ function renderKernelState(runtime,force=false){
   if(hs.algorithm&&(force||(!headDirty&&!document.activeElement?.closest('#headSettings,#advancedSettings')))){
     $('#headAlgorithm').value=hs.algorithm;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
-    head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
-    if(head.horizontalAlgorithm!=='roll_tilt')lastTurnAlgorithm=head.horizontalAlgorithm;
+    head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
+    if(['gesture_v153','frozen22','gesture_v188'].includes(head.horizontalAlgorithm))lastTurnAlgorithm=head.horizontalAlgorithm;
     if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
     if($('#rollTiltHint'))$('#rollTiltHint').hidden=head.horizontalAlgorithm!=='roll_tilt';
     const verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'off');
@@ -1303,7 +1305,7 @@ function renderViewControl(force=false){
   if(viewControlSaving||(!force&&document.activeElement?.matches('#viewHorizontalSource,#viewVerticalSource')))return;
   const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
   const verticalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:null;
-  const horizontal=horizontalHand||(head.enabled?(head.horizontalAlgorithm==='roll_tilt'?'roll_tilt':'head_turn'):'off');
+  const horizontal=horizontalHand||(head.enabled?(['roll_tilt','head_responsive'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off');
   const vertical=verticalHand||(head.verticalLookEnabled?'legacy':'off');
   $('#viewVerticalSource option[value="legacy"]').hidden=!head.verticalLookEnabled;
   $('#viewHorizontalSource').value=horizontal;$('#viewVerticalSource').value=vertical;
@@ -1358,7 +1360,7 @@ function tutorialState(){
     // 握拳控左右不需要头部中心，这一点和「视角控制」那块的判断保持一致。
     calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
     calibrating:!!hs.calibrating,calibrationNote:String(hs.notice||''),
-    horizontal:horizontalHand||(head.enabled?(head.horizontalAlgorithm==='roll_tilt'?'roll_tilt':'head_turn'):'off'),
+    horizontal:horizontalHand||(head.enabled?(['roll_tilt','head_responsive'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off'),
     hLevel,hHandState:String(axes.horizontal?.state||''),guardBlocked:!!hs.horizontal_paused_by_body_motion,
     vertical:verticalHand||(head.verticalLookEnabled?'legacy':'off'),
     vLevel,vHandState:String(axes.vertical?.state||''),gateActive:!!k.vertical_gate_active,legacySource:head.verticalLookSource,
@@ -1490,9 +1492,9 @@ async function saveViewControlAxis(axis){
   setViewControlBusy(true);headDirty=true;$('#viewControlStatus').textContent='正在保存…';
   try{
     if(axis==='horizontal'){
-      if(desiredHorizontal==='roll_tilt'||desiredHorizontal==='head_turn'){
+      if(['roll_tilt','head_turn','head_responsive'].includes(desiredHorizontal)){
         if(currentHorizontal!=='off')await post('/api/hand-mouse/config',{horizontal_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentVertical!=='off')});
-        await post('/api/head/config',{enabled:true,horizontal_algorithm:desiredHorizontal==='roll_tilt'?'roll_tilt':lastTurnAlgorithm});
+        await post('/api/head/config',{enabled:true,horizontal_algorithm:desiredHorizontal==='head_turn'?lastTurnAlgorithm:desiredHorizontal});
       }else if(desiredHorizontal==='left'||desiredHorizontal==='right'){
         if(head.enabled)await post('/api/head/config',{enabled:false});
         await post('/api/hand-mouse/config',{enabled:true,horizontal_hand:desiredHorizontal,vertical_hand:currentVertical});
@@ -1776,6 +1778,16 @@ $('#intentRecordBtn')?.addEventListener('click',e=>{
   const keys=missing.length&&missing.length<all.length?missing:null;
   tutorial.openLesson('record',e.currentTarget,{keys});
 });
+$('#marchAlgorithm')?.addEventListener('change',e=>runAction(async()=>{
+  const select=e.target,status=$('#marchSaveStatus');select.disabled=true;
+  try{
+    renderKernelState(await post('/api/march/config',{algorithm:select.value}));
+    status.textContent='已保存';
+  }catch(error){
+    select.value=kernelState?.march_algorithm==='responsive'?'responsive':'legacy';
+    status.textContent='未保存：'+error.message;throw error;
+  }finally{select.disabled=false}
+}));
 $('#zoneTriggerMode')?.addEventListener('change',e=>runAction(async()=>{
   const status=$('#zoneTriggerStatus');
   try{
@@ -1906,7 +1918,7 @@ function renderVoiceCommandCatalog(commands){
 }
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';if($('#rollTiltHint'))$('#rollTiltHint').hidden=head.horizontalAlgorithm!=='roll_tilt';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';if($('#rollTiltHint'))$('#rollTiltHint').hidden=head.horizontalAlgorithm!=='roll_tilt';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){
   syncControlLabels();
   renderKernelState(await post('/api/head/config',{

@@ -105,6 +105,7 @@ def make_replay_kernel(snapshot: dict):
         kernel.frozen_rects = copy.deepcopy(snapshot.get("frozen_rects") or {})
         kernel.frozen_anchor = copy.deepcopy(snapshot.get("frozen_anchor"))
         kernel.zone_trigger_mode = snapshot.get("zone_trigger_mode", "smart")
+        kernel.march_algorithm = snapshot.get("march_algorithm", "legacy")
         kernel.vertical_look.update(copy.deepcopy(snapshot.get("vertical_look") or {}))
         if snapshot.get("hand_mouse"):
             kernel.hand_mouse_controller.configure(copy.deepcopy(snapshot["hand_mouse"]))
