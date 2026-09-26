@@ -14,6 +14,8 @@ from __future__ import annotations
 import copy
 import re
 
+from .pose_points import MP_NAMES, POSE_POINT_LABELS
+
 GAMEPAD_BUTTONS = {
     "A", "B", "X", "Y", "LB", "RB", "L3", "R3",
     "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT", "START", "BACK",
@@ -215,10 +217,31 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
 def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
     if not isinstance(binding, dict):
         raise ValueError("binding must be an object")
+    point_settings = {}
+    if "trigger_points" in binding:
+        points = binding["trigger_points"]
+        if not isinstance(points, list) or any(not isinstance(point, str) or point not in POSE_POINT_LABELS
+                                              for point in points):
+            raise ValueError("区域触发点必须是有效人体骨骼点的列表")
+        point_settings["trigger_points"] = list(dict.fromkeys(points))
+    if "trigger_segments" in binding:
+        segments = binding["trigger_segments"]
+        if not isinstance(segments, list):
+            raise ValueError("区域触发连线必须是列表")
+        order = {point: index for index, point in enumerate(MP_NAMES)}
+        chosen = []
+        for pair in segments:
+            if (not isinstance(pair, list) or len(pair) != 2 or
+                    any(not isinstance(point, str) or point not in order for point in pair) or pair[0] == pair[1]):
+                raise ValueError("区域触发连线必须连接两个不同的有效骨骼点")
+            normalized = sorted(pair, key=order.__getitem__)
+            if normalized not in chosen:
+                chosen.append(normalized)
+        point_settings["trigger_segments"] = chosen
     if bool(binding.get("disabled")):
-        return {"disabled": True}
+        return {"disabled": True, **point_settings}
     action = binding.get("action") if isinstance(binding.get("action"), dict) else binding
-    out = {"action": normalize_action(action, default_behavior=default_behavior)}
+    out = {"action": normalize_action(action, default_behavior=default_behavior), **point_settings}
     label = str(binding.get("label", "")).strip()
     if label:
         out["label"] = label
@@ -428,5 +451,6 @@ def normalize_overrides(overrides) -> dict:
         elif prefix == "zone" and ident in {t for _, t in ZONE_ID_MERGES}:
             claimed[key] = -1
 
-        out[key] = None if normalized.get("disabled") else normalized
+        has_points = "trigger_points" in normalized or "trigger_segments" in normalized
+        out[key] = None if normalized.get("disabled") and not has_points else normalized
     return out

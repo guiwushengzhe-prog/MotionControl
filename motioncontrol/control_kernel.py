@@ -28,6 +28,7 @@ from motioncontrol.head_control import (
     HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION,
 )
 from motioncontrol_shared.profile_schema import flatten_bindings
+from motioncontrol_shared.pose_points import MP_NAMES, trigger_point_groups
 from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
 from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseController
@@ -66,16 +67,6 @@ def _user_recordings_dir():
     return user_data_root() / "recordings"
 from motioncontrol.vertical_hand_control import VerticalHandController
 
-
-MP_NAMES = [
-    "nose", "left_eye_inner", "left_eye", "left_eye_outer", "right_eye_inner",
-    "right_eye", "right_eye_outer", "left_ear", "right_ear", "mouth_left",
-    "mouth_right", "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
-    "left_wrist", "right_wrist", "left_pinky", "right_pinky", "left_index",
-    "right_index", "left_thumb", "right_thumb", "left_hip", "right_hip",
-    "left_knee", "right_knee", "left_ankle", "right_ankle", "left_heel",
-    "right_heel", "left_foot_index", "right_foot_index",
-]
 
 # Head control lives in head_control.py.  Keep only the exported signal-version
 # alias here so external diagnostics can identify the active algorithm family.
@@ -639,6 +630,7 @@ class ControlKernel:
         # v0.9.7 unified trigger -> output layer. Profile bindings are stored
         # independently from recognition so changing games never changes pose rules.
         self.control_bindings: dict[str, dict] = {}
+        self._zone_point_groups: dict[str, tuple] = {}
         self.trigger_previous: set[str] = set()
         self.pose_active: set[str] = set()
         self.pose_confidence: dict[str, float] = {}
@@ -1025,7 +1017,12 @@ class ControlKernel:
     def configure_bindings(self, bindings: dict | None) -> None:
         """Install one effective Game Profile without touching recognition thresholds."""
         with self._lock:
+            previous_points = {name: self._zone_point_groups_locked(name) for name in RUNTIME_BODY_ZONES}
             self.control_bindings = self._apply_macro_behavior_locked(flatten_bindings(bindings))
+            self._zone_point_groups.clear()
+            for name, points in previous_points.items():
+                if points != self._zone_point_groups_locked(name):
+                    self.zone_state[name] = fresh_zone_state()
             self.trigger_previous.clear()
             self.action_chain.reset()
             self.action_chain_result = self.action_chain.result()
@@ -2077,6 +2074,28 @@ class ControlKernel:
     def _point_in_rect(point: dict | None, rect: dict | None) -> bool:
         return bool(point and rect and _score(point) >= 0.42 and rect["x1"] <= point["x"] <= rect["x2"] and rect["y1"] <= point["y"] <= rect["y2"])
 
+    def _zone_point_binding_locked(self, name: str) -> dict:
+        binding = self.control_bindings.get(f"zone.{name}")
+        if binding is None:
+            for alias, canonical in ZONE_ALIASES.items():
+                if canonical == name and f"zone.{alias}" in self.control_bindings:
+                    binding = self.control_bindings[f"zone.{alias}"]
+                    break
+        return binding or {}
+
+    def _zone_has_custom_points_locked(self, name: str) -> bool:
+        binding = self._zone_point_binding_locked(name)
+        return "trigger_points" in binding or "trigger_segments" in binding
+
+    def _zone_point_groups_locked(self, name: str) -> tuple:
+        if name == "lookGate":
+            return (("left_wrist",),)
+        if name not in self._zone_point_groups:
+            binding = self._zone_point_binding_locked(name)
+            points = binding.get("trigger_points", RUNTIME_BODY_ZONES[name]["points"])
+            self._zone_point_groups[name] = trigger_point_groups(points, binding.get("trigger_segments", ()))
+        return self._zone_point_groups[name]
+
     def _zone_depth_locked(self, pose_map: dict[str, dict], name: str, frame: dict | None) -> float:
         """这个框的那只手（脚、鼻子）进了框多深，量身那把尺；几个点取最深的。不在框里是 -1。
 
@@ -2084,24 +2103,41 @@ class ControlKernel:
         就是画面边，手不可能从那边进来。定住后拖离了画面边的框，四条边都算。
         """
         rect = self.zone_rects.get(name)
-        points = ("left_wrist",) if name == "lookGate" else RUNTIME_BODY_ZONES[name]["points"]
         best = -1.0
-        for point_name in points:
-            point = pose_map.get(point_name)
-            if not self._point_in_rect(point, rect):
-                continue
-            if frame is None:
-                return math.inf
-            depths = []
-            if rect["y2"] < 0.999:
-                depths.append((rect["y2"] - point["y"]) / frame["uy"])
-            if rect["y1"] > 0.001:
-                depths.append((point["y"] - rect["y1"]) / frame["uy"])
-            if rect["x1"] > 0.001:
-                depths.append((point["x"] - rect["x1"]) / frame["ux"])
-            if rect["x2"] < 0.999:
-                depths.append((rect["x2"] - point["x"]) / frame["ux"])
-            best = max(best, min(depths) if depths else math.inf)
+        contact = None
+        custom = self._zone_has_custom_points_locked(name)
+        for group in self._zone_point_groups_locked(name):
+            members = []
+            for point_name in group:
+                point = pose_map.get(point_name)
+                if not self._point_in_rect(point, rect):
+                    break
+                if custom:
+                    side, _, part = point_name.partition("_")
+                    if part in {"wrist", "pinky", "index", "thumb"} and self.hand_mouse_controller.owns_hand(side):
+                        break
+                    if (name in {"leftFoot", "rightFoot"} and self.zone_trigger_mode != "simple"
+                            and part in {"ankle", "heel", "foot_index"} and not self._foot_outward(pose_map, side)):
+                        break
+                depths = []
+                if frame is not None:
+                    if rect["y2"] < 0.999:
+                        depths.append((rect["y2"] - point["y"]) / frame["uy"])
+                    if rect["y1"] > 0.001:
+                        depths.append((point["y"] - rect["y1"]) / frame["uy"])
+                    if rect["x1"] > 0.001:
+                        depths.append((point["x"] - rect["x1"]) / frame["ux"])
+                    if rect["x2"] < 0.999:
+                        depths.append((rect["x2"] - point["x"]) / frame["ux"])
+                members.append((min(depths) if depths else math.inf, point_name))
+            else:
+                # 独立点进入即可；连成一组的所有点同时进入，取最浅的点。
+                depth, point_name = min(members)
+                if contact is None or depth > best:
+                    best, contact = depth, point_name
+        state = self.zone_state.get(name)
+        if state is not None:
+            state["trigger_point"] = contact
         return best
 
     def _hand_points_for_mouse_locked(self) -> dict | None:
@@ -2141,7 +2177,10 @@ class ControlKernel:
         gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
         frame = body_frame(pose_map, self.width, self.height)
-        self.zone_kin.update(pose_map, frame, self._pose_sample_time_locked(now))
+        custom_targets = {name: tuple(dict.fromkeys(point for group in self._zone_point_groups_locked(name)
+                                                    for point in group))
+                          for name in zone_names if self._zone_has_custom_points_locked(name)}
+        self.zone_kin.update(pose_map, frame, self._pose_sample_time_locked(now), targets=custom_targets)
         actions = self._bound_action_triggers_locked()
         conflicts = {} if simple else self.zone_conflicts_locked(actions)
         busy = {trigger for trigger in actions if self._motion_busy_locked(trigger)}
@@ -2150,11 +2189,14 @@ class ControlKernel:
             state = self.zone_state.setdefault(name, fresh_zone_state())
             depth = self._zone_depth_locked(pose_map, name, frame)
             inside = depth >= 0.0
-            if name in ("leftFoot", "rightFoot") and not simple:
+            custom = name in custom_targets
+            if custom and state.get("trigger_point"):
+                self.zone_kin.targets[name] = (state["trigger_point"],)
+            if name in ("leftFoot", "rightFoot") and not simple and not custom:
                 # 脚区要确实往外抬了脚（见 FOOT_ZONE_LIFT）：站宽一点、脚贴地滑一下
                 # 都会碰到框，那不是按。
                 inside = inside and self._foot_outward(pose_map, "left" if name == "leftFoot" else "right")
-            if inside and self._hand_mouse_owns_zone(name):
+            if inside and not custom and self._hand_mouse_owns_zone(name):
                 # That hand is steering the pointer.  Without this it would also
                 # be pressing whatever zone it flies through, so aiming would
                 # mash buttons.

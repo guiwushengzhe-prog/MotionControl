@@ -518,6 +518,44 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
 
 .trigger-name { color: var(--text); font-size: 14px; }
 
+/* 不常用的区域触发点：放在区域名称下面，点开才显示选择列表。 */
+.zone-point-picker { position: relative; margin-top: 5px; font-size: 12px; font-weight: normal; }
+.zone-point-picker > summary { list-style: none; position: relative; width: fit-content; max-width: 100%;
+  padding-right: 16px; color: var(--text-3); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zone-point-picker > summary::-webkit-details-marker { display: none; }
+.zone-point-picker > summary::before { display: none; }
+.zone-point-picker > summary::after { content: ''; position: absolute; right: 3px; top: 4px; width: 5px; height: 5px;
+  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
+.zone-point-picker[open] > summary, .zone-point-picker > summary:hover { color: var(--text-2); }
+.zone-point-menu { position: fixed; z-index: 75; width: min(350px, 80vw);
+  max-height: min(620px, 75vh); overflow-y: auto; padding: 8px; background: var(--surface-3); border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+.zone-point-heading { padding: 6px 8px; color: var(--text-3); font-size: 12px; }
+.zone-point-option { display: block; width: 100%; min-height: 30px; padding: 4px 8px; border: 0; border-radius: 5px;
+  background: transparent; color: var(--text); text-align: left; font-size: 13px; }
+.zone-point-option::before { content: '□'; display: inline-block; width: 1.3em; color: var(--text-3); }
+.zone-point-option:hover, .zone-point-option.selected { background: var(--accent-soft); }
+.zone-point-option.selected::before { content: '✓'; color: var(--accent); }
+.zone-point-option.linked::before { content: '↔'; }
+.zone-point-tools { display: flex; gap: 6px; }
+.zone-point-tools button, .zone-drawn-edges button { padding: 4px 9px; font-size: 12px; }
+.zone-point-tools button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.zone-point-skeleton { display: block; width: 100%; height: 255px; touch-action: none; user-select: none; }
+.zone-skeleton-background { stroke: var(--text-3); stroke-width: 2; opacity: .35; pointer-events: none; }
+.zone-skeleton-point { cursor: pointer; touch-action: none; fill: var(--text-3); }
+.zone-point-hit { fill: transparent; }
+.zone-skeleton-point.selected { fill: var(--accent); }
+.zone-skeleton-point.linked { stroke: var(--accent); stroke-width: 1; }
+.zone-skeleton-point:hover, .zone-skeleton-point:focus, .zone-skeleton-point.drawing-start { fill: var(--text); outline: none; }
+.zone-selected-line { stroke: var(--accent); stroke-width: 6; cursor: pointer; }
+.zone-selected-line:hover, .zone-selected-line:focus { stroke: var(--text); outline: none; }
+.zone-drawing-preview { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; pointer-events: none; }
+.zone-point-list { display: grid; grid-template-columns: 1fr 1fr; max-height: 180px; overflow-y: auto; }
+.zone-point-rules { margin: 6px 0; color: var(--text-2); line-height: 1.6; font-size: 12px; }
+.zone-drawn-edges { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.zone-point-option { touch-action: pan-y; }
+.zone-point-option.drawing-start { background: var(--accent-soft); }
+
 .motion-conflict-note { grid-column: 1 / -1; color: var(--warn); font-size: 12.5px; }
 
 .motion-conflict-blocked { opacity: .55; }

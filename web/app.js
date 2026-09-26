@@ -680,6 +680,9 @@ async function searchProfiles(){
 async function refreshProfile(){
   const [selected,actions]=await Promise.all([api('/api/game-profiles/selected'),api('/api/output/actions')]);
   gameProfile.selected=selected.profile||null;gameProfile.actions=actions.actions||{};gameProfile.overrides=gameProfile.selected?.overrides||{};
+  gameProfile.zonePointLabels=actions.zone_point_labels||{};
+  gameProfile.zoneSegments=actions.zone_segments||[];
+  gameProfile.zoneDefaultPoints=actions.zone_default_points||{};
   renderProfileHeader();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
 }
 // ---- 自己加的游戏 ---------------------------------------------------------
@@ -1057,6 +1060,120 @@ function legacyReleaseTarget(action){
   }
   return '';
 }
+function buildZonePointPicker(trigger,binding){
+  const labels=gameProfile.zonePointLabels||{};if(!Object.keys(labels).length)return null;
+  const ids=Object.keys(labels),order=new Map(ids.map((id,index)=>[id,index]));
+  const edgeKey=(a,b)=>[a,b].sort((x,y)=>order.get(x)-order.get(y)).join('|');
+  const picker=document.createElement('details');picker.className='zone-point-picker';
+  const summary=document.createElement('summary');
+  const menu=document.createElement('div');menu.className='zone-point-menu';menu.setAttribute('aria-label',trigger.name+' 触发点与连线');
+  const choices=document.createElement('select');choices.multiple=true;choices.hidden=true;choices.className='zone-trigger-choices';
+  choices.dataset.explicit=binding&&('trigger_points'in binding||'trigger_segments'in binding)?'1':'0';
+  const points=new Set(binding?.trigger_points??gameProfile.zoneDefaultPoints?.[trigger.id]??[]);
+  const segments=new Set((binding?.trigger_segments||[]).map(pair=>edgeKey(...pair)));
+  let mode='points',gesture=null;
+  const tools=document.createElement('div');tools.className='zone-point-tools';
+  const hint=document.createElement('div');hint.className='zone-point-heading';
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 300 340');svg.classList.add('zone-point-skeleton');svg.setAttribute('aria-label','人体骨骼点，长按拖动连线');
+  // 图上所有 33 点都是可选端点，背景骨架只是定位参考。
+  const xy=[[150,48],[126,30],[112,28],[98,32],[174,30],[188,28],[202,32],[78,42],[222,42],[134,66],[166,66],
+    [94,102],[206,102],[62,150],[238,150],[54,202],[246,202],[32,232],[268,232],[54,242],[246,242],[78,220],[222,220],
+    [112,204],[188,204],[106,257],[194,257],[102,304],[198,304],[90,323],[210,323],[65,321],[235,321]];
+  const positions=Object.fromEntries(ids.map((id,index)=>[id,xy[index]]));
+  const svgEl=(tag,attrs)=>{const el=document.createElementNS(svg.namespaceURI,tag);for(const[key,value]of Object.entries(attrs))el.setAttribute(key,value);return el};
+  const line=(a,b)=>svgEl('line',{x1:positions[a][0],y1:positions[a][1],x2:positions[b][0],y2:positions[b][1]});
+  const background=svgEl('g',{'class':'zone-skeleton-background'}),drawn=svgEl('g',{}),nodes=svgEl('g',{});
+  for(const[a,b]of gameProfile.zoneSegments||[])background.appendChild(line(a,b));
+  const preview=svgEl('line',{'class':'zone-drawing-preview',visibility:'hidden'});
+  svg.append(background,drawn,preview,nodes);
+  const list=document.createElement('div');list.className='zone-point-list';list.setAttribute('aria-label','全部人体骨骼点');
+  const rules=document.createElement('div');rules.className='zone-point-rules';
+  const edges=document.createElement('div');edges.className='zone-drawn-edges';
+  const groups=()=>{
+    const graph=new Map();for(const value of segments){const[a,b]=value.split('|');if(!graph.has(a))graph.set(a,new Set());if(!graph.has(b))graph.set(b,new Set());graph.get(a).add(b);graph.get(b).add(a)}
+    const result=[...points].filter(id=>!graph.has(id)).map(id=>[id]),seen=new Set();
+    for(const start of graph.keys()){if(seen.has(start))continue;const todo=[start],group=[];while(todo.length){const id=todo.pop();if(seen.has(id))continue;seen.add(id);group.push(id);todo.push(...graph.get(id))}result.push(group.sort((a,b)=>order.get(a)-order.get(b)))}
+    return {result,linked:new Set(graph.keys())};
+  };
+  const cancelGesture=()=>{if(gesture)clearTimeout(gesture.timer);gesture=null;preview.setAttribute('visibility','hidden');menu.querySelectorAll('.drawing-start').forEach(el=>el.classList.remove('drawing-start'))};
+  const changed=()=>{choices.dataset.explicit='1';sync();choices.dispatchEvent(new Event('change',{bubbles:true}))};
+  const removePoint=id=>{points.delete(id);for(const value of [...segments])if(value.split('|').includes(id))segments.delete(value);changed()};
+  const clickPoint=id=>{if(groups().linked.has(id))removePoint(id);else if(mode==='points'){points.has(id)?points.delete(id):points.add(id);changed()}};
+  const localPoint=event=>new DOMPoint(event.clientX,event.clientY).matrixTransform(svg.getScreenCTM().inverse());
+  const endPoint=event=>{
+    const hit=document.elementFromPoint(event.clientX,event.clientY)?.closest('[data-point]');if(hit&&menu.contains(hit))return hit.dataset.point;
+    if(!svg.contains(document.elementFromPoint(event.clientX,event.clientY)))return null;
+    const p=localPoint(event);return ids.find(id=>Math.hypot(positions[id][0]-p.x,positions[id][1]-p.y)<=11)||null;
+  };
+  const pointerDown=(event,id)=>{
+    if(mode!=='lines'||event.button!==0)return;
+    cancelGesture();event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);
+    gesture={id,pointer:event.pointerId,x:event.clientX,y:event.clientY,dragging:false};
+    gesture.timer=setTimeout(()=>{if(!gesture)return;gesture.dragging=true;const[x,y]=positions[id];preview.setAttribute('x1',x);preview.setAttribute('y1',y);preview.setAttribute('x2',x);preview.setAttribute('y2',y);preview.setAttribute('visibility','visible');menu.querySelectorAll(`[data-point="${id}"]`).forEach(el=>el.classList.add('drawing-start'))},280);
+  };
+  menu.addEventListener('pointermove',event=>{if(!gesture||event.pointerId!==gesture.pointer)return;if(gesture.dragging){const p=localPoint(event);preview.setAttribute('x2',p.x);preview.setAttribute('y2',p.y)}else if(Math.hypot(event.clientX-gesture.x,event.clientY-gesture.y)>8)cancelGesture()});
+  menu.addEventListener('pointerup',event=>{
+    if(!gesture||event.pointerId!==gesture.pointer)return;
+    const start=gesture.id,dragged=gesture.dragging,end=dragged?endPoint(event):null;cancelGesture();
+    // 只在松手时决定终点；路径上经过的其他点不会加入。
+    if(dragged&&end&&end!==start){const value=edgeKey(start,end);segments.has(value)?segments.delete(value):segments.add(value);changed()}
+    else if(!dragged)clickPoint(start);
+  });
+  menu.addEventListener('pointercancel',cancelGesture);
+  const keyPoint=(event,id)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();clickPoint(id)}};
+  for(const id of ids){
+    const node=svgEl('g',{transform:`translate(${positions[id].join(' ')})`,'data-point':id,role:'button',tabindex:'0','aria-label':labels[id]});node.classList.add('zone-skeleton-point');
+    node.append(svgEl('circle',{r:10,'class':'zone-point-hit'}),svgEl('circle',{r:5}));const title=svgEl('title',{});title.textContent=labels[id];node.append(title);nodes.append(node);
+    const item=document.createElement('button');item.type='button';item.className='zone-point-option';item.textContent=labels[id];item.dataset.point=id;list.append(item);
+    for(const el of [node,item]){el.addEventListener('pointerdown',event=>pointerDown(event,id));el.addEventListener('click',event=>{if(mode==='points')clickPoint(id);else if(event.detail===0)clickPoint(id)});if(el===node)el.addEventListener('keydown',event=>keyPoint(event,id))}
+  }
+  for(const[value,text]of [['points','选点'],['lines','连线']]){const button=document.createElement('button');button.type='button';button.textContent=text;button.dataset.mode=value;button.addEventListener('click',()=>{cancelGesture();mode=value;sync()});tools.append(button)}
+  const sync=()=>{
+    choices.replaceChildren();for(const value of [...points,...segments]){const option=document.createElement('option');option.value=value;option.selected=true;choices.append(option)}
+    const {result,linked}=groups();
+    const count=result.reduce((sum,group)=>sum+group.length,0);
+    summary.textContent='触发点：'+(count>3?`${count} 个点${segments.size?' · 已连线':''}`:result.map(group=>group.map(id=>labels[id]).join('＋')).join(' / ')||'未选');
+    summary.title=result.map(group=>group.map(id=>labels[id]).join('＋')+(group.length>1?'（全部同时进入）':'')).join('；')||'未选择触发点，这个区域不会触发';
+    summary.setAttribute('aria-label',trigger.name+' '+summary.textContent);
+    for(const item of menu.querySelectorAll('[data-point]')){
+      const chosen=points.has(item.dataset.point)||linked.has(item.dataset.point);item.classList.toggle('selected',chosen);item.classList.toggle('linked',linked.has(item.dataset.point));item.setAttribute('aria-pressed',String(chosen));
+    }
+    tools.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.mode===mode)));
+    hint.textContent=mode==='points'?'点一下选择，再点取消。独立点任选其一。':'长按点拖线，松手选终点。点亮线或已连点取消。';
+    rules.textContent=result.length?result.map(group=>group.map(id=>labels[id]).join('＋')+(group.length>1?'：全部同时进入':'：进入即可')).join('；'):'未选触发点';
+    drawn.replaceChildren();edges.replaceChildren();
+    for(const value of segments){const[a,b]=value.split('|');const remove=()=>{segments.delete(value);changed()};const el=line(a,b);el.classList.add('zone-selected-line');el.setAttribute('tabindex','0');el.setAttribute('role','button');el.setAttribute('aria-label',`删除连线：${labels[a]}—${labels[b]}`);el.addEventListener('click',remove);el.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();remove()}});drawn.append(el);
+      const button=document.createElement('button');button.type='button';button.textContent=`${labels[a]}—${labels[b]} ×`;button.title='删除这条连线';button.addEventListener('click',remove);edges.append(button);
+    }
+  };
+  picker.positionMenu=()=>{
+    const rect=summary.getBoundingClientRect(),width=Math.min(350,innerWidth*.8),below=innerHeight-rect.bottom-12,above=rect.top-12;
+    menu.style.left=Math.max(8,Math.min(rect.left,innerWidth-width-8))+'px';
+    menu.style.maxHeight=Math.max(120,Math.min(620,innerHeight*.75,Math.max(above,below)))+'px';
+    menu.style.top=below>=above?rect.bottom+5+'px':'auto';menu.style.bottom=below>=above?'auto':innerHeight-rect.top+5+'px';
+  };
+  picker.addEventListener('toggle',()=>{if(picker.open)picker.positionMenu();else cancelGesture()});
+  picker.addEventListener('keydown',event=>{if(event.key==='Escape')cancelGesture()});
+  menu.append(tools,hint,svg,rules,edges,list);
+  picker.append(summary,menu,choices);sync();return picker;
+}
+document.addEventListener('click',event=>{
+  // 点删除后，该线/按钮已经离开文档；仍按点击开始时的路径判断是否点在面板内。
+  const current=event.composedPath().find(el=>el.classList?.contains('zone-point-picker'));
+  document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>{if(picker!==current)picker.open=false});
+});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape')document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>{picker.open=false;picker.querySelector('summary').focus()});
+});
+const positionZonePointMenus=()=>document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>picker.positionMenu());
+window.addEventListener('resize',positionZonePointMenus);
+document.addEventListener('scroll',positionZonePointMenus,true);
+function readZonePointChoices(row){
+  const choices=row.querySelector('.zone-trigger-choices');
+  if(!choices||choices.dataset.explicit!=='1')return {};
+  const values=[...choices.selectedOptions].map(option=>option.value);
+  return {trigger_points:values.filter(value=>!value.includes('|')),trigger_segments:values.filter(value=>value.includes('|')).map(value=>value.split('|'))};
+}
 function buildBindingRow(trigger){
   const binding=bindingFor(trigger);
   let action=binding?.disabled?null:binding?.action;
@@ -1079,6 +1196,7 @@ function buildBindingRow(trigger){
   row.querySelectorAll('input,select').forEach(control=>control.setAttribute('aria-label',trigger.name+' '+(control.className.includes('type')?'输出类型':'键位或触发方式')));
   if(trigger.group==='motions'){const note=document.createElement('div');note.className='motion-conflict-note';note.hidden=true;row.appendChild(note)}
   if(trigger.group==='zones'){
+    const pointPicker=buildZonePointPicker(trigger,binding);if(pointPicker)name.appendChild(pointPicker);
     // 「做动作时也要按」：没设过的，要跳才碰得到的框（头顶）默认是，别的默认不是——
     // 和电脑那边 _zone_with_motion_locked 同一条规则。
     const label=document.createElement('label');label.className='zone-with-motion';
@@ -1168,7 +1286,8 @@ function readProfileOverrides(){
     if(!profileDirty.has(trigger.key))continue;
     const row=document.querySelector(`.binding-row[data-trigger="${trigger.key}"]`);if(!row)continue;
     const type=row.querySelector('.binding-type')?.value||'';
-    if(!type){overrides[trigger.key]=null;continue}
+    const pointChoices=trigger.group==='zones'?readZonePointChoices(row):{};
+    if(!type){overrides[trigger.key]=Object.keys(pointChoices).length?{disabled:true,...pointChoices}:null;continue}
     let target;
     if(type==='voice_release'){
       const ids=voiceReleaseTargetIds(row.querySelector('.voice-release-target')).map(id=>id.toLowerCase());
@@ -1179,7 +1298,7 @@ function readProfileOverrides(){
     }
     if(!target||(Array.isArray(target)&&!target.length))throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:type==='voice_release'?`${trigger.name} 还没有选择要停住哪条口令`:`${trigger.name} 还没有选择具体键位`);
     const behavior=trigger.tapOnly||type==='mouse_wheel'||type==='voice_release'||type==='system'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
-    const override={action:{type,target,behavior}};
+    const override={action:{type,target,behavior},...pointChoices};
     const comboLead=row.querySelector('.combo-lead-ms');
     if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden&&(comboLead.dataset.explicit==='1'||comboLead.dataset.touched==='1')){
       override.action.combo_stick_lead_ms=Math.max(0,Math.min(200,Number(comboLead.value)||0));

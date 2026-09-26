@@ -174,12 +174,14 @@ class Kinematics:
         self.keep_s = keep_s
         self._samples: deque[tuple[float, dict[str, tuple[float, float]], tuple[float, float] | None]] = deque()
         self._scale: tuple[float, float] | None = None
+        self.targets = {}
 
     def reset(self) -> None:
         self._samples.clear()
         self._scale = None
+        self.targets = {}
 
-    def update(self, pose_map: dict | None, frame: dict | None, now: float) -> None:
+    def update(self, pose_map: dict | None, frame: dict | None, now: float, *, targets: dict | None = None) -> None:
         if not pose_map or frame is None:
             self.reset()
             return
@@ -188,7 +190,9 @@ class Kinematics:
             self.reset()
             return
         points = {}
-        for name in TRACKED_POINTS:
+        self.targets = targets or {}
+        tracked = dict.fromkeys((*TRACKED_POINTS, *(point for group in self.targets.values() for point in group)))
+        for name in tracked:
             point = pose_map.get(name)
             if point and _score(point) >= MIN_SCORE:
                 points[name] = ((point["x"] - hip["x"]) / ux, (point["y"] - hip["y"]) / uy)
@@ -242,7 +246,7 @@ class Kinematics:
 
     def target_of(self, zone: str) -> str | None:
         """这个框的「那只手（脚）」这一帧用哪个点：脚踝看不清就用脚跟。"""
-        for name in ZONE_LIMBS.get(zone, {}).get("target", ()):
+        for name in self.targets.get(zone, ZONE_LIMBS.get(zone, {}).get("target", ())):
             if self.position(name) is not None:
                 return name
         return None

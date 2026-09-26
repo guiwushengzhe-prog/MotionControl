@@ -28,13 +28,14 @@ from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
 from motioncontrol.key_macros import MacroError, MacroStore
 from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
 from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
-from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
+from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService, RUNTIME_BODY_ZONES
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.intent_library import ZoneLearner
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
 from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
 from motioncontrol_shared.profile_schema import action_catalog
+from motioncontrol_shared.pose_points import POSE_CONNECTIONS, POSE_POINT_LABELS
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
 from motioncontrol_shared.model_share import ModelShare
@@ -1144,7 +1145,9 @@ class AdminHandler(_BaseHandler):
                              })
             return
         if route == "/api/output/actions":
-            self._send_json({"version": VERSION, "actions": action_catalog()})
+            self._send_json({"version": VERSION, "actions": action_catalog(),
+                             "zone_point_labels": POSE_POINT_LABELS, "zone_segments": POSE_CONNECTIONS,
+                             "zone_default_points": {name: info["points"] for name, info in RUNTIME_BODY_ZONES.items()}})
             return
         if self._try_model_route(route):
             return
