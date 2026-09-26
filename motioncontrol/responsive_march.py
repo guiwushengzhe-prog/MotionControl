@@ -6,6 +6,8 @@ import math
 class ResponsiveMarch:
     LIFT_START = .055
     LIFT_END = .04
+    LIFT_CONTINUE = .02
+    LIFT_CONTINUE_END = .01
     CONFIRM_S = .020
     GROUNDED_STOP_MIN_S = .12
     GROUNDED_STOP_MAX_S = .28
@@ -32,20 +34,26 @@ class ResponsiveMarch:
             return False
         if self.last_at is not None and not 0 < now - self.last_at <= .25:
             self.reset()
+        if self.active_until and now >= self.active_until:
+            # 已停止：低幅度节奏不能借给下一次起动。
+            self.reset()
         self.last_at = now
         was_active = now < self.active_until
+        lift_start = self.LIFT_CONTINUE if was_active else self.LIFT_START
+        lift_end = self.LIFT_CONTINUE_END if was_active else self.LIFT_END
+        motion_delta = .004 if was_active else .01
         moving = False
-        two_feet_lifted = all(height >= self.LIFT_START for height in lifts.values())
+        two_feet_lifted = all(height >= lift_start for height in lifts.values())
         for side, leg in self.legs.items():
             height = lifts[side]
-            if side in excluded or height < self.LIFT_END:
+            if side in excluded or height < lift_end:
                 leg.update(since=None, announced=False, motion_height=height)
                 continue
-            if leg["motion_height"] is None or abs(height - leg["motion_height"]) >= .01:
+            if leg["motion_height"] is None or abs(height - leg["motion_height"]) >= motion_delta:
                 moving = True
                 leg["motion_height"] = height
             if leg["since"] is None:
-                if height < self.LIFT_START:
+                if height < lift_start:
                     continue
                 leg["since"] = now
                 moving = True
@@ -57,17 +65,21 @@ class ResponsiveMarch:
                 continue
             leg["announced"] = True
             if alternating:
-                # 较低门槛会提前记下每一步，步间节奏可能不均；覆盖这段过渡，
-                # 双脚落地和悬空静止仍按原来的短时判据及时停步。
                 self.active_until = now + min(.80, max(.22, 1.75 * gap + .02))
                 # 真人慢踏步在两步之间会双脚落地约 0.2 秒，不能当成已经停下。
                 self.grounded_stop_s = min(self.GROUNDED_STOP_MAX_S,
                                            max(self.GROUNDED_STOP_MIN_S, .4 * gap))
                 self.last_motion_at = now
-            self.last_side, self.last_event_at = side, now
+            # 起动前可重复记录同一脚；持续阶段只由真正交替更新节奏。
+            if alternating or not was_active:
+                self.last_side, self.last_event_at = side, now
         if moving:
             self.last_motion_at = now
-        grounded = all(height < self.LIFT_END for height in lifts.values())
+            if was_active:
+                # 低门槛可能在一次大步的早期就越线。脚仍在抬落时衔接到下一帧，
+                # 同一腿持续活动不能超过最后一次两脚交替后的 1.5 秒。
+                self.active_until = max(self.active_until, min(now + .25, self.last_event_at + 1.50))
+        grounded = all(height < lift_end for height in lifts.values())
         if jumping and was_active:
             self.active_until = max(self.active_until, now + .15)
             self.last_motion_at = now
@@ -79,8 +91,13 @@ class ResponsiveMarch:
                 self.active_until = 0.0
         else:
             self.grounded_since = None
-        # 起脚前的落地线到起动线之间，不能突然套用悬空静止超时。
-        if (any(height >= self.LIFT_START for height in lifts.values())
+        # 持续阶段的小幅动作卡在两条低门槛之间，也要能在静止后及时停下。
+        # 未起动时仍保留原来的起脚过渡规则。
+        still_height = lift_end if was_active else lift_start
+        if (any(height >= still_height for height in lifts.values())
                 and now - self.last_motion_at >= self.STILL_STOP_S):
             self.active_until = 0.0
-        return now < self.active_until
+        active = now < self.active_until
+        if was_active and not active:
+            self.reset()
+        return active

@@ -249,6 +249,71 @@ def test_uneven_alternating_steps_stay_continuous_with_the_lower_lift_threshold(
     assert not active
 
 
+@pytest.mark.parametrize('fps', [16, 30, 60])
+@pytest.mark.parametrize('cadence', [.45, .65])
+def test_started_march_continues_with_very_small_alternating_steps_and_stops(fps, cadence):
+    c = ResponsiveMarch()
+    start_march(c)
+    for index in range(1, 3 * fps + 1):
+        elapsed = index / fps
+        height = .025 * math.sin(elapsed / cadence * math.tau)
+        lifts = {'left': max(0., height), 'right': max(0., -height)}
+        assert c.update(lifts, 1.29 + elapsed), elapsed
+    for index in range(1, int(.3 * fps) + 1):
+        active = c.update({'left': 0., 'right': 0.}, 4.29 + index / fps)
+    assert not active
+    # 停下后，这样的小幅交替不能重新起动。
+    for index in range(1, 2 * fps + 1):
+        height = .025 * math.sin(index / fps / cadence * math.tau)
+        assert not c.update({'left': max(0., height), 'right': max(0., -height)}, 4.59 + index / fps)
+
+
+@pytest.mark.parametrize('height', [.015, .025])
+def test_stationary_low_foot_with_small_jitter_does_not_keep_a_started_walk_alive(height):
+    c = ResponsiveMarch()
+    start_march(c)
+    for index in range(1, 11):
+        active = c.update({'left': 0., 'right': height + .0005 * (index % 2)}, 1.29 + index / 30)
+    assert not active
+
+
+def test_small_alternation_alone_does_not_start_a_walk():
+    c = ResponsiveMarch()
+    for index in range(120):
+        height = .03 * math.sin(index / 30 / .6 * math.tau)
+        assert not c.update({'left': max(0., height), 'right': max(0., -height)}, 10 + index / 30)
+
+
+def test_started_walk_cannot_be_kept_alive_by_repeated_movements_of_one_leg():
+    c = ResponsiveMarch()
+    start_march(c)
+    values = []
+    for index in range(1, 91):
+        height = max(0., .03 * math.sin(index / 30 / .3 * math.tau))
+        values.append(c.update({'left': 0., 'right': height}, 1.29 + index / 30))
+    assert not any(values[45:]), '同一脚反复动不能一直续上踏步'
+
+
+def test_small_steps_continue_through_the_kernel_and_stop_when_grounded(monkeypatch):
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_march_algorithm('responsive')
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        feed(lifted('left'), 4)
+        feed(_standing_pose(), 2)
+        feed(lifted('right'), 3)
+        assert 'march' in kernel.motion_active
+        for index in range(90):
+            height = .025 * math.sin((index + 1) / 30 / .65 * math.tau)
+            feed(lifted('left' if height >= 0 else 'right', knee=.01, ankle=abs(height)), 1)
+            assert 'march' in kernel.motion_active
+        feed(_standing_pose(), 10)
+        assert 'march' not in kernel.motion_active
+    finally:
+        kernel.close()
+
+
 def test_single_leg_and_excluded_movements_never_start():
     c = ResponsiveMarch()
     for i in range(100):
