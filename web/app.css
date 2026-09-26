@@ -287,6 +287,12 @@ main { padding-top: 20px; }
 /* 触发 = 绿，和手机、动作测试页一个意思。 */
 .zone.active { border-color: #54f29a; background: rgba(84, 242, 154, .26); }
 
+/* 智能判定：黄虚线 = 进框了、正在判断是不是故意的；红 = 判定是做动作扫过，没按
+   （闪一下就灭）。系统功能要稳住才按，底下的黄条是稳住走到哪了。 */
+.zone.pending { border-color: #ffcc33; border-style: dashed; background-color: rgba(255, 204, 51, .18);
+  background-image: linear-gradient(to top, rgba(255, 204, 51, .45) var(--progress, 0%), transparent var(--progress, 0%)); }
+.zone.swept { border-color: #ff5966; background: rgba(255, 89, 102, .28); }
+
 .zone-editing .zone { pointer-events: auto; cursor: grab; touch-action: none; }
 
 /* 定住的跟随框：四个角上的把手拖着改大小。放在框里面，贴着画面边的框也拖得到。 */
@@ -987,3 +993,20 @@ dialog .settings-actions { margin-top: 20px; }
 .tour-cursor svg { fill: #fff; stroke: var(--bg); stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .65)); }
 .tour-cursor span { margin-top: 18px; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: var(--bg);
   font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+/* 录我的动作 */
+.intent-heading { margin-top: 18px; }
+.intent-heading h4 { margin: 0; font-size: 14px; }
+.intent-report { margin-top: 8px; font-size: 12.5px; line-height: 1.7; }
+.intent-report summary { cursor: pointer; }
+.intent-report table { border-collapse: collapse; margin: 6px 0; }
+.intent-report td, .intent-report th { padding: 2px 10px 2px 0; text-align: left; font-weight: normal; }
+.intent-report th { color: var(--text-3); }
+.intent-report .bad { color: var(--warn); }
+
+/* 映射表里框那几行：做动作时也要按、会扫过它的动作 */
+.binding-row .zone-with-motion { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 6px; justify-self: start;
+  white-space: nowrap; font-size: 12.5px; color: var(--text-2, var(--text-3)); cursor: pointer; }
+.binding-row .zone-with-motion input { width: 16px; flex: none; }
+.zone-conflict-note { grid-column: 1 / -1; margin-top: -8px; font-size: 12px; line-height: 1.5; color: var(--text-3); }
+.zone-conflict-note[hidden] { display: none; }

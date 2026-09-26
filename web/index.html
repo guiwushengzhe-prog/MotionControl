@@ -30,6 +30,7 @@
 </div>
 <div class="hint" id="hint">连接摄像头后，这里显示画面和体感区域</div>
 </div>
+<p class="pose-missing-notice misfire-hint" hidden="" id="misfireHint" role="status"><span></span><button class="btn" id="misfireHintGo" type="button">去录一下</button><button class="btn" id="misfireHintDismiss" type="button">先不用</button></p>
 <div class="viewer-foot">
 <div class="viewer-status">
 <div class="statusline" id="headStatus">头控：等待中心</div>
@@ -243,13 +244,17 @@
 <div class="settings-section" id="zoneTriggerSettings">
 <h3 class="title">区域触发方式</h3>
 <p class="lede">手、脚、头进了画面上的框，怎么才算按下。所有游戏通用。</p>
-<label class="zone-trigger-mode">区域怎么算按下<select id="zoneTriggerMode"><option value="guarded">防误触</option><option value="simple">进去就按</option></select></label>
+<label class="zone-trigger-mode">区域怎么算按下<select id="zoneTriggerMode"><option value="smart">智能</option><option value="simple">进去就按</option></select></label>
 <ul class="lede-list" id="zoneTriggerHelp">
-<li><b>防误触</b>：手要伸进去够深、停一小会儿才按，两只手一起扫进来要停更久；脚要真的抬起来往外伸；框和动作都绑了键时，做动作扫过框不按。</li>
+<li><b>智能</b>：进框时看一眼是故意伸进来的，还是做动作顺路扫过。没有动作会扫过这个框时，进去就按；只有这一只手在动也马上按；身体正在做大动作时先看一看，最多等 0.25 秒。框变黄 = 正在判断，闪一下红 = 判定是扫过，没按。</li>
 <li><b>进去就按</b>：进框那一帧就按，出框那一帧就松，别的都不管。反应最快，也最容易误按。</li>
 </ul>
-<p class="fineprint">两种方式下，握拳控制鼠标的那只手经过框都不会按。</p>
+<p class="fineprint">两种方式下，握拳控制鼠标的那只手经过框都不会按。框的输出是「系统功能」时，智能方式下要在框里稳住 0.6 秒才按。</p>
 <p class="statusline" id="zoneTriggerStatus" role="status"></p>
+<div class="view-control-heading intent-heading"><h4 class="title">录我的动作</h4><button class="btn" id="intentRecordBtn">录我的动作</button></div>
+<p class="lede">照提示每个框故意按几下、每个动作做几遍，大约三四分钟。录完智能判定就按你自己的动作来分：哪个动作会扫过哪个框、你故意按时是什么样子。和游戏无关，录一次所有游戏都用。</p>
+<p class="statusline" id="intentStatus" role="status">还没录过</p>
+<details class="intent-report" id="intentReport" hidden><summary>体检报告</summary><div id="intentReportBody"></div></details>
 </div>
 
 <div class="settings-section" id="zoneFitSettings">
