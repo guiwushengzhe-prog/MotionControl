@@ -192,6 +192,9 @@ class WindowsSpeechRecognizer:
         self.sample_rate = int(sample_rate)
         self.supported = [str(item) for item in dict.fromkeys(phrases) if compact_text(item)]
         self.unsupported: list[str] = []
+        # Windows 识别器不经过 Vosk 模型词表过滤。保留与旧识别器相同的校验接口，
+        # 让设置页在两种识别来源下都能工作。
+        self.unheard: dict[str, list[str]] = {}
         self.last_partial = ""
         self._events: queue.Queue[dict] = queue.Queue()
         self._write_lock = threading.Lock()
@@ -224,6 +227,11 @@ class WindowsSpeechRecognizer:
             error = self._startup_error
             self.close()
             raise RuntimeError(error)
+
+    def tokens_for(self, phrase: str) -> tuple[list[str], list[str]]:
+        """返回旧识别器使用的口令检查结果结构。"""
+        compact = compact_text(phrase)
+        return ([compact], []) if compact else ([], [])
 
     def _read_events(self) -> None:
         stream = self._process.stdout
@@ -739,6 +747,7 @@ class VoiceService:
             self.last_error = None
             self.audio_ready = True
         except Exception as exc:
+            self.recognizer = None
             self.recognizer_mode = "off"
             self.last_error = str(exc)
             self.audio_ready = False
