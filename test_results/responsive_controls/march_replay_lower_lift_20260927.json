@@ -1,0 +1,302 @@
+{
+  "conditions": "关闭实际输出、独立临时内核、相同默认区域、小腿后抬及碰肘均有映射",
+  "limits": "已有骨架离线回放；起动时刻是记录内时刻，不能当作端到端延迟",
+  "recordings": [
+    {
+      "file": "intent-20260926-195125-312771.jsonl",
+      "frames": 2988,
+      "legacy": [
+        {
+          "key": "idle",
+          "name": "随便动动",
+          "duration_s": 9.114,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:leftHand",
+          "name": "左手框",
+          "duration_s": 8.561,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:leftHand",
+          "name": "左手框（快速）",
+          "duration_s": 4.109,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:rightHand",
+          "name": "右手框",
+          "duration_s": 8.156,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:rightHand",
+          "name": "右手框（快速）",
+          "duration_s": 3.352,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:headJump",
+          "name": "头顶框",
+          "duration_s": 10.117,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:headJump",
+          "name": "头顶框（快速）",
+          "duration_s": 4.01,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:leftFoot",
+          "name": "左脚框",
+          "duration_s": 12.272,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:leftFoot",
+          "name": "左脚框（快速）",
+          "duration_s": 7.039,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:rightFoot",
+          "name": "右脚框",
+          "duration_s": 11.092,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:rightFoot",
+          "name": "右脚框（快速）",
+          "duration_s": 5.234,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "action:motion.march",
+          "name": "原地踏步",
+          "duration_s": 7.079,
+          "first_on_t": 102.4933,
+          "active_s": 6.093,
+          "active_runs": 1,
+          "final_ground_stop_ms": 492.7
+        },
+        {
+          "key": "action:motion.calf_back",
+          "name": "小腿向后抬起",
+          "duration_s": 7.696,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "action:motion.cross_knee_elbow",
+          "name": "提膝碰对侧肘",
+          "duration_s": 7.218,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "action:motion.side_step_jack",
+          "name": "侧步开合",
+          "duration_s": 24.651,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "action:pose.hands_cross",
+          "name": "双手交叉",
+          "duration_s": 8.177,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        }
+      ],
+      "responsive": [
+        {
+          "key": "idle",
+          "name": "随便动动",
+          "duration_s": 9.114,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:leftHand",
+          "name": "左手框",
+          "duration_s": 8.561,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:leftHand",
+          "name": "左手框（快速）",
+          "duration_s": 4.109,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:rightHand",
+          "name": "右手框",
+          "duration_s": 8.156,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:rightHand",
+          "name": "右手框（快速）",
+          "duration_s": 3.352,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:headJump",
+          "name": "头顶框",
+          "duration_s": 10.117,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:headJump",
+          "name": "头顶框（快速）",
+          "duration_s": 4.01,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:leftFoot",
+          "name": "左脚框",
+          "duration_s": 12.272,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:leftFoot",
+          "name": "左脚框（快速）",
+          "duration_s": 7.039,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "press:rightFoot",
+          "name": "右脚框",
+          "duration_s": 11.092,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "tap:rightFoot",
+          "name": "右脚框（快速）",
+          "duration_s": 5.234,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "action:motion.march",
+          "name": "原地踏步",
+          "duration_s": 7.079,
+          "first_on_t": 102.4235,
+          "active_s": 6.163,
+          "active_runs": 1,
+          "final_ground_stop_ms": 115.7
+        },
+        {
+          "key": "action:motion.calf_back",
+          "name": "小腿向后抬起",
+          "duration_s": 7.696,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "action:motion.cross_knee_elbow",
+          "name": "提膝碰对侧肘",
+          "duration_s": 7.218,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "action:motion.side_step_jack",
+          "name": "侧步开合",
+          "duration_s": 24.651,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        },
+        {
+          "key": "action:pose.hands_cross",
+          "name": "双手交叉",
+          "duration_s": 8.177,
+          "first_on_t": null,
+          "active_s": 0,
+          "active_runs": 0,
+          "final_ground_stop_ms": null
+        }
+      ]
+    }
+  ]
+}

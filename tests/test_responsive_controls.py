@@ -164,8 +164,28 @@ def test_march_opposite_leg_starts_in_the_threshold_frame(fps):
     assert not c.update({'left': 0., 'right': 0.}, 1. + 3 * dt)
     for index in range(4, 8):
         assert not c.update({'left': 0., 'right': 0.}, 1. + index * dt)
-    assert not c.update({'left': 0., 'right': .06}, 1. + 8 * dt)
-    assert c.update({'left': 0., 'right': .08}, 1. + 9 * dt)
+    assert not c.update({'left': 0., 'right': .05}, 1. + 8 * dt)
+    assert c.update({'left': 0., 'right': .06}, 1. + 9 * dt)
+
+
+@pytest.mark.parametrize('algorithm,height,expected', [
+    ('responsive', .06, True), ('responsive', .05, False), ('legacy', .06, False),
+])
+def test_shallow_alternating_steps_only_start_above_the_selected_algorithms_threshold(monkeypatch, algorithm, height, expected):
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_march_algorithm(algorithm)
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        feed(lifted('left', knee=.03, ankle=height), 3)
+        assert 'march' not in kernel.motion_active
+        feed(_standing_pose(), 4)
+        feed(lifted('right', knee=.03, ankle=height), 3)
+        assert ('march' in kernel.motion_active) == expected
+        feed(_standing_pose(), 10)
+        assert 'march' not in kernel.motion_active
+    finally:
+        kernel.close()
 
 
 def test_march_expired_alternation_and_simultaneous_lifts_do_not_start():
@@ -208,6 +228,25 @@ def test_regular_alternation_stays_continuous_and_stops(fps, cadence):
     for i in range(1, int(.3 * fps) + 1):
         value = c.update({'left': 0., 'right': 0.}, 14 + i / fps)
     assert not value
+
+
+def test_uneven_alternating_steps_stay_continuous_with_the_lower_lift_threshold():
+    c = ResponsiveMarch()
+    assert not c.update({'left': .06, 'right': 0.}, 9.60)
+    assert not c.update({'left': .08, 'right': 0.}, 9.64)
+    assert not c.update({'left': 0., 'right': 0.}, 9.75)
+    assert not c.update({'left': 0., 'right': 0.}, 9.90)
+    events = [10., 10.4, 11.1, 11.5, 12.2, 12.6, 13.3, 13.7, 14.1]
+    for index in range(240):
+        now = 10 + index / 60
+        step = max(i for i, start in enumerate(events[:-1]) if start <= now)
+        phase = (now - events[step]) / (events[step + 1] - events[step])
+        height = .06 + .08 * phase / .35 if phase <= .35 else .14 * (1 - (phase - .35) / .65)
+        side = 'right' if step % 2 == 0 else 'left'
+        assert c.update({side: height, ('left' if side == 'right' else 'right'): 0.}, now), now
+    for index in range(1, 19):
+        active = c.update({'left': 0., 'right': 0.}, 14 + index / 60)
+    assert not active
 
 
 def test_single_leg_and_excluded_movements_never_start():

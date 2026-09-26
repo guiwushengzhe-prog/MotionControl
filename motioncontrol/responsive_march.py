@@ -4,7 +4,7 @@ import math
 
 
 class ResponsiveMarch:
-    LIFT_START = .07
+    LIFT_START = .055
     LIFT_END = .04
     CONFIRM_S = .020
     GROUNDED_STOP_MIN_S = .12
@@ -57,8 +57,9 @@ class ResponsiveMarch:
                 continue
             leg["announced"] = True
             if alternating:
-                # 跨到下一只脚的确认帧要留少量余量；落地/静止判据负责及时停步。
-                self.active_until = now + min(.65, max(.22, 1.25 * gap + .02))
+                # 较低门槛会提前记下每一步，步间节奏可能不均；覆盖这段过渡，
+                # 双脚落地和悬空静止仍按原来的短时判据及时停步。
+                self.active_until = now + min(.80, max(.22, 1.75 * gap + .02))
                 # 真人慢踏步在两步之间会双脚落地约 0.2 秒，不能当成已经停下。
                 self.grounded_stop_s = min(self.GROUNDED_STOP_MAX_S,
                                            max(self.GROUNDED_STOP_MIN_S, .4 * gap))
@@ -78,7 +79,7 @@ class ResponsiveMarch:
                 self.active_until = 0.0
         else:
             self.grounded_since = None
-        # 起脚前的 0.04~0.07 过渡不能突然套用悬空静止超时。
+        # 起脚前的落地线到起动线之间，不能突然套用悬空静止超时。
         if (any(height >= self.LIFT_START for height in lifts.values())
                 and now - self.last_motion_at >= self.STILL_STOP_S):
             self.active_until = 0.0
