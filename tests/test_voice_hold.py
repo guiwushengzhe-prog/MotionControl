@@ -94,7 +94,7 @@ def test_grammar_phrases_cover_every_recognisable_phrase(tmp_path):
         {'phrase': '地图', 'type': 'keyboard', 'target': 'M', 'synonyms': ['打开地图']},
     ])
     phrases = service.grammar_phrases()
-    assert service.wake_word in phrases
+    assert service.wake_word not in phrases, '唤醒词不能作为独立口令'
     assert service.wake_word + '保持左肩键' in phrases
     assert service.wake_word + '打开地图' in phrases, 'synonyms must be recognisable too'
     for command in service.command_registry.values():

@@ -42,11 +42,8 @@ COPY_TREES = ("web", "game_profiles")
 CONFIG_FILES = (
     "voice_commands_v094.json",
 )
-# The Windows speech bridge is a runtime helper rather than a Python import, so
-# the import-graph copier would otherwise leave it out of portable releases.
-RUNTIME_FILES = (
-    "tools/windows_speech_helper.ps1",
-)
+# 语音识别直接使用随包的 Vosk 模型，不再打包 Windows 系统语音桥接脚本。
+RUNTIME_FILES = ()
 
 # Configuration that belongs to the bundle, not to the repository: it points at
 # paths *inside* the release.  The repo's copies point at a developer's machine

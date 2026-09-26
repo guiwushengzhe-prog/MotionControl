@@ -96,7 +96,7 @@ function zoneKeyLabel(id,def){
   return texts.length?texts.join(' / '):'未映射';
 }
 
-let currentPoseMap=null, kernelState=null, sourceMode='computer', audioSource='computer', audioMode='waiting', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
+let currentPoseMap=null, kernelState=null, sourceMode='computer', audioSource='computer', audioDevice='', audioMode='waiting', cameraIndex=0, cameraRunning=false, modelAvailable=false, sessionStarted=false, sceneConfigured=false, scenePreparing=false;
 // 摄像头的完整状态和最近一次扫描结果。新手教学要按这些判断「这台电脑现在能开什么」。
 let cameraInfo=null;const cameraScan={state:'idle',count:0,error:''};
 // 急停真的被按了几次。教学的最后一步要认的是急停，不是随便哪种关掉输出。
@@ -451,9 +451,13 @@ function renderInputStatus(status){
   inputStatus=status||{};
   const modeSource=['computer','phone'].includes(status.audio_mode)?status.audio_mode:null;
   audioSource=status.audio_source||modeSource||audioSource||'computer';
+  if(status.audio_device!==undefined)audioDevice=status.audio_device===null?'':String(status.audio_device);
   audioMode=status.audio_mode||'waiting';
   const audioSelect=$('#audioSource');
   if(audioSelect&&document.activeElement!==audioSelect)audioSelect.value=audioSource;
+  const deviceSelect=$('#audioDevice');
+  if(deviceSelect&&document.activeElement!==deviceSelect&&Array.from(deviceSelect.options).some(option=>option.value===audioDevice))deviceSelect.value=audioDevice;
+  const deviceRow=$('#audioDeviceRow');if(deviceRow)deviceRow.hidden=audioSource!=='computer';
   const audioStatus=$('#audioStatus');
   if(audioStatus){
     const voice=status.voice||{};
@@ -509,6 +513,24 @@ async function refreshKernel(){
 async function refreshInput(){
   try{renderInputStatus(await api('/api/input/status?brief=1'))}
   catch{renderInputStatus({});$('#mobileStatus').textContent='设备状态无法确认'}
+}
+function renderAudioDevices(devices,current){
+  const select=$('#audioDevice');if(!select)return;
+  const selected=current===null||current===undefined?'':String(current);
+  const options=[new Option('系统默认设备','')];
+  for(const item of (devices||[])){
+    const suffix=item.supports_16k?'': '（不支持 16kHz）';
+    const option=new Option(`${item.index} · ${item.name}${suffix}`,String(item.index));
+    option.disabled=!item.supports_16k;
+    options.push(option);
+  }
+  select.replaceChildren(...options);
+  audioDevice=selected;
+  select.value=selected;
+  if(select.value!==selected)select.value='';
+}
+async function refreshAudioDevices(){
+  try{const data=await api('/api/audio/devices');renderAudioDevices(data.devices,data.audio_device)}catch{}
 }
 function bindingFor(trigger){
   const items=gameProfile.selected?.bindings?.[trigger.group]||{};
@@ -2065,7 +2087,7 @@ async function init(){
   await Promise.all([refreshCustomPoses({rebuild:false}), refreshMacros({rebuild:false})]);
   await refreshKernel();await refreshOutput();
   const results=await Promise.allSettled([
-    refreshInput(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshPoseLibrary(),
+    refreshInput(),refreshAudioDevices(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshPoseLibrary(),
     reloadViewControlState().then(()=>{setViewControlBusy(false);renderViewControl(true)}),
     api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
@@ -2098,6 +2120,12 @@ $('#audioSource').addEventListener('change',e=>runAction(async()=>{
   audioSource=result.audio_source||value;audioMode=result.audio_mode||'waiting';
   renderInputStatus(result);
   notice(value==='phone'?'已选择手机麦克风，等待手机连接':'已选择电脑麦克风');
+}));
+$('#audioDevice').addEventListener('change',e=>runAction(async()=>{
+  const value=e.target.value;
+  const result=await post('/api/input/audio-device',{audio_device:value||null});
+  renderInputStatus(result);
+  notice(value?'已切换电脑音频输入设备':'已恢复系统默认音频输入设备');
 }));
 bind('overlayBtn',toggleOverlay);
 for(const [id,key] of [['handMouseEnabled','enabled'],['handMouseSensitivity','sensitivity'],['handMouseDeadzone','deadzone'],['handMouseClose','fist_close'],['handMouseOpen','fist_open'],['handMouseCurlClose','curl_close'],['handMouseCurlOpen','curl_open']]){

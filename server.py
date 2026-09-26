@@ -79,6 +79,16 @@ print("用户数据目录：", user_data_root())
 
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
+# 输出模式属于用户偏好，跟着程序重启保留；没有旧记录时才使用原来的鼠标默认值。
+_saved_output_mode = str(KERNEL.general_setting("output_mode", "mouse") or "mouse").strip().lower()
+if _saved_output_mode not in {"mouse", "gamepad"}:
+    _saved_output_mode = "mouse"
+try:
+    OUTPUT.set_config(mode=_saved_output_mode)
+except Exception as exc:
+    # 记住选择本身；没有 ViGEm 驱动时仍让页面显示上次模式，并把原因留给状态栏。
+    OUTPUT.mode = _saved_output_mode
+    OUTPUT.last_error = str(exc)
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
 PROFILE_UPDATE_LOCK = threading.RLock()
 PROFILES = GameProfileStore(ROOT)
@@ -268,6 +278,81 @@ def _saved_audio_source() -> str:
 AUDIO_SOURCE = _saved_audio_source()
 
 
+def _saved_audio_device() -> int | None:
+    """读取上次选择的电脑输入设备；空值表示系统默认设备。"""
+    try:
+        value = KERNEL.general_setting("audio_device", None)
+        if value in (None, "", "default"):
+            return None
+        return int(value)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+AUDIO_DEVICE = _saved_audio_device()
+
+
+def _normalize_audio_device(value) -> int | None:
+    if value in (None, "", "default"):
+        return None
+    if isinstance(value, bool):
+        raise ValueError("audio_device must be an input device index or default")
+    try:
+        index = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("audio_device must be an input device index or default") from exc
+    if index < 0:
+        raise ValueError("audio_device must be an input device index or default")
+    return index
+
+
+def _list_audio_devices() -> dict:
+    try:
+        import sounddevice as sd
+        defaults = sd.default.device
+        default_input = defaults[0] if isinstance(defaults, (list, tuple)) else defaults
+        devices = []
+        for index, item in enumerate(sd.query_devices()):
+            if int(item.get("max_input_channels", 0) or 0) <= 0:
+                continue
+            try:
+                sd.check_input_settings(device=index, samplerate=VOICE.sample_rate, channels=1, dtype="int16")
+                supported = True
+            except Exception:
+                supported = False
+            devices.append({
+                "index": index,
+                "name": str(item.get("name", f"输入设备 {index}")),
+                "host_api": str(item.get("hostapi", "")),
+                "default_samplerate": item.get("default_samplerate"),
+                "supports_16k": supported,
+                "default": index == default_input,
+            })
+        return {"devices": devices, "audio_device": AUDIO_DEVICE}
+    except Exception as exc:
+        return {"devices": [], "audio_device": AUDIO_DEVICE, "error": str(exc)}
+
+
+def _set_audio_device(device, *, start: bool = True) -> dict:
+    global AUDIO_DEVICE
+    selected = _normalize_audio_device(device)
+    if selected is not None:
+        available = {item["index"]: item for item in _list_audio_devices().get("devices", [])}
+        info = available.get(selected)
+        if info is None:
+            raise ValueError("找不到这个音频输入设备")
+        if not info.get("supports_16k"):
+            raise ValueError("这个输入设备不支持 16kHz 语音采集，请换一个设备")
+    AUDIO_DEVICE = selected
+    KERNEL.remember_general_setting("audio_device", selected)
+    if AUDIO_SOURCE != "computer":
+        return _audio_payload()
+    if start:
+        return VOICE.start_local_microphone(device=AUDIO_DEVICE)
+    VOICE.stop_local_microphone()
+    return _audio_payload()
+
+
 def _set_audio_source(source: str, *, start: bool = True) -> dict:
     """独立切换语音来源，不触碰身体（摄像头/姿态）来源。"""
     global AUDIO_SOURCE
@@ -285,7 +370,7 @@ def _set_audio_source(source: str, *, start: bool = True) -> dict:
             if active_kind == "computer":
                 return VOICE.status()
             try:
-                return VOICE.start_local_microphone()
+                return VOICE.start_local_microphone(device=AUDIO_DEVICE)
             except Exception as exc:
                 return {**VOICE.status(), "last_error": str(exc)}
         # 只恢复下拉选择时不提前打开麦克风，也要释放上一次的手机源。
@@ -306,6 +391,7 @@ def _audio_payload() -> dict:
     active = voice.get("source_kind")
     return {
         "audio_source": AUDIO_SOURCE,
+        "audio_device": AUDIO_DEVICE,
         "audio_mode": active or "waiting",
         "voice": voice,
     }
@@ -1088,6 +1174,9 @@ class AdminHandler(_BaseHandler):
             data.update(_audio_payload())
             self._send_json(data)
             return
+        if route == "/api/audio/devices":
+            self._send_json({"version": VERSION, "ok": True, **_list_audio_devices()})
+            return
         if route == "/api/kernel/status":
             # 录姿势的倒计时挂在这里，因为这是 250ms 轮询的那一份——人站在几米外
             # 盯着屏幕等数字，一秒刷一次都嫌慢。
@@ -1529,12 +1618,8 @@ class AdminHandler(_BaseHandler):
                     voice_data = _set_audio_source(AUDIO_SOURCE)
                 elif not enabled:
                     voice_data = _set_audio_source(AUDIO_SOURCE, start=False)
-                # Close the mobile gate before stopping/starting the body source.
-                # This keeps a phone frame from racing a source transition.
                 INPUT_BRIDGE.set_body_mode("computer")
                 INPUT_BRIDGE.clear_mobile_sources()
-                # Audio remains usable if the body model or camera cannot start.
-                # Each input reports its own readiness; a body failure is still an error.
                 if enabled:
                     data = RUNTIME.set_source(source, start_computer=True)
                 else:
@@ -1546,6 +1631,16 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": True, **data, **audio_data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status(), "voice": VOICE.status()}, 400)
+            return
+        if route == "/api/input/audio-device":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "audio device is loopback-only"}, 403)
+                return
+            try:
+                voice_data = _set_audio_device(body.get("audio_device"))
+                self._send_json({"ok": True, **_audio_payload(), "voice": voice_data})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **_audio_payload()}, 400)
             return
         if route == "/api/camera/config":
             if not self._is_loopback():
@@ -1743,6 +1838,8 @@ class AdminHandler(_BaseHandler):
                     xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
                     physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
                 )
+                if body.get("mode") in {"mouse", "gamepad"}:
+                    KERNEL.remember_general_setting("output_mode", body["mode"])
                 _broadcast_game_output_state()
             elif route == "/api/output/xinput":
                 data = OUTPUT.configure_xinput_merge(
