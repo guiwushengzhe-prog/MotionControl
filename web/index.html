@@ -267,6 +267,19 @@
 <details class="intent-report" id="intentReport" hidden><summary>体检报告</summary><div id="intentReportBody"></div></details>
 </div>
 
+<div class="settings-section" id="triggerRecordSettings">
+<h3 class="title">实时触发录制</h3>
+<label class="check"><input id="triggerRecordEnabled" type="checkbox"/>开启触发录制</label>
+<div class="trigger-record-select-label">保存这些触发</div>
+<details id="triggerRecordPicker" class="trigger-record-picker">
+<summary id="triggerRecordSummary">选择动作</summary>
+<div id="triggerRecordChoices" class="trigger-record-menu" role="listbox" aria-label="选择要录制的触发" aria-multiselectable="true"></div>
+</details>
+<p class="fineprint">只保留选中触发的前 1 秒、完整过程和结束后 1 秒，重叠片段合并。点击多选，再点取消；只录骨骼数据。</p>
+<p class="statusline" id="triggerRecordStatus" role="status">未开启</p>
+<p class="fineprint" id="triggerRecordFile"></p>
+</div>
+
 <div class="settings-section" id="zoneFitSettings">
 <div class="view-control-heading"><h3 class="title">量身</h3><button class="btn" id="zoneFitBtn">量一下</button></div>
 <p class="lede">画面里跟着你走的那几个圈放在哪、多大，握拳怎么算握紧，照你自己的动作定。站到平时玩的位置，挥挥手、伸伸脚、跳一下就行。</p>

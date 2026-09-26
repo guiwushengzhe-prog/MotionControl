@@ -1300,6 +1300,10 @@ class AdminHandler(_BaseHandler):
         if route == "/api/pose/record":
             self._send_json({"version": VERSION, "recording": KERNEL.pose_recorder.status()})
             return
+        if route == "/api/pose/trigger-recording":
+            self._send_json({"version": VERSION, "recording": KERNEL.trigger_recorder.status(),
+                             "choices": KERNEL.trigger_recording_choices()})
+            return
         if route == "/api/hand-mouse/config":
             self._send_json({"version": VERSION,
                              "hand_mouse": KERNEL.hand_mouse_controller.status()})
@@ -1777,6 +1781,16 @@ class AdminHandler(_BaseHandler):
                 else:
                     status = KERNEL.pose_recorder.start(
                         delay_s=body.get("delay_s"), duration_s=body.get("duration_s"))
+                self._send_json({"ok": True, "recording": status})
+            except (ValueError, TypeError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/pose/trigger-recording":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "只能在本机修改录制设置"}, 403)
+                return
+            try:
+                status = KERNEL.configure_trigger_recording(body)
                 self._send_json({"ok": True, "recording": status})
             except (ValueError, TypeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)

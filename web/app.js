@@ -370,6 +370,7 @@ function renderKernelState(runtime,force=false){
   renderTriggerLive();
   renderRange();
   const marchSelect=$('#marchAlgorithm');
+  renderTriggerRecord(k.trigger_recording);
   if(marchSelect&&!marchSelect.disabled&&document.activeElement!==marchSelect)marchSelect.value=k.march_algorithm==='responsive'?'responsive':'legacy';
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
   currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);renderZoneFreeze(k);renderIntent(k);renderMisfireHint(k);paintZoneConflictNotes();
@@ -1564,6 +1565,62 @@ function renderPoseRecord(state){
   }
 }
 async function refreshPoseRecord(){try{const data=await api('/api/pose/record');renderPoseRecord(data.recording)}catch{}}
+
+let triggerRecordSaving=false,triggerRecordChoices=[],triggerRecordState=null,triggerRecordChoiceKey='';
+function renderTriggerRecord(state){
+  if(!state||triggerRecordSaving)return;
+  triggerRecordState=state;
+  const config=state.config||{},selected=config.triggers||[];
+  $('#triggerRecordEnabled').checked=!!config.enabled;
+  const names=new Map(triggerRecordChoices.map(item=>[item.key,item.name]));
+  $('#triggerRecordSummary').textContent=selected.length?selected.map(key=>names.get(key)||key).join('、'):'选择动作';
+  const choices=[...triggerRecordChoices,...selected.filter(key=>!names.has(key)).map(key=>({key,name:key+'（暂不可用）'}))];
+  const signature=JSON.stringify(choices);
+  const menu=$('#triggerRecordChoices');
+  if(signature!==triggerRecordChoiceKey){
+    triggerRecordChoiceKey=signature;menu.replaceChildren();
+    for(const choice of choices){
+      const option=document.createElement('button');option.type='button';option.className='trigger-record-option';
+      option.dataset.trigger=choice.key;option.textContent=choice.name;option.setAttribute('role','option');menu.append(option);
+    }
+  }
+  for(const option of menu.children){const chosen=selected.includes(option.dataset.trigger);option.classList.toggle('selected',chosen);option.setAttribute('aria-selected',String(chosen))}
+  const phase={off:'未开启',waiting:selected.length?'监听中，等待选中触发':'请先选择要保存的触发',recording:'正在录制选中触发',tail:'保留收尾，等待相邻片段',error:state.error||'保存失败'}[state.state]||state.state;
+  $('#triggerRecordStatus').textContent=phase+` · 本次已保存 ${state.saved_clips||0} 段`+(state.saving?' · 正在保存':'');
+  $('#triggerRecordFile').textContent=state.file?'最近文件：'+state.file:'保存目录：'+state.directory;
+}
+async function refreshTriggerRecord(){
+  const data=await api('/api/pose/trigger-recording');
+  triggerRecordChoices=data.choices||[];renderTriggerRecord(data.recording);
+}
+async function saveTriggerRecord(payload){
+  if(triggerRecordSaving)return;
+  triggerRecordSaving=true;$('#triggerRecordEnabled').disabled=true;
+  for(const option of $('#triggerRecordChoices').children)option.disabled=true;
+  try{const data=await post('/api/pose/trigger-recording',payload);triggerRecordState=data.recording}
+  catch(error){notice('录制设置未保存：'+error.message)}
+  finally{
+    triggerRecordSaving=false;$('#triggerRecordEnabled').disabled=false;
+    renderTriggerRecord(triggerRecordState);for(const option of $('#triggerRecordChoices').children)option.disabled=false;
+  }
+}
+$('#triggerRecordEnabled').addEventListener('change',()=>void saveTriggerRecord({enabled:$('#triggerRecordEnabled').checked}));
+$('#triggerRecordChoices').addEventListener('click',event=>{
+  const option=event.target.closest('.trigger-record-option');if(!option||triggerRecordSaving)return;
+  const key=option.dataset.trigger,current=triggerRecordState?.config||{},selected=current.triggers||[];
+  const next=selected.includes(key)?selected.filter(item=>item!==key):[...selected,key];
+  void saveTriggerRecord({triggers:next,enabled:!!current.enabled&&next.length>0});
+});
+function placeTriggerRecordMenu(){
+  const picker=$('#triggerRecordPicker');if(!picker.open)return;
+  const rect=$('#triggerRecordSummary').getBoundingClientRect(),menu=$('#triggerRecordChoices');
+  const below=window.innerHeight-rect.bottom-12,above=rect.top-12,up=below<180&&above>below;
+  menu.classList.toggle('above',up);menu.style.maxHeight=Math.max(100,Math.min(300,up?above:below))+'px';
+}
+$('#triggerRecordPicker').addEventListener('toggle',()=>{if($('#triggerRecordPicker').open){placeTriggerRecordMenu();void refreshTriggerRecord().catch(error=>notice(error.message))}});
+window.addEventListener('resize',placeTriggerRecordMenu);
+document.addEventListener('click',event=>{if(!event.target.closest('#triggerRecordPicker'))$('#triggerRecordPicker').open=false});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')$('#triggerRecordPicker').open=false});
 async function startPoseRecord(){
   try{
     const data=await post('/api/pose/record',{delay_s:3,duration_s:15});
@@ -2217,7 +2274,7 @@ async function init(){
   await Promise.all([refreshCustomPoses({rebuild:false}), refreshMacros({rebuild:false})]);
   await refreshKernel();await refreshOutput();
   const results=await Promise.allSettled([
-    refreshInput(),refreshAudioDevices(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshPoseLibrary(),
+    refreshInput(),refreshAudioDevices(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshPoseLibrary(),refreshTriggerRecord(),
     reloadViewControlState().then(()=>{setViewControlBusy(false);renderViewControl(true)}),
     api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;

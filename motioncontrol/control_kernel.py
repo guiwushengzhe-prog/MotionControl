@@ -33,6 +33,7 @@ from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
 from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseController
 from motioncontrol.pose_recorder import PoseRecorder
+from motioncontrol.trigger_recorder import TriggerRecorder
 from motioncontrol.intent_recording import (
     IntentRecordingSession, IntentRecordingStore, build_steps,
 )
@@ -512,6 +513,7 @@ class ControlKernel:
         self.vertical_hand_controller = VerticalHandController()
         self.hand_mouse_controller = HandMouseController()
         self.pose_recorder = PoseRecorder(_user_recordings_dir())
+        self.trigger_recorder = TriggerRecorder(_user_recordings_dir() / "triggered")
         # The left-wrist lookGate is a deliberate arm/hand gate.  When it
         # becomes active we capture the right wrist's current Y as the
         # neutral anchor; head pitch is never allowed to reach final output.
@@ -724,6 +726,10 @@ class ControlKernel:
         # 的是 LocalControlRuntime 和 NativeCameraService。原样留着，别的地方
         # 通过 remember_general_setting 存的东西才不会被下一次写盘抹掉。
         self._general_raw = dict(data)
+        try:
+            self.trigger_recorder.configure(data.get("trigger_recording", {}))
+        except (ValueError, TypeError):
+            pass
         if data.get("march_algorithm") in {"legacy", "responsive"}:
             self.march_algorithm = data["march_algorithm"]
         hand_mouse = data.get("hand_mouse")
@@ -839,6 +845,7 @@ class ControlKernel:
             "action_chain": self.action_chain.config,
             "zone_trigger_mode": self.zone_trigger_mode,
             "march_algorithm": self.march_algorithm,
+            "trigger_recording": copy.deepcopy(self.trigger_recorder.config),
             "zone_freeze": {"frozen": bool(self.zones_frozen),
                             "rects": copy.deepcopy(self.frozen_rects),
                             "anchor": copy.deepcopy(self.frozen_anchor)},
@@ -1484,6 +1491,19 @@ class ControlKernel:
             self._dispatch_controls_locked(now)
             return self.status_locked(now)
 
+    def trigger_recording_choices(self) -> list[dict]:
+        with self._lock:
+            zones = {"leftHand": "左手区", "rightHand": "右手区", "leftFoot": "左脚区",
+                     "rightFoot": "右脚区", "headJump": "头顶区"}
+            return ([{"key": f"zone.{key}", "name": name} for key, name in zones.items()]
+                    + [{"key": key, "name": name} for key, name in self._intent_actions_locked()])
+
+    def configure_trigger_recording(self, raw) -> dict:
+        with self._lock:
+            status = self.trigger_recorder.configure(raw)
+            self._save_general_settings()
+            return status
+
     def _frozen_zone_rects_locked(self) -> dict[str, dict]:
         rects = copy.deepcopy(self.frozen_rects)
         for alias, canonical in ZONE_ALIASES.items():
@@ -1594,6 +1614,7 @@ class ControlKernel:
         if not pose_map:
             self._clear_body_outputs_locked()
             self._update_intent_recording_locked(None, now)
+            self._record_trigger_frame_locked(None, now)
             return
         # Evaluated before anything else in the frame: the zone pass and the
         # final apply() both consult the engaged state, and they run at
@@ -1627,6 +1648,22 @@ class ControlKernel:
         self._dispatch_controls_locked(now)
         self._update_body_motion_guard_locked(pose_map, now)
         self._update_head_locked(pose_map, now, world_pose)
+        self._record_trigger_frame_locked(pose_map, now, world_pose)
+
+    def _record_trigger_frame_locked(self, pose_map, now, world_pose=None):
+        if not self.trigger_recorder.config["enabled"]:
+            return
+        active = {f"zone.{name}" for name, state in self.zone_state.items()
+                  if name in RUNTIME_BODY_ZONES and state.get("pressed")}
+        active.update(f"motion.{name}" for name in self.motion_active)
+        active.update(f"pose.{name}" for name in self.pose_active)
+        self.trigger_recorder.capture(
+            pose_map, now, active, width=self.width, height=self.height,
+            source=str(self.active_body_source or ""), sample_at=self.pose_sample_at,
+            world_pose=world_pose, snapshot_factory=self.replay_snapshot,
+            extra={"hands": self.hand_mouse_controller.status(), "feet": self.feet,
+                   "motion_raw": self.motion_raw},
+        )
 
     def _reset_body_motion_guard_locked(self) -> None:
         self.body_motion_guard_active = False
@@ -3283,6 +3320,7 @@ class ControlKernel:
     # ---------- safety/status ----------
 
     def _clear_body_outputs_locked(self) -> None:
+        self.trigger_recorder.end_active(time.monotonic())
         self.hand_mouse_controller.reset()
         for state in self.zone_state.values():
             last = state.get("last_pressed_at")
@@ -3479,6 +3517,7 @@ class ControlKernel:
             "action_chain": self.action_chain.status(),
             "zone_fit": self._zone_fit_status_locked(now),
             "intent_recording": self._intent_status_locked(now),
+            "trigger_recording": self.trigger_recorder.status(),
             "intent_items": self.intent_items_locked(),
             "zone_learning": copy.deepcopy(self.zone_learning),
             # 哪些框会被哪些动作扫过、让不让路。界面在绑键的地方照这个提醒。
@@ -3536,6 +3575,7 @@ class ControlKernel:
                 for source in stale:
                     self.sensor_sources.pop(source, None)
                     self._safe_output(self.output.clear_source, source)
+                self.trigger_recorder.tick(now)
 
     def close(self) -> None:
         self._stop.set()
@@ -3545,6 +3585,7 @@ class ControlKernel:
             for source in list(self.sensor_sources):
                 self._safe_output(self.output.clear_source, source)
             self.sensor_sources.clear()
+        self.trigger_recorder.close()
 
 
 class CameraUnavailable(RuntimeError):
