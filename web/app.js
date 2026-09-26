@@ -1071,10 +1071,10 @@ function buildZonePointPicker(trigger,binding){
   choices.dataset.explicit=binding&&('trigger_points'in binding||'trigger_segments'in binding)?'1':'0';
   const points=new Set(binding?.trigger_points??gameProfile.zoneDefaultPoints?.[trigger.id]??[]);
   const segments=new Set((binding?.trigger_segments||[]).map(pair=>edgeKey(...pair)));
-  let mode='points',gesture=null;
+  let mode='lines',gesture=null;
   const tools=document.createElement('div');tools.className='zone-point-tools';
   const hint=document.createElement('div');hint.className='zone-point-heading';
-  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 300 340');svg.classList.add('zone-point-skeleton');svg.setAttribute('aria-label','人体骨骼点，长按拖动连线');
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 300 340');svg.classList.add('zone-point-skeleton');svg.setAttribute('aria-label','人体骨骼点，按住直接拖动连线');
   // 图上所有 33 点都是可选端点，背景骨架只是定位参考。
   const xy=[[150,48],[126,30],[112,28],[98,32],[174,30],[188,28],[202,32],[78,42],[222,42],[134,66],[166,66],
     [94,102],[206,102],[62,150],[238,150],[54,202],[246,202],[32,232],[268,232],[54,242],[246,242],[78,220],[222,220],
@@ -1095,7 +1095,7 @@ function buildZonePointPicker(trigger,binding){
     for(const start of graph.keys()){if(seen.has(start))continue;const todo=[start],group=[];while(todo.length){const id=todo.pop();if(seen.has(id))continue;seen.add(id);group.push(id);todo.push(...graph.get(id))}result.push(group.sort((a,b)=>order.get(a)-order.get(b)))}
     return {result,linked:new Set(graph.keys())};
   };
-  const cancelGesture=()=>{if(gesture)clearTimeout(gesture.timer);gesture=null;preview.setAttribute('visibility','hidden');menu.querySelectorAll('.drawing-start').forEach(el=>el.classList.remove('drawing-start'))};
+  const cancelGesture=()=>{gesture=null;preview.setAttribute('visibility','hidden');menu.querySelectorAll('.drawing-start').forEach(el=>el.classList.remove('drawing-start'))};
   const changed=()=>{choices.dataset.explicit='1';sync();choices.dispatchEvent(new Event('change',{bubbles:true}))};
   const removePoint=id=>{points.delete(id);for(const value of [...segments])if(value.split('|').includes(id))segments.delete(value);changed()};
   const clickPoint=id=>{if(groups().linked.has(id))removePoint(id);else if(mode==='points'){points.has(id)?points.delete(id):points.add(id);changed()}};
@@ -1108,24 +1108,23 @@ function buildZonePointPicker(trigger,binding){
   const pointerDown=(event,id)=>{
     if(mode!=='lines'||event.button!==0)return;
     cancelGesture();event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);
-    gesture={id,pointer:event.pointerId,x:event.clientX,y:event.clientY,dragging:false};
-    gesture.timer=setTimeout(()=>{if(!gesture)return;gesture.dragging=true;const[x,y]=positions[id];preview.setAttribute('x1',x);preview.setAttribute('y1',y);preview.setAttribute('x2',x);preview.setAttribute('y2',y);preview.setAttribute('visibility','visible');menu.querySelectorAll(`[data-point="${id}"]`).forEach(el=>el.classList.add('drawing-start'))},280);
+    gesture={id,pointer:event.pointerId};
+    const[x,y]=positions[id];preview.setAttribute('x1',x);preview.setAttribute('y1',y);preview.setAttribute('x2',x);preview.setAttribute('y2',y);preview.setAttribute('visibility','visible');menu.querySelectorAll(`[data-point="${id}"]`).forEach(el=>el.classList.add('drawing-start'));
   };
-  menu.addEventListener('pointermove',event=>{if(!gesture||event.pointerId!==gesture.pointer)return;if(gesture.dragging){const p=localPoint(event);preview.setAttribute('x2',p.x);preview.setAttribute('y2',p.y)}else if(Math.hypot(event.clientX-gesture.x,event.clientY-gesture.y)>8)cancelGesture()});
+  menu.addEventListener('pointermove',event=>{if(!gesture||event.pointerId!==gesture.pointer)return;const p=localPoint(event);preview.setAttribute('x2',p.x);preview.setAttribute('y2',p.y)});
   menu.addEventListener('pointerup',event=>{
     if(!gesture||event.pointerId!==gesture.pointer)return;
-    const start=gesture.id,dragged=gesture.dragging,end=dragged?endPoint(event):null;cancelGesture();
+    const start=gesture.id,end=endPoint(event);cancelGesture();
     // 只在松手时决定终点；路径上经过的其他点不会加入。
-    if(dragged&&end&&end!==start){const value=edgeKey(start,end);segments.has(value)?segments.delete(value):segments.add(value);changed()}
-    else if(!dragged)clickPoint(start);
+    if(end&&end!==start){const value=edgeKey(start,end);segments.has(value)?segments.delete(value):segments.add(value);changed()}
   });
   menu.addEventListener('pointercancel',cancelGesture);
-  const keyPoint=(event,id)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();clickPoint(id)}};
+  const keyPoint=(event,id)=>{if(mode==='points'&&(event.key==='Enter'||event.key===' ')){event.preventDefault();clickPoint(id)}};
   for(const id of ids){
     const node=svgEl('g',{transform:`translate(${positions[id].join(' ')})`,'data-point':id,role:'button',tabindex:'0','aria-label':labels[id]});node.classList.add('zone-skeleton-point');
     node.append(svgEl('circle',{r:10,'class':'zone-point-hit'}),svgEl('circle',{r:5}));const title=svgEl('title',{});title.textContent=labels[id];node.append(title);nodes.append(node);
     const item=document.createElement('button');item.type='button';item.className='zone-point-option';item.textContent=labels[id];item.dataset.point=id;list.append(item);
-    for(const el of [node,item]){el.addEventListener('pointerdown',event=>pointerDown(event,id));el.addEventListener('click',event=>{if(mode==='points')clickPoint(id);else if(event.detail===0)clickPoint(id)});if(el===node)el.addEventListener('keydown',event=>keyPoint(event,id))}
+    for(const el of [node,item]){el.addEventListener('pointerdown',event=>pointerDown(event,id));el.addEventListener('click',()=>{if(mode==='points')clickPoint(id)});if(el===node)el.addEventListener('keydown',event=>keyPoint(event,id))}
   }
   for(const[value,text]of [['points','选点'],['lines','连线']]){const button=document.createElement('button');button.type='button';button.textContent=text;button.dataset.mode=value;button.addEventListener('click',()=>{cancelGesture();mode=value;sync()});tools.append(button)}
   const sync=()=>{
@@ -1139,7 +1138,7 @@ function buildZonePointPicker(trigger,binding){
       const chosen=points.has(item.dataset.point)||linked.has(item.dataset.point);item.classList.toggle('selected',chosen);item.classList.toggle('linked',linked.has(item.dataset.point));item.setAttribute('aria-pressed',String(chosen));
     }
     tools.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.mode===mode)));
-    hint.textContent=mode==='points'?'点一下选择，再点取消。独立点任选其一。':'长按点拖线，松手选终点。点亮线或已连点取消。';
+    hint.textContent=mode==='points'?'点一下选择，再点取消。独立点任选其一。':'按住点直接拖线，松手选终点；点击亮线取消。';
     rules.textContent=result.length?result.map(group=>group.map(id=>labels[id]).join('＋')+(group.length>1?'：全部同时进入':'：进入即可')).join('；'):'未选触发点';
     drawn.replaceChildren();edges.replaceChildren();
     for(const value of segments){const[a,b]=value.split('|');const remove=()=>{segments.delete(value);changed()};const el=line(a,b);el.classList.add('zone-selected-line');el.setAttribute('tabindex','0');el.setAttribute('role','button');el.setAttribute('aria-label',`删除连线：${labels[a]}—${labels[b]}`);el.addEventListener('click',remove);el.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();remove()}});drawn.append(el);
