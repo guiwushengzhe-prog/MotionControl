@@ -19,7 +19,17 @@ const state = {
   saveDelay:0,saving:0,maxSaving:0,saveCalls:[],selectCalls:[],performanceCalls:0,failHead:false,
   zones:{rects:zones,frozen:false},
   head:{algorithm:'pnp',horizontal_algorithm:'classic',enabled:true,calibrated:true,sensitivity_x:58,sensitivity_y:46,deadzone:.1},
+  // 智能判定和「录我的动作」：框现在的判断状态、疑似误按提示、录到哪了、体检报告。
+  zonePhase:{},misfire:null,intentCalls:[],
+  intent:{active:false,state:'idle',steps:[],saving:false,error:''},
 };
+const intentItems={all:[{key:'idle',kind:'idle',name:'随便动动'},{key:'press:leftHand',kind:'press',name:'左手框'},
+  {key:'tap:leftHand',kind:'tap',name:'左手框（快速）'},{key:'action:motion.hands_up',kind:'action',name:'双手举过头'},
+  {key:'action:motion.jumping_jack',kind:'action',name:'开合跳'}],
+  recorded:['idle','press:leftHand','tap:leftHand'],missing:['action:motion.hands_up','action:motion.jumping_jack']};
+const report={actions:[{trigger:'motion.hands_up',name:'双手举过头',reps:5,misfires:{}}],
+  zones:[{zone:'leftHand',kind:'press',attempts:5,pressed:5,missed:0,p50_ms:0,p95_ms:33}],idle:{},
+  summary:{misfire_rate:0,miss_rate:0,p50_ms:0,p95_ms:33,action_reps:5,press_attempts:5}};
 // 动作库：程序自带两个，另外两个当作已经从官方动作库下载了。只给界面用得到的字段。
 const libraryItem=(id,name,group,source)=>({id,name,group,source,trigger:`${group==='pose'?'pose':'motion'}.${id}`,
   how:'',revision:1,ratings:{intensity:2,recognition:4,difficulty:2},body_parts:{legs:3},demo:{frame_s:.5,frames:[]}});
@@ -41,7 +51,11 @@ function profile(){
 function runtime(){
   return {body_mode:state.source,camera:{running:state.camera},kernel:{width:640,height:480,
     pose:state.camera?{nose:{x:.5,y:.25,score:1},left_shoulder:{x:.35,y:.4,score:1},right_shoulder:{x:.65,y:.4,score:1}}:null,
-    zones:Object.fromEntries(Object.entries(state.zones.rects).map(([id,rect])=>[id,{rect}])),zones_frozen:state.zones.frozen,head:state.head}};
+    zones:Object.fromEntries(Object.entries(state.zones.rects).map(([id,rect])=>[id,{rect,...(state.zonePhase[id]||{})}])),
+    zones_frozen:state.zones.frozen,head:state.head,zone_trigger_mode:'smart',
+    zone_overlaps:{leftHand:{triggers:['motion.hands_up'],rates:{'motion.hands_up':{hits:4,reps:5,source:'recorded'}},yields:true,with_motion:false}},
+    zone_misfire_hint:state.misfire,intent_recording:state.intent,intent_items:intentItems,
+    zone_learning:{state:'ready',error:'',report,took_s:1.2,snippets:40}}};
 }
 (async()=>{
   const executablePath=process.env.PW_CHROMIUM_PATH;
@@ -98,6 +112,9 @@ function runtime(){
       case '/api/zones/freeze':state.zones.frozen=body.frozen!==false;return respond(runtime());
       case '/api/zones/frozen':state.zones.rects={...state.zones.rects,...body.rects};return respond(runtime());
       case '/api/zones/move-here':state.zones.frozen=true;return respond(runtime());
+      case '/api/intent/start':state.intentCalls.push(['start',body.keys||null]);
+        state.intent={active:true,state:'preparing',remaining_s:3,index:0,phase:'ready',steps:[],saving:false,error:''};return respond(runtime());
+      case '/api/intent/cancel':state.intentCalls.push(['cancel']);state.intent={...state.intent,active:false,state:'cancelled'};return respond(runtime());
       case '/api/head/config':
         if(state.failHead)return fail('模拟头控设置失败');
         Object.assign(state.head,body);return respond(runtime());
@@ -203,6 +220,47 @@ function runtime(){
     await page.evaluate(()=>window.scrollTo(0,0));
     await page.screenshot({path:path.join(artifacts,'devices.png'),fullPage:true});
     await page.locator('[data-view=games]').click();await page.screenshot({path:path.join(artifacts,'games.png'),fullPage:true});
+    await page.locator('[data-view=play]').click();
+
+    // 智能判定：判断中的框是黄的（系统功能底下有稳住的进度条），判定扫过的闪红。
+    state.zonePhase={leftHand:{phase:'pending',progress:.5},rightHand:{phase:'swept'}};
+    await page.locator('.zone[data-zone="leftHand"].pending').waitFor({state:'attached'});
+    await page.locator('.zone[data-zone="rightHand"].swept').waitFor({state:'attached'});
+    assert.equal(await page.locator('.zone[data-zone="leftHand"]').evaluate(el=>el.style.getPropertyValue('--progress')),'50%');
+    await page.locator('#viewer').screenshot({path:path.join(artifacts,'zone-phases.png')});
+    state.zonePhase={};
+    await page.waitForFunction(()=>!document.querySelector('.zone.pending'));
+    // 没录过的动作老误按框：提示去录，点了直接打开教学里「录我的动作」那一课。
+    state.misfire={trigger:'motion.hands_up',zones:['leftHand'],count:3};
+    await page.locator('#misfireHint').waitFor({state:'visible'});
+    assert.match(await page.locator('#misfireHint span').textContent(),/左手框 3 次/);
+    await page.locator('#misfireHintGo').click();
+    await page.locator('#tourStep').filter({hasText:'录我的动作'}).waitFor();
+    await page.locator('#tourCloseBtn').click();
+    await page.locator('#misfireHintDismiss').click();
+    await page.locator('#misfireHint').waitFor({state:'hidden'});
+    // 映射表：框那几行有「做动作时也要按」，头顶默认勾上；下面一句说哪些动作会扫过它。
+    await page.locator('[data-view=games]').click();
+    const leftWith=page.locator('.binding-row[data-trigger="zone.leftHand"] .zone-with-motion-box');
+    assert.equal(await leftWith.isChecked(),false);
+    assert.equal(await page.locator('.binding-row[data-trigger="zone.headJump"] .zone-with-motion-box').isChecked(),true);
+    await page.locator('.binding-row[data-trigger="zone.leftHand"] .zone-conflict-note').waitFor({state:'visible'});
+    assert.match(await page.locator('.binding-row[data-trigger="zone.leftHand"] .zone-conflict-note').textContent(),/录的 5 次里扫过 4 次.*让路不按/);
+    const savesBefore=state.saveCalls.length;
+    await leftWith.check();
+    for(let i=0;i<40&&state.saveCalls.length===savesBefore;i++)await delay(50);
+    assert.equal(state.saveCalls.at(-1).overrides['zone.leftHand'].with_motion,true);
+    await page.locator('.binding-row[data-trigger="zone.leftHand"]').screenshot({path:path.join(artifacts,'zone-with-motion.png')});
+    // 通用设置：录过几项、还差哪几项，体检报告。
+    await page.locator('[data-view=devices]').click();
+    assert.match(await page.locator('#intentStatus').textContent(),/录过 3 \/ 5 项；还没录：双手举过头、开合跳/);
+    assert.equal(await page.locator('#intentRecordBtn').textContent(),'补录没录的');
+    await page.locator('#intentReport > summary').click();
+    assert.match(await page.locator('#intentReportBody').textContent(),/做动作时误按 0%/);
+    await page.locator('#zoneTriggerSettings').screenshot({path:path.join(artifacts,'zone-trigger-settings.png')});
+    await page.locator('#intentRecordBtn').click();
+    await page.locator('#tourStep').filter({hasText:'录我的动作'}).waitFor();
+    await page.locator('#tourCloseBtn').click();
     await page.locator('[data-view=play]').click();
 
     for(const [width,height] of [[1920,1080],[1366,768],[1024,768]]){

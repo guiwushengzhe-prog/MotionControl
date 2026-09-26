@@ -30,6 +30,7 @@ from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
 from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService
 from motioncontrol.input_bridge import InputBridge
+from motioncontrol.intent_library import ZoneLearner
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
 from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
@@ -412,6 +413,11 @@ CUSTOM_POSES = CustomPoseStore(user_path("custom_poses"))
 KERNEL.configure_custom_poses(CUSTOM_POSES)
 if CUSTOM_POSES.last_error:
     print(CUSTOM_POSES.last_error)
+# 「录我的动作」录下来的东西，对着现在的框在后台算：哪个动作扫过哪个框、每次进框
+# 的样子、体检报告。录完马上算一次，平时隔两秒看一眼设置变没变。线程在 main() 里才
+# 启动：测试会 import 这个模块，不该在后台跑东西。
+LEARNER = ZoneLearner(KERNEL)
+KERNEL.configure_intent_listener(LEARNER.poke)
 # 用户自己建的键盘宏。全局一份，不跟游戏走——建一次，哪个游戏、哪个动作都能直接选。
 MACROS = MacroStore(user_path("key_macros"))
 KERNEL.configure_macros(MACROS)
@@ -1342,6 +1348,10 @@ class AdminHandler(_BaseHandler):
                     elif route == "/api/pose/custom/remove":
                         removed = CUSTOM_POSES.remove(str(body.get("id", "")))
                         KERNEL.configure_custom_poses(CUSTOM_POSES)
+                        if removed:
+                            # 录的这个动作也不要了：编号以后会给新录的动作用，
+                            # 留着的话新动作会顶着旧动作的录像。
+                            KERNEL.forget_intent_items([f"action:pose.{body.get('id', '')}"])
                         self._send_json({"ok": True, "removed": removed,
                                          "poses": CUSTOM_POSES.status()})
                     else:
@@ -1595,7 +1605,28 @@ class AdminHandler(_BaseHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
             return
-        # 区域触发方式（进去就按 / 防误触）；定住跟随框、恢复跟随、定住后拖过的框。
+        # 录我的动作：开始（可以只录几项）、这一项跳过、不录了、删掉某几项。只给本机。
+        if route in ("/api/intent/start", "/api/intent/skip", "/api/intent/cancel", "/api/intent/forget"):
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "intent recording is loopback-only"}, 403)
+                return
+            action = route.rsplit("/", 1)[1]
+            try:
+                keys = body.get("keys")
+                keys = [str(key) for key in keys] if isinstance(keys, list) else None
+                if action == "start":
+                    KERNEL.start_intent_recording(keys)
+                elif action == "skip":
+                    KERNEL.skip_intent_step()
+                elif action == "cancel":
+                    KERNEL.cancel_intent_recording()
+                else:
+                    KERNEL.forget_intent_items(keys or [])
+                self._send_json({"ok": True, **RUNTIME.status()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+            return
+        # 区域触发方式（智能 / 进去就按）；定住跟随框、恢复跟随、定住后拖过的框。
         # 只给本机，和量身一样。
         if route in ("/api/zones/trigger-mode", "/api/zones/freeze", "/api/zones/frozen",
                      "/api/zones/move-here", "/api/vertical-look"):
@@ -1876,6 +1907,7 @@ def main():
         print(f"手机自动发现未启用：{DISCOVERY.last_error}；手机仍可用地址连接。")
 
     HOTKEYS.start()
+    LEARNER.start()
     url = f"http://127.0.0.1:{args.admin_port}/"
     print("Open:", url)
     print(f"手机接入（仅 /ws/input）：{args.host}:{args.port}")
@@ -1904,6 +1936,7 @@ def main():
         INPUT_BRIDGE.close()
         RUNTIME.close()
         HOTKEYS.close()
+        LEARNER.close()
         OUTPUT.close()
         device_server.shutdown()
         device_thread.join(timeout=2.0)

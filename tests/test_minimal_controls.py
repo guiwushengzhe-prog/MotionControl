@@ -73,7 +73,7 @@ def test_body_relative_zones_use_both_wrists_and_both_feet():
     assert DEFAULT_ZONE_FIT["leftFoot"]["half_w"] == 0.50 and '0.52 * torso_px' in kernel
     assert 'fit[name]["bottom"] * torso_px / ih' in kernel and 'fit[name]["inset"] * torso_px / iw' in kernel
     assert 'headJump' in kernel and 'headJump' in app
-    assert 'state["inside"] >= 2' in kernel and 'exit_frames = 1 if name == "lookGate" else 2' in kernel
+    assert 'exit_frames = 1 if name == "lookGate" else 2' in kernel
     assert 'set_action_holds' in kernel
     assert 'zone.' in kernel
     assert '/api/kernel/status' in app

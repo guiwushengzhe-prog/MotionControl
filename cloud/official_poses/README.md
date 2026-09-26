@@ -26,7 +26,7 @@
 | `group` | `motion`（身体动作）或 `pose`（姿势） |
 | `ratings` | 运动强度 `intensity`、识别度 `recognition`、上手难度 `difficulty`，各 1~5 星 |
 | `body_parts` | 腿部 `legs`、臀部 `glutes`、核心 `core`、手臂 `arms`、肩背 `shoulders`，只写用得上的，各 1~5 星 |
-| `passes_zones` | 做的时候身体会经过的跟随区域；`sweeps_first`：动作认出来之前就先扫过 |
+| `passes_zones` | 做的时候身体会经过的跟随区域。只在用户没「录我的动作」录过这个动作时兜底，录过的按录的算。`sweeps_first` 已经不用了，旧文件带着也不报错 |
 | `debounce` | `[按下要连续几帧成立, 松开要连续几帧不成立]` |
 | `risk_timing` | 身体动作才有：给头控防误触用的 `[认定要多少秒, 放下要多少秒]` |
 | `blocks_steps` | 做着这个动作时不算踏步、不算小腿后抬（下蹲） |

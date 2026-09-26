@@ -26,9 +26,14 @@
 ## 会扫过哪些圈
 
 ``passes_zones`` 是做这个动作时身体会经过的跟随区域（真人录像里量出来的）。举双手时
-手从两侧往上走，正好扫过两边的手区；这躲不开。两边都绑了键时，动作做着的时候那几个
-圈不按；``sweeps_first`` 的（动作认出来之前就先扫过圈的）圈平时还要晚一点按（见
-control_kernel 的 ZONE_YIELD_S）。头顶区不在让的范围，只提醒。
+手从两侧往上走，正好扫过两边的手区；这躲不开。两边都绑了键时，框的智能判定会把这
+个动作当成「可能扫过」来防（见 zone_arbiter）。
+
+这只是**没录过时的兜底**：用户在「录我的动作」里录过这个动作的话，扫没扫过、几次里
+扫过几次，按他自己的录像对着现在的框算（intent_library），以录的为准。
+
+``sweeps_first``（动作认出来之前就先扫过框）以前用来决定框要不要一律晚按，智能判定
+不需要它了。字段还收着，因为已经签过名发出去的动作文件里带着它。
 
 ## 触发名不变
 
@@ -297,11 +302,6 @@ def zone_crossers(zone: str) -> tuple[str, ...]:
     """做起来会扫过这个圈的那些动作的触发名。"""
     return tuple(trigger_of(entry) for entry in entries() if zone in entry["passes_zones"])
 
-
-def sweeps_first(trigger: str) -> bool:
-    """这个动作是不是在认出来之前就先扫过圈。是的话圈平时也要晚一点按。"""
-    entry = get(trigger.split(".", 1)[-1])
-    return bool(entry and entry.get("sweeps_first"))
 
 
 def demo_payload(frames, frame_s: float) -> dict:

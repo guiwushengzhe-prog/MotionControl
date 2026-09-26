@@ -12,7 +12,7 @@ import pytest
 
 from motioncontrol_shared import describe, motion_conflicts, pose_library
 from motioncontrol_shared.pose_library import (
-    BODY_PART_NAMES, RATING_NAMES, library_payload, normalize_action, sweeps_first, zone_crossers,
+    BODY_PART_NAMES, RATING_NAMES, library_payload, normalize_action, zone_crossers,
 )
 from conftest import official_pose_docs
 
@@ -41,8 +41,6 @@ def test_which_actions_sweep_which_zones():
     assert set(zone_crossers("leftHand")) >= {"motion.hands_up", "motion.jumping_jack"}
     assert "motion.jumping_jack" in zone_crossers("headJump")
     assert "motion.march" not in zone_crossers("leftFoot"), "踏步是往上抬，不往外伸"
-    assert sweeps_first("motion.hands_up"), "手还没举到头顶，就先扫过了手区"
-    assert not sweeps_first("motion.calf_back"), "脚是动作认出来之后才碰到脚区的"
     known = {zone for entry in pose_library.entries() for zone in entry["passes_zones"]}
     assert known <= {"leftHand", "rightHand", "leftFoot", "rightFoot", "headJump"}
 

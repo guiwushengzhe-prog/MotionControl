@@ -278,6 +278,10 @@ function renderKernelZones(zones={}){
     if(def.gate&&!kernelState?.vertical_look?.enabled){el.style.display='none';continue}
     const active=!zoneEditMode&&!!state?.pressed;
     el.classList.toggle('active',active);
+    // 智能判定：判断中（黄）、判定是扫过（闪红）。系统功能要稳住，底下的条是稳住走到哪了。
+    const phase=zoneEditMode?'idle':String(state?.phase||'idle');
+    el.classList.toggle('pending',phase==='pending');el.classList.toggle('swept',phase==='swept');
+    el.style.setProperty('--progress',Math.round(Number(state?.progress||0)*100)+'%');
     el.querySelector('strong').textContent=def.gate?'上下视角':zoneKeyLabel(id,def);
     el.querySelector('small').textContent=def.gate?(active?'已开启':'左手放这里'):def.body;
     el.tabIndex=zoneEditMode?0:-1;
@@ -366,7 +370,7 @@ function renderKernelState(runtime,force=false){
   renderTriggerLive();
   renderRange();
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
-  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);renderZoneFreeze(k);
+  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);renderZoneFreeze(k);renderIntent(k);renderMisfireHint(k);paintZoneConflictNotes();
   const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
   const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
   $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
@@ -1050,7 +1054,39 @@ function buildBindingRow(trigger){
   row.append(name,type,target,behavior);
   row.querySelectorAll('input,select').forEach(control=>control.setAttribute('aria-label',trigger.name+' '+(control.className.includes('type')?'输出类型':'键位或触发方式')));
   if(trigger.group==='motions'){const note=document.createElement('div');note.className='motion-conflict-note';note.hidden=true;row.appendChild(note)}
+  if(trigger.group==='zones'){
+    // 「做动作时也要按」：没设过的，要跳才碰得到的框（头顶）默认是，别的默认不是——
+    // 和电脑那边 _zone_with_motion_locked 同一条规则。
+    const label=document.createElement('label');label.className='zone-with-motion';
+    const box=document.createElement('input');box.type='checkbox';box.className='zone-with-motion-box';
+    box.checked=typeof binding?.with_motion==='boolean'?binding.with_motion:JUMP_ZONE_IDS.has(trigger.id);
+    label.append(box,document.createTextNode('做动作时也要按'));
+    label.title='不勾：做会扫过这个框的动作时，框让路不按。勾上：做动作时扫过也照样按（比如开合跳时想同时跳起来）。';
+    const note=document.createElement('div');note.className='zone-conflict-note';note.hidden=true;
+    row.append(label,note);
+  }
   return row;
+}
+// 要跳才碰得到的框。人在空中只停一瞬间，等不起，默认「做动作时也要按」。
+const JUMP_ZONE_IDS=new Set(['headJump']);
+// 映射表里框那几行下面的一句话：哪些动作会扫过它、录的时候几次里扫过几次、让不让路。
+function paintZoneConflictNotes(){
+  const overlaps=kernelState?.zone_overlaps||{};
+  for(const row of document.querySelectorAll('.binding-row[data-trigger^="zone."]')){
+    const note=row.querySelector('.zone-conflict-note');if(!note)continue;
+    const info=overlaps[row.dataset.trigger.slice(5)];
+    const text=info?zoneConflictText(info):'';
+    note.hidden=!text;if(note.textContent!==text)note.textContent=text;
+  }
+}
+function zoneConflictText(info){
+  const parts=(info.triggers||[]).map(trigger=>{
+    const name=(profileTriggers().find(t=>t.key===trigger)||{}).name||trigger;
+    const rate=info.rates?.[trigger]||{};
+    return rate.source==='recorded'?`${name}（录的 ${rate.reps} 次里扫过 ${rate.hits} 次）`:`${name}（没录过，按动作说明）`;
+  });
+  if(!parts.length)return '';
+  return `会扫过这个框：${parts.join('、')}。`+(info.yields?'做这些动作时框让路不按。':'做这些动作时照样按。');
 }
 function syncBodyGroup(){
   const details=document.querySelector('.binding-group[data-group="body"]');if(!details)return;
@@ -1124,6 +1160,8 @@ function readProfileOverrides(){
     if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden&&(comboLead.dataset.explicit==='1'||comboLead.dataset.touched==='1')){
       override.action.combo_stick_lead_ms=Math.max(0,Math.min(200,Number(comboLead.value)||0));
     }
+    const withMotion=row.querySelector('.zone-with-motion-box');
+    if(trigger.group==='zones'&&withMotion)override.with_motion=withMotion.checked;
     if(trigger.group==='voice'){
       const rawPhrase=row.querySelector('.voice-trigger-phrase')?.value.trim();
       const phrase=isGameVoiceKey(trigger.key)?normalizeGameVoicePhrase(rawPhrase):rawPhrase;
@@ -1255,10 +1293,6 @@ function renderViewControl(force=false){
 }
 // 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
 // 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
-// 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
-// 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
-// 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
-// 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
 function tutorialState(){
   const hs=kernelState?.head||{},k=kernelState||{},pose=currentPoseMap||{};
   const hand=hs.hand_mouse||{},axes=hand.axes||{};
@@ -1311,6 +1345,8 @@ function tutorialState(){
     stops:emergencyStops,
     // 「量身」：电脑那边量到哪一步了；握拳量哪几只手；固定区域时量的是跟随那一套。
     fit:k.zone_fit||{},fistHands:fistHands(),zonesFrozen:!!k.zones_frozen,
+    // 「录我的动作」：电脑那边录到哪一项了；全部要录的有哪些。
+    intent:k.intent_recording||{},intentItems:k.intent_items||{},
     // 「做了动作，游戏没反应」：最后打中的是什么、按的哪个键；时间用内核自己的钟比。
     kernelNow:Number(k.now),lastTrigger,
     // 「按键和我的游戏对不上」
@@ -1648,19 +1684,92 @@ function renderZoneFreeze(k=kernelState||{}){
     if(input.value!==percent){input.value=percent;$('#'+id+'Value').textContent=percent+'%'}
   }
 }
+// 「录我的动作」：开始前先停掉游戏控制，和量身一样——人要做一整套动作，别让游戏里跟着乱按。
+async function intentAction(action,body={}){
+  try{
+    if(action==='start')await setOutput(false);
+    renderKernelState(await post('/api/intent/'+action,body));
+  }catch(e){notice('录我的动作：'+(e?.message||e))}
+}
+const ZONE_BODY_CN={leftHand:'左手框',rightHand:'右手框',headJump:'头顶框',leftFoot:'左脚框',rightFoot:'右脚框'};
+// 设置页那一块：录过几项、还差哪几项、后台算到哪了、体检报告。
+function renderIntent(k=kernelState||{}){
+  const items=k.intent_items,status=$('#intentStatus');if(!items||!status)return;
+  const learning=k.zone_learning||{},rec=k.intent_recording||{};
+  const all=items.all||[],missing=items.missing||[],done=all.length-missing.length;
+  const missingActions=all.filter(item=>item.kind==='action'&&missing.includes(item.key)).map(item=>item.name);
+  let text=!done?'还没录过。智能判定现在按动作说明判断哪些动作会扫过哪些框。'
+    :`录过 ${done} / ${all.length} 项`+(missingActions.length?`；还没录：${missingActions.slice(0,4).join('、')}${missingActions.length>4?' 等':''}`:'');
+  if(rec.active)text='正在录…';
+  else if(rec.saving)text='正在保存…';
+  else if(learning.state==='computing')text+=' · 正在按现在的框重新算…';
+  else if(learning.state==='error')text+=' · 算的时候出错了：'+learning.error;
+  if(status.textContent!==text)status.textContent=text;
+  const btn=$('#intentRecordBtn');if(btn){const label=!done?'录我的动作':missing.length?'补录没录的':'重新录一遍';if(btn.textContent!==label)btn.textContent=label}
+  renderIntentReport(learning.report);
+}
+function renderIntentReport(report){
+  const box=$('#intentReport'),body=$('#intentReportBody');if(!box||!body)return;
+  const key=JSON.stringify(report||null);if(box.dataset.key===key)return;box.dataset.key=key;
+  box.hidden=!report;if(!report){body.replaceChildren();return}
+  const sum=report.summary||{},pct=v=>v==null?'—':Math.round(v*100)+'%',ms=v=>v==null?'—':v+' 毫秒';
+  const rows=[];
+  const line=(cells,bad)=>`<tr${bad?' class="bad"':''}>${cells.map(c=>`<td>${c}</td>`).join('')}</tr>`;
+  for(const item of report.actions||[]){
+    const miss=Object.entries(item.misfires||{}).map(([zone,n])=>`${ZONE_BODY_CN[zone]||zone} ${n} 次`);
+    rows.push(line([escapeHtml(item.name),`做了 ${item.reps} 遍`,miss.length?'误按 '+miss.join('、'):'没误按'],miss.length));
+  }
+  for(const item of report.zones||[]){
+    rows.push(line([(ZONE_BODY_CN[item.zone]||item.zone)+(item.kind==='tap'?'（快速点）':''),`故意按 ${item.attempts} 次`,
+      `按出 ${item.pressed} 次`+(item.missed?`，漏 ${item.missed} 次`:'')+` · 慢 ${ms(item.p50_ms)}`],item.missed));
+  }
+  const idle=Object.entries(report.idle||{}).map(([zone,n])=>`${ZONE_BODY_CN[zone]||zone} ${n} 次`);
+  if(idle.length)rows.push(line(['随便动动','',`误按 ${idle.join('、')}：框离站着的位置太近，量一下身`],true));
+  body.innerHTML=`<p>用你录的动作、按这个游戏现在的绑定，用智能判定重放了一遍：做动作时误按 ${pct(sum.misfire_rate)}，故意按漏掉 ${pct(sum.miss_rate)}，按下平均比「进去就按」慢 ${ms(sum.p50_ms)}（最慢的一成 ${ms(sum.p95_ms)}）。</p>`
+    +(rows.length?`<table>${rows.join('')}</table>`:'<p>这个游戏里没有绑了键、又录过的框和动作。</p>')
+    +'<p class="fineprint">只算这个游戏里绑了键的框和动作。样本少的时候一两次就是很大的百分比，看次数比看百分比准。</p>';
+}
+function escapeHtml(text){return String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+// 没录过的动作老是误按框：提示去录那一个。点「先不用」这次打开页面就不再提示它。
+const misfireDismissed=new Set();
+function renderMisfireHint(k=kernelState||{}){
+  const box=$('#misfireHint');if(!box)return;
+  const hint=k.zone_misfire_hint;
+  const show=!!hint&&!misfireDismissed.has(hint.trigger)&&!k.intent_recording?.active;
+  box.hidden=!show;if(!show)return;
+  const name=(profileTriggers().find(t=>t.key===hint.trigger)||{}).name||hint.trigger;
+  const zones=(hint.zones||[]).map(zone=>ZONE_BODY_CN[zone]||zone).join('、');
+  const text=`做「${name}」时误按了 ${zones} ${hint.count} 次。这个动作还没录过，录一下，智能判定就知道它会扫过哪里。`;
+  const span=box.querySelector('span');if(span.textContent!==text)span.textContent=text;
+  box.dataset.trigger=hint.trigger;
+}
+$('#misfireHintGo')?.addEventListener('click',e=>{
+  const trigger=$('#misfireHint').dataset.trigger;
+  tutorial.openLesson('record',e.currentTarget,{keys:['action:'+trigger]});
+});
+$('#misfireHintDismiss')?.addEventListener('click',()=>{misfireDismissed.add($('#misfireHint').dataset.trigger);renderMisfireHint()});
+$('#intentRecordBtn')?.addEventListener('click',e=>{
+  const items=kernelState?.intent_items||{},missing=items.missing||[],all=items.all||[];
+  // 录过一部分：只补没录的。全录过：整套重来。
+  const keys=missing.length&&missing.length<all.length?missing:null;
+  tutorial.openLesson('record',e.currentTarget,{keys});
+});
 $('#zoneTriggerMode')?.addEventListener('change',e=>runAction(async()=>{
   const status=$('#zoneTriggerStatus');
   try{
     renderKernelState(await post('/api/zones/trigger-mode',{mode:e.target.value}));
-    status.textContent=e.target.value==='simple'?'已改成进去就按':'已改成防误触';
+    status.textContent=e.target.value==='simple'?'已改成进去就按':'已改成智能';
   }catch(error){status.textContent='没改成：'+error.message;renderZoneFreeze();throw error}
 }));
 async function centerHead(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('视角中心已更新。')}catch(e){notice('视角回正失败：'+(e?.message||e))}}
 
 function drawOverlayZones(octx,w,h,zones={}){
   for(const[id,def]of Object.entries(BODY_ZONES)){
-    const state=zones[id];if(!state)continue;const active=!!state.pressed,isGate=!!def.gate;
-    octx.save();octx.lineWidth=Math.max(2,w/220);octx.strokeStyle=isGate?(active?'#62ff91':'#62d982'):(active?'#ff5966':'rgba(255,255,255,.78)');octx.fillStyle=isGate?(active?'rgba(45,210,95,.30)':'rgba(30,150,75,.15)'):(active?'rgba(255,70,80,.26)':'rgba(0,0,0,.12)');if(isGate&&!active)octx.setLineDash([Math.max(4,w/100),Math.max(3,w/140)]);
+    const state=zones[id];if(!state)continue;const active=!!state.pressed,isGate=!!def.gate,phase=String(state.phase||'idle');
+    // 悬浮窗里按下一直是红的（游戏画面上最显眼）；判断中黄、扫过灰掉，免得和按下混。
+    const stroke=active?'#ff5966':phase==='pending'?'#ffcc33':phase==='swept'?'rgba(255,255,255,.35)':'rgba(255,255,255,.78)';
+    const fill=active?'rgba(255,70,80,.26)':phase==='pending'?'rgba(255,204,51,.22)':'rgba(0,0,0,.12)';
+    octx.save();octx.lineWidth=Math.max(2,w/220);octx.strokeStyle=isGate?(active?'#62ff91':'#62d982'):stroke;octx.fillStyle=isGate?(active?'rgba(45,210,95,.30)':'rgba(30,150,75,.15)'):fill;if(isGate&&!active)octx.setLineDash([Math.max(4,w/100),Math.max(3,w/140)]);
     let x=0,y=0,ww=0,hh=0;const r=state.rect;
     if(r){x=(1-Number(r.x2))*w;y=Number(r.y1)*h;ww=(Number(r.x2)-Number(r.x1))*w;hh=(Number(r.y2)-Number(r.y1))*h}
     if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.34,w/9)))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):zoneKeyLabel(id,def),x+ww/2,y+hh/2);octx.restore();
@@ -2003,7 +2112,9 @@ $('#headEnable').addEventListener('change',()=>void saveHeadEnabled());
 // 摄像头，好知道该建议什么。
 const tutorial=createTutorial({state:tutorialState,scanCameras,
   zoneFitStart:()=>zoneFit('start'),zoneFitGripOnly:()=>zoneFit('start',{body:false}),
-  zoneFitSkip:()=>zoneFit('skip'),zoneFitCancel:()=>zoneFit('cancel')});
+  zoneFitSkip:()=>zoneFit('skip'),zoneFitCancel:()=>zoneFit('cancel'),
+  intentStart:keys=>intentAction('start',keys?{keys}:{}),intentSkip:()=>intentAction('skip'),
+  intentCancel:()=>intentAction('cancel')});
 $('#zoneFitBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.currentTarget));
 $('#zoneFitGripBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.currentTarget,{gripOnly:true}));
 bind('zoneFitResetBtn',async()=>{renderKernelState(await post('/api/zones/fit/reset',{}));notice('区域已恢复默认大小。')});
@@ -2929,21 +3040,17 @@ document.getElementById('poseMissingGo')?.addEventListener('click', () => {
   if (!poseCloudItems.length) openPoseCloud();
 });
 
-/** 圈给动作让路时说的那句话。电脑那边算好哪些圈在让、让谁，这里只翻译成人话。 */
+/** 框给动作让路时说的那句话。电脑那边算好哪些框在让、让谁，这里只翻译成人话。 */
 function zoneYieldText(trigger) {
   const overlaps = kernelState?.zone_overlaps || {};
-  const delayed = [], paused = [], sharing = [];
+  const paused = [], sharing = [];
   for (const [zone, info] of Object.entries(overlaps)) {
     if (!(info.triggers || []).includes(trigger)) continue;
     const name = ZONE_NAMES_CN[zone] || zone;
-    if (!info.yields) sharing.push(name);
-    else if (info.delay) delayed.push(name);
-    else paused.push(name);
+    (info.yields ? paused : sharing).push(name);
   }
-  const wait = Math.round(Number(kernelState?.zone_yield_s || 0.25) * 100) / 100;
   const parts = [];
-  if (delayed.length) parts.push(`${delayed.join('、')}也绑了键：做这个动作时不按，平时会晚 ${wait} 秒按下，免得误触`);
-  if (paused.length) parts.push(`${paused.join('、')}也绑了键：做这个动作时不按`);
+  if (paused.length) parts.push(`${paused.join('、')}也绑了键：做这个动作扫过时不按，平时照常按`);
   if (sharing.length) parts.push(`${sharing.join('、')}也绑了键：做这个动作时会一起按到`);
   return parts.join('；');
 }

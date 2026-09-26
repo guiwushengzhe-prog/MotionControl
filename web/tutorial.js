@@ -328,7 +328,81 @@ function fitDoneSay(fit = {}) {
   return measured.some(id => !id.endsWith('Grip')) ? '✓ 量好了，圈按你的身体放好了' : '✓ 握拳量好了';
 }
 
+// 录我的动作：电脑那边一项一项往下走，这里只照着它说现在做什么。
+const INTENT_ISSUE = {not_visible: '看不到你了：头、肩膀和胯都要进画面，录脚的时候脚也要拍到'};
+const INTENT_GROUP = {idle: '随便动', leftHand: '左手', rightHand: '右手', headJump: '头顶', leftFoot: '左脚', rightFoot: '右脚'};
+
+function intentGroup(step) {
+  return step.kind === 'action' ? '动作' : INTENT_GROUP[step.kind === 'idle' ? 'idle' : step.zone] || step.name;
+}
+
+function intentDoneSay(rec = {}) {
+  const steps = rec.steps || [];
+  const skipped = steps.filter(step => step.skipped).map(step => step.name);
+  const short = steps.filter(step => !step.skipped && step.target && step.count < step.target).map(step => step.name);
+  if (!steps.length || skipped.length === steps.length) return '一项都没录到';
+  const tail = skipped.length ? ` · ${skipped.slice(0, 3).join('、')}${skipped.length > 3 ? ' 等' : ''}跳过了` : short.length ? ` · ${short[0]}没做够次数，也存下了` : '';
+  return `✓ 录好了，体检报告在「通用设置 → 区域触发方式」${tail}`;
+}
+
 const EXTRAS = [
+  {
+    id: 'record',
+    name: '录我的动作',
+    problem: '做动作时误按了框',
+    doneSay: s => intentDoneSay(s.intent),
+    guide(s, memo, now) {
+      const rec = s.intent || {};
+      // 点了「开始」之后电脑那边才有一轮在录；那之前看到的 done 是上一轮的，不算。
+      if (rec.active) memo.started = true;
+      if (memo.started && rec.state === 'done') return {target: '#viewer', ready: true, say: rec.saving ? '正在保存…' : '✓ 录好了'};
+      if (memo.started && rec.state === 'preparing') {
+        const left = Math.max(1, Math.ceil(Number(rec.remaining_s) || 0));
+        return {target: '#viewer', ready: true, say: '回到镜头前站好，倒计时结束才开始录', hint: `准备倒计时：还剩 ${left} 秒`};
+      }
+      if (memo.started && rec.active) {
+        const step = (rec.steps || [])[rec.index] || {};
+        const soon = rec.phase === 'ready';
+        const progress = step.target ? `${step.count || 0} / ${step.target}` : rec.remaining_s ? `还剩 ${Math.ceil(rec.remaining_s)} 秒` : '';
+        return {
+          target: '#viewer', ready: true,
+          say: (soon ? '下一项：' : '') + (step.say || ''),
+          hint: INTENT_ISSUE[rec.issue] || [step.hint, soon ? '' : progress].filter(Boolean).join(' · '),
+          choice: {label: '这一项跳过', run: 'intentSkip'},
+        };
+      }
+      memo.started = false;
+      const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
+      if (before) return before;
+      const all = s.intentItems?.all || [];
+      const keys = memo.keys && memo.keys.length ? memo.keys : null;
+      const names = keys ? keys.map(key => (all.find(item => item.key === key) || {}).name || key) : [];
+      const prepare = '点下后倒数 3 秒，点完回到镜头前';
+      return {
+        target: '#viewer', say: '站到你平时玩的位置',
+        hint: keys ? `只录：${names.join('、')}。${prepare}`
+          : `全身进画面，脚也要拍到。一共 ${all.length} 项，大约三四分钟，拍不到的项可以跳过。${prepare}`,
+        choice: {label: '点这里，3 秒后开始', run: 'intentStart', arg: keys},
+      };
+    },
+    check(s, memo) {
+      const rec = s.intent || {};
+      const steps = rec.steps || [];
+      const at = rec.state === 'done' ? steps.length : Number(rec.index) || 0;
+      // 一项一格太多了：按手、脚、动作分组，一组都录完才算打中。
+      const groups = [];
+      steps.forEach((step, i) => {
+        const label = intentGroup(step);
+        let group = groups.find(item => item.label === label);
+        if (!group) groups.push(group = {label, last: i});
+        group.last = i;
+      });
+      const targets = memo.started ? groups.map(group => ({label: group.label, hit: group.last < at})) : [];
+      return {ok: !!memo.started && rec.state === 'done' && !rec.saving, targets};
+    },
+    // 录到一半离开这一课：电脑那边那一轮也不录了，什么都不存。
+    leave: (s, memo) => (memo.started && s.intent?.active ? 'intentCancel' : null),
+  },
   {
     id: 'fit',
     name: '量身',
@@ -859,7 +933,7 @@ export function createTutorial(actions = {}) {
       memo.repickFrom = state.cameraIndex;
       memo.lostSince = 0;
     } else {
-      actions[choice.run]?.();
+      actions[choice.run]?.(choice.arg);
     }
     tick();
   });

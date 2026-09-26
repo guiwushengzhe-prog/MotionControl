@@ -32,12 +32,26 @@ from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
 from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseController
 from motioncontrol.pose_recorder import PoseRecorder
+from motioncontrol.intent_recording import (
+    IntentRecordingSession, IntentRecordingStore, build_steps,
+)
+from motioncontrol.zone_arbiter import (
+    JUMP_ZONES, TAIL_S, Kinematics, SnippetBank, ZoneArbiter, ZoneInput, fresh_zone_state,
+    zone_phase_for_display,
+)
 from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
     foot_floor_y, foot_out, is_default, normalize_zone_fit,
 )
 from motioncontrol_shared import pose_library, pose_rules
+
+
+def _user_intent_dir():
+    """「录我的动作」录下来的东西。和游戏无关，见 intent_recording。"""
+    from motioncontrol.user_paths import user_data_root
+
+    return user_data_root() / "intent_recordings"
 
 
 def _user_recordings_dir():
@@ -187,25 +201,19 @@ FOOT_BASE_FOLLOW_S = 0.8
 FOOT_ZONE_LIFT = 0.04
 FOOT_ZONE_OUT = 0.12
 
-# 手区防误触：手腕越过框的下沿、里沿至少 HAND_ENTER_DEPTH（量身那把尺），连续待
-# 够 HAND_DWELL_S 才按；另一只手这时也在自己框里，多半是两只手一起往上举、从两边
-# 扫过去，要待够 HAND_BOTH_DWELL_S。松开还是原来那样快，挥手连按不受影响。真人
-# 录像：举双手时手臂扫过手区，左右手原来一共按了 24 次，改完 4 次；挥手 12 下
-# 按出 10 下，没按出的是进框不到 0.07 秒的两下。
-HAND_ENTER_DEPTH = 0.04
-HAND_DWELL_S = 0.07
-HAND_BOTH_DWELL_S = 0.30
-
-# 圈给动作让路（只在两边都绑了键时）：圈要待够这么久才按，做那个动作时、做完之后
-# 这么久之内都不按。录像里举双手扫过手区大多 0.1~0.3 秒，算上动作认出来之前那几帧。
-ZONE_YIELD_S = 0.25
-ZONE_YIELD_GRACE_S = 0.30
-
-# 区域怎么算按下。guarded（防误触）：上面这些都用上。simple（进去就按）：关节进框
-# 那一帧就按、出框那一帧就松，脚不用往外抬、圈不给动作让路，只留一条——握拳控制
-# 鼠标的那只手，飞过哪个区域都不按。
-ZONE_TRIGGER_MODES = ("guarded", "simple")
-DEFAULT_ZONE_TRIGGER_MODE = "guarded"
+# 区域怎么算按下。smart（智能）：进框先判断是故意伸进来的还是做动作时扫过，见
+# zone_arbiter。simple（进去就按）：关节进框那一帧就按、出框那一帧就松，脚不用往外
+# 抬、框不给动作让路，只留一条——握拳控制鼠标的那只手，飞过哪个区域都不按。
+# 以前的 guarded（防误触）是一组写死的等待时间，已经被 smart 取代，存盘里读到就当 smart。
+ZONE_TRIGGER_MODES = ("smart", "simple")
+DEFAULT_ZONE_TRIGGER_MODE = "smart"
+LEGACY_ZONE_TRIGGER_MODES = {"guarded": "smart"}
+# 会扫过这个框的动作，录的时候几次里至少有这么多次真的扫过，才算冲突。
+ZONE_CONFLICT_MIN_RATE = 0.2
+# 按下之后这么久之内认出了一个绑了键的动作，这一下记成「疑似误按」。多了就提示去录。
+MISFIRE_WINDOW_S = 0.8
+MISFIRE_MEMORY_S = 600.0
+MISFIRE_HINT_COUNT = 3
 
 # 定住的跟随框：哪几个能定、编辑时最小多大（画面宽高的比例）。
 FROZEN_ZONE_IDS = ("leftHand", "rightHand", "leftFoot", "rightFoot", "headJump", "lookGate")
@@ -443,8 +451,11 @@ def _canonical_fixed_zones(zones: dict | None) -> dict:
 class ControlKernel:
     """Thread-safe body/action/head kernel with its own watchdog."""
 
-    def __init__(self, output, *, watchdog_timeout: float = 0.30) -> None:
+    def __init__(self, output, *, watchdog_timeout: float = 0.30, persist: bool = True) -> None:
+        """persist=False：不读也不写用户的设置文件。回放录的动作时临时建的那个内核
+        用它（intent_library），设置由调用方一项一项装进去，怎么折腾都不碰盘。"""
         self.output = output
+        self._persist = bool(persist)
         self.watchdog_timeout = float(watchdog_timeout)
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -534,9 +545,30 @@ class ControlKernel:
         self.vertical_pitch_velocity = 0.0
         self.vertical_pitch_acceleration = 0.0
         self.vertical_pitch_intent_state = "IDLE"
-        self.zone_state = {name: {"inside": 0, "outside": 0, "pressed": False} for name in RUNTIME_BODY_ZONES}
-        self.zone_state["lookGate"] = {"inside": 0, "outside": 0, "pressed": False}
+        self.zone_state = {name: fresh_zone_state() for name in RUNTIME_BODY_ZONES}
+        self.zone_state["lookGate"] = fresh_zone_state()
         self.last_zone_emit = 0.0
+        # 「智能」判定：最近一小段手脚动得多快、每个框的判断状态机、录的数据。
+        self.zone_kin = Kinematics()
+        self.zone_arbiter = ZoneArbiter()
+        # 录的动作算出来的冲突：{触发名: {框: {"hits": 扫过几次, "reps": 做了几次}}}。
+        # 录过的动作以它为准（哪怕一次都没扫过），没录过的才看动作文件的 passes_zones。
+        # 由 intent_library 在后台算好装进来，见 configure_zone_learning。
+        self.zone_conflict_rates: dict[str, dict[str, dict]] = {}
+        # 每个触发最近一次「正在做」是什么时候，框用它判断动作是不是刚做完。
+        self.trigger_busy_at: dict[str, float] = {}
+        # 疑似误按：[(时刻, 框, 触发名)]。某个没录过的动作攒够了就提示去录。
+        self.zone_misfires: deque = deque(maxlen=64)
+        # 「录我的动作」：正在录的这一轮，存盘的地方，录过哪几项（存盘后刷新，不每帧读盘）。
+        self.intent_session: IntentRecordingSession | None = None
+        self.intent_store = IntentRecordingStore(_user_intent_dir())
+        self.intent_recorded: set[str] = self.intent_store.recorded_keys() if persist else set()
+        self.intent_saving = False
+        self.intent_last_error = ""
+        # 后台对着现在的框算录的东西（intent_library.ZoneLearner）：算到哪了、体检报告。
+        self.zone_learning: dict = {"state": "idle", "error": "", "report": None, "took_s": None, "snippets": 0}
+        # 录完存好之后叫一声（server 装上，拿去重新算冲突和体检）。在存盘线程里调。
+        self._intent_listener = None
 
         self.motion_config: list[dict] = []
         self.motion_active: set[str] = set()
@@ -642,8 +674,9 @@ class ControlKernel:
         # legacy headJump binding remains the only behavior.
         self.action_chain = HoldChain(DEFAULT_ACTION_CHAIN)
         self._general_raw: dict = {}
-        self._load_general_settings()
-        self._migrate_scene_layout_locked()
+        if self._persist:
+            self._load_general_settings()
+            self._migrate_scene_layout_locked()
         # 新玩家使用侧倾左右配左手上下；初次校准只保存头控档案时，重启仍保留该组合。
         if not isinstance(self._general_raw.get("hand_mouse"), dict) and (
             not self._head_profile_path().exists() or self.head_controller.config["horizontal_algorithm"] == "roll_tilt"
@@ -714,6 +747,7 @@ class ControlKernel:
         # 量过身的区域。坏了、缺了都回到默认大小，不影响启动。
         self.zone_fit = normalize_zone_fit(data.get("zone_fit"))
         mode = str(data.get("zone_trigger_mode", "")).strip().lower()
+        mode = LEGACY_ZONE_TRIGGER_MODES.get(mode, mode)
         if mode in ZONE_TRIGGER_MODES:
             self.zone_trigger_mode = mode
         frozen = data.get("zone_freeze")
@@ -785,6 +819,8 @@ class ControlKernel:
 
     def _save_general_settings(self) -> None:
         """写盘。失败不抛：存不下设置也不该打断正在进行的游戏。"""
+        if not self._persist:
+            return
         path = self._general_settings_path()
         payload = {
             **getattr(self, "_general_raw", {}),
@@ -1202,6 +1238,115 @@ class ControlKernel:
             self._safe_output(self.output.apply, 0.0, 0.0)
             return self.status_locked(time.monotonic())
 
+    # ---------- 录我的动作 ----------
+
+    def _intent_actions_locked(self) -> list[tuple[str, str]]:
+        """这台电脑上有的全部动作（不管这个游戏绑没绑）：录的东西和游戏无关。"""
+        out = []
+        for ident in ("march", "calf_back", *self._motion_rules):
+            entry = pose_library.get(ident)
+            out.append((f"motion.{ident}", entry["name"] if entry else ident))
+        for ident in self._pose_rules:
+            entry = pose_library.get(ident)
+            out.append((f"pose.{ident}", entry["name"] if entry else ident))
+        store = self.custom_pose_store
+        for entry in getattr(store, "poses", ()) if store is not None else ():
+            if isinstance(entry, dict) and entry.get("id"):
+                out.append((f"pose.{entry['id']}", str(entry.get("name") or entry["id"])))
+        return list(dict.fromkeys(out))
+
+    def intent_items_locked(self) -> dict:
+        """要录的全部项目，和其中还没录过的。界面靠 missing 提示「新动作还没录」。"""
+        steps = build_steps(self._intent_actions_locked())
+        return {
+            "all": [{"key": step["key"], "kind": step["kind"], "name": step["name"]} for step in steps],
+            "recorded": sorted(self.intent_recorded),
+            "missing": [step["key"] for step in steps if step["key"] not in self.intent_recorded],
+        }
+
+    def start_intent_recording(self, keys=None) -> dict:
+        """开始录。keys 给了就只录这几项（补录新动作、重录某一项）。"""
+        with self._lock:
+            now = time.monotonic()
+            if self.intent_saving:
+                raise ValueError("上一轮还在存，等一下再录")
+            steps = build_steps(self._intent_actions_locked(), keys)
+            if not steps:
+                raise ValueError("没有要录的项目")
+            self.intent_session = IntentRecordingSession(steps, now)
+            self.intent_last_error = ""
+            return self.status_locked(now)
+
+    def skip_intent_step(self) -> dict:
+        with self._lock:
+            now = time.monotonic()
+            if self.intent_session is not None:
+                self.intent_session.skip(now)
+                self._finish_intent_if_done_locked()
+            return self.status_locked(now)
+
+    def cancel_intent_recording(self) -> dict:
+        with self._lock:
+            if self.intent_session is not None:
+                self.intent_session.cancel()
+            return self.status_locked(time.monotonic())
+
+    def forget_intent_items(self, keys) -> dict:
+        """删掉这几项录的东西（比如删了一个自定义动作）。"""
+        with self._lock:
+            self.intent_store.forget(keys)
+            self.intent_recorded = self.intent_store.recorded_keys()
+            listener = self._intent_listener
+        if listener is not None:
+            listener()
+        return self.status()
+
+    def configure_intent_listener(self, listener) -> None:
+        with self._lock:
+            self._intent_listener = listener
+
+    def _update_intent_recording_locked(self, pose_map, now: float) -> None:
+        session = self.intent_session
+        if session is None or not session.active:
+            return
+        zone_inside = {name: bool(self.zone_state.get(name, {}).get("raw_inside")) for name in RUNTIME_BODY_ZONES}
+        active = {f"motion.{ident}" for ident in self.motion_active} | {f"pose.{ident}" for ident in self.pose_active}
+        session.update(now, pose_map, self.width, self.height, zone_inside, active)
+        self._finish_intent_if_done_locked()
+
+    def _finish_intent_if_done_locked(self) -> None:
+        session = self.intent_session
+        if session is None or session.state != "done" or self.intent_saving:
+            return
+        self.intent_saving = True
+
+        def save() -> None:
+            error = ""
+            try:
+                self.intent_store.save(session)
+            except OSError as exc:
+                error = f"保存失败：{exc}"
+            with self._lock:
+                self.intent_saving = False
+                self.intent_last_error = error
+                self.intent_recorded = self.intent_store.recorded_keys()
+                session.frames = []  # 存完就不占内存了
+                listener = self._intent_listener
+            if listener is not None and not error:
+                try:
+                    listener()
+                except Exception as exc:  # noqa: BLE001 - 算不出来不该拖垮录制
+                    self.last_error = str(exc)
+
+        threading.Thread(target=save, name="intent-save", daemon=True).start()
+
+    def _intent_status_locked(self, now: float) -> dict:
+        session = self.intent_session
+        status = session.status(now) if session is not None else {"active": False, "state": "idle", "steps": []}
+        status["saving"] = bool(self.intent_saving)
+        status["error"] = self.intent_last_error
+        return status
+
     # ---------- 量身定区域 ----------
 
     def start_zone_fit(self, *, body: bool = True) -> dict:
@@ -1284,15 +1429,19 @@ class ControlKernel:
 
     def configure_zone_trigger_mode(self, mode: str) -> dict:
         mode = str(mode or "").strip().lower()
+        mode = LEGACY_ZONE_TRIGGER_MODES.get(mode, mode)
         if mode not in ZONE_TRIGGER_MODES:
-            raise ValueError("区域触发方式只能是「进去就按」或「防误触」")
+            raise ValueError("区域触发方式只能是「智能」或「进去就按」")
         with self._lock:
             if mode != self.zone_trigger_mode:
                 self.zone_trigger_mode = mode
-                # 换方式时各区域的计时清零，免得带着上一种方式的半截状态。
+                # 换方式时各区域的判断状态清零，免得带着上一种方式的半截状态。按着
+                # 的键保留：人手还在框里，换个方式不该让键闪断。
                 for state in self.zone_state.values():
-                    state["deep_since"] = None
-                    state.pop("yield_until", None)
+                    pressed = state["pressed"]
+                    state.update(fresh_zone_state())
+                    if pressed:
+                        state.update(pressed=True, phase="pressed", inside=1)
                 self._save_general_settings()
             return self.status_locked(time.monotonic())
 
@@ -1405,6 +1554,7 @@ class ControlKernel:
     ) -> None:
         if not pose_map:
             self._clear_body_outputs_locked()
+            self._update_intent_recording_locked(None, now)
             return
         # Evaluated before anything else in the frame: the zone pass and the
         # final apply() both consult the engaged state, and they run at
@@ -1433,6 +1583,7 @@ class ControlKernel:
         self._update_zones_locked(pose_map, now)
         self._update_motion_locked(pose_map, now)
         self._update_cross_poses_locked(pose_map, now)
+        self._update_intent_recording_locked(pose_map, now)
         self._update_action_chain_locked(now)
         self._dispatch_controls_locked(now)
         self._update_body_motion_guard_locked(pose_map, now)
@@ -1884,28 +2035,32 @@ class ControlKernel:
     def _point_in_rect(point: dict | None, rect: dict | None) -> bool:
         return bool(point and rect and _score(point) >= 0.42 and rect["x1"] <= point["x"] <= rect["x2"] and rect["y1"] <= point["y"] <= rect["y2"])
 
-    def _hand_reach_locked(self, pose_map: dict[str, dict], name: str, frame: dict | None) -> float | None:
-        """手腕进了这只手的区域多深，量身那把尺；不在区域里是 None。
+    def _zone_depth_locked(self, pose_map: dict[str, dict], name: str, frame: dict | None) -> float:
+        """这个框的那只手（脚、鼻子）进了框多深，量身那把尺；几个点取最深的。不在框里是 -1。
 
         看越过每条边多少，取最小的。贴着画面边的那几条不算：跟随的手区外沿、上沿
         就是画面边，手不可能从那边进来。定住后拖离了画面边的框，四条边都算。
         """
-        wrist = pose_map.get(RUNTIME_BODY_ZONES[name]["points"][0])
         rect = self.zone_rects.get(name)
-        if not self._point_in_rect(wrist, rect):
-            return None
-        if frame is None:
-            return math.inf
-        depths = []
-        if rect["y2"] < 0.999:
-            depths.append((rect["y2"] - wrist["y"]) / frame["uy"])
-        if rect["y1"] > 0.001:
-            depths.append((wrist["y"] - rect["y1"]) / frame["uy"])
-        if rect["x1"] > 0.001:
-            depths.append((wrist["x"] - rect["x1"]) / frame["ux"])
-        if rect["x2"] < 0.999:
-            depths.append((rect["x2"] - wrist["x"]) / frame["ux"])
-        return min(depths) if depths else math.inf
+        points = ("left_wrist",) if name == "lookGate" else RUNTIME_BODY_ZONES[name]["points"]
+        best = -1.0
+        for point_name in points:
+            point = pose_map.get(point_name)
+            if not self._point_in_rect(point, rect):
+                continue
+            if frame is None:
+                return math.inf
+            depths = []
+            if rect["y2"] < 0.999:
+                depths.append((rect["y2"] - point["y"]) / frame["uy"])
+            if rect["y1"] > 0.001:
+                depths.append((point["y"] - rect["y1"]) / frame["uy"])
+            if rect["x1"] > 0.001:
+                depths.append((point["x"] - rect["x1"]) / frame["ux"])
+            if rect["x2"] < 0.999:
+                depths.append((rect["x2"] - point["x"]) / frame["ux"])
+            best = max(best, min(depths) if depths else math.inf)
+        return best
 
     def _hand_points_for_mouse_locked(self) -> dict | None:
         """两只手各自使用自己的关节点，缺失时分别退回人体指尖判断。"""
@@ -1943,80 +2098,58 @@ class ControlKernel:
         simple = self.zone_trigger_mode == "simple"
         gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
-        overlaps = self.zone_overlaps_locked()
         frame = body_frame(pose_map, self.width, self.height)
-        hand_reach = {} if simple else {
-            name: self._hand_reach_locked(pose_map, name, frame) for name in ("leftHand", "rightHand")}
+        self.zone_kin.update(pose_map, frame, now)
+        actions = self._bound_action_triggers_locked()
+        conflicts = {} if simple else self.zone_conflicts_locked(actions)
+        busy = {trigger for trigger in actions if self._motion_busy_locked(trigger)}
+        self._note_busy_locked(busy, conflicts, now)
         for name in zone_names:
-            state = self.zone_state.setdefault(name, {"inside": 0, "outside": 0, "pressed": False})
-            if name == "lookGate":
-                points = ("left_wrist",)
-            else:
-                points = RUNTIME_BODY_ZONES[name]["points"]
-            inside = any(self._point_in_rect(pose_map.get(point), self.zone_rects.get(name)) for point in points)
+            state = self.zone_state.setdefault(name, fresh_zone_state())
+            depth = self._zone_depth_locked(pose_map, name, frame)
+            inside = depth >= 0.0
             if name in ("leftFoot", "rightFoot") and not simple:
-                # 固定圈与跟随区均须先实际接触，再确认是向外伸脚。
+                # 脚区要确实往外抬了脚（见 FOOT_ZONE_LIFT）：站宽一点、脚贴地滑一下
+                # 都会碰到框，那不是按。
                 inside = inside and self._foot_outward(pose_map, "left" if name == "leftFoot" else "right")
             if inside and self._hand_mouse_owns_zone(name):
                 # That hand is steering the pointer.  Without this it would also
                 # be pressing whatever zone it flies through, so aiming would
                 # mash buttons.
                 inside = False
+            # 身体确实在框里没有，不管判定按不按。「录我的动作」数进框次数用它。
+            state["raw_inside"] = inside
+            # The look gate is a safety arm, so leaving it must cut vertical
+            # output on the very first missing frame.  Body action zones
+            # retain their normal two-frame hysteresis.
+            exit_frames = 1 if name == "lookGate" else 2
             if simple:
-                # 进去就按：在框里就按着，出来就松，下面那些防误触一条都不走。
+                # 进去就按：在框里就按着，出来就松，下面那些判断一条都不走。
                 state["inside"] = state["inside"] + 1 if inside else 0
                 state["outside"] = 0 if inside else state["outside"] + 1
-                state["deep_since"] = None
                 if state["pressed"] != inside:
-                    state["pressed"] = inside
+                    state.update(pressed=inside, phase="pressed" if inside else "idle",
+                                 pressed_at=now if inside else None, reason="simple")
+                    if inside:
+                        state["last_pressed_at"] = now
                     changed = True
                 continue
-            # 圈给动作让路：这个圈和一个会扫过它的动作都绑了键时，动作做着（或刚做
-            # 完）就不按；那个动作在认出来之前就会先扫过圈的，平时也要待够
-            # ZONE_YIELD_S 才按——举双手时手从两侧扫过手区，不让的话每举一次就误按
-            # 一次 X、B。只绑了其中一边的人完全不受影响。
-            overlap = overlaps.get(name)
-            yielding = overlap["triggers"] if overlap and overlap["yields"] else ()
-            if yielding:
-                if any(self._motion_busy_locked(trigger) for trigger in yielding):
-                    state["yield_until"] = now + ZONE_YIELD_GRACE_S
-                if now < state.get("yield_until", 0.0):
-                    inside = False
-            # 手区：进够深、待够久才按，见 HAND_ENTER_DEPTH。待了多久只看手腕在哪：握拳
-            # 控制把这只手占住的那几帧（握拳读数常常一闪一闪）不把计时清零，按不按
-            # 仍由上面那几条管。
-            ready = True
-            if name in hand_reach:
-                depth = hand_reach[name]
-                if depth is not None and depth >= HAND_ENTER_DEPTH:
-                    if state.get("deep_since") is None:
-                        state["deep_since"] = now
-                else:
-                    state["deep_since"] = None
-                # 另一只手正握拳控制鼠标的话，它停在那儿不是在往上举，不算。
-                other = "rightHand" if name == "leftHand" else "leftHand"
-                both = hand_reach[other] is not None and not self._hand_mouse_owns_zone(other)
-                dwell = HAND_BOTH_DWELL_S if both else HAND_DWELL_S
-                ready = state.get("deep_since") is not None and now - state["deep_since"] >= dwell
-            if inside:
-                if state["inside"] == 0:
-                    state["entered_at"] = now
-                state["inside"] += 1
-                state["outside"] = 0
-                settled = not (overlap and overlap["delay"]) or now - state.get("entered_at", now) >= ZONE_YIELD_S
-                if not state["pressed"] and state["inside"] >= 2 and settled and ready:
-                    state["pressed"] = True
-                    changed = True
-            else:
-                state["outside"] += 1
-                state["inside"] = 0
-                # The look gate is a safety arm, so leaving it must cut
-                # vertical output on the very first missing frame.  Body
-                # action zones retain their normal two-frame hysteresis.
-                exit_frames = 1 if name == "lookGate" else 2
-                if state["pressed"] and state["outside"] >= exit_frames:
-                    state["pressed"] = False
-                    changed = True
+            info = conflicts.get(name)
+            yielding = tuple(info["triggers"]) if info and info["yields"] else ()
+            binding = self._effective_binding_locked(f"zone.{name}") if name in RUNTIME_BODY_ZONES else None
+            deliberate = str(((binding or {}).get("action") or {}).get("type", "")) == "system"
+            # 系统功能：有任何绑了键的动作正在做都不按。游戏按键：只看会扫过它的那几个。
+            watched = actions if deliberate else yielding
+            zone_busy = any(trigger in busy for trigger in watched)
+            tail = not zone_busy and any(now - self.trigger_busy_at.get(trigger, -math.inf) < TAIL_S
+                                         for trigger in watched)
+            given = ZoneInput(
+                inside=inside, depth=depth if inside else -1.0, conflict=bool(yielding),
+                busy=zone_busy, tail=tail, deliberate=deliberate, jump=name in JUMP_ZONES,
+                exit_frames=exit_frames, sweep_tags=yielding,
+            )
+            if self.zone_arbiter.update(name, state, now, given, self.zone_kin):
+                changed = True
         self.vertical_gate_active = bool(self.zone_state.get("lookGate", {}).get("pressed")) if gate_available else False
         if not self.vertical_gate_active:
             self._reset_vertical_hand_locked()
@@ -2031,25 +2164,132 @@ class ControlKernel:
         if changed:
             self.last_zone_emit = now
 
-    def zone_overlaps_locked(self) -> dict[str, dict]:
-        """绑了键的圈里，哪些会被同样绑了键的动作扫过（见 pose_library 的 passes_zones）。
+    def _bound_action_triggers_locked(self) -> list[str]:
+        """绑了键的动作和姿势（内置、下载的、自己录的），框要不要让路只看这些。"""
+        idents = [f"motion.{ident}" for ident in ("march", "calf_back", *self._motion_rules)]
+        idents += [f"pose.{ident}" for ident in self._pose_rules]
+        store = self.custom_pose_store
+        if store is not None:
+            idents += [f"pose.{entry['id']}" for entry in getattr(store, "poses", ())
+                       if isinstance(entry, dict) and entry.get("id")]
+        out = []
+        for trigger in dict.fromkeys(idents):
+            action = (self._effective_binding_locked(trigger) or {}).get("action")
+            if isinstance(action, dict) and action.get("type") and action.get("target"):
+                out.append(trigger)
+        return out
 
-        ``yields`` 为真的要让路；头顶区不让：开合跳本身就在跳，让它晚按等于跳不
-        起来，只在界面上提醒。界面上绑键时那句提醒也读这一份，规则只在这里写。
+    def _zone_with_motion_locked(self, zone: str, binding: dict | None) -> bool:
+        """这个框设成了「做动作时也要按」没有。没设过的：要跳才碰得到的框默认是，
+        别的默认不是——人在空中只停一瞬间，等不起。"""
+        if isinstance(binding, dict) and "with_motion" in binding:
+            return bool(binding["with_motion"])
+        return zone in JUMP_ZONES
+
+    def zone_conflicts_locked(self, actions: list[str] | None = None) -> dict[str, dict]:
+        """绑了键的框里，哪些会被同样绑了键的动作扫过，录的时候几次里扫过几次。
+
+        录过的动作按录的算（intent_library 对着现在的框在后台算好装进来），哪怕一次
+        都没扫过也以它为准；没录过的才看动作文件里写的 passes_zones。
+
+        ``yields``：框要让路，也就是没设成「做动作时也要按」。设成了的照样列出来，
+        界面上提醒「做这个动作时会一起按到」。
         """
         out: dict[str, dict] = {}
+        actions = self._bound_action_triggers_locked() if actions is None else actions
+        # 动作文件里写的，一次读完：这个函数每帧都跑。
+        declared: dict[str, set[str]] = {}
+        for entry in pose_library.entries():
+            for zone in entry["passes_zones"]:
+                declared.setdefault(zone, set()).add(pose_library.trigger_of(entry))
         for zone in RUNTIME_BODY_ZONES:
-            if not self._effective_binding_locked(f"zone.{zone}"):
+            binding = self._effective_binding_locked(f"zone.{zone}")
+            if not binding:
                 continue
-            triggers = [trigger for trigger in pose_library.zone_crossers(zone)
-                        if self._effective_binding_locked(trigger)]
-            if triggers:
-                # 「进去就按」不让路：动作和圈都绑了键，做动作时扫过圈就一起按到。
-                yields = zone != "headJump" and self.zone_trigger_mode != "simple"
-                out[zone] = {"triggers": triggers, "yields": yields,
-                             # 有动作会在认出来之前就先扫过这个圈：平时也要晚一点按。
-                             "delay": yields and any(pose_library.sweeps_first(t) for t in triggers)}
+            rates: dict[str, dict] = {}
+            for trigger in actions:
+                recorded = self.zone_conflict_rates.get(trigger)
+                if recorded is not None:
+                    rate = recorded.get(zone) or {}
+                    hits, reps = int(rate.get("hits", 0)), int(rate.get("reps", 0))
+                    if reps > 0 and hits / reps >= ZONE_CONFLICT_MIN_RATE:
+                        rates[trigger] = {"hits": hits, "reps": reps, "source": "recorded"}
+                elif trigger in declared.get(zone, ()):
+                    rates[trigger] = {"source": "declared"}
+            if rates:
+                with_motion = self._zone_with_motion_locked(zone, binding)
+                out[zone] = {"triggers": list(rates), "rates": rates, "with_motion": with_motion,
+                             "yields": not with_motion and self.zone_trigger_mode != "simple"}
         return out
+
+    def _note_busy_locked(self, busy: set[str], conflicts: dict, now: float) -> None:
+        """记下哪些动作正在做；一个动作刚开始做时，看看有没有框在这之前刚按下——
+        那一下多半是做这个动作时扫过去误按的。"""
+        started = busy - getattr(self, "_busy_previous", set())
+        self._busy_previous = set(busy)
+        for trigger in busy:
+            self.trigger_busy_at[trigger] = now
+        for trigger in started:
+            for zone in RUNTIME_BODY_ZONES:
+                state = self.zone_state.get(zone) or {}
+                pressed_at = state.get("last_pressed_at")
+                if pressed_at is None or not 0.0 <= now - pressed_at <= MISFIRE_WINDOW_S:
+                    continue
+                info = conflicts.get(zone)
+                if info and trigger in info["triggers"] and not info["yields"]:
+                    continue  # 设成了「做动作时也要按」：本来就要一起按
+                if self._zone_with_motion_locked(zone, self._effective_binding_locked(f"zone.{zone}")):
+                    continue
+                recent = [item for item in self.zone_misfires
+                          if item[1] == zone and item[2] == trigger and now - item[0] < 1.5]
+                if not recent:
+                    self.zone_misfires.append((now, zone, trigger))
+
+    def zone_misfire_hint_locked(self, now: float) -> dict | None:
+        """没录过的动作误按框攒够了次数，就提示去录一下。录过的不提示：录过还误按，
+        要调的是判断本身，录第二遍没用。"""
+        counts: dict[str, list[str]] = {}
+        for at, zone, trigger in self.zone_misfires:
+            if now - at <= MISFIRE_MEMORY_S and trigger not in self.zone_conflict_rates:
+                counts.setdefault(trigger, []).append(zone)
+        best = max(counts.items(), key=lambda item: len(item[1]), default=None)
+        if not best or len(best[1]) < MISFIRE_HINT_COUNT:
+            return None
+        return {"trigger": best[0], "zones": sorted(set(best[1])), "count": len(best[1])}
+
+    def configure_zone_learning(self, rates: dict | None, bank: SnippetBank | None) -> None:
+        """装上从录的动作算出来的东西：各动作扫过各框的次数、每次进框的样子。"""
+        with self._lock:
+            self.zone_conflict_rates = copy.deepcopy(rates or {})
+            self.zone_arbiter.bank = bank or SnippetBank()
+
+    def set_zone_learning_state(self, state: str, *, report=None, error: str = "", took_s=None) -> None:
+        """后台算的进度和结果（体检报告），界面上显示。"""
+        with self._lock:
+            self.zone_learning = {"state": state, "error": error,
+                                  "report": report if state == "ready" else self.zone_learning.get("report"),
+                                  "took_s": took_s, "snippets": len(self.zone_arbiter.bank)}
+
+    def replay_snapshot(self) -> dict | None:
+        """回放录的动作要照着的那些设置（intent_library.make_replay_kernel）。正在录就不给。"""
+        with self._lock:
+            if self.intent_session is not None and self.intent_session.active:
+                return None
+            store = self.custom_pose_store
+            return copy.deepcopy({
+                "control_bindings": self.control_bindings,
+                "motion_config": self.motion_config,
+                "pose_actions": list(self.pose_actions.values()),
+                "custom_poses": list(getattr(store, "poses", []) or []) if store is not None else [],
+                "zone_fit": self.zone_fit,
+                "zones_frozen": self.zones_frozen,
+                "frozen_rects": self.frozen_rects,
+                "frozen_anchor": self.frozen_anchor,
+                "zone_trigger_mode": self.zone_trigger_mode,
+                "vertical_look": self.vertical_look,
+                "hand_mouse": dict(self.hand_mouse_controller.config),
+                "action_chain": self.action_chain.config,
+            })
 
     def _motion_busy_locked(self, trigger: str) -> bool:
         """这个动作正在做：已经认出来了，或者上一帧的原始判定已经成立（还在去抖）。"""
@@ -2941,7 +3181,9 @@ class ControlKernel:
     def _clear_body_outputs_locked(self) -> None:
         self.hand_mouse_controller.reset()
         for state in self.zone_state.values():
-            state.update({"inside": 0, "outside": 0, "pressed": False, "deep_since": None})
+            last = state.get("last_pressed_at")
+            state.update(fresh_zone_state(), last_pressed_at=last)
+        self.zone_kin.reset()
         # 定住的框不靠人算，人走开了也还在原地，画面上照样画出来、照样能拖。
         self.zone_rects = self._frozen_zone_rects_locked() if self.zones_frozen else {}
         self.head_jump_anchor = None
@@ -3019,11 +3261,19 @@ class ControlKernel:
         """
         gate_available = self._gate_available()
         zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
+        now = time.monotonic()
         zones = {}
         for name in zone_names:
-            recognized = bool(self.zone_state.get(name, {}).get("pressed", False))
+            raw = self.zone_state.get(name, {})
+            recognized = bool(raw.get("pressed", False))
             mapped = name not in RUNTIME_BODY_ZONES or bool(self._effective_binding_locked(f"zone.{name}"))
             state = {"pressed": recognized and mapped, "recognized": recognized}
+            # 画成什么样：idle 灰、pending 判断中（黄）、pressed 亮、swept 判定是扫过（闪红）。
+            # 没绑键的框不判断也不亮，一律 idle。progress 是系统功能框「稳住」走到哪了。
+            phase = zone_phase_for_display(raw, now) if mapped and raw else "idle"
+            state["phase"] = phase
+            if phase == "pending" and raw.get("progress"):
+                state["progress"] = round(float(raw["progress"]), 2)
             zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), **state}
         # Keep the old four identifiers in status for clients that have not yet
         # learned the merged names. They are aliases only; no second trigger is
@@ -3123,9 +3373,13 @@ class ControlKernel:
             "now": round(now, 3),
             "action_chain": self.action_chain.status(),
             "zone_fit": self._zone_fit_status_locked(now),
-            # 哪些圈在给哪些动作让路。界面在绑键的地方照这个提醒。
-            "zone_overlaps": self.zone_overlaps_locked(),
-            "zone_yield_s": ZONE_YIELD_S,
+            "intent_recording": self._intent_status_locked(now),
+            "intent_items": self.intent_items_locked(),
+            "zone_learning": copy.deepcopy(self.zone_learning),
+            # 哪些框会被哪些动作扫过、让不让路。界面在绑键的地方照这个提醒。
+            "zone_overlaps": self.zone_conflicts_locked(),
+            # 没录过的动作误按框攒够了次数：界面提示去「录我的动作」。
+            "zone_misfire_hint": self.zone_misfire_hint_locked(now),
             "zone_trigger_mode": self.zone_trigger_mode,
             # 跟随框定住了没有；zones_anchor_known：定住时看清了人站在哪，「区域挪到我这里」
             # 能按它把整组框搬过来。

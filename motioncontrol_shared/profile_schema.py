@@ -222,6 +222,10 @@ def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
     label = str(binding.get("label", "")).strip()
     if label:
         out["label"] = label
+    # 区域的「做动作时也要按」：设过才存，没设过的由内核按框定默认（要跳才碰得到的
+    # 框默认是）。只对区域有意义，别的触发带着也不碍事。
+    if isinstance(binding.get("with_motion"), bool):
+        out["with_motion"] = binding["with_motion"]
     # Voice trigger text belongs to the binding, not to the shipped command
     # catalog.  Keep it in the shared schema so cloud validation and desktop
     # validation preserve the same player setting.

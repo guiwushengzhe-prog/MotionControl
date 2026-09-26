@@ -15,13 +15,13 @@ import threading
 import pytest
 
 from motioncontrol.control_kernel import (
-    FROZEN_ZONE_MIN_SIZE, HAND_ENTER_DEPTH, ControlKernel, legacy_scene_to_frozen,
+    FROZEN_ZONE_MIN_SIZE, ControlKernel, legacy_scene_to_frozen,
 )
 from motioncontrol_shared.mapping_schema import normalize_voice_mappings
 from motioncontrol_shared.profile_schema import (
     BINDING_SYSTEM_TARGETS, action_catalog, normalize_action, normalize_bindings,
 )
-from test_hand_zone_dwell import into, with_elbows
+from test_zone_smart import into, with_elbows
 from test_minimal_controls import KernelOutput, _standing_pose, _zone_feeder
 
 
@@ -38,10 +38,6 @@ def kernel():
 
 # ---------- 进去就按 ----------
 
-def test_the_default_is_still_the_guarded_mode(kernel):
-    assert kernel.status()["zone_trigger_mode"] == "guarded"
-
-
 def test_simple_mode_presses_on_the_first_frame_inside_and_releases_on_the_first_outside(kernel, monkeypatch):
     feed = _zone_feeder(kernel, monkeypatch)
     feed(standing(), 10)
@@ -49,18 +45,10 @@ def test_simple_mode_presses_on_the_first_frame_inside_and_releases_on_the_first
     # 手先停在框下沿外面一点（真人的手是一路抬上来的，不会一帧从腰间跳进框里）。
     feed(into(kernel, standing(), "leftHand", -.01), 5)
     assert not kernel.zone_state["leftHand"]["pressed"]
-    # 擦着边进去：防误触下待多久都不按，进去就按下第一帧就按。
-    feed(into(kernel, standing(), "leftHand", HAND_ENTER_DEPTH / 2), 1)
+    # 擦着边进去：智能判定下还没进够深，进去就按下第一帧就按。
+    feed(into(kernel, standing(), "leftHand", .005), 1)
     assert kernel.zone_state["leftHand"]["pressed"]
     feed(into(kernel, standing(), "leftHand", -.03), 1)
-    assert not kernel.zone_state["leftHand"]["pressed"]
-
-
-def test_guarded_mode_still_ignores_a_graze(kernel, monkeypatch):
-    feed = _zone_feeder(kernel, monkeypatch)
-    feed(standing(), 10)
-    pose = into(kernel, standing(), "leftHand", HAND_ENTER_DEPTH / 2)
-    feed(pose, 20)
     assert not kernel.zone_state["leftHand"]["pressed"]
 
 
@@ -78,7 +66,8 @@ def test_simple_mode_zones_do_not_yield_to_motions(kernel):
     assert kernel.status()["zone_overlaps"]["leftHand"]["yields"] is True
     kernel.configure_zone_trigger_mode("simple")
     overlaps = kernel.status()["zone_overlaps"]
-    assert overlaps["leftHand"] == {"triggers": ["motion.hands_up"], "yields": False, "delay": False}
+    assert overlaps["leftHand"] == {"triggers": ["motion.hands_up"], "yields": False, "with_motion": False,
+                                    "rates": {"motion.hands_up": {"source": "declared"}}}
 
 
 def test_simple_mode_still_skips_the_hand_steering_the_mouse(kernel, monkeypatch):
