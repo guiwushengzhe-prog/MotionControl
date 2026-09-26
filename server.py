@@ -1867,7 +1867,8 @@ def main():
     INPUT_BRIDGE.configure_endpoint(args.host, args.port)
     # 启动时恢复两种独立输入：身体来源只决定姿态，音频来源只决定语音。
     INPUT_BRIDGE.set_body_mode(RUNTIME.body_mode)
-    _set_audio_source(AUDIO_SOURCE, start=False)
+    # 默认电脑麦克风随服务启动；选择手机麦克风时仍会释放本地麦克风。
+    _set_audio_source(AUDIO_SOURCE, start=True)
     _enable_default_xinput_merge()
     print(f"MotionControl 2.0 · body zones + motions + voice · v{VERSION}")
     print("Model root:", MODEL_ROOT or "NOT FOUND")
