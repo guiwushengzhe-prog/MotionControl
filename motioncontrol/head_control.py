@@ -135,7 +135,7 @@ HORIZONTAL_ALGORITHM_VERSIONS = {
     "frozen22": "v5.1-fixed22-stable-units",
     "gesture_v188": "v5.1-consensus-shared-calibration",
     "roll_tilt": "roll-tilt-v1",
-    "head_responsive": "head-responsive-v2",
+    "head_responsive": "head-responsive-v3",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
     "gesture_v153": "个性化 PnP（灵敏）",

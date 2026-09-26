@@ -16,8 +16,8 @@ class ResponsiveHeadControl:
         self.state = "CENTER"
         self.tilt_stop_threshold = 3.0
         self.yaw_stop_threshold = .22
-        self.tilt_threshold = 3.6
-        self.yaw_threshold = .255
+        self.tilt_threshold = 3.45
+        self.yaw_threshold = .245
         self.directions = {"tilt": 0, "yaw": 0}
         self.raw = 0.0
 
@@ -32,7 +32,7 @@ class ResponsiveHeadControl:
         self.directions[source] = direction
         amount = min(1.0, (abs(delta) - stop) / max(.1, 1.0 - stop))
         # 中心附近便于细调，大幅动作加速；连续、单调，不突然跳到高速。
-        curved = .35 * amount + .65 * amount * amount
+        curved = .60 * amount + .40 * amount * amount
         return math.copysign(curved, delta)
 
     def update(self, tilt, yaw, now, *, center_tilt, noise_tilt, noise_yaw, yaw_span, deadzone):
@@ -49,8 +49,8 @@ class ResponsiveHeadControl:
         self.yaw_stop_threshold = max(.22, deadzone * 1.8,
                                       3.5 * max(0.0, noise_yaw) / yaw_span)
         # 起动线在停止线外面一点，回正后的小抖动不会立刻重新起动。
-        self.tilt_threshold = self.tilt_stop_threshold + max(.6, .2 * max(0.0, noise_tilt))
-        self.yaw_threshold = self.yaw_stop_threshold + .035
+        self.tilt_threshold = self.tilt_stop_threshold + max(.45, .15 * max(0.0, noise_tilt))
+        self.yaw_threshold = self.yaw_stop_threshold + .025
         tilt_delta = (tilt - center_tilt) / TILT_SPAN_DEG if all(
             math.isfinite(v) for v in (tilt, center_tilt)) else math.nan
         tilt_value = self._channel(tilt_delta, self.tilt_threshold / TILT_SPAN_DEG,

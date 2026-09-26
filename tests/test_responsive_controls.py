@@ -66,7 +66,7 @@ def test_head_curve_is_fine_near_center_monotone_and_bounded(source):
     for index, degrees in enumerate((5., 6., 8., 10., 12., 15., 18., 25.)):
         values.append(head_value(c, degrees if source == 'tilt' else 0.,
                                  degrees / 18 if source == 'yaw' else 0., 1 + index / 30))
-    assert 0 < values[0] < .07  # 中心附近可细调。
+    assert 0 < values[0] < .10  # 中心附近可细调。
     assert all(a < b for a, b in zip(values[:6], values[1:7]))
     assert all(0 <= value <= 1 for value in values)
     assert values[-2] > .85  # 大幅动作仍能快速转向。
@@ -74,6 +74,14 @@ def test_head_curve_is_fine_near_center_monotone_and_bounded(source):
     # 保持偏移仍持续转向；速度并非取决于头正在移动。
     assert head_value(c, 25. if source == 'tilt' else 0.,
                       25 / 18 if source == 'yaw' else 0., 1.27) > .99
+
+
+def test_head_moderate_deflection_is_more_responsive_without_shrinking_the_stop_zone():
+    c = ResponsiveHeadControl()
+    assert .20 < head_value(c, 7.5, 0., 1.) < .30
+    assert head_value(c, 2.9, 0., 1.04) == 0
+    assert head_value(c, 3.3, 0., 1.08) == 0
+    assert head_value(c, 3.5, 0., 1.12) > 0
 
 
 def test_head_real_calibration_noise_preserves_a_usable_stop_range():
