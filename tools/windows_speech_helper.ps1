@@ -69,6 +69,9 @@ public sealed class MotionControlPcmStream : Stream
         }
     }
     $builder = New-Object -TypeName System.Speech.Recognition.GrammarBuilder
+    # GrammarBuilder 默认使用当前 PowerShell 语言（可能是 en-US），
+    # 但这里加载的是中文识别器；语言不一致时 LoadGrammar 会直接失败。
+    $builder.Culture = $recognizerInfo.Culture
     [void]$builder.Append($choices)
     $grammar = New-Object -TypeName System.Speech.Recognition.Grammar -ArgumentList $builder
     $grammar.Name = "MotionControl"
