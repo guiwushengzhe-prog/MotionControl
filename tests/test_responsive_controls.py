@@ -24,8 +24,8 @@ def head_value(c, tilt, yaw, now):
 def test_head_start_reverse_and_stop_use_the_current_frame(fps, source):
     c = ResponsiveHeadControl()
     tilt, yaw = (8., 0.) if source == 'tilt' else (0., .5)
-    assert head_value(c, tilt, yaw, 1.) > .3
-    assert head_value(c, -tilt, -yaw, 1. + 1 / fps) < -.3
+    assert head_value(c, tilt, yaw, 1.) > .15
+    assert head_value(c, -tilt, -yaw, 1. + 1 / fps) < -.15
     assert head_value(c, 0., 0., 1. + 2 / fps) == 0.
 
 
@@ -38,8 +38,54 @@ def test_head_deadzone_noise_missing_signals_and_no_double_speed():
     assert head_value(c, math.nan, .5, 5.08) > 0
     assert head_value(c, math.nan, math.nan, 5.12) == 0
     # 转脸门槛比侧倾门槛高；小幅侧倾可以响应，同幅度转脸仍处于死区。
-    assert head_value(c, 2., 0., 5.16) > 0
-    assert head_value(c, 0., 2 / 18, 5.20) == 0
+    assert head_value(c, 4., 0., 5.16) > 0
+    assert head_value(c, 0., 4 / 18, 5.20) == 0
+
+
+@pytest.mark.parametrize('source', ['tilt', 'yaw'])
+def test_head_stops_with_residual_deflection_and_stays_stopped(source):
+    c = ResponsiveHeadControl()
+    def at(value, now):
+        return head_value(c, value if source == 'tilt' else 0.,
+                          value / 18 if source == 'yaw' else 0., now)
+    assert at(10., 1.) > 0
+    # 无需精确回到校准中心，回正范围内的残余偏移当帧停止。
+    assert at(2.9 if source == 'tilt' else 3.9, 1.04) == 0
+    # 停止线和起动线之间的小抖动不重新开始转向。
+    residual = 3.3 if source == 'tilt' else 4.2
+    assert at(residual, 1.08) == 0
+    assert at(-residual, 1.12) == 0
+    assert at(-6., 1.16) < 0
+    assert at(0., 1.20) == 0
+
+
+@pytest.mark.parametrize('source', ['tilt', 'yaw'])
+def test_head_curve_is_fine_near_center_monotone_and_bounded(source):
+    c = ResponsiveHeadControl()
+    values = []
+    for index, degrees in enumerate((5., 6., 8., 10., 12., 15., 18., 25.)):
+        values.append(head_value(c, degrees if source == 'tilt' else 0.,
+                                 degrees / 18 if source == 'yaw' else 0., 1 + index / 30))
+    assert 0 < values[0] < .07  # 中心附近可细调。
+    assert all(a < b for a, b in zip(values[:6], values[1:7]))
+    assert all(0 <= value <= 1 for value in values)
+    assert values[-2] > .85  # 大幅动作仍能快速转向。
+    assert values[-1] > .97
+    # 保持偏移仍持续转向；速度并非取决于头正在移动。
+    assert head_value(c, 25. if source == 'tilt' else 0.,
+                      25 / 18 if source == 'yaw' else 0., 1.27) > .99
+
+
+def test_head_real_calibration_noise_preserves_a_usable_stop_range():
+    c = ResponsiveHeadControl()
+    def at(tilt, yaw, now):
+        return c.update(tilt, yaw / 18, now, center_tilt=-.3, noise_tilt=2.242,
+                        noise_yaw=1.544, yaw_span=18., deadzone=.1)
+    assert at(12., 0., 1.) > 0
+    assert at(5., 5., 1.04) == 0
+    assert at(6.7, 5.7, 1.08) == 0
+    assert at(-12., 0., 1.12) < 0
+    assert at(-.3, 0., 1.16) == 0
 
 
 def full_head(tmp_path, monkeypatch):
@@ -95,9 +141,36 @@ def test_new_head_calibration_survives_restart_and_switch_to_old(tmp_path, monke
 
 def start_march(c):
     for t, left, right in [(1., 0., 0.), (1.1, .1, 0.), (1.14, .14, 0.),
-                            (1.2, 0., 0.), (1.25, 0., .1)]:
+                            (1.2, 0., 0.)]:
         assert not c.update({'left': left, 'right': right}, t)
+    assert c.update({'left': 0., 'right': .1}, 1.25)
     assert c.update({'left': 0., 'right': .14}, 1.29)
+
+
+@pytest.mark.parametrize('fps', [16, 30, 60])
+def test_march_opposite_leg_starts_in_the_threshold_frame(fps):
+    c = ResponsiveMarch()
+    dt = 1 / fps
+    assert not c.update({'left': .10, 'right': 0.}, 1.)
+    assert not c.update({'left': .12, 'right': 0.}, 1. + 2 * dt)
+    assert not c.update({'left': 0., 'right': 0.}, 1. + 3 * dt)
+    for index in range(4, 8):
+        assert not c.update({'left': 0., 'right': 0.}, 1. + index * dt)
+    assert not c.update({'left': 0., 'right': .06}, 1. + 8 * dt)
+    assert c.update({'left': 0., 'right': .08}, 1. + 9 * dt)
+
+
+def test_march_expired_alternation_and_simultaneous_lifts_do_not_start():
+    c = ResponsiveMarch()
+    for index in range(80):
+        t = 1 + index / 30
+        left = .12 if index < 3 else 0.
+        right = .12 if index > 60 else 0.
+        assert not c.update({'left': left, 'right': right}, t)
+    c.reset()
+    for index in range(80):
+        height = .12 if index % 20 < 6 else 0.
+        assert not c.update({'left': height, 'right': height}, 1 + index / 30)
 
 
 def test_new_march_stops_after_grounding_or_holding_a_leg():
@@ -219,7 +292,7 @@ def test_new_march_starts_before_the_peak_with_calf_mapping(monkeypatch):
                     first_frames.setdefault(algorithm, index)
         finally:
             kernel.close()
-    assert first_frames['responsive'] <= 1
+    assert first_frames['responsive'] == 0
     assert first_frames['legacy'] - first_frames['responsive'] >= 4
 
 

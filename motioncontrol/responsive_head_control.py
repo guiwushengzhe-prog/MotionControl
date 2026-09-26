@@ -14,16 +14,26 @@ class ResponsiveHeadControl:
         self.filtered = 0.0
         self.source = "none"
         self.state = "CENTER"
-        self.tilt_threshold = 1.6
-        self.yaw_threshold = .15
+        self.tilt_stop_threshold = 3.0
+        self.yaw_stop_threshold = .22
+        self.tilt_threshold = 3.6
+        self.yaw_threshold = .255
+        self.directions = {"tilt": 0, "yaw": 0}
         self.raw = 0.0
 
-    @staticmethod
-    def _channel(delta, threshold):
-        if not math.isfinite(delta) or abs(delta) <= threshold:
+    def _channel(self, delta, start, stop, source):
+        if not math.isfinite(delta) or abs(delta) <= stop:
+            self.directions[source] = 0
             return 0.0
-        amount = min(1.0, (abs(delta) - threshold) / max(.1, 1.0 - threshold))
-        return math.copysign(amount, delta)
+        direction = 1 if delta > 0 else -1
+        if self.directions[source] != direction and abs(delta) < start:
+            self.directions[source] = 0
+            return 0.0
+        self.directions[source] = direction
+        amount = min(1.0, (abs(delta) - stop) / max(.1, 1.0 - stop))
+        # 中心附近便于细调，大幅动作加速；连续、单调，不突然跳到高速。
+        curved = .35 * amount + .65 * amount * amount
+        return math.copysign(curved, delta)
 
     def update(self, tilt, yaw, now, *, center_tilt, noise_tilt, noise_yaw, yaw_span, deadzone):
         if not math.isfinite(now):
@@ -34,12 +44,18 @@ class ResponsiveHeadControl:
         dt = now - self.last_at if self.last_at is not None else 0.0
         self.last_at = now
         # 转脸常和看旁边、点头起手相似，门槛比侧倾更大；噪声沿用站好校准所得。
-        self.tilt_threshold = max(1.6, TILT_SPAN_DEG * deadzone * .85, 2.5 * max(0.0, noise_tilt))
-        self.yaw_threshold = max(.15, deadzone * 1.5, 3.0 * max(0.0, noise_yaw) / yaw_span)
+        self.tilt_stop_threshold = max(3.0, TILT_SPAN_DEG * deadzone * 1.5,
+                                       3.0 * max(0.0, noise_tilt))
+        self.yaw_stop_threshold = max(.22, deadzone * 1.8,
+                                      3.5 * max(0.0, noise_yaw) / yaw_span)
+        # 起动线在停止线外面一点，回正后的小抖动不会立刻重新起动。
+        self.tilt_threshold = self.tilt_stop_threshold + max(.6, .2 * max(0.0, noise_tilt))
+        self.yaw_threshold = self.yaw_stop_threshold + .035
         tilt_delta = (tilt - center_tilt) / TILT_SPAN_DEG if all(
             math.isfinite(v) for v in (tilt, center_tilt)) else math.nan
-        tilt_value = self._channel(tilt_delta, self.tilt_threshold / TILT_SPAN_DEG)
-        yaw_value = self._channel(yaw, self.yaw_threshold)
+        tilt_value = self._channel(tilt_delta, self.tilt_threshold / TILT_SPAN_DEG,
+                                   self.tilt_stop_threshold / TILT_SPAN_DEG, "tilt")
+        yaw_value = self._channel(yaw, self.yaw_threshold, self.yaw_stop_threshold, "yaw")
         self.source = "tilt" if abs(tilt_value) >= abs(yaw_value) else "yaw"
         desired = tilt_value if self.source == "tilt" else yaw_value
         self.raw = tilt_delta if self.source == "tilt" else yaw

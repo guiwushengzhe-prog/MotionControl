@@ -35,6 +35,7 @@ class ResponsiveMarch:
         self.last_at = now
         was_active = now < self.active_until
         moving = False
+        two_feet_lifted = all(height >= self.LIFT_START for height in lifts.values())
         for side, leg in self.legs.items():
             height = lifts[side]
             if side in excluded or height < self.LIFT_END:
@@ -48,12 +49,14 @@ class ResponsiveMarch:
                     continue
                 leg["since"] = now
                 moving = True
-            if leg["announced"] or now - leg["since"] < self.CONFIRM_S:
+            gap = now - self.last_event_at
+            alternating = bool(self.last_side and side != self.last_side and .10 <= gap <= 1.50
+                               and not two_feet_lifted)
+            # 第一只脚确认节奏；相反脚达到门槛时，已有交替证据，不再额外等待。
+            if leg["announced"] or (not alternating and now - leg["since"] < self.CONFIRM_S):
                 continue
             leg["announced"] = True
-            gap = now - self.last_event_at
-            # 第一只脚仍只记节奏，避免单腿挪动启动。相反脚上来就确认，不等峰值。
-            if self.last_side and side != self.last_side and .10 <= gap <= 1.50:
+            if alternating:
                 # 跨到下一只脚的确认帧要留少量余量；落地/静止判据负责及时停步。
                 self.active_until = now + min(.65, max(.22, 1.25 * gap + .02))
                 # 真人慢踏步在两步之间会双脚落地约 0.2 秒，不能当成已经停下。

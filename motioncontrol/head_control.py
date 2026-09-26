@@ -135,7 +135,7 @@ HORIZONTAL_ALGORITHM_VERSIONS = {
     "frozen22": "v5.1-fixed22-stable-units",
     "gesture_v188": "v5.1-consensus-shared-calibration",
     "roll_tilt": "roll-tilt-v1",
-    "head_responsive": "head-responsive-v1",
+    "head_responsive": "head-responsive-v2",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
     "gesture_v153": "个性化 PnP（灵敏）",
@@ -3995,6 +3995,8 @@ class HeadController:
             "tilt_deadzone_deg": self._responsive_head.tilt_threshold if responsive else self._tilt_control.threshold,
             "responsive_head_source": self._responsive_head.source if responsive else None,
             "responsive_yaw_deadzone": self._responsive_head.yaw_threshold if responsive else None,
+            "responsive_tilt_stop_deg": self._responsive_head.tilt_stop_threshold if responsive else None,
+            "responsive_yaw_stop": self._responsive_head.yaw_stop_threshold if responsive else None,
             "runtime_neutral_pending": self._runtime_neutral_pending,
             "runtime_neutral_epoch": self._runtime_neutral_epoch,
             "runtime_neutral_at": self._runtime_neutral_at,
