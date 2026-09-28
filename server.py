@@ -33,6 +33,7 @@ from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, Nat
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.intent_library import ZoneLearner
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
+from motioncontrol.game_launch import is_administrator, launch_as_administrator, wait_for_previous_process
 from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
 from motioncontrol_shared.profile_schema import action_catalog
@@ -122,6 +123,13 @@ RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
 PROFILE_UPDATE_LOCK = threading.RLock()
 PROFILES = GameProfileStore(ROOT)
 KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
+
+
+def _game_launch_status(profile: dict | None = None) -> dict:
+    profile = profile or PROFILES.effective_profile()
+    game_id = str(profile["selected_id"])
+    return {"game_id": game_id, "requires_admin": PROFILES.requires_admin(game_id),
+            "is_admin": is_administrator()}
 
 
 def _apply_effective_profile() -> dict:
@@ -700,10 +708,14 @@ def _install_profile_selection(document: dict, game_id: str | None) -> dict:
     library. Without it the entire document is adopted.
     """
     by_profile = document.get("overrides_by_profile", {})
+    launch_modes = document.get("launch_mode_by_profile", {})
+    for custom_game in document.get("custom_games", []):
+        if not game_id or custom_game["id"] == game_id:
+            PROFILES.import_custom_game(custom_game)
     if game_id:
-        if game_id not in by_profile:
+        if game_id not in by_profile and game_id not in launch_modes:
             raise ValueError(f"这份配置里没有 {game_id} 的映射")
-        wanted = {game_id: by_profile[game_id]}
+        wanted = {game_id: by_profile[game_id]} if game_id in by_profile else {}
         final_selection = game_id
     else:
         wanted = by_profile
@@ -717,6 +729,13 @@ def _install_profile_selection(document: dict, game_id: str | None) -> dict:
         PROFILES.select(profile_id)
         PROFILES.set_overrides(overrides, profile_id=profile_id)
         applied.append(profile_id)
+
+    for profile_id, mode in launch_modes.items():
+        if game_id and profile_id != game_id:
+            continue
+        PROFILES.set_admin(profile_id, mode == "admin")
+        if profile_id not in applied:
+            applied.append(profile_id)
 
     if final_selection:
         PROFILES.select(final_selection)
@@ -738,8 +757,12 @@ def _install_game_bundle(document: dict) -> dict:
     game_id = str(document.get("game_id", "")).strip()
     if not game_id:
         raise ValueError("这份方案没说是哪个游戏")
+    if "custom_game" in document:
+        PROFILES.import_custom_game(document["custom_game"])
     PROFILES.select(game_id)
     PROFILES.set_overrides(document.get("overrides", {}), profile_id=game_id)
+    if "launch_mode" in document:
+        PROFILES.set_admin(game_id, document["launch_mode"] == "admin")
     MOTION_CONFIG = save_motion_config(document.get("motions", []))
     KERNEL.configure_motions(MOTION_CONFIG)
     OUTPUT.set_holds([], source_group="motions")
@@ -1143,7 +1166,9 @@ class AdminHandler(_BaseHandler):
             self._send_json({"version": VERSION, **PROFILES.list_games(query)})
             return
         if route == "/api/game-profiles/selected":
-            self._send_json({"version": VERSION, "profile": PROFILES.effective_profile()})
+            profile = PROFILES.effective_profile()
+            self._send_json({"version": VERSION, "profile": profile,
+                             "launch": _game_launch_status(profile)})
             return
         if route == "/api/game-profiles/profile":
             profile_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -1352,6 +1377,41 @@ class AdminHandler(_BaseHandler):
         if body is None:
             self._send_json({"ok": False, "error": "invalid json"}, 400)
             return
+        if route == "/api/game-profiles/launch-mode":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "启动权限只能在这台电脑上修改"}, 403)
+                return
+            origin = self.headers.get("Origin")
+            allowed_origins = {f"http://127.0.0.1:{self.server.server_port}",
+                               f"http://localhost:{self.server.server_port}"}
+            if origin and origin not in allowed_origins:
+                self._send_json({"ok": False, "error": "请从本机控制页面操作"}, 403)
+                return
+            admin = body.get("admin")
+            if type(admin) is not bool:
+                self._send_json({"ok": False, "error": "请选择普通或管理员启动"}, 400)
+                return
+            try:
+                profile = PROFILES.effective_profile()
+                game_id = str(profile["selected_id"])
+                previous = PROFILES.requires_admin(game_id)
+                PROFILES.set_admin(game_id, admin)
+                restarting = admin and not is_administrator()
+                if restarting:
+                    try:
+                        launch_as_administrator(ROOT, sys.argv[1:], wait_for_pid=os.getpid(),
+                                                no_browser=True)
+                    except Exception:
+                        PROFILES.set_admin(game_id, previous)
+                        raise
+                self._send_json({"ok": True, "restarting": restarting,
+                                 "launch": _game_launch_status(profile)})
+                if restarting:
+                    # Only retire the old server after Windows accepted elevation.
+                    threading.Thread(target=self.server.shutdown, name="admin-restart", daemon=True).start()
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if route == "/api/voice/check":
             phrases = body.get("phrases", [])
             if not isinstance(phrases, list):
@@ -1533,7 +1593,8 @@ class AdminHandler(_BaseHandler):
                         "title": remote.title, "owner": remote.owner_name,
                         "doc_type": remote.doc_type, "revision_no": remote.revision_no,
                         "sha256": remote.sha256, "game_id": remote.game_id,
-                        "games": sorted(remote.document.get("overrides_by_profile", {}))
+                        "games": sorted(set(remote.document.get("overrides_by_profile", {})) |
+                                        set(remote.document.get("launch_mode_by_profile", {})))
                                  if remote.doc_type == "profile_selection"
                                  else ([remote.document.get("game_id", "")]
                                        if remote.doc_type == "game_bundle" else []),
@@ -1624,7 +1685,10 @@ class AdminHandler(_BaseHandler):
                     broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
                     if broadcaster is not None:
                         broadcaster(_phone_control_payload())
-                self._send_json({"ok": True, "profile": profile})
+                response = {"ok": True, "profile": profile}
+                if route.endswith("/select"):
+                    response["launch"] = _game_launch_status(profile)
+                self._send_json(response)
             except ProfileSelectionChanged as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 409)
             except Exception as exc:
@@ -2009,7 +2073,21 @@ def main():
                     help="本机管理面端口；只监听 127.0.0.1，局域网无法访问")
     ap.add_argument("--model-root", default=None)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--wait-for-pid", type=int, default=0, help=argparse.SUPPRESS)
     args = ap.parse_args()
+
+    if args.wait_for_pid and not wait_for_previous_process(args.wait_for_pid):
+        raise SystemExit("旧版程序没有退出，已取消重启，避免两个实例争用端口")
+    selected_game_id = str(PROFILES.effective_profile()["selected_id"])
+    if PROFILES.requires_admin(selected_game_id) and not is_administrator():
+        try:
+            launch_as_administrator(ROOT, sys.argv[1:])
+        except Exception as exc:
+            # The user may decline the Windows prompt. Keep the settings page
+            # available so they can retry or choose ordinary startup.
+            print(f"管理员启动未完成，继续以普通权限运行：{exc}")
+        else:
+            return
 
     MODEL_ROOT = choose_model_root(args.model_root)
     MODEL_PATH = resolve_full_model(MODEL_ROOT)

@@ -32,7 +32,7 @@ from motioncontrol_shared.describe import describe
 
 from ..db import utcnow
 from ..deps import CurrentUser, DbSession, MaybeUser
-from ..models import Game, Profile, ProfileVersion, User
+from ..models import Game, Profile, ProfileVersion, User, search_key
 from ..schemas import (
     CreateProfileRequest,
     NewVersionRequest,
@@ -165,7 +165,19 @@ async def create_profile(payload: CreateProfileRequest, user: CurrentUser,
                          db: DbSession) -> ProfileOut:
     blob, sha256, schema_version = _validate_document(payload.doc_type, payload.document)
     if payload.game_id and await db.get(Game, payload.game_id) is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"未知游戏：{payload.game_id}")
+        document = json.loads(blob)
+        if payload.doc_type == "game_bundle":
+            custom = document.get("custom_game")
+        elif payload.doc_type == "profile_selection":
+            custom = next((item for item in document.get("custom_games", [])
+                           if item["id"] == payload.game_id), None)
+        else:
+            custom = None
+        if not custom or custom["id"] != payload.game_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"未知游戏：{payload.game_id}")
+        db.add(Game(id=custom["id"], name=custom["name"],
+                    search_key=search_key(custom["name"]), source="custom"))
+        await db.flush()
 
     profile = Profile(
         owner_id=user.id,

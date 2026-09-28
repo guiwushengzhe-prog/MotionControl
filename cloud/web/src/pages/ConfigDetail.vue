@@ -150,6 +150,7 @@ onMounted(load);
               <span v-if="game.game_id === summary.selected_id" class="badge">上传时选中</span>
               <span class="count">{{ game.total }} 条</span>
             </h3>
+            <p v-if="game.launch_mode === 'admin'" class="hint small">此游戏建议以管理员权限启动；每台电脑由 Windows 确认。</p>
             <div v-for="group in game.groups" :key="group.key" class="group">
               <h4>{{ group.name }}<span class="count">{{ group.items.length }}</span></h4>
               <!-- 超过 8 条时分两栏：20 条语音口令排成一列就是一面墙。 -->
@@ -182,6 +183,7 @@ onMounted(load);
               <span class="game-id">{{ summary.game_id }}</span>
               <span class="count">{{ summary.total }} 条</span>
             </h3>
+            <p v-if="summary.launch_mode === 'admin'" class="hint small">此游戏建议以管理员权限启动；每台电脑由 Windows 确认。</p>
             <div v-for="group in summary.groups" :key="group.key" class="group">
               <h4>{{ group.name }}<span class="count">{{ group.items.length }}</span></h4>
               <div class="items" :class="{ split: group.items.length > 8 }">

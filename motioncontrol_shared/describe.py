@@ -201,9 +201,11 @@ def _describe_overrides(overrides: dict) -> dict:
 
 def _describe_profile_selection(data: dict) -> dict:
     by_profile = data.get("overrides_by_profile", {})
+    modes = data.get("launch_mode_by_profile", {})
     games = [
-        {"game_id": game_id, **_describe_overrides(overrides)}
-        for game_id, overrides in sorted(by_profile.items())
+        {"game_id": game_id, "launch_mode": modes.get(game_id, "normal"),
+         **_describe_overrides(by_profile.get(game_id, {}))}
+        for game_id in sorted(set(by_profile) | set(modes))
     ]
     return {
         "kind": "profile_selection",
@@ -252,6 +254,7 @@ def _describe_game_bundle(data: dict) -> dict:
         "kind": "game_bundle",
         "headline": f"{bindings['total']} 条按键绑定，{enabled} 个身体动作",
         "game_id": data.get("game_id", ""),
+        "launch_mode": data.get("launch_mode", "normal"),
         "groups": bindings["groups"],
         "total": bindings["total"],
         "motions": motions["items"],

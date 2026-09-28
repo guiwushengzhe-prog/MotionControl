@@ -128,13 +128,14 @@ export interface Summary {
   revision_no: number;
   headline: string;
   selected_id?: string;
-  games?: { game_id: string; total: number; groups: SummaryGroup[] }[];
+  games?: { game_id: string; total: number; groups: SummaryGroup[]; launch_mode?: "normal" | "admin" }[];
   items?: SummaryItem[];
   wake_word?: string;
   emergency_stop_phrases?: string[];
   // 游戏方案（game_bundle）只讲一个游戏，所以绑定直接摊在这一层，
   // 不像 profile_selection 那样外套一层 games。
   game_id?: string;
+  launch_mode?: "normal" | "admin";
   total?: number;
   groups?: SummaryGroup[];
   motions?: { name: string; enabled: boolean; action: string }[];

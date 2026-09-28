@@ -92,7 +92,11 @@ const selectionPending = computed(() =>
 const bundleGames = computed<string[]>(() => {
   const document = selectionPending.value?.document as any;
   const byProfile = document?.overrides_by_profile;
-  return byProfile && typeof byProfile === "object" ? Object.keys(byProfile).sort() : [];
+  const modes = document?.launch_mode_by_profile;
+  return [...new Set([
+    ...(byProfile && typeof byProfile === "object" ? Object.keys(byProfile) : []),
+    ...(modes && typeof modes === "object" ? Object.keys(modes) : []),
+  ])].sort();
 });
 
 function combineIntoBundle() {
@@ -111,6 +115,10 @@ function combineIntoBundle() {
         schema: "motioncontrol.game_bundle.v1",
         game_id: game,
         overrides: selection.overrides_by_profile?.[game] ?? {},
+        launch_mode: selection.launch_mode_by_profile?.[game] ?? "normal",
+        ...(selection.custom_games?.find((entry: any) => entry.id === game)
+          ? { custom_game: selection.custom_games.find((entry: any) => entry.id === game) }
+          : {}),
         // 没拖动作映射那份也能合，只是方案里没有身体动作。
         motions: Array.isArray(motions) ? motions : [],
       },

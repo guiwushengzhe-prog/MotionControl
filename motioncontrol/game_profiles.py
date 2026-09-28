@@ -93,9 +93,25 @@ class GameProfileStore:
             not isinstance(value, dict) for value in data["overrides_by_profile"].values()
         ):
             raise ValueError("游戏映射数据无效，原文件已保留")
+        launch_modes = data.get("launch_mode_by_profile", {})
+        if not isinstance(launch_modes, dict) or any(
+            not isinstance(key, str) or not key or not isinstance(mode, str) or mode not in {"normal", "admin"}
+            for key, mode in launch_modes.items()
+        ):
+            raise ValueError("游戏启动权限数据无效，原文件已保留")
         return data
 
     def _save_selection(self, selection: dict) -> None:
+        selection = copy.deepcopy(selection)
+        if hasattr(self, "_custom"):
+            # The selection file is the cloud-shareable game configuration.
+            # Include custom-game identity so another PC can install its bindings
+            # and launch preference without already having this local game ID.
+            games = self._custom["games"]
+            if games:
+                selection["custom_games"] = copy.deepcopy(games)
+            else:
+                selection.pop("custom_games", None)
         self.selection_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
         try:
@@ -157,6 +173,24 @@ class GameProfileStore:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         self._custom = data
+        self._save_selection(self._selection)
+
+    def import_custom_game(self, record: dict) -> None:
+        """Install the same custom game ID from a shared game configuration."""
+        ident = str(record.get("id", "")).strip()
+        name = str(record.get("name", "")).strip()
+        base = str(record.get("base") or "generic-xbox").strip()
+        if not ident.startswith(self.CUSTOM_PREFIX) or not name or len(name) > 80:
+            raise ValueError("自建游戏信息无效")
+        with self._lock:
+            existing = self._custom_entry(ident)
+            if existing is not None:
+                return  # Keep any local rename of the same shared game ID.
+            self.get_profile(base)
+            item = {"id": ident, "name": name, "base": base,
+                    "appid": _clean_appid(record.get("appid"))}
+            self._save_custom_games({"schema": CUSTOM_GAMES_SCHEMA,
+                                     "games": [*self._custom["games"], item]})
 
     def _custom_entry(self, profile_id: str) -> dict | None:
         ident = str(profile_id).strip()
@@ -212,6 +246,7 @@ class GameProfileStore:
 
             selection = copy.deepcopy(self._selection)
             selection["overrides_by_profile"].pop(ident, None)
+            selection.get("launch_mode_by_profile", {}).pop(ident, None)
             # 正选着它就退回通用档，否则界面会指向一个已经不存在的游戏。
             if selection["selected_id"] == ident:
                 selection["selected_id"] = "generic-xbox"
@@ -318,6 +353,21 @@ class GameProfileStore:
             validate_motion_bindings(_merge_bindings(profile.get("bindings", {}), overrides))
             self._save_selection({**self._selection, "selected_id": str(profile_id)})
             return self.effective_profile()
+
+    def requires_admin(self, profile_id: str) -> bool:
+        with self._lock:
+            return self._selection.get("launch_mode_by_profile", {}).get(profile_id) == "admin"
+
+    def set_admin(self, profile_id: str, enabled: bool) -> None:
+        with self._lock:
+            self.get_profile(profile_id)  # 同按键映射一样，只接受存在的游戏。
+            selection = copy.deepcopy(self._selection)
+            modes = selection.setdefault("launch_mode_by_profile", {})
+            wanted = "admin" if enabled else "normal"
+            if modes.get(profile_id) == wanted:
+                return
+            modes[profile_id] = wanted
+            self._save_selection(selection)
 
     def set_overrides(self, overrides: dict, profile_id: str | None = None, check=None) -> dict:
         """``check`` sees the merged bindings before anything is saved and may

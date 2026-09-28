@@ -54,6 +54,23 @@ async def create(client, doc_type: str, document, **extra):
     return await client.post("/api/v1/profiles", json=body)
 
 
+async def test_custom_game_admin_setting_uploads_and_downloads(client, invite_code):
+    await sign_up(client, invite_code, "custom-admin@example.com")
+    game = {"id": "custom-58b502276e", "name": "和平精英",
+            "base": "generic-xbox", "appid": ""}
+    bundle = {"schema": "motioncontrol.game_bundle.v1", "game_id": game["id"],
+              "custom_game": game, "overrides": {}, "motions": [], "launch_mode": "admin"}
+    response = await create(client, "game_bundle", bundle, game_id=game["id"])
+    assert response.status_code == 201, response.text
+    profile = response.json()
+    assert profile["game_name"] == "和平精英"
+    version = profile["current_version"]
+    downloaded = await client.get(
+        f"/api/v1/profiles/{profile['id']}/versions/{version['id']}/download")
+    assert downloaded.status_code == 200
+    assert json.loads(downloaded.content)["launch_mode"] == "admin"
+
+
 # --- the full lifecycle ------------------------------------------------------
 
 async def test_real_config_round_trip(client, invite_code):

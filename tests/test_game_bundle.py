@@ -129,7 +129,7 @@ def test_the_desktop_knows_how_to_install_a_bundle():
 
 def test_the_preview_says_which_game_a_bundle_is_for():
     """装之前要能看清楚它会动哪个游戏。"""
-    start = SERVER.index('"games": sorted(remote.document.get("overrides_by_profile"')
+    start = SERVER.index('"games": sorted(set(remote.document.get("overrides_by_profile"')
     assert 'game_bundle' in SERVER[start:start + 400]
 
 

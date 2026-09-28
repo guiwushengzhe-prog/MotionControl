@@ -107,6 +107,7 @@ const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:
 const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
 let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'},lastTurnAlgorithm='gesture_v188',viewControlSaving=false,viewControlReady=false;
 const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
+let gameLaunch=null;
 let profileAutoSaveTimer=null,profileFlight=null,profileRevision=0,profileSwitching=false,profileConflict=false;
 const profileDirty=new Set();
 let serviceReady=false,actionBusy=false,outputEpoch=0,kernelEpoch=0,inputStatus={},headDirty=false;
@@ -646,7 +647,47 @@ function renderProfileHeader(){
   $('#currentGameName').textContent=p?.name||'未选择游戏';
   $('#profileMeta').textContent=profileMetaText(p);
   $('#profileUnverified').hidden=!p||Boolean(p.source?.verified);
+  renderGameLaunch();
   syncProfileZoneLabels();
+}
+function renderGameLaunch(){
+  const status=$('#profileLaunchStatus'),button=$('#profileLaunchBtn');
+  if(!gameProfile.selected||!gameLaunch){status.textContent='正在检查启动权限…';button.disabled=true;return}
+  button.disabled=false;
+  if(gameLaunch.is_admin){
+    status.textContent=gameLaunch.requires_admin
+      ?'当前是管理员权限；这个游戏下次启动仍会申请管理员权限。'
+      :'当前仍是管理员权限；这个游戏下次将普通启动。';
+    button.textContent=gameLaunch.requires_admin?'下次改用普通权限':'记住本游戏使用管理员权限';
+  }else{
+    status.textContent=gameLaunch.requires_admin
+      ?'这个游戏已记住管理员启动；当前仍是普通权限。'
+      :'这个游戏使用普通权限启动。';
+    button.textContent='以管理员方式重启';
+  }
+}
+async function waitForAdminRestart(gameId){
+  const deadline=Date.now()+30000;
+  while(Date.now()<deadline){
+    await new Promise(resolve=>setTimeout(resolve,500));
+    try{
+      const data=await api('/api/game-profiles/selected?refresh='+Date.now(),{timeoutMs:1200});
+      if(data.launch?.is_admin&&data.profile?.selected_id===gameId){location.reload();return}
+    }catch{}
+  }
+  throw new Error('管理员程序尚未启动，请检查 Windows 权限确认或重新打开程序');
+}
+async function changeGameLaunchMode(admin){
+  if(admin&&!gameLaunch?.is_admin)notice('请在 Windows 权限确认中选择“是”，程序随后会重新连接。');
+  const data=await post('/api/game-profiles/launch-mode',{admin},120000);
+  gameLaunch=data.launch;renderGameLaunch();
+  if(data.restarting){
+    notice('已确认管理员权限，正在重新连接…');
+    await waitForAdminRestart(data.launch.game_id);
+  }else notice(admin?'这个游戏下次启动仍会申请管理员权限。':'这个游戏下次将普通启动。');
+}
+async function toggleGameLaunchMode(){
+  await changeGameLaunchMode(!(gameLaunch?.requires_admin&&gameLaunch?.is_admin));
 }
 function renderProfileCatalog(games){
   gameProfile.catalog=Array.isArray(games)?games:[];
@@ -681,6 +722,7 @@ async function searchProfiles(){
 async function refreshProfile(){
   const [selected,actions]=await Promise.all([api('/api/game-profiles/selected'),api('/api/output/actions')]);
   gameProfile.selected=selected.profile||null;gameProfile.actions=actions.actions||{};gameProfile.overrides=gameProfile.selected?.overrides||{};
+  gameLaunch=selected.launch||null;
   gameProfile.zonePointLabels=actions.zone_point_labels||{};
   gameProfile.zoneSegments=actions.zone_segments||[];
   gameProfile.zoneDefaultPoints=actions.zone_default_points||{};
@@ -701,6 +743,7 @@ async function addCustomGame(){
     $('#customGameName').value='';$('#customGameAppid').value='';
     const picked=await post('/api/game-profiles/select',{id:data.game.id});
     gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};++profileApplies;
+    gameLaunch=picked.launch||null;
     // searchProfiles 会把 #profileMeta 写成库统计，所以头部要排在它后面重画一次。
     await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
     notice(`已添加并切换到「${data.game.name}」。按键在下面自己绑。`);
@@ -727,6 +770,7 @@ async function removeCustomGame(){
     // 要用它返回的那份，不能继续显示一个已经不存在的游戏。
     const data=await post('/api/game-profiles/custom/remove',{id:current.id});
     gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
+    gameLaunch=(await api('/api/game-profiles/selected')).launch||null;
     await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
     notice(`已删掉，当前游戏退回「${data.profile.name}」`);
   });
@@ -739,8 +783,10 @@ async function applySelectedProfile(){
     const data=await post('/api/game-profiles/select',{id});
     gameProfile.selected=data.profile;++profileApplies;
     gameProfile.overrides=data.profile.overrides||{};
+    gameLaunch=data.launch||null;
     await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
     notice(`已切换游戏：${data.profile.name}`);
+    if(gameLaunch?.requires_admin&&!gameLaunch.is_admin)await changeGameLaunchMode(true);
   });
 }
 async function profileOperation(operation){
@@ -2474,6 +2520,7 @@ bind('poseRecordCancelBtn',cancelPoseRecord);
 bind('profileSearchBtn',searchProfiles);
 $('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(searchProfiles)});
 bind('profileApplyBtn',applySelectedProfile);bind('resetProfileBindingsBtn',resetProfileBindings);
+bind('profileLaunchBtn',toggleGameLaunchMode);
 bind('customGameAddBtn',addCustomGame);
 bind('customGameRenameBtn',renameCustomGame);
 bind('customGameRemoveBtn',removeCustomGame);

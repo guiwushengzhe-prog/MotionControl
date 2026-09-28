@@ -34,6 +34,16 @@ try {
     $running = $null
 }
 if ($running -and $running.StatusCode -eq 200) {
+    try {
+        $selected = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/selected' -TimeoutSec 2
+        if ($selected.launch.requires_admin -and -not $selected.launch.is_admin) {
+            Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/launch-mode' `
+                -Method Post -ContentType 'application/json' -Body '{"admin":true}' -TimeoutSec 120 | Out-Null
+            Write-Host '已请求按当前游戏的设置以管理员方式重启。'
+        }
+    } catch {
+        Write-Host "未能切换启动权限，现有程序继续运行：$($_.Exception.Message)"
+    }
     Write-Host 'MotionControl 已在运行，正在打开控制页面。'
     Start-Process 'http://127.0.0.1:8766/'
     exit 0

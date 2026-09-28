@@ -60,6 +60,19 @@ def _canonical_json_bytes(data) -> bytes:
     return (text + "\n").encode("utf-8")
 
 
+def _normalize_custom_game(raw) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("自建游戏信息无效")
+    ident, name, base = (raw.get(key) for key in ("id", "name", "base"))
+    appid = raw.get("appid", "")
+    if (not isinstance(ident, str) or not ident.startswith("custom-") or len(ident) > 80
+            or not isinstance(name, str) or not name.strip() or len(name.strip()) > 80
+            or not isinstance(base, str) or not base.strip() or len(base) > 80
+            or not isinstance(appid, str) or len(appid) > 12 or (appid and not appid.isdigit())):
+        raise ValueError("自建游戏信息无效")
+    return {"id": ident, "name": name.strip(), "base": base.strip(), "appid": appid}
+
+
 def _normalize_profile_selection(raw) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("游戏配置格式无法读取")
@@ -72,7 +85,7 @@ def _normalize_profile_selection(raw) -> dict:
     by_profile = data.get("overrides_by_profile")
     if not isinstance(by_profile, dict):
         raise ValueError("游戏映射数据无效：overrides_by_profile")
-    return {
+    result = {
         "schema": SELECTION_SCHEMA,
         "selected_id": selected_id.strip(),
         "overrides_by_profile": {
@@ -80,6 +93,22 @@ def _normalize_profile_selection(raw) -> dict:
             for profile_id, overrides in by_profile.items()
         },
     }
+    if "launch_mode_by_profile" in data:
+        modes = data["launch_mode_by_profile"]
+        if not isinstance(modes, dict) or any(
+            not isinstance(game_id, str) or not game_id.strip() or not isinstance(mode, str) or mode not in {"normal", "admin"}
+            for game_id, mode in modes.items()
+        ):
+            raise ValueError("游戏启动权限数据无效：launch_mode_by_profile")
+        result["launch_mode_by_profile"] = {game_id.strip(): mode for game_id, mode in modes.items()}
+    if "custom_games" in data:
+        if not isinstance(data["custom_games"], list):
+            raise ValueError("自建游戏列表无效")
+        games = [_normalize_custom_game(item) for item in data["custom_games"]]
+        if len({item["id"] for item in games}) != len(games):
+            raise ValueError("自建游戏编号重复")
+        result["custom_games"] = sorted(games, key=lambda item: item["id"])
+    return result
 
 
 def _require_schema(data, expected: str, label: str) -> None:
@@ -161,12 +190,22 @@ def _normalize_game_bundle(raw) -> dict:
         seen.add(motion["id"])
     motions.sort(key=lambda motion: motion["id"])
     validate_motion_config(motions)
-    return {
+    result = {
         "schema": GAME_BUNDLE_SCHEMA,
         "game_id": game_id.strip(),
         "overrides": normalize_overrides(raw.get("overrides", {})),
         "motions": motions,
     }
+    if "launch_mode" in raw:
+        if not isinstance(raw["launch_mode"], str) or raw["launch_mode"] not in {"normal", "admin"}:
+            raise ValueError("游戏启动权限只能是普通或管理员")
+        result["launch_mode"] = raw["launch_mode"]
+    if "custom_game" in raw:
+        game = _normalize_custom_game(raw["custom_game"])
+        if game["id"] != result["game_id"]:
+            raise ValueError("自建游戏编号与方案不一致")
+        result["custom_game"] = game
+    return result
 
 
 # Every document type the canonical form knows about.  An unknown type is an

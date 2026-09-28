@@ -445,6 +445,9 @@ main { padding-top: 20px; }
 
 .profile-bar select, .profile-bar input { width: 100%; min-width: 0; }
 
+.profile-launch { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 10px; margin-top: 12px; padding: 12px 0 0; border-top: 1px solid var(--line); }
+
 .profile-game-name { margin-top: 12px; font-size: 22px; font-weight: 600; line-height: 1.35; }
 
 .profile-meta { margin-top: 2px; color: var(--text-3); font-size: 12.5px; }
