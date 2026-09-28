@@ -4,6 +4,7 @@
 #     bash cloud/deploy/push.sh
 #     bash cloud/deploy/push.sh --host aliyun          # 换一台机器
 #     bash cloud/deploy/push.sh --skip-web             # 只改了后端，不重建网站
+#     bash cloud/deploy/push.sh --skip-app-bundle      # 只部署云端，不重打电脑更新包
 #
 # 顺序是刻意的：先构建、先打包、先上传，最后才动正在跑的服务。任何一步失败，
 # 线上那份还是原样。数据库迁移排在重启之前——反过来的话，新代码会对着旧表结构
@@ -37,11 +38,13 @@ APP_DIR=/opt/motioncontrol
 SKIP_WEB=0
 PHONE_WEB=""
 BUNDLE_FRESH=0
+SKIP_APP_BUNDLE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --host) HOST="$2"; shift 2 ;;
         --skip-web) SKIP_WEB=1; shift ;;
+        --skip-app-bundle) SKIP_APP_BUNDLE=1; shift ;;
         # 同一个仓库开多个工作树之后，stage_release 那个 ../switch/mobile/dist 默认值
         # 指向的是别人那份构建产物。打出来的包能签名、能安装，只是手机上跑的是别人
         # 分支的网页，而没有任何地方会报错。所以这里必须能显式指定。
@@ -71,7 +74,7 @@ echo "==> 电脑端更新包"
 # 已经装了的人靠这一份更新，不用重下 174 MB。打包时会签名——电脑端拒绝没签名
 # 的包，所以这一步失败就该停下，而不是发一份装不上的东西上去。
 PC_DIR=$(python tools/release_paths.py pc_dir)
-if [ -d "$PC_DIR/app" ]; then
+if [ "$SKIP_APP_BUNDLE" -eq 0 ] && [ -d "$PC_DIR/app" ]; then
     python tools/build_app_bundle.py ${PHONE_WEB:+--phone-web "$PHONE_WEB"} || {
         echo "更新包没做成，不部署" >&2; exit 1
     }
