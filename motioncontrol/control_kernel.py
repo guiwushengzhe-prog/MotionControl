@@ -634,6 +634,9 @@ class ControlKernel:
         self.control_bindings: dict[str, dict] = {}
         self._zone_point_groups: dict[str, tuple] = {}
         self.trigger_previous: set[str] = set()
+        self._rule_previous: set[str] = set()
+        self._sequence_next: dict[str, int] = {}
+        self._selected_active: dict[str, dict] = {}
         self.pose_active: set[str] = set()
         self.pose_confidence: dict[str, float] = {}
         # 下载的姿势（双手交叉……）装上时建条目，自己录的姿势第一次见到时建。
@@ -999,16 +1002,18 @@ class ControlKernel:
         if store is None:
             return bindings
         for binding in bindings.values():
-            action = binding.get("action")
-            if not isinstance(action, dict) or action.get("type") != "macro":
-                continue
-            # 语音的"松开"是一条停止指令，和宏本身循环不循环无关，不能被改掉。
-            if action.get("behavior") == "release":
-                continue
-            try:
-                action["behavior"] = "hold" if store.repeats(action.get("target", "")) else "tap"
-            except Exception:  # noqa: BLE001 - 宏库出问题时保持原样，不影响别的绑定
-                continue
+            actions = [binding.get("action"), binding.get("alternate_action")]
+            actions.extend(binding.get("extra_actions", []))
+            for action in actions:
+                if not isinstance(action, dict) or action.get("type") != "macro":
+                    continue
+                # 语音的"松开"是一条停止指令，和宏本身循环不循环无关。
+                if action.get("behavior") == "release":
+                    continue
+                try:
+                    action["behavior"] = "hold" if store.repeats(action.get("target", "")) else "tap"
+                except Exception:  # noqa: BLE001 - 宏库出问题时保持原样，不影响别的绑定
+                    continue
         return bindings
 
     def configure_macros(self, store) -> None:
@@ -1031,6 +1036,9 @@ class ControlKernel:
                 if points != self._zone_point_groups_locked(name):
                     self.zone_state[name] = fresh_zone_state()
             self.trigger_previous.clear()
+            self._rule_previous.clear()
+            self._sequence_next.clear()
+            self._selected_active.clear()
             self.action_chain.reset()
             self.action_chain_result = self.action_chain.result()
             # A profile switch can disable a motion while its guard-risk debounce
@@ -3000,7 +3008,8 @@ class ControlKernel:
 
     def _trigger_brief_locked(self, trigger: str) -> dict:
         binding = self._effective_binding_locked(trigger)
-        return {"id": trigger, "action": copy.deepcopy((binding or {}).get("action"))}
+        action = self._selected_active.get(trigger) or (binding or {}).get("action")
+        return {"id": trigger, "action": copy.deepcopy(action)}
 
     def _mapped_triggers_locked(self, triggers) -> set[str]:
         """其中真的绑了键的那些。手机上只显示这些。
@@ -3109,13 +3118,20 @@ class ControlKernel:
 
     def _dispatch_controls_locked(self, now: float) -> None:
         managed = self.action_chain.managed_triggers if self.action_chain.enabled else set()
-        active = {
+        body_active = {
             f"zone.{name}" for name, state in self.zone_state.items()
             if name in RUNTIME_BODY_ZONES and state.get("pressed")
-            and f"zone.{name}" not in managed
         }
-        active.update(f"motion.{name}" for name in self.motion_active)
-        active.update(f"pose.{name}" for name in self.pose_active)
+        body_active.update(f"motion.{name}" for name in self.motion_active)
+        body_active.update(f"pose.{name}" for name in self.pose_active)
+        active = body_active - managed
+
+        rising = body_active - self._rule_previous
+        # Reset first, so a reset and a new primary action in the same frame
+        # begin a fresh sequence. Unmapped body triggers still count as resets.
+        for trigger, binding in self.control_bindings.items():
+            if binding.get("alternate_mode") == "cycle" and binding.get("reset_trigger") in rising:
+                self._sequence_next[trigger] = 0
 
         chain_hold = self.action_chain_result if hasattr(self, "action_chain_result") else self.action_chain.result()
         if chain_hold.hold and chain_hold.hold_action:
@@ -3126,7 +3142,23 @@ class ControlKernel:
             binding = self._effective_binding_locked(trigger)
             if not binding:
                 continue
-            action = copy.deepcopy(binding.get("action", {}))
+            alternate = binding.get("alternate_action")
+            mode = binding.get("alternate_mode")
+            if isinstance(alternate, dict) and mode in {"with_trigger", "cycle"}:
+                if trigger not in self.trigger_previous:
+                    if mode == "with_trigger":
+                        selected = alternate if binding.get("alternate_when") in body_active else binding.get("action", {})
+                    else:
+                        choices = [binding.get("action", {}), alternate, *binding.get("extra_actions", [])]
+                        step = self._sequence_next.get(trigger, 0) % len(choices)
+                        selected = choices[step]
+                        self._sequence_next[trigger] = (step + 1) % len(choices)
+                    # Keep the selected key fixed until this primary action ends.
+                    self._selected_active[trigger] = copy.deepcopy(selected)
+                action = copy.deepcopy(self._selected_active.get(trigger, binding.get("action", {})))
+            else:
+                self._selected_active.pop(trigger, None)
+                action = copy.deepcopy(binding.get("action", {}))
             if trigger == chain_hold.hold_action and chain_hold.hold:
                 # A chain is a hold lifecycle even if the profile's ordinary
                 # headJump binding was saved as a tap.
@@ -3158,7 +3190,8 @@ class ControlKernel:
         # 记录冲光了，真正有用的那几条反而看不见。
         for trigger in sorted(active - self.trigger_previous):
             binding = self._effective_binding_locked(trigger)
-            self._note_trigger_locked(trigger, (binding or {}).get("action"), now)
+            self._note_trigger_locked(trigger, self._selected_active.get(trigger)
+                                      or (binding or {}).get("action"), now)
 
         # 集合变了才推给手机。每帧推一次的话，按住不放的那几秒就是每秒三十条一模
         # 一样的消息——手机那边什么都不会变，网络和电池却在一直烧。
@@ -3193,6 +3226,9 @@ class ControlKernel:
                     ident = str(item.get("id", ""))
                     legacy_holds.append({"id": ident.split(".", 1)[-1], "type": action.get("type", ""), "target": action.get("target", "")})
                 self._safe_output(legacy_setter, legacy_holds)
+        for trigger in self._selected_active.keys() - active:
+            self._selected_active.pop(trigger, None)
+        self._rule_previous = body_active
         self.trigger_previous = active
 
     # ---------- clean head control ----------

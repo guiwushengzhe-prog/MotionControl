@@ -473,6 +473,18 @@ main { padding-top: 20px; }
   padding: 8px 10px; border-radius: var(--radius-sm); transition: background .12s; }
 
 .binding-row + .binding-row { box-shadow: 0 -1px 0 var(--line); }
+.binding-alternate, .binding-alternate-add { grid-column: 1 / -1; }
+.binding-alternate { padding-top: 8px; border-top: 1px solid var(--line); }
+.binding-alternate-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.binding-rule-controls { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 12px; margin-bottom: 10px; }
+.binding-rule-help { grid-column: 1 / -1; color: var(--text-3); font-size: 12px; }
+.binding-sequence-actions { display: grid; gap: 8px; }
+.binding-sequence-action { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.2fr) minmax(0,1fr); align-items: center; gap: 12px; }
+.binding-alternate-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-2); }
+.binding-alternate-remove, .binding-alternate-add, .binding-sequence-add { border: 0; background: none; color: var(--accent); cursor: pointer; }
+.binding-alternate-add { justify-self: start; padding: 2px 0; }
+.binding-sequence-add { margin-top: 8px; padding: 2px 0; }
+.binding-alternate-add:disabled { opacity: .45; cursor: default; }
 
 /* 两张表的列名。只在宽屏显示：窄屏时一行折成两列，列名对不上了。 */
 .binding-head, .voice-head { display: grid; gap: 12px; margin-top: 16px; padding: 0 10px;
@@ -1000,6 +1012,7 @@ dialog .settings-actions { margin-top: 20px; }
   .settings-pair, .controls, .advgrid, .view-control-grid, .voice-command-grid, .voice-row { grid-template-columns: 1fr; }
   .profile-bar.three, .profile-bar.pose-bar, .wake-row { grid-template-columns: 1fr; }
   .binding-row { grid-template-columns: 1fr 1fr; }
+  .binding-sequence-action { grid-template-columns: 1fr 1fr; }
   .binding-head, .voice-head { display: none; }
   .viewer-foot { flex-direction: column; align-items: stretch; }
   .macro-step { flex-wrap: wrap; }

@@ -242,6 +242,33 @@ def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
         return {"disabled": True, **point_settings}
     action = binding.get("action") if isinstance(binding.get("action"), dict) else binding
     out = {"action": normalize_action(action, default_behavior=default_behavior), **point_settings}
+    rule_fields = {"alternate_mode", "alternate_action", "alternate_when", "reset_trigger", "extra_actions"}
+    if rule_fields & binding.keys():
+        mode = binding.get("alternate_mode")
+        if mode not in {"with_trigger", "cycle"} or "alternate_action" not in binding:
+            raise ValueError("第二输出须选择配合动作或按次数循环")
+        alternate = normalize_action(binding["alternate_action"], default_behavior=default_behavior)
+        if alternate["behavior"] == "release":
+            raise ValueError("第二输出不能使用松开方式")
+        out["alternate_mode"] = mode
+        out["alternate_action"] = alternate
+        if mode == "with_trigger":
+            if "reset_trigger" in binding or "extra_actions" in binding:
+                raise ValueError("配合动作规则不能设置循环步骤或重置触发")
+            out["alternate_when"] = _normalize_body_rule_trigger(binding.get("alternate_when"), "配合动作")
+        else:
+            if "alternate_when" in binding:
+                raise ValueError("按次数循环规则不能设置配合动作")
+            out["reset_trigger"] = _normalize_body_rule_trigger(binding.get("reset_trigger"), "重置触发")
+            extras = binding.get("extra_actions", [])
+            if not isinstance(extras, list):
+                raise ValueError("后续输出必须是列表")
+            out["extra_actions"] = []
+            for item in extras:
+                step = normalize_action(item, default_behavior=default_behavior)
+                if step["behavior"] == "release":
+                    raise ValueError("循环输出不能使用松开方式")
+                out["extra_actions"].append(step)
     label = str(binding.get("label", "")).strip()
     if label:
         out["label"] = label
@@ -270,6 +297,27 @@ def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
     return out
 
 
+def _normalize_body_rule_trigger(value, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label}必须选择身体区域或身体动作")
+    trigger = value.strip()
+    prefix, separator, ident = trigger.partition(".")
+    if not separator or prefix not in {"zone", "motion", "pose"} or not ident or len(trigger) > 128:
+        raise ValueError(f"{label}必须选择身体区域或身体动作")
+    return trigger
+
+
+def _validate_body_rule(group: str, ident: str, binding: dict) -> None:
+    if "alternate_mode" not in binding:
+        return
+    if group not in {"motions", "poses"}:
+        raise ValueError("第二输出只适用于身体动作")
+    trigger = f"{'motion' if group == 'motions' else 'pose'}.{ident}"
+    other = binding.get("alternate_when") or binding.get("reset_trigger")
+    if other == trigger:
+        raise ValueError("配合或重置触发不能是动作自身")
+
+
 def normalize_bindings(bindings: dict | None) -> dict:
     source = bindings if isinstance(bindings, dict) else {}
     out: dict[str, dict] = {group: {} for group in TRIGGER_GROUPS}
@@ -283,6 +331,7 @@ def normalize_bindings(bindings: dict | None) -> dict:
             if not ident or not isinstance(binding, dict):
                 continue
             normalized = normalize_binding(binding, default_behavior=default_behavior)
+            _validate_body_rule(group, ident, normalized)
             if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
                 raise ValueError("松开方式仅适用于语音映射")
             # Poses default to edge-triggered above; holding is opt-in, the
@@ -337,6 +386,7 @@ def _merge_bindings(base: dict, overrides: dict) -> dict:
             continue
         default_behavior = "tap" if group in {"poses", "voice"} else "hold"
         normalized = normalize_binding(value, default_behavior=default_behavior)
+        _validate_body_rule(group, ident, normalized)
         if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
             raise ValueError("松开方式仅适用于语音映射")
         merged[group][ident] = normalized
@@ -407,6 +457,7 @@ def normalize_override_entry(trigger: str, value):
         return group, ident, {"disabled": True}
     default_behavior = "tap" if group in {"poses", "voice"} else "hold"
     normalized = normalize_binding(value, default_behavior=default_behavior)
+    _validate_body_rule(group, ident, normalized)
     if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
         raise ValueError("松开方式仅适用于语音映射")
     return group, ident, normalized

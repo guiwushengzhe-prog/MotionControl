@@ -1174,6 +1174,90 @@ function readZonePointChoices(row){
   const values=[...choices.selectedOptions].map(option=>option.value);
   return {trigger_points:values.filter(value=>!value.includes('|')),trigger_segments:values.filter(value=>value.includes('|')).map(value=>value.split('|'))};
 }
+function bodyRuleTriggerChoices(trigger){
+  return profileTriggers().filter(item=>['zones','motions','poses'].includes(item.group)&&item.key!==trigger.key);
+}
+function buildExtraOutputRow(trigger,action,number,onRemove){
+  const wrap=document.createElement('div');wrap.className='binding-sequence-action';
+  const label=document.createElement('div');label.className='binding-alternate-label';
+  const title=document.createElement('span');title.textContent=`第 ${number} 次输出`;
+  label.appendChild(title);
+  if(onRemove){
+    const remove=document.createElement('button');remove.type='button';remove.className='binding-alternate-remove';remove.textContent='删除这一步';
+    remove.addEventListener('click',onRemove);label.appendChild(remove);
+  }
+  const type=makeTypeSelect({action});
+  const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;
+  fillTargetControl(target,type.value,action.target,action.combo_stick_lead_ms??80,action.combo_stick_lead_ms!=null);
+  const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
+  const behavior=document.createElement('div');behavior.className='binding-behavior-box';
+  fillBehaviorControl(behavior,trigger,type.value,action.behavior,action.target);
+  type.addEventListener('change',()=>{fillTargetControl(target,type.value,'',80);fillBehaviorControl(behavior,trigger,type.value,'hold',pickedMacro());syncMotionConflictChoices()});
+  target.addEventListener('change',()=>{if(type.value==='macro')fillBehaviorControl(behavior,trigger,'macro',behavior.querySelector('.binding-behavior')?.value,pickedMacro())});
+  type.setAttribute('aria-label',trigger.name+` 第 ${number} 次输出类型`);
+  target.setAttribute('aria-label',trigger.name+` 第 ${number} 次键位`);
+  behavior.setAttribute('aria-label',trigger.name+` 第 ${number} 次方式`);
+  wrap.append(label,type,target,behavior);return wrap;
+}
+function buildAlternateActionRow(trigger,binding,onRemove){
+  const wrap=document.createElement('div');wrap.className='binding-alternate';
+  const header=document.createElement('div');header.className='binding-alternate-header';
+  const title=document.createElement('strong');title.textContent='另一输出的条件';
+  const remove=document.createElement('button');remove.type='button';remove.className='binding-alternate-remove';remove.textContent='取消另一输出';
+  remove.addEventListener('click',onRemove);header.append(title,remove);
+  const rule=document.createElement('div');rule.className='binding-rule-controls';
+  const mode=document.createElement('select');mode.className='binding-alternate-mode';mode.setAttribute('aria-label',trigger.name+' 第二输出规则');
+  for(const [value,label] of [['with_trigger','配合另一个动作时'],['cycle','每次触发按顺序循环']]){
+    const option=document.createElement('option');option.value=value;option.textContent=label;mode.appendChild(option);
+  }
+  mode.value=binding?.alternate_mode||'with_trigger';
+  const triggerPick=document.createElement('select');triggerPick.className='binding-rule-trigger';
+  const help=document.createElement('div');help.className='binding-rule-help';
+  rule.append(mode,triggerPick,help);
+  const steps=document.createElement('div');steps.className='binding-sequence-actions';
+  const second=buildExtraOutputRow(trigger,binding.alternate_action,2);steps.appendChild(second);
+  const addStep=document.createElement('button');addStep.type='button';addStep.className='binding-sequence-add';addStep.textContent='＋ 添加第 3 次输出';
+  const relabel=()=>{
+    steps.querySelectorAll('.binding-sequence-action').forEach((row,index)=>{
+      row.querySelector('.binding-alternate-label span').textContent=`第 ${index+2} 次输出`;
+    });
+    addStep.textContent=`＋ 添加第 ${steps.children.length+2} 次输出`;
+  };
+  for(const action of binding.extra_actions||[]){
+    const row=buildExtraOutputRow(trigger,action,steps.children.length+2,()=>{
+      row.remove();relabel();wrap.dispatchEvent(new Event('change',{bubbles:true}));
+    });
+    steps.appendChild(row);
+  }
+  relabel();
+  addStep.addEventListener('click',()=>{
+    let action;
+    try{action=readBindingAction(steps.lastElementChild,trigger)}catch(error){notice(error.message);return}
+    const row=buildExtraOutputRow(trigger,action,steps.children.length+2,()=>{
+      row.remove();relabel();wrap.dispatchEvent(new Event('change',{bubbles:true}));
+    });
+    steps.appendChild(row);relabel();wrap.dispatchEvent(new Event('change',{bubbles:true}));
+  });
+  const refreshRule=selected=>{
+    const cycle=mode.value==='cycle';
+    triggerPick.replaceChildren();
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=cycle?'选择重置区域或动作':'选择配合动作';triggerPick.appendChild(placeholder);
+    const candidates=bodyRuleTriggerChoices(trigger).filter(item=>cycle||isBodyTrigger(item));
+    for(const item of candidates){const option=document.createElement('option');option.value=item.key;option.textContent=item.name;triggerPick.appendChild(option)}
+    if(selected&&!candidates.some(item=>item.key===selected)){
+      const missing=document.createElement('option');missing.value=selected;missing.textContent=`已不可用：${selected}`;triggerPick.appendChild(missing);
+    }
+    triggerPick.value=selected||'';
+    triggerPick.setAttribute('aria-label',trigger.name+(cycle?' 重置区域或动作':' 配合动作'));
+    help.textContent=cycle?'碰到重置区域或做出重置动作后，下次从第一输出开始；未重置时按配置顺序循环。':'配合动作须在本动作开始时保持；本次输出确定后不会中途换键。配合动作若也映射了按键，它的按键仍会触发。';
+    steps.firstElementChild.querySelector('.binding-alternate-label span').textContent=cycle?'第 2 次输出':'配合时输出';
+    steps.querySelectorAll('.binding-sequence-action').forEach((row,index)=>{row.hidden=!cycle&&index>0});
+    addStep.hidden=!cycle;
+  };
+  refreshRule(mode.value==='cycle'?binding.reset_trigger:binding.alternate_when);
+  mode.addEventListener('change',()=>refreshRule(''));
+  wrap.append(header,rule,steps,addStep);return wrap;
+}
 function buildBindingRow(trigger){
   const binding=bindingFor(trigger);
   let action=binding?.disabled?null:binding?.action;
@@ -1195,6 +1279,27 @@ function buildBindingRow(trigger){
   row.append(name,type,target,behavior);
   row.querySelectorAll('input,select').forEach(control=>control.setAttribute('aria-label',trigger.name+' '+(control.className.includes('type')?'输出类型':'键位或触发方式')));
   if(trigger.group==='motions'){const note=document.createElement('div');note.className='motion-conflict-note';note.hidden=true;row.appendChild(note)}
+  if(isBodyTrigger(trigger)){
+    const add=document.createElement('button');add.type='button';add.className='binding-alternate-add';
+    add.textContent='＋ 配合动作或按次数换键';add.disabled=!type.value;
+    const show=ruleBinding=>{
+      const second=buildAlternateActionRow(trigger,ruleBinding,()=>{
+        second.remove();add.hidden=false;row.dispatchEvent(new Event('change',{bubbles:true}));
+      });
+      row.appendChild(second);add.hidden=true;
+    };
+    if(binding?.alternate_action)show(binding);
+    add.addEventListener('click',()=>{
+      let first;
+      try{first=readBindingAction(row,trigger)}catch(error){notice(error.message);return}
+      show({alternate_action:first});
+    });
+    type.addEventListener('change',()=>{
+      add.disabled=!type.value;
+      if(!type.value){row.querySelector('.binding-alternate')?.remove();add.hidden=false}
+    });
+    row.appendChild(add);
+  }
   if(trigger.group==='zones'){
     const pointPicker=buildZonePointPicker(trigger,binding);if(pointPicker)name.appendChild(pointPicker);
     // 「做动作时也要按」：没设过的，要跳才碰得到的框（头顶）默认是，别的默认不是——
@@ -1280,6 +1385,27 @@ function renderProfileBindingRows(){
   syncVoiceReleaseChoices();
   paintPoseMissingNotice();
 }
+function readBindingAction(container,trigger,ordinal=''){
+  const type=container.querySelector('.binding-type')?.value||'';
+  if(!type)return null;
+  let target;
+  if(type==='voice_release'){
+    const ids=voiceReleaseTargetIds(container.querySelector('.voice-release-target')).map(id=>id.toLowerCase());
+    target=ids.length===1?ids[0]:ids;
+  }else{
+    const raw=String(container.querySelector('.binding-target')?.value||'').trim();
+    target=type==='macro'?raw.toLowerCase():raw.toUpperCase();
+  }
+  const name=trigger.name+(ordinal?`（${ordinal}）`:'');
+  if(!target||(Array.isArray(target)&&!target.length))throw new Error(type==='macro'?`${name} 还没有选择要跑哪条宏`:type==='voice_release'?`${name} 还没有选择要停住哪条口令`:`${name} 还没有选择具体键位`);
+  const behavior=trigger.tapOnly||type==='mouse_wheel'||type==='voice_release'||type==='system'?'tap':(container.querySelector('select.binding-behavior')?.value||container.querySelector('.binding-behavior')?.dataset.value||'hold');
+  const action={type,target,behavior};
+  const comboLead=container.querySelector('.combo-lead-ms');
+  if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden&&(comboLead.dataset.explicit==='1'||comboLead.dataset.touched==='1')){
+    action.combo_stick_lead_ms=Math.max(0,Math.min(200,Number(comboLead.value)||0));
+  }
+  return action;
+}
 function readProfileOverrides(){
   const overrides=structuredClone(gameProfile.overrides);
   for(const trigger of profileTriggers()){
@@ -1288,20 +1414,23 @@ function readProfileOverrides(){
     const type=row.querySelector('.binding-type')?.value||'';
     const pointChoices=trigger.group==='zones'?readZonePointChoices(row):{};
     if(!type){overrides[trigger.key]=Object.keys(pointChoices).length?{disabled:true,...pointChoices}:null;continue}
-    let target;
-    if(type==='voice_release'){
-      const ids=voiceReleaseTargetIds(row.querySelector('.voice-release-target')).map(id=>id.toLowerCase());
-      target=ids.length===1?ids[0]:ids;
-    }else{
-      const raw=String(row.querySelector('.binding-target')?.value||'').trim();
-      target=type==='macro'?raw.toLowerCase():raw.toUpperCase();
-    }
-    if(!target||(Array.isArray(target)&&!target.length))throw new Error(type==='macro'?`${trigger.name} 还没有选择要跑哪条宏`:type==='voice_release'?`${trigger.name} 还没有选择要停住哪条口令`:`${trigger.name} 还没有选择具体键位`);
-    const behavior=trigger.tapOnly||type==='mouse_wheel'||type==='voice_release'||type==='system'?'tap':(row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'hold');
-    const override={action:{type,target,behavior},...pointChoices};
-    const comboLead=row.querySelector('.combo-lead-ms');
-    if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden&&(comboLead.dataset.explicit==='1'||comboLead.dataset.touched==='1')){
-      override.action.combo_stick_lead_ms=Math.max(0,Math.min(200,Number(comboLead.value)||0));
+    const override={action:readBindingAction(row,trigger),...pointChoices};
+    const alternate=row.querySelector('.binding-alternate');
+    if(alternate){
+      const mode=alternate.querySelector('.binding-alternate-mode')?.value;
+      const selected=alternate.querySelector('.binding-rule-trigger')?.value;
+      if(!selected)throw new Error(`${trigger.name} 还没有选择${mode==='cycle'?'重置区域或动作':'配合动作'}`);
+      override.alternate_mode=mode;
+      override.alternate_action=readBindingAction(alternate.querySelector('.binding-sequence-action'),trigger,'第 2 次');
+      if(!override.alternate_action)throw new Error(`${trigger.name} 还没有设置另一输出的键位`);
+      if(mode==='cycle'){
+        override.reset_trigger=selected;
+        override.extra_actions=[...alternate.querySelectorAll('.binding-sequence-action')].slice(1).map((row,index)=>{
+          const action=readBindingAction(row,trigger,`第 ${index+3} 次`);
+          if(!action)throw new Error(`${trigger.name} 第 ${index+3} 次还没有设置键位`);
+          return action;
+        });
+      }else override.alternate_when=selected;
     }
     const withMotion=row.querySelector('.zone-with-motion-box');
     if(trigger.group==='zones'&&withMotion)override.with_motion=withMotion.checked;
@@ -1357,6 +1486,11 @@ function scheduleProfileAutoSave(event){
   const row=event?.target.closest('.binding-row');if(!row||profileSwitching)return;
   profileDirty.add(row.dataset.trigger);profileRevision++;
   clearTimeout(profileAutoSaveTimer);
+  const pendingRule=row.querySelector('.binding-alternate .binding-rule-trigger');
+  if(pendingRule&&!pendingRule.value){
+    $('#profileSaveStatus').textContent='先选择配合动作或重置区域';
+    return;
+  }
   $('#profileSaveStatus').textContent='有待保存的修改';
   profileAutoSaveTimer=setTimeout(()=>saveProfileBindings().catch(()=>{}),350);
 }
