@@ -1555,7 +1555,11 @@ async function resetProfileBindings(){
 }
 function formatPerf(value,suffix=''){return value===null||value===undefined||value===''?'—':`${value}${suffix}`}
 function renderPerformance(data){
-  $('#perfSummary').textContent='实时诊断 · 仅在本面板展开时刷新';
+  const line=$('#recognitionStatus');
+  if(line)line.textContent=data.inference_fps
+    ?`识别：${data.inference_fps} 帧/秒 · 每帧 ${formatPerf(data.inference_avg_ms,' 毫秒')} · 本程序占 CPU ${formatPerf(data.process_cpu_percent,'%')}`
+    :'识别：未开始';
+  $('#perfSummary').textContent='实时诊断';
   $('#perfDetails').textContent=[
     `采集帧率：${formatPerf(data.capture_fps)} · 推理帧率：${formatPerf(data.inference_fps)}`,
     `总延迟：${formatPerf(data.total_latency_ms,' 毫秒')} · 推理平均：${formatPerf(data.inference_avg_ms,' 毫秒')}`,
@@ -1564,7 +1568,61 @@ function renderPerformance(data){
 }
 
 async function refreshPerformance(){try{renderPerformance(await api('/api/performance'))}catch{}}
-async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference;renderCameraDevices(null,data.camera_index)}catch{}}
+
+let stereoState=null;
+function renderStereo(data){
+  stereoState=data;
+  const toggle=$('#stereoToggleBtn'),calibrate=$('#stereoCalibrateBtn');
+  toggle.textContent=data.enabled?'关闭双目':'开启双目';
+  const busy=data.state==='collecting'||data.state==='solving';
+  calibrate.textContent=data.state==='collecting'?`取消标定（还剩 ${Math.ceil(data.remaining_s||0)} 秒）`:'标定（30 秒）';
+  calibrate.disabled=!data.enabled||data.state==='solving';
+  let status;
+  if(!data.enabled)status=data.body_mode==='phone'?'未开启':'未开启：双目以手机为主画面，先把摄像头来源切到手机';
+  else if(!data.pc_camera_running)status=data.pc_camera_error?'电脑摄像头打不开：'+data.pc_camera_error:'已开启：点「连接并开始识别」，电脑摄像头会一起打开当第二视角';
+  else if(data.message&&(busy||data.state==='failed'||/标定/.test(data.message)))status=data.message;
+  else if(!data.calibrated)status='还没有标定：站到平时玩的位置，点「标定」，然后活动双臂 30 秒';
+  else status='运行中';
+  $('#stereoStatus').textContent=status;
+  const cal=data.calibration;
+  $('#stereoQuality').textContent=cal
+    ?`标定于 ${cal.calibrated_at||'—'} · 检验误差 ${cal.holdout_error_px} 像素 · 两台相机夹角 ${cal.optical_axis_angle_deg}°`:'';
+  const latest=data.latest,hands=latest?.hands||{},missing=latest?.missing||{};
+  const fmt=side=>hands[side]?`${hands[side].forward>=0?'+':''}${hands[side].forward.toFixed(2)}`
+    :(missing[side]?`—（${missing[side]}）`:'—');
+  const views=data.views||{};$('#stereoViews').hidden=$('#stereoLegend').hidden=!data.enabled;
+  if(data.enabled){drawStereoView($('#stereoPcView'),views.pc,views.phone,data);drawStereoView($('#stereoPhoneView'),views.phone,views.pc,data)}
+  $('#stereoReadout').textContent=data.enabled&&data.calibrated
+    ?(latest?.valid?`手往前伸（肩宽为 1）：左 ${fmt('left')} · 右 ${fmt('right')}`:`等待双目数据：${latest?.reason||'两台相机都要看到你'}`):'';
+}
+// 两台相机各自看到的骨架。双目用到的关节按"两台都看到 / 只有这台看到"上色，
+// 哪只手没读数、该挪哪台相机，一眼就知道。
+function drawStereoView(el,view,other,data){
+  const H=360,[w0,h0]=view?.size?.[0]&&view?.size?.[1]?view.size:[3,4],W=Math.round(H*w0/h0);
+  if(el.width!==W||el.height!==H){el.width=W;el.height=H}
+  const c=el.getContext('2d');c.fillStyle='#050608';c.fillRect(0,0,W,H);
+  const fresh=v=>v&&v.age_ms<=1000,pts=view?.points||{};
+  const blank=!fresh(view)?'没有画面':(Object.keys(pts).length?'':'看不到人');
+  if(blank){c.fillStyle='#6f7d8c';c.font='26px sans-serif';c.textAlign='center';c.fillText(blank,W/2,H/2);return}
+  c.strokeStyle='rgba(85,221,255,.5)';c.lineWidth=3;
+  for(const[a,b]of EDGES){const p=pts[a],q=pts[b];if(!p||!q||p[2]<.3||q[2]<.3)continue;c.beginPath();c.moveTo(p[0]*W,p[1]*H);c.lineTo(q[0]*W,q[1]*H);c.stroke()}
+  const min=data.min_score||.6,seen=p=>p&&p[2]>=min,otherPts=fresh(other)?other.points||{}:{};
+  for(const name of data.joints||[]){
+    const p=pts[name];if(!seen(p))continue;
+    c.fillStyle=seen(otherPts[name])?'#4cc38a':'#e3a553';c.beginPath();c.arc(p[0]*W,p[1]*H,8,0,Math.PI*2);c.fill();
+  }
+}
+async function refreshStereo(){try{renderStereo(await api('/api/stereo'))}catch{}}
+async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference;renderCameraRotation(data);renderCameraDevices(null,data.camera_index)}catch{}}
+const ROTATION_LABELS={none:'不旋转',cw:'顺时针 90°',ccw:'逆时针 90°','180':'180°'};
+// 自动模式下把此刻实际转的方向写在选项里，免得人以为"自动"什么都没做。
+function renderCameraRotation(data){
+  const select=$('#cameraRotation');if(!select||!data?.rotation)return;
+  select.value=data.rotation;
+  const auto=select.querySelector('option[value="auto"]');
+  if(auto)auto.textContent=data.rotation==='auto'&&data.applied_rotation&&data.applied_rotation!=='none'
+    ?`自动转正（当前${ROTATION_LABELS[data.applied_rotation]}）`:'自动转正';
+}
 
 // 开机不扫。挨个序号去开摄像头要好几秒，而绝大多数人只有一个，不该为了那个
 // 下拉框每次启动都等一遍。所以先只把"现在用的是第几个"摆出来，真要换的人点
@@ -2465,7 +2523,9 @@ async function init(){
   await loadProfiles();renderVoiceRows(voiceRowsFromStatus(voice.status));
   poll(refreshKernel,250);poll(async()=>{await refreshInput();await refreshOutput();await refreshVoice()},900);
   poll(refreshXinput,1500,()=>currentView==='devices');
-  poll(refreshPerformance,1500,()=>currentView==='devices'&&$('#advancedSettings').open&&$('#performancePanel').open);
+  // 识别帧率和 CPU 占用常驻在"输入来源"里，设备页开着就刷新。
+  poll(refreshPerformance,1500,()=>currentView==='devices');
+  poll(refreshStereo,300,()=>currentView==='devices');
   poll(refreshPreview,150);
 }
 async function loadProfiles(){
@@ -2578,7 +2638,20 @@ async function scanCameras(){
   }catch(e){Object.assign(cameraScan,{state:'failed',error:String(e?.message||e)});if(status)status.textContent='扫描失败：'+cameraScan.error}
 }
 bind('cameraScanBtn',scanCameras);
+// 开启要启动电脑摄像头和识别模型，十几秒都正常。
+bind('stereoToggleBtn',async()=>{
+  if(!stereoState?.enabled)$('#stereoStatus').textContent='正在启动电脑摄像头…';
+  renderStereo(await post('/api/stereo',{enabled:!stereoState?.enabled},60000));
+});
+bind('stereoCalibrateBtn',async()=>{
+  const collecting=stereoState?.state==='collecting';
+  renderStereo(await post('/api/stereo/calibrate',collecting?{cancel:true}:{duration_s:30}));
+});
 bind('copyPhoneUrlBtn',async()=>{await navigator.clipboard.writeText($('#phoneWsUrl').value);notice('连接地址已复制')});
+$('#cameraRotation').addEventListener('change',e=>runAction(async()=>{
+  renderCameraRotation(await post('/api/camera/config',{rotation:e.target.value}));
+  notice(e.target.value==='auto'?'已改为自动转正：看到人以后会自己判断方向':'画面方向已保存，立即生效');
+}));
 $('#cameraBackend').addEventListener('change',e=>runAction(async()=>{
   await post('/api/camera/config',{backend:e.target.value});notice('采集方式已保存，下次连接时生效');
 }));

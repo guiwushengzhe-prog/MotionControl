@@ -645,6 +645,10 @@ select.binding-behavior { color: var(--text); font-size: 14px; }
 .wake-row .fineprint { padding-bottom: 9px; }
 
 .settings-section > .fineprint, .card > .fineprint { margin-top: 10px; }
+.stereo-views { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.stereo-views figure { margin: 0; }
+.stereo-views canvas { display: block; height: 180px; width: auto; background: #050608; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.stereo-views figcaption { margin-top: 4px; font-size: 12px; color: var(--text-2); }
 
 .fineprint:empty { display: none; }
 

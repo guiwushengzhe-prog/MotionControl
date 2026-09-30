@@ -29,7 +29,7 @@ from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
 from motioncontrol.key_macros import MacroError, MacroStore
 from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
 from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
-from motioncontrol.control_kernel import ControlKernel, LocalControlRuntime, NativeCameraService, RUNTIME_BODY_ZONES
+from motioncontrol.control_kernel import CameraUnavailable, ControlKernel, LocalControlRuntime, NativeCameraService, RUNTIME_BODY_ZONES
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.intent_library import ZoneLearner
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
@@ -964,6 +964,38 @@ def resolve_full_model(root: Path | None) -> Path | None:
         return None
 
 
+_PROCESS_CPU = None
+
+
+def process_cpu_percent() -> float | None:
+    """本进程自上次调用以来占整机 CPU 的百分比（所有线程合计，已按核数折算）。
+
+    识别在 CPU 上跑（Windows 版 MediaPipe 没有 GPU 推理），所以这就是识别的真实开销。
+    第一次调用只是起算点，返回 None。
+    """
+    global _PROCESS_CPU
+    try:
+        import psutil
+    except ImportError:
+        return None
+    if _PROCESS_CPU is None:
+        _PROCESS_CPU = psutil.Process()
+        _PROCESS_CPU.cpu_percent(None)
+        return None
+    return round(_PROCESS_CPU.cpu_percent(None) / (psutil.cpu_count() or 1), 1)
+
+
+def stereo_payload() -> dict:
+    camera = RUNTIME.camera.status()
+    return {
+        "enabled": RUNTIME.stereo_enabled,
+        "body_mode": RUNTIME.body_mode,
+        "pc_camera_running": bool(camera.get("running") and camera.get("assist")),
+        "pc_camera_error": camera.get("last_error"),
+        **KERNEL.stereo.status(),
+    }
+
+
 def performance_snapshot() -> dict:
     """Combine the active source's machine-readable camera/input metrics."""
     if RUNTIME.body_mode == "phone":
@@ -974,8 +1006,10 @@ def performance_snapshot() -> dict:
         data.setdefault("backend_name", None)
         data.setdefault("requested_fps", None)
         data.setdefault("actual_capture_fps", None)
-        return data
-    return RUNTIME.performance()
+    else:
+        data = RUNTIME.performance()
+    data["process_cpu_percent"] = process_cpu_percent()
+    return data
 
 
 def _format_perf(value, suffix: str = "") -> str:
@@ -1246,6 +1280,9 @@ class AdminHandler(_BaseHandler):
             data = performance_snapshot()
             data["version"] = VERSION
             self._send_json(data)
+            return
+        if route == "/api/stereo":
+            self._send_json(stereo_payload())
             return
         if route == "/api/camera/config":
             self._send_json(RUNTIME.camera_backend_config())
@@ -1741,6 +1778,21 @@ class AdminHandler(_BaseHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **_audio_payload()}, 400)
             return
+        if route in {"/api/stereo", "/api/stereo/calibrate"}:
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "stereo is loopback-only"}, 403)
+                return
+            try:
+                if route == "/api/stereo":
+                    RUNTIME.set_stereo(bool(body.get("enabled")))
+                elif body.get("cancel"):
+                    KERNEL.stereo.cancel_calibration()
+                else:
+                    KERNEL.stereo.start_calibration(body.get("duration_s"))
+                self._send_json({"ok": True, **stereo_payload()})
+            except (ValueError, CameraUnavailable) as exc:
+                self._send_json({"ok": False, "error": str(exc), **stereo_payload()}, 400)
+            return
         if route == "/api/camera/config":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "camera config is loopback-only"}, 403)
@@ -1748,6 +1800,8 @@ class AdminHandler(_BaseHandler):
             try:
                 if "index" in body or "camera_index" in body:
                     data = RUNTIME.configure_camera_index(body.get("index", body.get("camera_index")))
+                elif "rotation" in body:
+                    data = RUNTIME.camera.set_rotation(body.get("rotation"))
                 else:
                     data = RUNTIME.configure_camera_backend(body.get("backend", body.get("preference", "auto")))
                 self._send_json({"ok": True, **data})

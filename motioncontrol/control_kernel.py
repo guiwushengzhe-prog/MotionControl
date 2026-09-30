@@ -12,9 +12,10 @@ import json
 import math
 import os
 import statistics
+import sys
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,14 @@ def _user_recordings_dir():
     from motioncontrol.user_paths import user_data_root
 
     return user_data_root() / "recordings"
+
+
+def _stereo_calibration_path():
+    """双目标定属于这台电脑 + 这台手机的摆放，和其他用户数据放在一起。"""
+    from motioncontrol.user_paths import user_data_root
+
+    return user_data_root() / "stereo_calibration.json"
+from motioncontrol.stereo_depth import StereoDepth
 from motioncontrol.vertical_hand_control import VerticalHandController
 
 
@@ -514,6 +523,8 @@ class ControlKernel:
         self.hand_mouse_controller = HandMouseController()
         self.pose_recorder = PoseRecorder(_user_recordings_dir())
         self.trigger_recorder = TriggerRecorder(_user_recordings_dir() / "triggered")
+        # 手机为主、电脑摄像头为第二视角时的真实前后深度；没开双目时它只是闲着。
+        self.stereo = StereoDepth(_stereo_calibration_path())
         # The left-wrist lookGate is a deliberate arm/hand gate.  When it
         # becomes active we capture the right wrist's current Y as the
         # neutral anchor; head pitch is never allowed to reach final output.
@@ -1187,6 +1198,11 @@ class ControlKernel:
             if pose_map:
                 self.pose_last_valid_at = now
                 self.pose_history.append((now, copy.deepcopy(pose_map)))
+                if source_id != "computer_camera":
+                    # 用手机识别这一帧的时刻（已换到电脑钟、去掉 WiFi 抖动）对电脑帧，
+                    # 标定里的时间差只剩固定延迟。
+                    sampled = self.pose_sample_at if self.pose_sample_at is not None else now
+                    self.stereo.observe_phone(pose_map, self.width, self.height, sampled)
             # Keep compatibility with scene/test adapters that still expose
             # the original two-argument processing hook; only pass the new
             # world stream when one is actually present.
@@ -3662,6 +3678,21 @@ class NativeCameraService:
         if camera_index is None:
             camera_index = self._remembered("camera_index", 0)
         self.camera_index = max(0, min(self.MAX_CAMERA_INDEX, int(camera_index)))
+        # 笔记本立起来用、或者摄像头侧装时，画面是横躺的；人躺着，所有"上下"判定全错。
+        # 读帧后立刻转正，识别、预览、宽高都只见到转正后的这一张。
+        # rotation 是用户的设置（auto 或固定方向）；applied_rotation 是此刻真正在转的方向。
+        # auto 从上次自动判出的方向起步，重启后第一帧就是正的。
+        self.rotation = self._parse_rotation(self._remembered("camera_rotation", "auto")) or "auto"
+        remembered_auto = self._parse_rotation(self._remembered("camera_auto_rotation", "none"))
+        self.applied_rotation = (
+            (remembered_auto if remembered_auto in self.QUARTER_TURNS else "none")
+            if self.rotation == "auto" else self.rotation
+        )
+        self._rotation_votes: deque[int] = deque(maxlen=self.ROTATION_VOTE_FRAMES)
+        self._rotation_locked = False
+        self._rotation_changed_at = 0.0
+        # 辅助模式：手机是身体源，这台摄像头只给双目深度当第二视角，识别结果不进控制。
+        self.assist = False
         self.backend_preference = self.BACKEND_AUTO
         self.selected_backend: str | None = None
         self.selected_backend_name: str | None = None
@@ -3831,6 +3862,91 @@ class NativeCameraService:
                 self._remember("camera_index", index)
             return self.backend_config()
 
+    # 顺时针转几个 90°。
+    QUARTER_TURNS = {"none": 0, "cw": 1, "180": 2, "ccw": 3}
+    ROTATION_ALIASES = {"0": "none", "90": "cw", "270": "ccw", "-90": "ccw"}
+    # 自动判向：连续这么多帧里八成都说"还差同一个角度"才转；都说"正的"就锁定到下次启动。
+    # 锁定是为了侧身、弯腰这类动作不会把画面转走。
+    ROTATION_VOTE_FRAMES = 12
+
+    @classmethod
+    def _parse_rotation(cls, value) -> str | None:
+        text = str(value or "").strip().lower()
+        text = cls.ROTATION_ALIASES.get(text, text)
+        return text if text == "auto" or text in cls.QUARTER_TURNS else None
+
+    def set_rotation(self, value) -> dict:
+        """画面旋转：auto 按人体关键点自动转正，或固定 none/cw/ccw/180。运行中也能改。"""
+        rotation = self._parse_rotation(value)
+        if rotation is None:
+            raise CameraUnavailable("画面旋转只能是 auto、none、cw（顺时针 90°）、ccw（逆时针 90°）或 180")
+        with self._lock:
+            self.rotation = rotation
+            self._remember("camera_rotation", rotation)
+            self._rotation_votes.clear()
+            self._rotation_locked = False
+            if rotation != "auto":
+                self._apply_rotation_locked(rotation)
+            return self.backend_config()
+
+    def _apply_rotation_locked(self, rotation: str) -> None:
+        if rotation != self.applied_rotation:
+            self.applied_rotation = rotation
+            # 此刻之前采到的帧还是旧方向，它们的投票作废。
+            self._rotation_changed_at = time.monotonic()
+            self._rotation_votes.clear()
+
+    @staticmethod
+    def _upright_turns(pose_map: dict, width: int, height: int) -> int | None:
+        """人在这张画面里还要再顺时针转几个 90° 才是直立的；拿不准返回 None。
+
+        身体朝上的方向取髋部中点指向肩部中点；髋部出画（坐着、离得近）时取肩部中点指向鼻子。
+        """
+        def point(name: str, min_score: float = 0.6):
+            p = pose_map.get(name)
+            if not p or float(p.get("score", 0.0)) < min_score:
+                return None
+            return float(p["x"]) * width, float(p["y"]) * height
+
+        ls, rs = point("left_shoulder"), point("right_shoulder")
+        if not ls or not rs:
+            return None
+        top = ((ls[0] + rs[0]) / 2, (ls[1] + rs[1]) / 2)
+        lh, rh = point("left_hip", 0.5), point("right_hip", 0.5)
+        if lh and rh:
+            base = ((lh[0] + rh[0]) / 2, (lh[1] + rh[1]) / 2)
+        else:
+            nose = point("nose")
+            if not nose:
+                return None
+            base, top = top, nose
+        dx, dy = top[0] - base[0], top[1] - base[1]
+        if math.hypot(dx, dy) < 1e-6:
+            return None
+        angle = math.degrees(math.atan2(dx, -dy))  # 0 = 朝上，+90 = 头朝画面右边
+        turns = round(angle / 90.0)
+        if abs(angle - turns * 90.0) > 30.0:
+            return None
+        return (-turns) % 4
+
+    def _vote_rotation_locked(self, pose_map: dict, width: int, height: int) -> None:
+        turns = self._upright_turns(pose_map, width, height)
+        if turns is None:
+            return
+        self._rotation_votes.append(turns)
+        if len(self._rotation_votes) < self.ROTATION_VOTE_FRAMES:
+            return
+        best, count = Counter(self._rotation_votes).most_common(1)[0]
+        if count < 0.8 * len(self._rotation_votes):
+            return
+        if best == 0:
+            self._rotation_locked = True
+            return
+        total = (self.QUARTER_TURNS[self.applied_rotation] + best) % 4
+        rotation = next(name for name, value in self.QUARTER_TURNS.items() if value == total)
+        self._apply_rotation_locked(rotation)
+        self._remember("camera_auto_rotation", rotation)
+
     def list_cameras(self, limit: int | None = None) -> dict:
         """挨个序号试着打开，看哪几个是真的在。
 
@@ -3884,6 +4000,9 @@ class NativeCameraService:
             return {
                 "camera_index": self.camera_index,
                 "max_camera_index": self.MAX_CAMERA_INDEX,
+                "rotation": self.rotation,
+                "applied_rotation": self.applied_rotation,
+                "rotation_locked": self._rotation_locked,
                 "preference": self.backend_preference,
                 "selected_backend": self.selected_backend,
                 "selected_backend_name": self._backend_display_name(self.selected_backend_name),
@@ -3917,6 +4036,9 @@ class NativeCameraService:
         return round(value, digits) if value is not None and math.isfinite(value) else None
 
     def _reset_runtime_locked(self) -> None:
+        # 每次启动重新判一次方向：两次启动之间设备可能被转过。
+        self._rotation_votes.clear()
+        self._rotation_locked = False
         self.frames = 0
         self.capture_width = 0
         self.capture_height = 0
@@ -3950,6 +4072,10 @@ class NativeCameraService:
     def _create_detector(self):
         if not self.model_path or not getattr(self.model_path, "is_file", lambda: False)():
             raise CameraUnavailable("MediaPipe Full task 未找到")
+        # mediapipe 只为拿一个文档装饰器就去 import tensorflow（找不到时自己退回空实现）。
+        # 装了 tensorflow 的机器上这一下要 30 多秒，还会连带加载 keras/sklearn——其中任何
+        # 一个包坏了，电脑摄像头就整个起不来。本程序不用 tensorflow，直接让它"不存在"。
+        sys.modules.setdefault("tensorflow", None)
         try:
             import mediapipe as mp
             from mediapipe.tasks import python
@@ -4196,6 +4322,7 @@ class NativeCameraService:
     def _capture_loop(self) -> None:
         try:
             import cv2
+            rotate_codes = {"cw": cv2.ROTATE_90_CLOCKWISE, "ccw": cv2.ROTATE_90_COUNTERCLOCKWISE, "180": cv2.ROTATE_180}
             while not self._stop.wait(0.001):
                 ok, frame = self._capture.read()
                 if not ok:
@@ -4205,6 +4332,9 @@ class NativeCameraService:
                             self._stop.set()
                         self._condition.notify_all()
                     break
+                code = rotate_codes.get(self.applied_rotation)
+                if code is not None:
+                    frame = cv2.rotate(frame, code)
                 height, width = frame.shape[:2]
                 captured_at = time.monotonic()
                 with self._condition:
@@ -4274,13 +4404,19 @@ class NativeCameraService:
                         }
                         for index, point in enumerate(world_landmarks)
                     }
-                self.kernel.handle_pose_map(
-                    "computer_camera", pose_map, width=width, height=height,
-                    world_pose=world_pose,
-                )
+                if self.assist:
+                    self.kernel.stereo.observe_pc(pose_map, width, height, captured_at)
+                else:
+                    self.kernel.handle_pose_map(
+                        "computer_camera", pose_map, width=width, height=height,
+                        world_pose=world_pose,
+                    )
                 finished = time.monotonic()
                 inference_ms = (time.perf_counter() - started) * 1000.0
                 with self._condition:
+                    if (pose_map and self.rotation == "auto" and not self._rotation_locked
+                            and captured_at >= self._rotation_changed_at):
+                        self._vote_rotation_locked(pose_map, width, height)
                     self.last_frame_at = finished
                     self.last_inference_at = finished
                     self.last_inference_ms = inference_ms
@@ -4389,6 +4525,7 @@ class NativeCameraService:
                 "actual_capture_fps": self._round_or_none(self.actual_capture_fps, 2),
                 "coordinate_space": "camera_frame_normalized_unmirrored",
                 "preview_mirrored": False, "coordinates_mirrored": False,
+                "assist": bool(self.assist),
             }
 
     def performance(self) -> dict:
@@ -4487,6 +4624,7 @@ class LocalControlRuntime:
             raise ValueError("source must be computer or phone")
         with self._lock:
             self.camera.stop()
+            self.camera.assist = False
             self.kernel.clear_body()
             self.body_mode = source
             # 先记下来再开摄像头：开不起来也是一次有效的选择——没有摄像头的人
@@ -4494,11 +4632,40 @@ class LocalControlRuntime:
             self.kernel.remember_general_setting("body_source", source)
             if source == "computer" and start_computer:
                 self.camera.start()
+            elif source == "phone" and start_computer and self.stereo_enabled:
+                # 双目是锦上添花：电脑摄像头开不起来，手机照常控制。
+                try:
+                    self._start_assist_locked()
+                except CameraUnavailable:
+                    self.camera.assist = False
+            return self.status()
+
+    @property
+    def stereo_enabled(self) -> bool:
+        return bool(self.kernel.general_setting("stereo_enabled", False))
+
+    def _start_assist_locked(self) -> None:
+        self.camera.assist = True
+        if not self.camera.status().get("running"):
+            self.camera.start()
+
+    def set_stereo(self, enabled: bool) -> dict:
+        """双目深度开关：手机仍是身体源，电脑摄像头作第二视角。"""
+        with self._lock:
+            if enabled and self.body_mode != "phone":
+                raise CameraUnavailable("双目深度以手机为主画面：请先把摄像头来源切到手机并连接")
+            self.kernel.remember_general_setting("stereo_enabled", bool(enabled))
+            if enabled:
+                self._start_assist_locked()
+            elif self.camera.assist:
+                self.camera.stop()
+                self.camera.assist = False
             return self.status()
 
     def stop_body(self) -> dict:
         with self._lock:
             self.camera.stop()
+            self.camera.assist = False
             self.kernel.clear_body()
             return self.status()
 
