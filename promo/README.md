@@ -14,7 +14,17 @@
 
 ## 渲染
 
-需要 Node 22、Playwright（带 Chromium）和 ffmpeg。
+需要 Node 22、Playwright（带 Chromium）和 ffmpeg。Windows 上第一次用：
+
+```text
+cd promo
+npm install
+npm install --no-save playwright
+npx playwright install chromium
+pip install imageio-ffmpeg          # 或者自己装 ffmpeg 放进 PATH
+```
+
+之后：
 
 ```text
 cd promo

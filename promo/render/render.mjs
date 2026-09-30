@@ -34,9 +34,12 @@ function loadPlaywright() {
 function findFfmpeg() {
   if (process.env.FFMPEG) return process.env.FFMPEG;
   try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); return 'ffmpeg'; } catch { /* 没装在 PATH 上 */ }
-  try {
-    return execFileSync('python3', ['-c', 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())']).toString().trim();
-  } catch { /* 也没有 imageio-ffmpeg */ }
+  // Windows 上一般叫 python 或 py，Linux/macOS 叫 python3
+  for (const py of ['python3', 'python', 'py']) {
+    try {
+      return execFileSync(py, ['-c', 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch { /* 这个名字不存在，或没装 imageio-ffmpeg */ }
+  }
   throw new Error('找不到 ffmpeg：装一个放进 PATH，或设置 FFMPEG 环境变量');
 }
 
