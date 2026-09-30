@@ -43,7 +43,7 @@
 </div>
 <div class="viewer-msg" id="hint"><b>连接摄像头后显示画面</b></div>
 <span class="hud hud-fps" hidden="" id="fpsHud"></span>
-<div class="hud hud-view" hidden="" id="headStatus"><span class="hud-label">视角</span><span class="gauge"><i id="viewDot"></i></span></div>
+<div class="hud hud-view" hidden="" id="headStatus"></div>
 <div class="hud hud-gate" hidden="" id="lookGateStatus"></div>
 <div aria-live="polite" class="range-hit" hidden="" id="rangeHit"><b class="range-hit-what" id="rangeHitWhat"></b><span class="range-hit-when" id="rangeHitWhen"></span></div>
 </div>
@@ -110,6 +110,8 @@
 </div>
 </div>
 
+<p class="banner warn" hidden="" id="adminBanner" role="status"><span>这个游戏要用管理员权限，现在是普通权限，游戏里可能收不到按键</span><button class="btn" id="adminRestartBtn" type="button">用管理员权限重启</button></p>
+
 <section class="card picker" hidden="" id="gamePicker">
 <input aria-label="搜索游戏名或 Steam 链接" class="field wide" id="profileSearch" placeholder="搜索游戏名或 Steam AppID" type="search"/>
 <select aria-hidden="true" hidden="" id="profileSelect" tabindex="-1"></select>
@@ -138,24 +140,28 @@
 <button class="btn link add-voice" hidden="" id="addGameVoiceBtn" type="button">＋ 添加口令</button>
 
 <section class="library" hidden="" id="poseLibraryPanel">
-<div class="library-head"><h2 class="section-title">动作库</h2><span class="library-count" id="libraryCount"></span><span class="spacer"></span><button aria-controls="libraryBody" aria-expanded="true" class="btn link" id="libToggle" type="button">收起</button></div>
+<div class="library-head"><h2 class="section-title">动作库</h2><span class="library-count" id="libraryCount"></span><span class="spacer"></span><button class="btn link" hidden="" id="customPoseScoresBtn" type="button">显示相似度</button><button aria-controls="libraryBody" aria-expanded="true" class="btn link" id="libToggle" type="button">收起</button></div>
 <div id="libraryBody">
-<div class="pose-library" id="poseLibraryList"></div>
-<div class="pose-cloud" id="poseCloudPanel">
-<div class="library-sub"><h3>官方动作库</h3><span class="statusline" id="poseCloudStatus"></span><span class="spacer"></span><button class="btn" id="poseCloudBtn" type="button">看看有哪些</button></div>
-<div class="pose-library" hidden="" id="poseCloudList"></div>
+<!-- 自带的、下载的、自己录的动作都在这一排卡片里；最后两张是「录一个」和「官方动作库」。 -->
+<div class="pose-library" id="libraryGrid">
+<div class="grid-contents" id="poseLibraryList"></div>
+<div class="grid-contents" id="customPoseList"></div>
+<button aria-controls="customPoseRecorder" aria-expanded="false" class="pose-library-item add" id="customPoseOpenBtn" type="button"><span class="add-mark">＋</span><b>录一个自己的动作</b><span>摆好姿势，倒计时结束时记下来</span></button>
+<button aria-controls="poseCloudPanel" aria-expanded="false" class="pose-library-item add" id="poseCloudBtn" type="button"><span class="add-mark">↓</span><b>官方动作库</b><span id="poseCloudHint">看看还有哪些动作可以下载</span></button>
 </div>
-<div class="custom-poses" id="customPosePanel">
-<div class="library-sub"><h3>自己录</h3><span class="fineprint">录一个姿势：摆着就一直按；录两个以上：按顺序做完按一下</span></div>
+<section class="card recorder" hidden="" id="customPoseRecorder">
+<div class="card-head"><h3 class="card-title">录一个自己的动作</h3><button class="btn link" id="customPoseCloseBtn" type="button">收起</button></div>
 <div class="inline-form pose-bar">
 <input class="field" id="customPoseName" maxlength="20" placeholder="给这个姿势起个名字" type="text"/>
 <label class="inline-label">准备<span class="sel"><select id="customPoseDelay"><option value="3">3 秒</option><option selected="" value="5">5 秒</option><option value="8">8 秒</option><option value="1">立刻</option></select></span></label>
 <button class="btn primary" id="customPoseCaptureBtn">录下当前姿势</button>
-<button class="btn" id="customPoseScoresBtn">显示相似度</button>
 </div>
+<p class="card-sub">摆着这个姿势就一直按。要按顺序做几个姿势才算的，录好后在它的卡片上点「调整 → 再加一个姿势」。</p>
+</section>
 <p class="statusline" id="customPoseStatus"></p>
-<div id="customPoseList"></div>
-<p class="fineprint" hidden="" id="customPoseHint">「像到」设得比摆好时的相似度略低一点；「保持」用来滤掉路过的动作。</p>
+<div class="pose-cloud" hidden="" id="poseCloudPanel">
+<div class="library-sub"><h3>官方动作库</h3><span class="statusline" id="poseCloudStatus"></span><span class="spacer"></span><button class="btn link" id="poseCloudCloseBtn" type="button">收起</button></div>
+<div class="pose-library" hidden="" id="poseCloudList"></div>
 </div>
 </div>
 </section>

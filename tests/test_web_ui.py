@@ -100,8 +100,11 @@ def browser():
 @pytest.fixture
 def ui(browser, server):
     context = browser.new_context(viewport={"width": 1280, "height": 820}, color_scheme="dark")
+    # 第一次用时的指引气泡也标成看过，免得它挡在按钮旁边；它自己另有一条测试。
+    tips_seen = json.dumps(json.dumps(["help", "gameMenu"]))
     context.add_init_script(
-        f"try{{localStorage.setItem('motioncontrol_tutorial_v2', {json.dumps(TUTORIAL_SEEN)})}}catch{{}}")
+        f"try{{localStorage.setItem('motioncontrol_tutorial_v2', {json.dumps(TUTORIAL_SEEN)});"
+        f"localStorage.setItem('motioncontrol_tips_seen', {tips_seen})}}catch{{}}")
     page = context.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
@@ -303,3 +306,29 @@ def test_the_tutorial_opens_from_the_help_menu(ui):
     page.click("#tourCloseBtn")
     assert page.locator("#tour").is_hidden()
     assert ui.errors == []
+
+
+def test_first_use_tips_point_at_the_small_menus(browser, server):
+    """「？」和「⋯」里放着重要的东西（新手教学、恢复默认按键、管理员权限），第一次用时指一下。"""
+    context = browser.new_context(viewport={"width": 1280, "height": 820})
+    context.add_init_script(
+        f"try{{localStorage.setItem('motioncontrol_tutorial_v2', {json.dumps(TUTORIAL_SEEN)})}}catch{{}}")
+    page = context.new_page()
+    try:
+        page.goto(server + "/")
+        tip = page.locator(".coach-tip")
+        tip.wait_for(timeout=10000)
+        assert "新手教学" in tip.inner_text()
+        page.click("#helpBtn")  # 点了它指的那个按钮，气泡就走
+        assert page.locator(".coach-tip").count() == 0
+        page.keyboard.press("Escape")
+        page.click('nav [data-view="games"]')
+        page.locator(".coach-tip").wait_for(timeout=5000)
+        assert "恢复默认按键" in page.locator(".coach-tip").inner_text()
+        page.click(".coach-tip .btn")
+        page.reload()
+        page.click('nav [data-view="games"]')
+        page.wait_for_timeout(1500)
+        assert page.locator(".coach-tip").count() == 0, "看过一次就不再出现"
+    finally:
+        context.close()

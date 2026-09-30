@@ -192,7 +192,7 @@ const STEPS = [
       const other = want === 'left' ? 'right' : 'left';
       const toward = Number.isFinite(s.hLevel) ? (want === 'left' ? -s.hLevel : s.hLevel) : 0;
       return {
-        target: ['#viewer', '#headStatus'], focus: '#headStatus', ready: true, cursor: virtualCursor(s, 'x', s.hLevel),
+        target: '#viewer', ready: true, cursor: virtualCursor(s, 'x', s.hLevel),
         say: memo[other] ? move.back(want === 'left' ? '左' : '右') : move[want], doneSay: move.done,
         hint: s.guardBlocked ? '身子别晃，只动头' : toward >= MORE && toward < LEVEL ? move.more : move.hint,
       };

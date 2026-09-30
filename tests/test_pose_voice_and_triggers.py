@@ -350,7 +350,7 @@ def test_the_range_lives_on_the_start_page_and_shows_the_hit_big():
     assert "renderRange" in APP_JS
     css = (ROOT / "web" / "app.css").read_text(encoding="utf-8")
     hit = css[css.index(".range-hit-what"):css.index(".range-hit-what") + 120]
-    smallest = float(re.search(r"font-size:\s*clamp\(([\d.]+)px", hit).group(1))
+    smallest = float(re.search(r"font-size:\s*clamp\(([\d.]+)rem", hit).group(1)) * 16
     assert smallest >= 22, f"命中那行字最小只有 {smallest}px，几米外看不见"
 
 

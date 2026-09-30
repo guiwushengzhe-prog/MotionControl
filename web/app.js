@@ -35,7 +35,7 @@ function actionKeyText(action){
   if(!type||!target)return null;
   // 宏的编号对人没有意义，圈上和卡片上要写它的名字。
   if(type==='macro')return macroName(action.target);
-  if(type==='voice_release')return `停「${voiceCommandPhrases(action.target).join('、')}」`;
+  if(type==='voice_release')return `松开「${voiceCommandPhrases(action.target).join('、')}」`;
   if(type==='keyboard')return target;
   if(type==='system')return SYSTEM_TARGET_NAMES.get(target)||target;
   if(type==='mouse_button')return({LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键1',X2:'侧键2'}[target]||target);
@@ -130,7 +130,9 @@ const MOTION_CONFLICT_GROUPS=[
   {ids:['jumping_jack','hands_up'],label:'开合跳与双手举过头'},
 ];
 const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',squat:'下蹲',hands_up:'双手举过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
-const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标',mouse_wheel:'滚轮',gamepad:'手柄',gamepad_trigger:'手柄扳机',gamepad_axis:'左摇杆',macro:'键盘宏',voice_release:'停住语音按住',system:'系统功能'};
+const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'手柄按键',gamepad_trigger:'手柄扳机',gamepad_axis:'左摇杆',macro:'键盘宏',voice_release:'松开口令按住的键',system:'系统功能'};
+// 输出类型下拉分三组，一眼找到在哪一类。
+const ACTION_TYPE_GROUPS=[['键盘鼠标',['keyboard','mouse_button','mouse_wheel']],['手柄',['gamepad','gamepad_trigger','gamepad_axis']],['其他',['macro','voice_release','system']]];
 // 宏库。每一处映射的下拉都从这里取，所以只在增删改之后刷一次，不跟着状态轮询走。
 const macroLibrary={items:[],limits:null};
 function macroById(id){return macroLibrary.items.find(item=>item.id===String(id||'').toLowerCase())||null}
@@ -418,23 +420,14 @@ function renderConflicts(){
     return row;
   }));
 }
-// 画面左下角的视角条：点在中间 = 不转，偏多少转多快。没校准、被防晃拦着时换成一句话；
-// 左右视角关着、或者画面里没人，整块不出现。
+// 画面右上角只在视角出问题时说一句：没校准、做动作时被防晃拦着。平时什么都不显示。
 function renderViewHud(hs,guardBlocked){
   const hud=$('#headStatus');if(!hud)return;
   const usesHand=!!(hs.hand_mouse?.enabled&&['left','right'].includes(hs.hand_mouse?.config?.horizontal_hand));
-  if(!currentPoseMap||(!usesHand&&hs.enabled===false)||!Number.isFinite(hs.output_x)&&!usesHand){hud.hidden=true;return}
-  hud.hidden=false;
+  const headOn=!usesHand&&hs.enabled!==false;
   const calibrated=usesHand||(hs.horizontal_calibrated??hs.calibrated);
-  const text=!calibrated?'视角未校准':(!usesHand&&guardBlocked)?'做动作中，视角稳住':'';
-  hud.classList.toggle('text',!!text);
-  const label=hud.querySelector('.hud-label'),want=text||'视角';if(label.textContent!==want)label.textContent=want;
-  if(text)return;
-  // 和新手教学同一套折算：头控满量程是左右灵敏度，握拳是握拳灵敏度/100。
-  const handMax=Math.min(1,Math.max(.01,Number(handMouseConfig.sensitivity??70)/100));
-  const axis=hs.hand_mouse?.axes?.horizontal;
-  const level=usesHand?Number(axis?.output||0)/handMax:Number(hs.output_x||0)/Math.max(1,Number(hs.sensitivity_x||head.sensitivityX||58));
-  $('#viewDot').style.left=(50+clamp(level,-1,1)*46).toFixed(1)+'%';
+  const text=!currentPoseMap||!headOn?'':!calibrated?'视角未校准':guardBlocked?'做动作中，视角稳住':'';
+  hud.hidden=!text;if(text&&hud.textContent!==text)hud.textContent=text;
 }
 function renderKernelState(runtime,force=false){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
@@ -693,6 +686,8 @@ function renderProfileHeader(){
 }
 function renderGameLaunch(){
   const status=$('#profileLaunchStatus'),button=$('#profileLaunchBtn');
+  // 这个游戏要管理员权限、现在却是普通权限：游戏里可能收不到按键，直接在本游戏页上说。
+  const banner=$('#adminBanner');if(banner)banner.hidden=!(gameLaunch?.requires_admin&&!gameLaunch?.is_admin);
   if(!gameProfile.selected||!gameLaunch){status.textContent='';button.disabled=true;return}
   button.disabled=false;
   if(gameLaunch.is_admin){
@@ -847,7 +842,15 @@ async function profileOperation(operation){
 function makeTypeSelect(binding){
   const sel=document.createElement('select');sel.className='binding-type';
   const none=document.createElement('option');none.value='';none.textContent='不绑';sel.appendChild(none);
-  for(const type of Object.keys(ACTION_TYPE_LABELS)){if(!gameProfile.actions?.[type])continue;const o=document.createElement('option');o.value=type;o.textContent=ACTION_TYPE_LABELS[type];sel.appendChild(o)}
+  const option=type=>{const o=document.createElement('option');o.value=type;o.textContent=ACTION_TYPE_LABELS[type];return o};
+  for(const [label,types] of ACTION_TYPE_GROUPS){
+    const group=document.createElement('optgroup');group.label=label;
+    for(const type of types)if(gameProfile.actions?.[type])group.appendChild(option(type));
+    if(group.children.length)sel.appendChild(group);
+  }
+  // 服务端以后新加、这里还没分组的输出类型，放在最后，不至于选不到。
+  const grouped=new Set(ACTION_TYPE_GROUPS.flatMap(([,types])=>types));
+  for(const type of Object.keys(ACTION_TYPE_LABELS))if(gameProfile.actions?.[type]&&!grouped.has(type))sel.appendChild(option(type));
   sel.value=binding?.disabled?'':(binding?.action?.type||'');return sel;
 }
 // 「停住语音按住」能停哪几条：本游戏口令里现在设成持续按住的那些（循环的宏也算，
@@ -970,9 +973,9 @@ function syncVoiceReleaseChoices(){
     const typeSel=row.querySelector('.binding-type');if(!typeSel)continue;
     const option=[...typeSel.options].find(o=>o.value==='voice_release');
     if(option){
+      // 没有设成「按住不放」的口令时，这一项用不上，就不列出来（这一行正选着它的除外）。
       const none=!voiceHoldChoices(row.dataset.trigger).length;
-      option.disabled=none&&typeSel.value!=='voice_release';
-      option.textContent=none?`${ACTION_TYPE_LABELS.voice_release}（没有按住不放的口令）`:ACTION_TYPE_LABELS.voice_release;
+      option.hidden=none&&typeSel.value!=='voice_release';option.disabled=option.hidden;
     }
     const select=row.querySelector('select.voice-release-target');
     if(select)fillVoiceReleaseSelect(select,row.dataset.trigger,voiceReleaseTargetIds(select));
@@ -1115,12 +1118,12 @@ function fillBehaviorControl(container,trigger,type,value,macroId){
     const span=document.createElement('span');span.className='binding-behavior';
     span.dataset.value=mode;span.textContent=text;container.appendChild(span);return;
   }
-  if(type==='voice_release'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='停住一次';span.dataset.value='tap';container.appendChild(span);return}
+  if(type==='voice_release'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='松开一次';span.dataset.value='tap';container.appendChild(span);return}
   if(type==='system'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='执行一次';span.dataset.value='tap';container.appendChild(span);return}
   if(trigger.tapOnly||type==='mouse_wheel'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='点一下';span.dataset.value='tap';container.appendChild(span);return}
   if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='';span.dataset.value='hold';container.appendChild(span);return}
   const sel=document.createElement('select');sel.className='binding-behavior';
-  sel.title=trigger.group==='voice'?'点一下：说一次按一下。按住不放：说完一直按着，直到另一句口令停住它':'按住：动作做着（或在框里）就一直按着。点一下：开始时按一下';
+  sel.title=trigger.group==='voice'?'点一下：说一次按一下。按住不放：说完一直按着，直到另一句口令把它松开':'按住：动作做着（或在框里）就一直按着。点一下：开始时按一下';
   for(const[v,t]of (trigger.group==='voice'?[['tap','点一下'],['hold','按住不放']]:[['hold','按住'],['tap','点一下']])){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
   // Poses default to a single edge trigger on the server, so show that rather
   // than "hold" while a pose has no binding yet.
@@ -2641,6 +2644,7 @@ function showView(view){
     if(el.dataset.view===view)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');
   });
   closeMenus();
+  if(view==='games')setTimeout(()=>showTipOnce('gameMenu',$('#gameMenuBtn'),'恢复默认按键、管理员权限启动在这里'),400);
   if(view==='devices'){void refreshXinput();void refreshHandMouse();void refreshPoseRecord()}
   if(view==='games')loadCloudEndpoint().catch(()=>{});
   window.scrollTo(0,0);
@@ -2673,6 +2677,7 @@ async function init(){
   ]);
   if(results.some(result=>result.status==='rejected'))notice('部分设备信息尚未读取，可继续使用已连接的输入');
   await loadProfiles();renderVoiceRows(voiceRowsFromStatus(voice.status));renderBodyDescs();
+  if(currentView==='play')setTimeout(()=>showTipOnce('help',$('#helpBtn'),'新手教学、白天 / 夜间在这里'),1200);
   poll(refreshKernel,250);poll(async()=>{await refreshInput();await refreshOutput();await refreshVoice()},900);
   poll(refreshXinput,1500,()=>currentView==='devices');
   // 帧数写在开始页的画面角上，诊断细节在设置里；这两页开着才刷新。
@@ -2739,7 +2744,7 @@ $('#profileResults').addEventListener('click',event=>{
   void runAction(async()=>{await applySelectedProfile();togglePanel('switchGameBtn','gamePicker',false)});
 });
 bind('resetProfileBindingsBtn',resetProfileBindings);
-bind('profileLaunchBtn',toggleGameLaunchMode);
+bind('profileLaunchBtn',toggleGameLaunchMode);bind('adminRestartBtn',()=>changeGameLaunchMode(true));
 bind('customGameAddBtn',addCustomGame);
 bind('customGameRenameBtn',renameCustomGame);
 bind('customGameRemoveBtn',removeCustomGame);
@@ -2841,6 +2846,30 @@ window.addEventListener('beforeunload',e=>{
   try{overlay.win?.close()}catch{}
 });
 /* --- 顶栏菜单、白天/夜间、设置分类、本游戏页签 ------------------------------------ */
+// 第一次用新界面时，指一下收在小按钮里的东西在哪：看过一次、点过那个按钮，就不再出现。
+const TIPS_KEY='motioncontrol_tips_seen';
+function tipsSeen(){try{return new Set(JSON.parse(localStorage.getItem(TIPS_KEY)||'[]'))}catch{return new Set()}}
+function markTipSeen(id){try{const seen=tipsSeen();seen.add(id);localStorage.setItem(TIPS_KEY,JSON.stringify([...seen]))}catch{}}
+let activeTip=null;
+function showTipOnce(id,anchor,text){
+  if(activeTip||tipsSeen().has(id)||!anchor||!$('#tour').hidden)return;
+  if(!anchor.getBoundingClientRect().width)return;
+  const tip=document.createElement('div');tip.className='coach-tip';tip.setAttribute('role','status');
+  const words=document.createElement('span');words.textContent=text;
+  const ok=document.createElement('button');ok.type='button';ok.className='btn';ok.textContent='知道了';
+  tip.append(words,ok);document.body.append(tip);
+  const place=()=>{
+    const box=anchor.getBoundingClientRect();
+    const left=Math.max(12,Math.min(box.right-tip.offsetWidth+12,innerWidth-tip.offsetWidth-12));
+    tip.style.top=`${box.bottom+10}px`;tip.style.left=`${left}px`;
+    tip.style.setProperty('--arrow-x',`${box.left+box.width/2-left}px`);
+  };
+  const close=()=>{markTipSeen(id);tip.remove();activeTip=null;removeEventListener('resize',place);removeEventListener('scroll',place,true);anchor.removeEventListener('click',close)};
+  place();activeTip={id,close};
+  ok.addEventListener('click',close);anchor.addEventListener('click',close);
+  addEventListener('resize',place);addEventListener('scroll',place,true);
+}
+
 function closeMenus(except){
   document.querySelectorAll('.menu').forEach(menu=>{
     if(menu===except)return;
@@ -3187,6 +3216,8 @@ function paintPoseCountdown(state) {
   if (counting) {
     const left = Math.max(1, Math.ceil(Number(state.remaining_s) || 0));
     if (purpose === 'capture') {
+      const recorder = document.getElementById('customPoseRecorder');
+      if (recorder) recorder.hidden = false;
       button.classList.add('counting');
       button.textContent = String(left);
     } else {
@@ -3216,7 +3247,10 @@ function paintPoseCountdown(state) {
   const message = String(state?.message || '');
   if (wasActive || (message && message !== poseCaptureMessage)) {
     poseCaptureMessage = message;
-    if (message) customPoseSay(message, message.includes('没') || message.includes('失败') ? 'error' : '');
+    const failed = message.includes('没') || message.includes('失败');
+    if (message) customPoseSay(message, failed ? 'error' : '');
+    // 录好了，录制面板合上：新录的动作已经出现在卡片里了。
+    if (wasActive && purpose === 'capture' && !failed) setRecorderOpen(false);
     void refreshCustomPoses();
   }
 }
@@ -3296,24 +3330,47 @@ function customPoseSlider(labelText, input, format) {
   return label;
 }
 
+// 展开过「调整」的自己录的动作，重画之后还展开着。
+const expandedPoses = new Set();
+
+/* 自己录的动作和别的动作放在同一排卡片里，正面长得一样：示范（录下来的第一个姿势）、
+ * 名字、键位、一句怎么做。像到多少才算、保持多久、再加一个姿势、删除这些，收在卡片
+ * 的「调整」里——录完一般不用动。 */
 function renderCustomPoses() {
   if (!customPoseListEl) return;
-  const hint = document.getElementById('customPoseHint');
-  if (hint) hint.hidden = !customPoses.length;
+  const scores = document.getElementById('customPoseScoresBtn');
+  if (scores) scores.hidden = !customPoses.length;
   customPoseListEl.replaceChildren();
 
   for (const item of customPoses) {
-    const row = document.createElement('div');
-    row.className = 'custom-pose';
-    row.dataset.id = item.id;
+    const card = document.createElement('div');
+    card.className = 'pose-library-item custom-pose';
+    card.dataset.id = item.id;
 
-    const name = document.createElement('input');
-    name.className = 'custom-pose-name';
-    name.value = item.name;
-    name.maxLength = 20;
-    name.addEventListener('change', () => updateCustomPose(item.id, { name: name.value }));
+    const demo = document.createElement('div');
+    demo.className = 'pose-demo';
+    demo.appendChild(poseThumbnail((item.previews || [])[0]));
 
-    // 实时相似度。没有它，用户调阈值只能靠猜。
+    const name = document.createElement('span');
+    name.className = 'pose-library-name';
+    name.textContent = item.name;
+    // 绑的是哪个键。只显示，不在这里改——同一个东西两处能改，就一定会有一处
+    // 是旧的。点它跳到上面那张表里对应的一行，改在那边。
+    const bound = document.createElement('button');
+    bound.type = 'button';
+    bound.className = 'custom-pose-key';
+    bound.textContent = libraryKeyLabel('pose.' + item.id);
+    bound.title = '点一下去绑键、改键';
+    bound.addEventListener('click', () => revealBindingRow('pose.' + item.id));
+    const head = document.createElement('div');
+    head.className = 'pose-library-head';
+    head.append(name, bound);
+
+    const how = document.createElement('div');
+    how.className = 'pose-library-how';
+    how.textContent = item.frames > 1 ? `${item.frames} 个姿势，按顺序做完按一下` : '摆着这个姿势就一直按';
+
+    // 实时相似度。没有它，调「像到」只能靠猜。平时藏着，点「显示相似度」才出来。
     const meter = document.createElement('div');
     meter.className = 'custom-pose-meter';
     const fill = document.createElement('div');
@@ -3322,31 +3379,34 @@ function renderCustomPoses() {
     readout.className = 'custom-pose-score';
     meter.append(fill, readout);
 
-    const threshold = document.createElement('input');
-    threshold.type = 'range';
-    threshold.min = '50'; threshold.max = '99'; threshold.step = '1';
-    threshold.value = String(Math.round(item.threshold * 100));
-    threshold.addEventListener('change', () =>
-      updateCustomPose(item.id, { threshold: Number(threshold.value) / 100 }));
+    const source = document.createElement('div');
+    source.className = 'pose-library-source';
+    const origin = document.createElement('span');
+    origin.textContent = item.enabled ? '自己录' : '自己录 · 已停用';
+    const adjust = document.createElement('button');
+    adjust.type = 'button';
+    adjust.className = 'btn link';
+    adjust.textContent = '调整';
+    const open = expandedPoses.has(item.id);
+    adjust.setAttribute('aria-expanded', String(open));
+    source.append(origin, adjust);
 
-    const dwell = document.createElement('input');
-    dwell.type = 'range';
-    dwell.min = '1'; dwell.max = '60'; dwell.step = '1';
-    dwell.value = String(item.dwell_frames);
-    dwell.addEventListener('change', () =>
-      updateCustomPose(item.id, { dwell_frames: Number(dwell.value) }));
+    const panel = document.createElement('div');
+    panel.className = 'custom-pose-panel';
+    panel.hidden = !open;
+    adjust.addEventListener('click', () => {
+      const next = panel.hidden;
+      panel.hidden = !next;
+      adjust.setAttribute('aria-expanded', String(next));
+      if (next) expandedPoses.add(item.id); else expandedPoses.delete(item.id);
+    });
 
-    const enabled = document.createElement('label');
-    const toggle = document.createElement('input');
-    toggle.type = 'checkbox';
-    toggle.checked = item.enabled;
-    toggle.addEventListener('change', () => updateCustomPose(item.id, { enabled: toggle.checked }));
-    enabled.append(toggle, '启用');
-
-    const remove = document.createElement('button');
-    remove.className = 'btn';
-    remove.textContent = '删除';
-    remove.addEventListener('click', () => removeCustomPose(item));
+    const rename = document.createElement('input');
+    rename.className = 'custom-pose-name field';
+    rename.value = item.name;
+    rename.maxLength = 20;
+    rename.setAttribute('aria-label', '名字');
+    rename.addEventListener('change', () => updateCustomPose(item.id, { name: rename.value }));
 
     // 关键帧一排。多于一帧就是连贯动作，要按顺序依次做出来。
     const strip = document.createElement('div');
@@ -3374,7 +3434,6 @@ function renderCustomPoses() {
       }
       strip.appendChild(cell);
     });
-
     const addFrame = document.createElement('button');
     addFrame.className = 'btn pose-add';
     addFrame.type = 'button';
@@ -3383,26 +3442,26 @@ function renderCustomPoses() {
     addFrame.addEventListener('click', () => appendCustomPoseFrame(item));
     strip.appendChild(addFrame);
 
-    // 绑的是哪个键。只显示，不在这里改——同一个东西两处能改，就一定会有一处
-    // 是旧的。点它跳到上面那张表里对应的一行，改在那边。
-    const bound = document.createElement('button');
-    bound.type = 'button';
-    bound.className = 'custom-pose-key';
-    bound.textContent = libraryKeyLabel('pose.' + item.id);
-    bound.title = '点一下跳到上面的按键映射';
-    bound.addEventListener('click', () => revealBindingRow('pose.' + item.id));
+    const threshold = document.createElement('input');
+    threshold.type = 'range';
+    threshold.min = '50'; threshold.max = '99'; threshold.step = '1';
+    threshold.value = String(Math.round(item.threshold * 100));
+    threshold.addEventListener('change', () =>
+      updateCustomPose(item.id, { threshold: Number(threshold.value) / 100 }));
 
-    const head = document.createElement('div');
-    head.className = 'custom-pose-head';
-    head.append(name, meter, bound);
+    const dwell = document.createElement('input');
+    dwell.type = 'range';
+    dwell.min = '1'; dwell.max = '60'; dwell.step = '1';
+    dwell.value = String(item.dwell_frames);
+    dwell.addEventListener('change', () =>
+      updateCustomPose(item.id, { dwell_frames: Number(dwell.value) }));
 
     const tools = document.createElement('div');
     tools.className = 'custom-pose-tools';
     tools.append(
-      customPoseSlider('像到 ', threshold, v => v + '% 才算'),
+      customPoseSlider('像到', threshold, v => v + '% 才算'),
       // 帧数对用户没有意义，换算成秒。30fps 是相机的常见帧率。
-      customPoseSlider(item.frames > 1 ? '最后一个姿势保持 ' : '保持 ', dwell,
-                       v => (v / 30).toFixed(2) + ' 秒'));
+      customPoseSlider(item.frames > 1 ? '最后一个保持' : '保持', dwell, v => (v / 30).toFixed(2) + ' 秒'));
     if (item.frames > 1) {
       const window_ = document.createElement('input');
       window_.type = 'range';
@@ -3410,15 +3469,53 @@ function renderCustomPoses() {
       window_.value = String(Math.round(item.step_window_s * 10));
       window_.addEventListener('change', () =>
         updateCustomPose(item.id, { step_window_s: Number(window_.value) / 10 }));
-      tools.append(customPoseSlider('每步最多 ', window_, v => (v / 10).toFixed(1) + ' 秒'));
+      tools.append(customPoseSlider('每步最多', window_, v => (v / 10).toFixed(1) + ' 秒'));
     }
-    tools.append(enabled, remove);
 
-    row.append(strip, head, tools);
-    customPoseListEl.appendChild(row);
+    const enabled = document.createElement('label');
+    enabled.className = 'custom-pose-enabled';
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.className = 'switch';
+    toggle.checked = item.enabled;
+    toggle.addEventListener('change', () => updateCustomPose(item.id, { enabled: toggle.checked }));
+    enabled.append('启用', toggle);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn link danger';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => removeCustomPose(item));
+
+    const actions = document.createElement('div');
+    actions.className = 'custom-pose-actions';
+    actions.append(enabled, remove);
+
+    const hint = document.createElement('p');
+    hint.className = 'fineprint';
+    hint.textContent = '「像到」设得比摆好时的相似度略低一点；「保持」用来滤掉路过的动作。';
+
+    panel.append(rename, strip, tools, hint, actions);
+    card.append(demo, poseCardBody(head, how, meter), source, panel);
+    customPoseListEl.appendChild(card);
   }
   paintCustomPoseScores();
 }
+
+// 「录一个自己的动作」那张卡片：点开录制面板，录完或者点收起就合上。
+function setRecorderOpen(open) {
+  const recorder = document.getElementById('customPoseRecorder');
+  if (!recorder) return;
+  recorder.hidden = !open;
+  document.getElementById('customPoseOpenBtn')?.setAttribute('aria-expanded', String(open));
+  if (open) {
+    recorder.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.getElementById('customPoseName')?.focus();
+  }
+}
+document.getElementById('customPoseOpenBtn')?.addEventListener('click', () =>
+  setRecorderOpen(document.getElementById('customPoseRecorder').hidden));
+document.getElementById('customPoseCloseBtn')?.addEventListener('click', () => setRecorderOpen(false));
 
 /** 只改数字和进度条，不重建 DOM——每秒重建会把用户正在拖的滑块打断。 */
 function paintCustomPoseScores() {
@@ -3620,13 +3717,18 @@ let poseCloudItems = [];
 
 function poseCloudSay(text, kind = '') {
   const el = document.getElementById('poseCloudStatus');
-  if (!el) return;
+  // 官方动作库那一块收着的时候（比如在卡片上删了一个动作），话说在页面底下的提示里。
+  if (!el || document.getElementById('poseCloudPanel')?.hidden) { if (text) notice(text); return; }
   el.textContent = text;
   el.className = kind === 'error' ? 'statusline error' : 'statusline';
 }
 
+// 「官方动作库」那张卡片：点开才去云端读列表，读到的动作用和上面一样的卡片列出来。
 async function openPoseCloud() {
+  const panel = document.getElementById('poseCloudPanel');
   const button = document.getElementById('poseCloudBtn');
+  if (panel) panel.hidden = false;
+  button?.setAttribute('aria-expanded', 'true');
   if (button) button.disabled = true;
   poseCloudSay('正在读官方动作库…');
   try {
@@ -3635,10 +3737,6 @@ async function openPoseCloud() {
     ratingNames = data.rating_names || ratingNames;
     bodyPartNames = data.body_part_names || bodyPartNames;
     for (const item of poseCloudItems) poseLibraryNames.cloud[item.id] = item.name;
-    const fresh = poseCloudItems.filter(item => !item.installed_revision).length;
-    poseCloudSay(poseCloudItems.length
-      ? (fresh ? `${poseCloudItems.length} 个动作，${fresh} 个还没下载` : '都下载了')
-      : '暂时还没有发布的动作');
     renderPoseCloud();
     paintPoseMissingNotice();
   } catch (error) {
@@ -3648,17 +3746,38 @@ async function openPoseCloud() {
   }
 }
 
+function closePoseCloud() {
+  const panel = document.getElementById('poseCloudPanel');
+  if (panel) panel.hidden = true;
+  document.getElementById('poseCloudBtn')?.setAttribute('aria-expanded', 'false');
+}
+
 function renderPoseCloud() {
   if (!poseCloudEl) return;
-  poseCloudEl.hidden = !poseCloudItems.length;
+  const fresh = poseCloudItems.filter(item => !item.installed_revision).length;
+  poseCloudSay(poseCloudItems.length
+    ? (fresh ? `${fresh} 个还没下载` : '官方的动作都下载了')
+    : '暂时还没有发布的动作');
+  // 卡片上那句话跟着变：还有几个能下载。
+  const hint = document.getElementById('poseCloudHint');
+  if (hint && poseCloudItems.length) hint.textContent = fresh ? `还有 ${fresh} 个动作可以下载` : '官方的动作都下载了';
+  // 已经下载、也没有新版的不再列一遍：上面的动作库里已经有它们了。
+  const wanted = poseCloudItems.filter(item => !item.installed_revision || item.update_available);
+  poseCloudEl.hidden = !wanted.length;
   poseCloudEl.replaceChildren();
-  for (const item of poseCloudItems) {
+  for (const item of wanted) {
     const card = document.createElement('div');
     card.className = 'pose-library-item';
     card.dataset.id = item.id;
     const name = document.createElement('span');
     name.className = 'pose-library-name';
     name.textContent = item.name;
+    const head = document.createElement('div');
+    head.className = 'pose-library-head';
+    head.append(name);
+    const how = document.createElement('div');
+    how.className = 'pose-library-how';
+    how.textContent = item.how;
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'btn';
@@ -3672,16 +3791,15 @@ function renderPoseCloud() {
       action.disabled = true;
     }
     action.addEventListener('click', () => installPoseAction(item, action));
-    const head = document.createElement('div');
-    head.className = 'pose-library-head';
-    head.append(name, action);
-    const how = document.createElement('div');
-    how.className = 'pose-library-how';
-    how.textContent = item.how;
-    card.append(poseDemo(item.demo), poseCardBody(head, how, poseRatings(item)));
+    const source = document.createElement('div');
+    source.className = 'pose-library-source';
+    source.append(`官方 · 第 ${item.revision} 版`, action);
+    card.append(poseDemo(item.demo), poseCardBody(head, how, poseRatings(item)), source);
     poseCloudEl.appendChild(card);
   }
 }
+
+document.getElementById('poseCloudCloseBtn')?.addEventListener('click', closePoseCloud);
 
 async function installPoseAction(item, button) {
   button.disabled = true;
@@ -3698,7 +3816,9 @@ async function installPoseAction(item, button) {
   }
 }
 
-document.getElementById('poseCloudBtn')?.addEventListener('click', openPoseCloud);
+document.getElementById('poseCloudBtn')?.addEventListener('click', () => {
+  if (document.getElementById('poseCloudPanel')?.hidden) openPoseCloud(); else closePoseCloud();
+});
 
 /** 这份配置绑了还没下载的动作：那几行现在不会触发。说清楚是哪几个、去哪下载。
  *  不自动下载——以后要和账号、收费一起考虑。 */
@@ -3712,7 +3832,7 @@ function paintPoseMissingNotice() {
     for (const [id, binding] of Object.entries(items)) {
       if (!binding || binding.disabled || !binding.action?.target) continue;
       if (id.startsWith('custom') || known.has(`${prefix}.${id}`)) continue;
-      missing.push(poseLibraryNames.cloud[id] || id);
+      missing.push(poseLibraryNames.cloud[id] || MOTION_CONFLICT_NAMES[id] || id);
     }
   }
   box.hidden = !missing.length;
@@ -4155,8 +4275,10 @@ let rangeTargetKeys = '';
 let rangeLogKey = '';
 
 // 画面下面那排：本机认得的身体动作全列上。区域不列——画面里的框自己会亮。
+// 画面下面那排：绑了键的身体动作。没绑的不列——它被认出来时，画面上的大字照样会
+// 写「××× → 没绑键」。区域也不列：画面里的框自己会亮。
 function rangeTriggers() {
-  return profileTriggers().filter(item => item.group === 'motions' || item.group === 'poses');
+  return profileTriggers().filter(item => (item.group === 'motions' || item.group === 'poses') && triggerMapped(item.key));
 }
 
 function buildRangeTargets(triggers) {
