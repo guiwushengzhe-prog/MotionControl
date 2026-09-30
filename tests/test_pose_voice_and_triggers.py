@@ -342,15 +342,16 @@ def test_the_page_shows_the_effective_binding_not_the_config():
     assert "effective_bindings" in hits[0]
 
 
-def test_the_range_is_its_own_tab_and_shows_the_hit_big():
-    """人站在几米外做动作，小字等于没有。"""
+def test_the_range_lives_on_the_start_page_and_shows_the_hit_big():
+    """人站在几米外做动作，小字等于没有。动作测试并进了开始页：大字叠在画面上。"""
     page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
-    assert 'data-panel="range"' in page and 'data-view="range"' in page
+    play = page.split('data-panel="play"', 1)[1].split('data-panel="games"', 1)[0]
+    assert 'id="rangeHit"' in play and 'id="rangeTargets"' in play and 'id="rangeLog"' in play
     assert "renderRange" in APP_JS
     css = (ROOT / "web" / "app.css").read_text(encoding="utf-8")
     hit = css[css.index(".range-hit-what"):css.index(".range-hit-what") + 120]
-    size = float(re.search(r"font-size:\s*([\d.]+)em", hit).group(1))
-    assert size >= 2.0, f"命中那行字只有 {size}em，几米外看不见"
+    smallest = float(re.search(r"font-size:\s*clamp\(([\d.]+)px", hit).group(1))
+    assert smallest >= 22, f"命中那行字最小只有 {smallest}px，几米外看不见"
 
 
 def test_an_unmapped_target_still_shows_up_in_the_range():
@@ -360,11 +361,10 @@ def test_an_unmapped_target_still_shows_up_in_the_range():
     assert "unmapped" in (ROOT / "web" / "app.css").read_text(encoding="utf-8")
 
 
-def test_the_live_view_sits_next_to_the_editor():
-    """看到「左手区 → Y」不对，往下一眼就是改它的那一行。分两个地方只会让人来回找。"""
+def test_a_recent_trigger_jumps_to_its_row():
+    """看到「左手区 → Y」不对，点一下就到改它的那一行，那一行还会闪一下。
+    最近触发只在开始页列一份——映射表上方原来那一份和它重复，删了。"""
     page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
-    live = page.index('id="triggerLive"')
-    table = page.index('id="profileBindingRows"')
-    assert live < table, "触发实况跑到映射表下面去了"
-    assert "renderTriggerLive" in APP_JS
-    assert "revealBindingRow" in APP_JS, "点一条要能跳到它的映射行"
+    assert 'id="triggerLive"' not in page
+    assert "revealBindingRow(key)" in APP_JS, "点一条要能跳到它的映射行"
+    assert "just-fired" in APP_JS, "刚触发的那一行要闪一下"

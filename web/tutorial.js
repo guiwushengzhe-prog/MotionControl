@@ -37,11 +37,11 @@ function connectGuide(s, memo, now) {
   if (s.view !== 'devices') {
     return s.view === 'play'
       ? {target: '.checklist [data-go="devices"]', say: repick ? '点「去连接」，换一个摄像头' : '点「去连接」'}
-      : {target: NAV_DEVICES, say: '点「通用设置」'};
+      : {target: NAV_DEVICES, say: '点「设置」'};
   }
 
   if (s.sourcePick === 'phone') {
-    if (s.source !== 'phone') return {target: '#sourceStartBtn', say: '点「连接并开始识别」'};
+    if (s.source !== 'phone') return {target: '#sourceStartBtn', say: '点「连接」'};
     return {
       target: ['#poseSource', '#mobileStatus'], say: '打开手机上的 MotionControl',
       hint: `选「固定摄像头」，点「连接并开始」 · ${s.usbTether ? '数据线已接通' : '手机和电脑连同一个 WiFi'}`,
@@ -51,12 +51,12 @@ function connectGuide(s, memo, now) {
   // 下面都是「电脑摄像头」。
   if (s.phoneStreaming) return {target: '#poseSource', say: '来源改成「手机摄像头」', hint: '手机已经在传画面了'};
   if (s.modelOk === false) return {target: '#poseSource', say: '来源改成「手机摄像头」', hint: '这台电脑的识别模型没装好，电脑摄像头认不出人'};
-  if (repick) return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '换一个摄像头，点「连接并开始识别」'};
+  if (repick) return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '换一个摄像头，点「连接」'};
 
   if (s.cameraRunning) {
     memo.noFrameSince = memo.noFrameSince || now;
     return now - memo.noFrameSince > 5000
-      ? {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '这个摄像头没有画面，换一个', hint: '换好再点「连接并开始识别」'}
+      ? {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '这个摄像头没有画面，换一个', hint: '换好再点「连接」'}
       : {target: '#cameraDeviceRow', say: '等画面出来…'};
   }
   memo.noFrameSince = 0;
@@ -71,12 +71,12 @@ function connectGuide(s, memo, now) {
       : {target: ['#poseSource', '#sourceStartBtn'], say: '摄像头打不开', hint: '关掉正在用摄像头的软件再连；没有摄像头就改用「手机摄像头」'};
   }
   if (s.scan === 'done' && s.scanCount === 0) {
-    return {target: ['#poseSource', '#cameraScanBtn'], say: '没找到摄像头', hint: '被别的软件占着就关掉它再点「扫描摄像头」；没有就改用「手机摄像头」'};
+    return {target: ['#poseSource', '#cameraScanBtn'], say: '没找到摄像头', hint: '被别的软件占着就关掉它再点「扫描」；没有就改用「手机摄像头」'};
   }
   if (s.scanCount > 1) {
-    return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '选一个摄像头，点「连接并开始识别」', hint: `找到 ${s.scanCount} 个；画面里不是你就换一个`};
+    return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '选一个摄像头，点「连接」', hint: `找到 ${s.scanCount} 个；画面里不是你就换一个`};
   }
-  return {target: '#sourceStartBtn', say: '点「连接并开始识别」', hint: s.scanCount === 1 ? '找到 1 个摄像头' : ''};
+  return {target: '#sourceStartBtn', say: '点「连接」', hint: s.scanCount === 1 ? '找到 1 个摄像头' : ''};
 }
 
 // 人在不在画面里、站得够不够远。只看头和双肩：程序第一次定位也只要这三样。
@@ -172,7 +172,7 @@ const STEPS = [
     guide(s, memo, now) {
       if (s.horizontal === 'off') {
         return s.view !== 'devices'
-          ? {target: NAV_DEVICES, say: '点「通用设置」', hint: '左右视角现在是关着的'}
+          ? {target: NAV_DEVICES, say: '点「设置」', hint: '左右视角现在是关着的'}
           : {target: '#viewHorizontalSource', say: `「左右控制」选「${schemeLabel('horizontal', 'roll_tilt')}」`};
       }
       const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
@@ -209,7 +209,7 @@ const STEPS = [
     guide(s, memo, now) {
       if (s.vertical === 'off') {
         return s.view !== 'devices'
-          ? {target: NAV_DEVICES, say: '点「通用设置」', hint: '上下视角现在是关着的'}
+          ? {target: NAV_DEVICES, say: '点「设置」', hint: '上下视角现在是关着的'}
           : {target: '#viewVerticalSource', say: `「上下控制」选「${schemeLabel('vertical', 'left')}」`};
       }
       const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
@@ -258,7 +258,7 @@ const STEPS = [
   },
   {
     id: 'start',
-    name: '开始游戏控制',
+    name: '开始控制',
     doneSay: '✓ 游戏控制开了',
     guide(s, memo, now) {
       const before = connectGuide(s, memo, now);
@@ -267,7 +267,7 @@ const STEPS = [
       if (s.driverMissing) {
         return {target: '#mainActionBtn', say: '先装虚拟手柄驱动', hint: '双击程序文件夹里的「安装虚拟手柄驱动.exe」；装不了就这步先跳过'};
       }
-      return {target: '#mainActionBtn', ready: true, say: '点「开始游戏控制」', hint: '打开后动作就真的生效，下一步教你停'};
+      return {target: '#mainActionBtn', ready: true, say: '点「开始控制」', hint: '打开后动作就真的生效，下一步教你停'};
     },
     check: s => ({ok: s.outputEnabled}),
   },
@@ -277,7 +277,7 @@ const STEPS = [
     doneSay: '✓ 全停了',
     guide(s, memo) {
       if (memo.stopsBefore === undefined) memo.stopsBefore = s.stops;
-      return {target: '#stopBtn', ready: true, say: '按 F9', hint: '或者点「紧急停止」'};
+      return {target: '#stopBtn', ready: true, say: '按 F9', hint: '或者点「急停」'};
     },
     // 数的是急停真的被触发了几次，而不是输出关没关：点「暂停游戏控制」也会关，但那不是急停。
     check: (s, memo) => ({ok: s.stops > (memo.stopsBefore ?? s.stops)}),
@@ -285,7 +285,6 @@ const STEPS = [
 ];
 
 const NAV_GAMES = 'nav [data-view="games"]';
-const NAV_RANGE = 'nav [data-view="range"]';
 
 // 基础之外的三课，不在第一遍里教：第一遍只管「能玩起来」。它们各自住在自己那一页，
 // 基础学完之后下次打开时让人挑。挑的时候看到的不是功能名，而是它解决的那个问题——
@@ -344,7 +343,7 @@ function intentDoneSay(rec = {}) {
   const short = steps.filter(step => !step.skipped && step.target && step.count < step.target).map(step => step.name);
   if (!steps.length || skipped.length === steps.length) return '一项都没录到';
   const tail = skipped.length ? ` · ${skipped.slice(0, 3).join('、')}${skipped.length > 3 ? ' 等' : ''}跳过了` : short.length ? ` · ${short[0]}没做够次数，也存下了` : '';
-  return `✓ 录好了，体检报告在「通用设置 → 区域触发方式」${tail}`;
+  return `✓ 录好了，体检报告在「设置 → 身体识别」${tail}`;
 }
 
 const EXTRAS = [
@@ -457,9 +456,9 @@ const EXTRAS = [
   },
   {
     id: 'range',
-    name: '动作测试',
+    name: '试动作',
     problem: '做了动作，游戏没反应',
-    doneSay: '✓ 没反应时，先来这里试',
+    doneSay: '✓ 没反应时，先在开始页试一下',
     guide(s, memo, now) {
       if (memo.since === undefined) memo.since = s.kernelNow;
       const last = s.lastTrigger;
@@ -469,12 +468,12 @@ const EXTRAS = [
         // 点靶子会跳到「本游戏」里它那一行；亮着那一行，人就知道键在哪改。
         return {target: `.binding-row[data-trigger="${hit.key}"]`, ready: true, say: '在这里改它按的键'};
       }
-      if (s.view !== 'range') return {target: NAV_RANGE, say: '点「动作测试」'};
+      if (s.view !== 'play') return {target: NAV_PLAY, say: '回到「开始」页'};
       if (!hit) {
         const before = connectGuide(s, memo, now);
         if (before) return before;
-        if (!s.posed) return {target: '#rangeHit', say: '站到镜头前'};
-        return {target: '#rangeHit', say: '做个动作试试', hint: '伸手进圈、踏步、下蹲都行'};
+        if (!s.posed) return {target: '#viewer', say: '站到镜头前'};
+        return {target: '#viewer', say: '做个动作试试', hint: '伸手进圈、踏步、下蹲都行，画面上会用大字写按了哪个键'};
       }
       // 下面那一排格子里有它就指它；没有（比如一句没绑键的口令），就让人随便点一个——
       // 这一课要教的是「从这里点过去就能改键」，改哪一个不要紧。
@@ -482,7 +481,7 @@ const EXTRAS = [
       const here = !!document.querySelector(tile);
       return {
         target: here ? tile : '#rangeTargets',
-        say: !here ? '点下面任意一个，去改它的键' : hit.keyText ? `点「${hit.name}」，去改它的键` : `「${hit.name}」没绑键，点它去绑`,
+        say: !here ? '点画面下面任意一个动作，去改它的键' : hit.keyText ? `点「${hit.name}」，去改它的键` : `「${hit.name}」没绑键，点它去绑`,
         hint: `刚认出：${hit.name} → ${hit.keyText || '未映射'}`,
       };
     },
@@ -497,9 +496,10 @@ const EXTRAS = [
       if (memo.appliesBefore === undefined) memo.appliesBefore = s.profileApplies;
       if (s.view !== 'games') return {target: NAV_GAMES, say: '点「本游戏」', hint: `现在是「${s.gameName}」`};
       // 在这一页上怎么换成的都算——搜到选中也好，自己加一个也好——所以这几个状态都是 ready。
-      if (!s.searchedFor) return {target: ['#profileSearch', '#profileSearchBtn'], ready: true, say: '搜你要玩的游戏', hint: `现在是「${s.gameName}」`};
+      if (!s.gamePickerOpen) return {target: '#switchGameBtn', ready: true, say: '点「换游戏」', hint: `现在是「${s.gameName}」`};
+      if (!s.searchedFor) return {target: '#profileSearch', ready: true, say: '搜你要玩的游戏', hint: `现在是「${s.gameName}」`};
       if (!s.catalogCount) return {target: '#customGameBox', ready: true, say: '搜不到就自己加一个', hint: '展开，填游戏名，点「添加」'};
-      return {target: ['#profileSelect', '#profileApplyBtn'], ready: true, say: '选中它，点「使用这个游戏」', hint: `找到 ${s.catalogCount} 款`};
+      return {target: '#profileResults', ready: true, say: '点它，就换成这个游戏', hint: `找到 ${s.catalogCount} 款`};
     },
     check: (s, memo) => ({ok: s.profileApplies > (memo.appliesBefore ?? s.profileApplies)}),
   },
@@ -515,7 +515,7 @@ const EXTRAS = [
       if (!s.voiceReady) return {target: ['#voicePill', '#voiceStatus'], ...(VOICE_FIX[s.voiceIssue] || VOICE_FIX.starting)};
       // 先教急停那一句：它无害，而且是最该会的——手占着按不到 F9 的时候就靠它。
       if (!memo.heard) return {target: ['#voicePill', '#voiceStatus'], say: `说「${s.stopPhrase}」`, hint: '一口气说完'};
-      return {target: '#voiceCommandsBtn', ready: true, say: '点「查看语音指令」', hint: '还能说哪些，都在这'};
+      return {target: '#voiceCommandsBtn', ready: true, say: '点「查看口令」', hint: '还能说哪些，都在这'};
     },
     check: (s, memo) => ({ok: !!memo.heard && s.voiceListOpen}),
   },
@@ -567,6 +567,7 @@ export function createTutorial(actions = {}) {
     if (key === targetKey) return;
     targetKey = key;
     targetEls = (target ? [].concat(target) : []).map(sel => document.querySelector(sel)).filter(Boolean);
+    actions.reveal?.(targetEls);
     focusEl = (focus && document.querySelector(focus)) || targetEls[0] || null;
     // 换目标时亮框滑过去，眼睛才跟得上；平时不带过渡，否则滚动页面时框会拖在后面。
     spot.classList.add('moving');

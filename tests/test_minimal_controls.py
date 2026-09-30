@@ -27,17 +27,18 @@ def test_only_full_model_is_registered():
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-    # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩，本游戏 = 换游戏会变的，
-    # 通用设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
-    for required in ['2.0', '开始', '本游戏', '通用设置', '站好并校准', '恢复跟随', '重设正前方', '紧急停止 · F9', '通用口令', '三维头姿（推荐）', '挪动区域', 'profileBindingRows']:
+    # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩（动作测试也并在这里），
+    # 本游戏 = 换游戏会变的，设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
+    for required in ['2.0', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', '急停 <kbd>F9</kbd>', '通用口令', '三维头姿', '挪动区域', 'profileBindingRows']:
         assert required in page
-    assert '开始游戏控制' in app and '暂停游戏控制' in app
+    assert 'data-view="range"' not in page, '动作测试已经并进开始页'
+    assert '开始控制' in app and '暂停控制' in app
     for removed in ['开始 30 秒性能测试', '静止抖动测试', '实时性能数据', 'Lite / Full 对比结果', 'modelSelect']:
         assert removed not in page
     for removed in ['hidden-compat', 'id="cameraBtn"', 'id="outputBtn"', 'id="sceneEditor"', 'id="fixedZonesMask"', 'id="sceneTools"', 'saveProfileBindingsBtn', '<style>']:
         assert removed not in page
     assert '<dialog' in page
-    assert '上下视角待机' in page
+    assert '左手放进绿框开上下视角' in app
     css = (ROOT / 'web' / 'app.css').read_text(encoding='utf-8')
     assert '[hidden] { display: none !important; }' in css
     assert 'position: sticky' in css
@@ -53,7 +54,7 @@ def test_v2_command_catalog_and_head_ui():
     assert sum(item['id'].startswith('game.profile_slot_') for item in catalog['commands']) == 12
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
-    assert "开始游戏控制" in app and "暂停游戏控制" in app
+    assert "开始控制" in app and "暂停控制" in app
     assert "· Y ${Number(hs.output_y)" not in app
     assert 'for item in VOICE.command_registry.values()' in server
 
@@ -854,7 +855,7 @@ def test_spare_voice_slots_are_editable_not_only_displayable():
     app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
     assert "filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_'))" not in app
     assert "slot:String(item.id||'').startsWith('game.profile_slot_')" in app
-    assert "title:'本游戏口令'" in app
+    assert "{id:'voice',filter:t=>t.group==='voice'" in app
     assert "className='voice-trigger-phrase'" in app
 
 

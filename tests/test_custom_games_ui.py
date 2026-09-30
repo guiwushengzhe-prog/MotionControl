@@ -84,4 +84,5 @@ def test_a_custom_game_is_not_labelled_experimental(app):
     自己刚建的空白档标成「实验」，会让人以为是软件给了个半成品，而不是等着他
     自己调的东西。
     """
-    assert "我加的" in app or "我自己加的" in app
+    assert "自己加的" in app
+    assert "' · 实验'" not in app

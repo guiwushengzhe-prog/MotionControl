@@ -60,19 +60,19 @@ function voiceLatchText(status){
 function bindingsForDisplay(){
   return kernelState?.effective_bindings||kernelState?.control_bindings||{};
 }
-// 一个触发器现在绑的是什么。圈上、姿势卡片上、动作测试页里都用它，写法才一致。
+// 一个触发器现在绑的是什么。圈上、姿势卡片上、开始页的大字里都用它，写法才一致。
 function triggerKeyLabel(triggerKey){
   const binding=bindingsForDisplay()[triggerKey];
   const text=binding&&!binding.disabled?actionKeyText(binding.action):null;
   return text||'未映射';
 }
-// 绑没绑键。没绑的做了也不按任何键，所以除了「动作测试」页，哪里都不显示它触发了——
+// 绑没绑键。没绑的做了也不按任何键，所以除了开始页的触发显示，哪里都不显示它触发了——
 // 亮一下只会让人以为它起作用了。
 function triggerMapped(triggerKey){return triggerKeyLabel(triggerKey)!=='未映射'}
 // 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
 function revealBindingRow(triggerKey){
-  // 通用口令和内置口令不在本游戏的映射表里：前者在「通用设置」，后者改不了。
-  if(triggerKey.startsWith('voice.shared.')){showView('devices');document.getElementById('personalVoicePanel')?.scrollIntoView({behavior:'smooth',block:'start'});return}
+  // 通用口令和内置口令不在本游戏的映射表里：前者在「设置 → 语音」，后者改不了。
+  if(triggerKey.startsWith('voice.shared.')){showView('devices');showSettingsPane('voice');return}
   if(triggerKey.startsWith('voice.')&&!triggerKey.startsWith('voice.game.profile_slot_')){notice('这是内置口令，不能改键');return}
   // 从「开始」页点过来的话，映射表所在的页签还藏着——藏着的东西滚不过去，
   // 也高亮不出来。先切过去再找。
@@ -80,7 +80,7 @@ function revealBindingRow(triggerKey){
   // 没绑键的身体动作平时不在表里（见 shownBodyRows），点过来就是要绑它，现加一行。
   const row=document.querySelector(`.binding-row[data-trigger="${triggerKey}"]`)||addBodyRow(triggerKey);
   if(!row){notice('这个动作还没出现在映射表里，刷新一下页面再试');return}
-  row.closest('details')?.setAttribute('open','');
+  row.hidden=false;showMapTab(row.closest('.binding-group')?.dataset.group||mapTab);
   row.scrollIntoView({behavior:'smooth',block:'center'});
   row.classList.add('just-found');
   setTimeout(()=>row.classList.remove('just-found'),1600);
@@ -130,7 +130,7 @@ const MOTION_CONFLICT_GROUPS=[
   {ids:['jumping_jack','hands_up'],label:'开合跳与双手举过头'},
 ];
 const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',squat:'下蹲',hands_up:'双手举过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
-const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'Xbox 按键',gamepad_trigger:'Xbox 扳机',gamepad_axis:'Xbox 左摇杆',macro:'键盘宏',voice_release:'停住语音按住',system:'系统功能'};
+const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标',mouse_wheel:'滚轮',gamepad:'手柄',gamepad_trigger:'手柄扳机',gamepad_axis:'左摇杆',macro:'键盘宏',voice_release:'停住语音按住',system:'系统功能'};
 // 宏库。每一处映射的下拉都从这里取，所以只在增删改之后刷一次，不跟着状态轮询走。
 const macroLibrary={items:[],limits:null};
 function macroById(id){return macroLibrary.items.find(item=>item.id===String(id||'').toLowerCase())||null}
@@ -238,7 +238,16 @@ function profileTriggers(){
 }
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-function notice(text){$('#notice').textContent=text;$('#notice').hidden=!text}
+// 提示浮在页面底部，几秒后自己消失——出了事才出现，事过了就走，不在页面上一直挂着。
+// 长的多留一会儿，点一下也能关。
+let noticeTimer=0;
+function notice(text){
+  const el=$('#notice');clearTimeout(noticeTimer);
+  if(!text){el.hidden=true;return}
+  el.textContent=text;el.hidden=false;el.classList.remove('show');void el.offsetWidth;el.classList.add('show');
+  noticeTimer=setTimeout(()=>{el.hidden=true},Math.min(9000,Math.max(3500,String(text).length*120)));
+}
+$('#notice').addEventListener('click',()=>notice(''));
 async function api(path,opt={}){
   let response;
   // 8s suits local calls. A cloud call is a download plus an apply on the far
@@ -260,7 +269,7 @@ async function post(path,data,timeoutMs){return api(path,{method:'POST',headers:
 function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
   target.save();target.setTransform(1,0,0,1,0,0);target.clearRect(0,0,w,h);
   if(mirror){target.translate(w,0);target.scale(-1,1)}
-  target.strokeStyle='#55ddff';target.fillStyle='#fff';target.lineWidth=3;
+  target.strokeStyle='rgba(255,255,255,.82)';target.fillStyle='#fff';target.lineWidth=3;
   if(map){
     for(const [a,b] of EDGES){
       const p=map[a],q=map[b];if(!p||!q||p.score<.3||q.score<.3)continue;
@@ -320,17 +329,62 @@ function renderMainStatus(){
   serviceReady=kernelConnected&&outputConnected;
   const main=$('#mainActionBtn');
   main.disabled=!serviceReady||actionBusy||zoneEditMode;
-  main.textContent=output.enabled?'暂停游戏控制':(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady?'连接设备':'开始游戏控制');
-  main.classList.toggle('running',!!output.enabled);
-  $('#serviceStatus').textContent=serviceReady?'本地服务已连接':'服务失联 · 当前状态无法确认';
+  main.textContent=output.enabled?'暂停控制':(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady?'连接设备':'开始控制');
+  main.classList.toggle('running',!!output.enabled);main.classList.toggle('primary',!output.enabled);
+  // 服务连着的时候什么都不说；断了才冒出来。
+  $('#serviceStatus').textContent=serviceReady?'本地服务已连接':'服务断开，急停仍可重试';
   $('#serviceStatus').classList.toggle('online',serviceReady);$('#serviceStatus').classList.toggle('offline',!serviceReady);
-  const missing=[];
-  if(!currentPoseMap)missing.push('人体未识别：区域和身体动作不可用');
-  $('#mainActionStatus').textContent=!serviceReady?'请检查本地服务；紧急停止可继续重试':
-    zoneEditMode?'区域调整中 · 体感输出已关闭':
-    (output.enabled?'正在控制游戏':'游戏控制已暂停')+(missing.length?' · '+missing.join('；'):' · 可以开玩');
-  $('#hint').textContent=currentPoseMap?'区域亮起表示动作已触发':'请让头部和双肩入镜；脚部动作需要脚部入镜';
+  renderViewerMessage();
+  renderReadiness();
   renderConflicts();
+}
+// 画面中间那句话只在没人、没画面时出现；有人站进来就让开。
+function renderViewerMessage(){
+  const hint=$('#hint');if(!hint)return;
+  const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
+  const [title,detail]=!live?[sourceMode==='phone'?'等手机连上':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':'在「设置 → 设备」里点「连接」']
+    :!currentPoseMap?['站到镜头前','头和双肩入镜就能开始']:['',''];
+  hint.hidden=!title;
+  const key=title+'|'+detail;if(hint.dataset.key===key)return;hint.dataset.key=key;
+  hint.replaceChildren();if(!title)return;
+  const b=document.createElement('b');b.textContent=title;const s=document.createElement('span');s.textContent=detail;hint.append(b,s);
+}
+// 开始页右边那张卡：差哪一步就点名哪一步，做好的只打个勾；控制开着时整张换成计时。
+let runStartedAt=0;
+function setStep(name,state,sub){
+  const li=document.querySelector(`.checklist [data-step="${name}"]`);if(!li)return;
+  li.classList.toggle('done',state==='done');li.classList.toggle('warn',state==='warn');
+  const el=li.querySelector('.step-sub');if(el&&sub!==undefined&&el.textContent!==sub)el.textContent=sub;
+}
+function renderReadiness(){
+  const hs=kernelState?.head||{};
+  const phoneMode=sourceMode==='phone';
+  const cameraOk=phoneMode?!!inputStatus.mobile_pose_connected:cameraRunning;
+  const posed=!!currentPoseMap;
+  const handHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand);
+  const needCal=!handHorizontal&&head.enabled;
+  const calibrated=!needCal||!!(hs.horizontal_calibrated??hs.calibrated);
+  setStep('camera',cameraOk?'done':'warn',phoneMode?(cameraOk?'手机摄像头':'等手机连上'):(cameraOk?'电脑摄像头':'还没连接'));
+  const go=$('#cameraStepGo');if(go)go.hidden=cameraOk;
+  setStep('pose',posed?'done':(cameraOk?'warn':''),posed?'已识别':'站到镜头前，头和双肩入镜');
+  setStep('game',gameProfile.selected?'done':'',gameProfile.selected?.name||'正在读取…');
+  // 握拳管左右时不用校准头；这一步照样列着，写明用不着。
+  const calStep=document.querySelector('.checklist [data-step="cal"]');
+  if(calStep){calStep.classList.toggle('done',calibrated&&!hs.calibrating);calStep.classList.toggle('warn',!calibrated&&posed)}
+  if(!needCal&&$('#calStatus'))$('#calStatus').textContent=handHorizontal?'握拳控制视角，不用校准':'左右视角关着，不用校准';
+  const left=[cameraOk,posed,calibrated].filter(ok=>!ok).length;
+  $('#readyTitle').textContent=left?`还差 ${left} 步`:'可以开始了';
+  const running=!!output.enabled;
+  $('#readyCard').hidden=running&&!setupConflicts().length;
+  $('#runCard').hidden=!running;
+  if(running){
+    if(!runStartedAt)runStartedAt=Date.now();
+    const sec=Math.floor((Date.now()-runStartedAt)/1000),pad=n=>String(n).padStart(2,'0');
+    const text=sec>=3600?`${Math.floor(sec/3600)}:${pad(Math.floor(sec/60)%60)}:${pad(sec%60)}`:`${pad(Math.floor(sec/60))}:${pad(sec%60)}`;
+    if($('#runElapsed').textContent!==text)$('#runElapsed').textContent=text;
+    const sub=$('#runSub'),lost=!posed;
+    sub.textContent=lost?'看不到人了，站回镜头前':`${gameProfile.selected?.name||''} · F9 随时停`;sub.classList.toggle('warn',lost);
+  }else runStartedAt=0;
 }
 
 // 两个设置各自都合法，合起来却什么都不做。玩家看不出区别——功能开着、读数在跳、
@@ -364,6 +418,24 @@ function renderConflicts(){
     return row;
   }));
 }
+// 画面左下角的视角条：点在中间 = 不转，偏多少转多快。没校准、被防晃拦着时换成一句话；
+// 左右视角关着、或者画面里没人，整块不出现。
+function renderViewHud(hs,guardBlocked){
+  const hud=$('#headStatus');if(!hud)return;
+  const usesHand=!!(hs.hand_mouse?.enabled&&['left','right'].includes(hs.hand_mouse?.config?.horizontal_hand));
+  if(!currentPoseMap||(!usesHand&&hs.enabled===false)||!Number.isFinite(hs.output_x)&&!usesHand){hud.hidden=true;return}
+  hud.hidden=false;
+  const calibrated=usesHand||(hs.horizontal_calibrated??hs.calibrated);
+  const text=!calibrated?'视角未校准':(!usesHand&&guardBlocked)?'做动作中，视角稳住':'';
+  hud.classList.toggle('text',!!text);
+  const label=hud.querySelector('.hud-label'),want=text||'视角';if(label.textContent!==want)label.textContent=want;
+  if(text)return;
+  // 和新手教学同一套折算：头控满量程是左右灵敏度，握拳是握拳灵敏度/100。
+  const handMax=Math.min(1,Math.max(.01,Number(handMouseConfig.sensitivity??70)/100));
+  const axis=hs.hand_mouse?.axes?.horizontal;
+  const level=usesHand?Number(axis?.output||0)/handMax:Number(hs.output_x||0)/Math.max(1,Number(hs.sensitivity_x||head.sensitivityX||58));
+  $('#viewDot').style.left=(50+clamp(level,-1,1)*46).toFixed(1)+'%';
+}
 function renderKernelState(runtime,force=false){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
@@ -375,19 +447,9 @@ function renderKernelState(runtime,force=false){
   if(marchSelect&&!marchSelect.disabled&&document.activeElement!==marchSelect)marchSelect.value=k.march_algorithm==='responsive'?'responsive':'legacy';
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
   currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);renderZoneFreeze(k);renderIntent(k);renderMisfireHint(k);paintZoneConflictNotes();
-  const zonePad={leftHand:'#padX',rightHand:'#padB',leftFoot:'#padLB',rightFoot:'#padRB',headJump:'#padA'};
-  const activeZones=[];for(const trigger of BASE_PROFILE_TRIGGERS.filter(t=>t.group==='zones')){const pressed=!!k.zones?.[trigger.id]?.pressed;$(zonePad[trigger.id])?.classList.toggle('active',pressed);if(pressed)activeZones.push(trigger.name)}
-  $('#buttonStatus').textContent=activeZones.length?'身体区域：'+activeZones.join(' + '):(currentPoseMap?'身体区域：未触发':'身体区域：等待人体');
-  // 没绑键的动作做了也不按键，这一页上不亮它；认没认出来去「动作测试」页看。
-  const active=new Set((k.motions||[]).filter(id=>triggerMapped('motion.'+id)));
-  for(const chip of document.querySelectorAll('#triggerChips .trigger-chip'))chip.classList.toggle('active',chip.dataset.group==='motion'?active.has(chip.dataset.id):false);
+  // 区域按没按，画面里的框自己会亮；动作按没按，画面下面那排动作自己会亮（renderRange）。
   // 自定义姿势的相似度跟着主状态一起来，不另开一路轮询。
   customPoseScores=k.custom_pose_scores||{};paintCustomPoseScores();paintPoseLibrary();
-  const poses=new Set((k.poses_active||[]).filter(id=>triggerMapped('pose.'+id)));
-  for(const chip of document.querySelectorAll('#triggerChips .trigger-chip[data-group="pose"]'))chip.classList.toggle('active',poses.has(chip.dataset.id));
-  const actionName=id=>poseLibrary.find(item=>item.id===id)?.name||profileTriggers().find(t=>t.id===id)?.name||id;
-  const statusParts=[];if(active.size)statusParts.push('动作：'+[...active].map(actionName).join(' + '));if(poses.size)statusParts.push('动作：'+[...poses].map(actionName).join(' + '));
-  $('#motionStatus').textContent=statusParts.join(' · ')||'动作：未触发';
   const hs=k.head||{};
   const guardVersion=String(hs.body_motion_guard_version||k.body_motion_guard_version||'未上报');
   const guardEnabled=hs.body_motion_guard_enabled??k.body_motion_guard_enabled??false;
@@ -400,26 +462,20 @@ function renderKernelState(runtime,force=false){
     guardStatus.textContent=guardEnabled===false?`防晃 ${guardVersion} · 已关闭`:guardBlocked?`防晃 ${guardVersion} · ${guardReasonLabel} · 左右视角已稳定`:guardActive?`防晃 ${guardVersion} · 监测中 · 当前未拦截左右视角`:`防晃 ${guardVersion} · 已启用 · 待机`;
     guardStatus.classList.toggle('active',guardBlocked&&guardEnabled!==false);
   }
-  if(Number.isFinite(hs.output_x)){
-    const usesHand=hs.hand_mouse?.enabled&&['left','right'].includes(hs.hand_mouse?.config?.horizontal_hand);
-    const method=usesHand?'握拳':hs.horizontal_algorithm==='head_responsive'?'侧倾＋转脸':hs.horizontal_algorithm==='roll_tilt'?'侧倾':'转头';
-    const horizontalCalibrated=usesHand||(hs.horizontal_calibrated??hs.calibrated);
-    $('#headStatus').textContent=!usesHand&&hs.enabled===false?'左右视角已关闭':horizontalCalibrated?(!usesHand&&guardBlocked?'身体动作中 · 左右视角已稳定':`${method} · 左右 ${Number(hs.output_x).toFixed(0)}%`):'头控：等待中心，可说「体感开始校准」';
-  }
+  renderViewHud(hs,guardBlocked);
   if(hs.calibrated!==undefined){
-    $('#calBtn').textContent=hs.calibrating?'取消校准':'站好并校准';
-    $('#calStatus').textContent=hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'等待校准，可说「开始校准」');
+    $('#calBtn').textContent=hs.calibrating?'取消校准':(hs.horizontal_calibrated??hs.calibrated)?'重新校准':'站好并校准';
+    $('#calStatus').textContent=hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'看着屏幕中心站好，约 8 秒');
     const missingPoints=(hs.frozen22_missing_points||[]).join('、');
     $('#calStatus').title=[hs.estimate_error,missingPoints&&'缺少关键点：'+missingPoints].filter(Boolean).join(' · ');
     renderCalibrationOverlay(hs);
   }
-  if(hs.algorithm&&(force||(!headDirty&&!document.activeElement?.closest('#headSettings,#advancedSettings')))){
+  if(hs.algorithm&&(force||(!headDirty&&!document.activeElement?.closest('#headSettings,[data-pane="lab"]')))){
     $('#headAlgorithm').value=hs.algorithm;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
     head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
     if(['gesture_v153','frozen22','gesture_v188'].includes(head.horizontalAlgorithm))lastTurnAlgorithm=head.horizontalAlgorithm;
     if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
-    if($('#rollTiltHint'))$('#rollTiltHint').hidden=head.horizontalAlgorithm!=='roll_tilt';
     const verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'off');
     head.verticalLookSource=verticalLookSource==='head'?'head':'hand';
     head.verticalLookEnabled=verticalLookSource!=='off'&&(k.vertical_look?.enabled??hs.vertical_look_enabled??true)!==false;
@@ -428,10 +484,11 @@ function renderKernelState(runtime,force=false){
     if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookEnabled?head.verticalLookSource:'off';
     if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;
     if($('#bodyMotionGuard'))$('#bodyMotionGuard').checked=head.bodyMotionGuard;
-    document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));
+    document.querySelectorAll('.head-vertical-setting').forEach(el=>{el.hidden=head.verticalLookSource!=='head'});
     $('#deadzone').value=Math.round(Number(hs.deadzone||.10)*100);
     $('#speedX').value=Number(hs.sensitivity_x||58);$('#speedY').value=Number(hs.sensitivity_y||46);
-    $('#headEnable').checked=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();renderViewControl();
+    // 头控开没开由「左右」那个下拉决定（选头部方案 = 开，选握拳或关闭 = 关），这里只记下来。
+    head.enabled=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();renderViewControl();
   }
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;if(runtime?.camera)cameraInfo=runtime.camera;
@@ -446,9 +503,10 @@ function renderKernelState(runtime,force=false){
       URL.revokeObjectURL(cameraPreview.src);cameraPreview.removeAttribute('src');
     }
   }
-  $('#cameraPill').textContent=(sourceMode==='phone'?inputStatus.mobile_pose_connected:cameraRunning)?'摄像头 ✓':'摄像头';$('#cameraPill').className='pill '+(sourceMode==='phone'||cameraRunning?'ok':'bad');
-  // phonePill is owned by renderInputStatus (/api/input/status); kernel status has no transport state.
-  $('#posePill').textContent=currentPoseMap?'人体 ✓':'人体';$('#posePill').className='pill '+(currentPoseMap?'ok':'bad');const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){gateStatus.hidden=!k.vertical_look?.enabled;const paused=!!hs.horizontal_paused_by_vertical_gate;gateStatus.textContent=head.verticalLookEnabled?(gateActive?`上下视角已开启 · ${verticalSource}控制上下${paused?' · 左右暂停':''}`:'上下视角待机 · 左手放入绿色区域开启'):'上下视角已关闭';gateStatus.className='look-gate-status '+(gateActive?'active':'')}renderOverlay(currentPoseMap);renderMainStatus();
+  // 真在识别才给「停止」。
+  $('#sourceStopBtn').hidden=!(sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning);
+  // 旧版上下视角（绿框）开着才有这一块。
+  const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){gateStatus.hidden=!k.vertical_look?.enabled||!head.verticalLookEnabled||!currentPoseMap;const paused=!!hs.horizontal_paused_by_vertical_gate;const text=gateActive?`上下视角开 · ${verticalSource}控制${paused?' · 左右暂停':''}`:'左手放进绿框开上下视角';if(gateStatus.textContent!==text)gateStatus.textContent=text;gateStatus.className='hud hud-gate'+(gateActive?' active':'')}renderOverlay(currentPoseMap);renderMainStatus();
 
 }
 function renderInputStatus(status){
@@ -462,32 +520,24 @@ function renderInputStatus(status){
   const deviceSelect=$('#audioDevice');
   if(deviceSelect&&document.activeElement!==deviceSelect&&Array.from(deviceSelect.options).some(option=>option.value===audioDevice))deviceSelect.value=audioDevice;
   const deviceRow=$('#audioDeviceRow');if(deviceRow)deviceRow.hidden=audioSource!=='computer';
+  // 麦克风好好的就不说话；没就绪才在那一组底下说一句。
   const audioStatus=$('#audioStatus');
   if(audioStatus){
     const voice=status.voice||{};
-    if(audioSource==='phone'){
-      audioStatus.textContent=audioMode==='phone'&&voice.connected?'音频：手机麦克风已连接':'音频：手机麦克风，等待手机';
-    }else{
-      audioStatus.textContent=audioMode==='computer'&&voice.connected?'音频：电脑麦克风已启用':'音频：电脑麦克风未就绪';
-    }
-    audioStatus.className='statusline '+(audioMode===audioSource&&voice.connected?'':'warn');
+    const ok=audioMode===audioSource&&voice.connected;
+    audioStatus.textContent=ok?'':(audioSource==='phone'?'等手机连上，用手机的麦克风':'电脑麦克风还没打开');
   }
   const connected=!!(status.mobile_pose_connected||status.handheld_connected);
-  for(const id of ['mobileStatus','phonePill']){
-    $('#'+id).textContent=connected?(status.mobile_pose_connected?'手机摄像头已连接':'手机手持端已连接'):'手机未连接';
-    $('#'+id).className='pill '+(connected?'ok':'bad');
-  }
-  // 手机慢下来只有两种可能：模型退回了 CPU，或者这台机器就这么快。光看帧率分
-  // 不出来，所以把 delegate 和每帧耗时一起摆出来。
+  const mobile=$('#mobileStatus');
+  mobile.textContent=connected?(status.mobile_pose_connected?'已连接':'手持端已连接'):'没连上';
+  mobile.className='tag '+(connected?'ok':'warn');
+  // 手机那一组：选了手机、或者手机自己连上来了才出现。
+  const phoneGroup=$('#phoneGroup');
+  if(phoneGroup)phoneGroup.hidden=!(($('#poseSource')?.value||sourceMode)==='phone'||audioSource==='phone'||connected);
+  // 手机慢下来只有两种可能：模型退回了 CPU，或者这台机器就这么快。退回 CPU 才值得说。
   const phone=(status.mobile_pose_sources||[]).find(item=>item.active)||(status.mobile_pose_sources||[])[0];
   const perf=$('#phonePerf');
-  if(perf){
-    const ms=Number(phone?.inference_ms);
-    const parts=[];
-    if(phone?.delegate)parts.push(phone.delegate==='CPU'?'跑在 CPU（慢一倍，GPU 不可用时的退路）':'跑在 GPU');
-    if(Number.isFinite(ms)&&ms>0)parts.push(`每帧 ${Math.round(ms)} ms · 约 ${Math.round(1000/ms)} 帧/秒`);
-    perf.textContent=parts.join(' · ');
-  }
+  if(perf)perf.textContent=phone?.delegate==='CPU'?'手机在用 CPU 识别，比 GPU 慢一倍':'';
   // 数据线插没插、网络共享开没开，服务端本来就知道，以前只是没说出来。而这正是
   // 有线连不上时唯一的分岔：没开网络共享的话，线插得再紧也没有一条能通的路。
   const tether=$('#usbTetherStatus');
@@ -516,7 +566,7 @@ async function refreshKernel(){
 }
 async function refreshInput(){
   try{renderInputStatus(await api('/api/input/status?brief=1'))}
-  catch{renderInputStatus({});$('#mobileStatus').textContent='设备状态无法确认'}
+  catch{renderInputStatus({});$('#mobileStatus').textContent='状态未知'}
 }
 function renderAudioDevices(devices,current){
   const select=$('#audioDevice');if(!select)return;
@@ -623,47 +673,34 @@ function profileMetaText(profile){
   const appid=profile.appid||profile.steam_appid||'';
   // 自己加的游戏不是「实验配置」——那句话说的是自动生成的那两百个没人试过，而
   // 这一个是他自己建的，本来就该自己调，说它"实验"只会让人以为是软件出的问题。
-  if(profile.source==='custom'){
-    return ['我自己加的', appid?'AppID '+appid:'没填 AppID',
-            '底档 '+(profile.base||'generic-xbox')].join(' · ');
-  }
+  if(profile.source==='custom')return appid?`自己加的 · Steam ${appid}`:'自己加的';
   const source=profile.source||{};
-  const verified=source.verified?' · 已验证':' · 实验配置';
-  const sourceName=source.kind==='manual'?'人工':(source.kind==='steaminputdb'?'社区配置库':(source.kind==='builtin'?'内置':'离线库'));
-  const bindings=profile.bindings||{};
-  const zones=Object.keys(bindings.zones||{}).length;
-  const motions=Object.keys(bindings.motions||{}).length+Object.keys(bindings.poses||{}).length;
-  const voice=voiceCatalog.filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_')&&item.effective_action).length;
-  const coverage=`${zones} 区域 · ${motions} 动作 · ${voice} 语音`;
-  return `${appid?`Steam ${appid} · `:''}${sourceName}${verified} · ${coverage}`;
+  return [appid?`Steam ${appid}`:'',source.verified?'已验证':''].filter(Boolean).join(' · ');
 }
 function renderProfileHeader(){
   const p=gameProfile.selected;
   renderOutputMix();
   // 改名和删除只对自己加的那些有意义：内置那两百个删不得也改不得。
   const mine=p?.source==='custom';
-  $('#customGameActions').hidden=!mine;
+  document.querySelectorAll('.custom-only').forEach(el=>{el.hidden=!mine});
   $('#profileGameName').textContent=p?.name||'未选择游戏';
   $('#currentGameName').textContent=p?.name||'未选择游戏';
   $('#profileMeta').textContent=profileMetaText(p);
-  $('#profileUnverified').hidden=!p||Boolean(p.source?.verified);
+  // 「自动生成」说的是那两百个没人试过的；自己加的不算。
+  $('#profileUnverified').hidden=!p||mine||Boolean(p.source?.verified);
   renderGameLaunch();
   syncProfileZoneLabels();
 }
 function renderGameLaunch(){
   const status=$('#profileLaunchStatus'),button=$('#profileLaunchBtn');
-  if(!gameProfile.selected||!gameLaunch){status.textContent='正在检查启动权限…';button.disabled=true;return}
+  if(!gameProfile.selected||!gameLaunch){status.textContent='';button.disabled=true;return}
   button.disabled=false;
   if(gameLaunch.is_admin){
-    status.textContent=gameLaunch.requires_admin
-      ?'当前是管理员权限；这个游戏下次启动仍会申请管理员权限。'
-      :'当前仍是管理员权限；这个游戏下次将普通启动。';
-    button.textContent=gameLaunch.requires_admin?'下次改用普通权限':'记住本游戏使用管理员权限';
+    status.textContent=gameLaunch.requires_admin?'现在是管理员权限，下次也会用':'现在是管理员权限，下次普通启动';
+    button.textContent=gameLaunch.requires_admin?'下次改用普通权限':'记住用管理员权限';
   }else{
-    status.textContent=gameLaunch.requires_admin
-      ?'这个游戏已记住管理员启动；当前仍是普通权限。'
-      :'这个游戏使用普通权限启动。';
-    button.textContent='以管理员方式重启';
+    status.textContent=gameLaunch.requires_admin?'已记住用管理员权限，现在还是普通权限':'';
+    button.textContent='用管理员权限重启';
   }
 }
 async function waitForAdminRestart(gameId){
@@ -702,13 +739,20 @@ function renderProfileCatalog(games){
   // verified 重排一遍，等于把它推回两百条里去。
   const rank=g=>g.source==='custom'?2:(g.verified?1:0);
   const ordered=[...gameProfile.catalog].sort((a,b)=>rank(b)-rank(a)||String(a.name).localeCompare(String(b.name),'zh'));
+  const results=$('#profileResults');results.replaceChildren();
   for(const g of ordered){
     const o=document.createElement('option');o.value=g.id;
     // 「实验」说的是没人试过的自动生成配置。自己加的不属于那一类，标错了会让人
     // 以为是软件给的半成品，而不是他自己刚建的空白档。
-    const tail=g.source==='custom'?' · 我加的':(g.verified?'':' · 实验');
-    o.textContent=`${g.verified?'✓ ':''}${g.name}${g.appid?` · ${g.appid}`:''}${tail}`;
+    const tail=g.source==='custom'?'自己加的':(g.verified?'已验证':'');
+    o.textContent=`${g.name}${tail?` · ${tail}`:''}`;
     select.appendChild(o);
+    // 选游戏只有一个列表：点哪个就换成哪个，不再「下拉选中 + 点使用」两步。
+    const item=document.createElement('button');item.type='button';item.className='game-result';item.dataset.id=g.id;item.setAttribute('role','option');
+    item.setAttribute('aria-selected',String(g.id===selectedId));
+    const name=document.createElement('span');name.textContent=g.name;
+    const meta=document.createElement('small');meta.textContent=[tail,g.appid?`Steam ${g.appid}`:''].filter(Boolean).join(' · ');
+    item.append(name,meta);results.appendChild(item);
   }
   if(gameProfile.catalog.some(g=>g.id===selectedId))select.value=selectedId;
 }
@@ -717,7 +761,8 @@ async function searchProfiles(){
   const data=await api('/api/game-profiles/catalog'+(q?'?q='+encodeURIComponent(q):''));
   lastProfileQuery=q;
   renderProfileCatalog(data.games||[]);
-  $('#profileMeta').textContent=`离线库 ${Number(data.library_count||data.count||0)} 款 · 当前显示 ${Number(data.count||0)} 款`;
+  const count=Number(data.count||0);
+  $('#profileResultsInfo').textContent=q?(count?`找到 ${count} 款`:'没搜到，可以在下面自己加一个'):`共 ${Number(data.library_count||count)} 款，自己加的和验证过的排在前面`;
 }
 async function refreshProfile(){
   const [selected,actions]=await Promise.all([api('/api/game-profiles/selected'),api('/api/output/actions')]);
@@ -746,7 +791,7 @@ async function addCustomGame(){
     gameLaunch=picked.launch||null;
     // searchProfiles 会把 #profileMeta 写成库统计，所以头部要排在它后面重画一次。
     await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
-    notice(`已添加并切换到「${data.game.name}」。按键在下面自己绑。`);
+    notice(`已添加并切换到「${data.game.name}」，按键在下面自己绑`);togglePanel('switchGameBtn','gamePicker',false);
   });
 }
 async function renameCustomGame(){
@@ -790,17 +835,18 @@ async function applySelectedProfile(){
   });
 }
 async function profileOperation(operation){
+  const controls=()=>[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn')];
   profileSwitching=true;$('#mappingFields').disabled=true;
-  for(const id of ['profileApplyBtn','resetProfileBindingsBtn','profileSelect','customGameAddBtn','customGameRenameBtn','customGameRemoveBtn'])$('#'+id).disabled=true;
+  for(const el of controls())el.disabled=true;
   try{await operation()}
   finally{
     profileSwitching=false;$('#mappingFields').disabled=false;
-    for(const id of ['profileApplyBtn','resetProfileBindingsBtn','profileSelect','customGameAddBtn','customGameRenameBtn','customGameRemoveBtn'])$('#'+id).disabled=false;
+    for(const el of controls())el.disabled=false;
   }
 }
 function makeTypeSelect(binding){
   const sel=document.createElement('select');sel.className='binding-type';
-  const none=document.createElement('option');none.value='';none.textContent='不映射';sel.appendChild(none);
+  const none=document.createElement('option');none.value='';none.textContent='不绑';sel.appendChild(none);
   for(const type of Object.keys(ACTION_TYPE_LABELS)){if(!gameProfile.actions?.[type])continue;const o=document.createElement('option');o.value=type;o.textContent=ACTION_TYPE_LABELS[type];sel.appendChild(o)}
   sel.value=binding?.disabled?'':(binding?.action?.type||'');return sel;
 }
@@ -913,8 +959,8 @@ function fillVoiceReleaseSelect(select,excludeKey,value){
   select.replaceChildren();
   for(const id of choices){const o=document.createElement('option');o.value=id;o.textContent=voiceCommandName(id);o.selected=want.includes(id);select.appendChild(o)}
   // 指着的那条已经不是持续按住了，照实写出来，不偷偷换成别的一条。
-  for(const id of want.filter(item=>!choices.includes(item))){const o=document.createElement('option');o.value=id;o.textContent=`${voiceCommandName(id)}（已不是持续按住）`;o.selected=true;select.appendChild(o)}
-  if(!select.options.length){const o=document.createElement('option');o.value='';o.textContent='先把一条本游戏口令设成「持续按住」';o.selected=true;select.appendChild(o)}
+  for(const id of want.filter(item=>!choices.includes(item))){const o=document.createElement('option');o.value=id;o.textContent=`${voiceCommandName(id)}（已不是按住不放）`;o.selected=true;select.appendChild(o)}
+  if(!select.options.length){const o=document.createElement('option');o.value='';o.textContent='先把一条口令设成「按住不放」';o.selected=true;select.appendChild(o)}
   select.disabled=!choices.length&&!want.length;
   updateVoiceReleasePicker(select);
 }
@@ -926,7 +972,7 @@ function syncVoiceReleaseChoices(){
     if(option){
       const none=!voiceHoldChoices(row.dataset.trigger).length;
       option.disabled=none&&typeSel.value!=='voice_release';
-      option.textContent=none?`${ACTION_TYPE_LABELS.voice_release}（没有持续按住的口令）`:ACTION_TYPE_LABELS.voice_release;
+      option.textContent=none?`${ACTION_TYPE_LABELS.voice_release}（没有按住不放的口令）`:ACTION_TYPE_LABELS.voice_release;
     }
     const select=row.querySelector('select.voice-release-target');
     if(select)fillVoiceReleaseSelect(select,row.dataset.trigger,voiceReleaseTargetIds(select));
@@ -1038,7 +1084,7 @@ function fillTargetControl(container,type,value='',comboLeadMs=80,comboLeadExpli
   if(type==='macro'){
     const select=document.createElement('select');select.className='binding-target';
     if(!macroLibrary.items.length){
-      const o=document.createElement('option');o.value='';o.textContent='还没有宏——到「通用设置 · 键盘宏」里建一条';
+      const o=document.createElement('option');o.value='';o.textContent='还没有宏，到「设置 → 键盘宏」建一条';
       select.appendChild(o);select.disabled=true;container.appendChild(select);return;
     }
     for(const macro of macroLibrary.items){const o=document.createElement('option');o.value=macro.id;o.textContent=macro.repeat?`${macro.name}（循环）`:macro.name;select.appendChild(o)}
@@ -1060,7 +1106,7 @@ function fillBehaviorControl(container,trigger,type,value,macroId){
     // 就一定会有一处是旧的，所以这里只显示结果。
     const macro=macroById(macroId);
     const mode=macro?.repeat?'hold':'tap';
-    const text=!macro?'—':macro.repeat?'按住时循环':'触发时跑一遍';
+    const text=!macro?'—':macro.repeat?'按住时循环':'跑一遍';
     if(trigger.group!=='voice'){
       const span=document.createElement('span');span.className='binding-behavior';
       span.dataset.value=mode;span.textContent=text;container.appendChild(span);return;
@@ -1069,12 +1115,13 @@ function fillBehaviorControl(container,trigger,type,value,macroId){
     const span=document.createElement('span');span.className='binding-behavior';
     span.dataset.value=mode;span.textContent=text;container.appendChild(span);return;
   }
-  if(type==='voice_release'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='触发时停住一次';span.dataset.value='tap';container.appendChild(span);return}
-  if(type==='system'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='触发时执行一次';span.dataset.value='tap';container.appendChild(span);return}
-  if(trigger.tapOnly||type==='mouse_wheel'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='进入时触发一次';span.dataset.value='tap';container.appendChild(span);return}
-  if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='—';span.dataset.value='hold';container.appendChild(span);return}
+  if(type==='voice_release'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='停住一次';span.dataset.value='tap';container.appendChild(span);return}
+  if(type==='system'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='执行一次';span.dataset.value='tap';container.appendChild(span);return}
+  if(trigger.tapOnly||type==='mouse_wheel'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='点一下';span.dataset.value='tap';container.appendChild(span);return}
+  if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='';span.dataset.value='hold';container.appendChild(span);return}
   const sel=document.createElement('select');sel.className='binding-behavior';
-  for(const[v,t]of (trigger.group==='voice'?[['tap','点按'],['hold','持续按住']]:[['hold','保持动作时持续'],['tap','进入时触发一次']])){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
+  sel.title=trigger.group==='voice'?'点一下：说一次按一下。按住不放：说完一直按着，直到另一句口令停住它':'按住：动作做着（或在框里）就一直按着。点一下：开始时按一下';
+  for(const[v,t]of (trigger.group==='voice'?[['tap','点一下'],['hold','按住不放']]:[['hold','按住'],['tap','点一下']])){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
   // Poses default to a single edge trigger on the server, so show that rather
   // than "hold" while a pose has no binding yet.
   const edgeDefault=trigger.group==='voice'||trigger.group==='poses';
@@ -1093,7 +1140,7 @@ function bodyRowWanted(trigger){
 // 卡片上那个键位按钮：绑了写键，表里有这一行但没绑写「未映射」，表里还没有写「加到映射」。
 function libraryKeyLabel(triggerKey){
   const label=triggerKeyLabel(triggerKey);
-  return label==='未映射'&&!shownBodyRows.keys.has(triggerKey)?'加到映射':label;
+  return label==='未映射'?(shownBodyRows.keys.has(triggerKey)?'没绑键':'加到映射'):label;
 }
 // 旧的「松开同一语音按键」：那句口令自己又选了一遍同样的键。按键对上哪条持续按住
 // 的口令，就显示成「停住语音按住 · 那条口令」；存的还是旧写法，改这一行时才换成新的。
@@ -1178,7 +1225,7 @@ function buildZonePointPicker(trigger,binding){
     choices.replaceChildren();for(const value of [...points,...segments]){const option=document.createElement('option');option.value=value;option.selected=true;choices.append(option)}
     const {result,linked}=groups();
     const count=result.reduce((sum,group)=>sum+group.length,0);
-    summary.textContent='触发点：'+(count>3?`${count} 个点${segments.size?' · 已连线':''}`:result.map(group=>group.map(id=>labels[id]).join('＋')).join(' / ')||'未选');
+    summary.textContent=(count>3?`${count} 个点${segments.size?' · 已连线':''}`:result.map(group=>group.map(id=>labels[id]).join('＋')).join(' / ')||'未选');
     summary.title=result.map(group=>group.map(id=>labels[id]).join('＋')+(group.length>1?'（全部同时进入）':'')).join('；')||'未选择触发点，这个区域不会触发';
     summary.setAttribute('aria-label',trigger.name+' '+summary.textContent);
     for(const item of menu.querySelectorAll('[data-point]')){
@@ -1226,10 +1273,10 @@ function bodyRuleTriggerChoices(trigger){
 function buildExtraOutputRow(trigger,action,number,onRemove){
   const wrap=document.createElement('div');wrap.className='binding-sequence-action';
   const label=document.createElement('div');label.className='binding-alternate-label';
-  const title=document.createElement('span');title.textContent=`第 ${number} 次输出`;
+  const title=document.createElement('span');title.textContent=`第 ${number} 次`;
   label.appendChild(title);
   if(onRemove){
-    const remove=document.createElement('button');remove.type='button';remove.className='binding-alternate-remove';remove.textContent='删除这一步';
+    const remove=document.createElement('button');remove.type='button';remove.className='binding-alternate-remove';remove.textContent='删除';
     remove.addEventListener('click',onRemove);label.appendChild(remove);
   }
   const type=makeTypeSelect({action});
@@ -1243,17 +1290,19 @@ function buildExtraOutputRow(trigger,action,number,onRemove){
   type.setAttribute('aria-label',trigger.name+` 第 ${number} 次输出类型`);
   target.setAttribute('aria-label',trigger.name+` 第 ${number} 次键位`);
   behavior.setAttribute('aria-label',trigger.name+` 第 ${number} 次方式`);
-  wrap.append(label,type,target,behavior);return wrap;
+  // 输出类型和键位拼成一个控件，和主行一样。
+  const output=document.createElement('div');output.className='binding-output';output.append(type,target);
+  wrap.append(label,output,behavior);return wrap;
 }
 function buildAlternateActionRow(trigger,binding,onRemove){
   const wrap=document.createElement('div');wrap.className='binding-alternate';
   const header=document.createElement('div');header.className='binding-alternate-header';
-  const title=document.createElement('strong');title.textContent='另一输出的条件';
-  const remove=document.createElement('button');remove.type='button';remove.className='binding-alternate-remove';remove.textContent='取消另一输出';
+  const title=document.createElement('strong');title.textContent='条件换键';
+  const remove=document.createElement('button');remove.type='button';remove.className='binding-alternate-remove';remove.textContent='删除条件';
   remove.addEventListener('click',onRemove);header.append(title,remove);
   const rule=document.createElement('div');rule.className='binding-rule-controls';
   const mode=document.createElement('select');mode.className='binding-alternate-mode';mode.setAttribute('aria-label',trigger.name+' 第二输出规则');
-  for(const [value,label] of [['with_trigger','配合另一个动作时'],['cycle','每次触发按顺序循环']]){
+  for(const [value,label] of [['with_trigger','配合另一个动作时'],['cycle','按次数轮流换']]){
     const option=document.createElement('option');option.value=value;option.textContent=label;mode.appendChild(option);
   }
   mode.value=binding?.alternate_mode||'with_trigger';
@@ -1262,12 +1311,12 @@ function buildAlternateActionRow(trigger,binding,onRemove){
   rule.append(mode,triggerPick,help);
   const steps=document.createElement('div');steps.className='binding-sequence-actions';
   const second=buildExtraOutputRow(trigger,binding.alternate_action,2);steps.appendChild(second);
-  const addStep=document.createElement('button');addStep.type='button';addStep.className='binding-sequence-add';addStep.textContent='＋ 添加第 3 次输出';
+  const addStep=document.createElement('button');addStep.type='button';addStep.className='binding-sequence-add';addStep.textContent='＋ 加第 3 次';
   const relabel=()=>{
     steps.querySelectorAll('.binding-sequence-action').forEach((row,index)=>{
-      row.querySelector('.binding-alternate-label span').textContent=`第 ${index+2} 次输出`;
+      row.querySelector('.binding-alternate-label span').textContent=`第 ${index+2} 次`;
     });
-    addStep.textContent=`＋ 添加第 ${steps.children.length+2} 次输出`;
+    addStep.textContent=`＋ 加第 ${steps.children.length+2} 次`;
   };
   for(const action of binding.extra_actions||[]){
     const row=buildExtraOutputRow(trigger,action,steps.children.length+2,()=>{
@@ -1287,7 +1336,7 @@ function buildAlternateActionRow(trigger,binding,onRemove){
   const refreshRule=selected=>{
     const cycle=mode.value==='cycle';
     triggerPick.replaceChildren();
-    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=cycle?'选择重置区域或动作':'选择配合动作';triggerPick.appendChild(placeholder);
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=cycle?'选择重置用的区域或动作':'选择配合的动作';triggerPick.appendChild(placeholder);
     const candidates=bodyRuleTriggerChoices(trigger).filter(item=>cycle||isBodyTrigger(item));
     for(const item of candidates){const option=document.createElement('option');option.value=item.key;option.textContent=item.name;triggerPick.appendChild(option)}
     if(selected&&!candidates.some(item=>item.key===selected)){
@@ -1295,8 +1344,8 @@ function buildAlternateActionRow(trigger,binding,onRemove){
     }
     triggerPick.value=selected||'';
     triggerPick.setAttribute('aria-label',trigger.name+(cycle?' 重置区域或动作':' 配合动作'));
-    help.textContent=cycle?'碰到重置区域或做出重置动作后，下次从第一输出开始；未重置时按配置顺序循环。':'配合动作须在本动作开始时保持；本次输出确定后不会中途换键。配合动作若也映射了按键，它的按键仍会触发。';
-    steps.firstElementChild.querySelector('.binding-alternate-label span').textContent=cycle?'第 2 次输出':'配合时输出';
+    help.textContent=cycle?'每触发一次换下一个键；碰到重置用的区域或动作，回到第一个。':'这个动作开始时正做着配合动作，就改按下面的键。';
+    steps.firstElementChild.querySelector('.binding-alternate-label span').textContent=cycle?'第 2 次':'配合时';
     steps.querySelectorAll('.binding-sequence-action').forEach((row,index)=>{row.hidden=!cycle&&index>0});
     addStep.hidden=!cycle;
   };
@@ -1304,16 +1353,43 @@ function buildAlternateActionRow(trigger,binding,onRemove){
   mode.addEventListener('change',()=>refreshRule(''));
   wrap.append(header,rule,steps,addStep);return wrap;
 }
+// 展开过「更多」的行，重画之后还展开着。
+const expandedRows=new Set();
+const CHEVRON_SVG='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+function advRow(title,sub,control){
+  const row=document.createElement('div');row.className='adv-row';
+  const main=document.createElement('div');main.className='adv-main';
+  const b=document.createElement('b');b.textContent=title;main.append(b);
+  if(sub!==null){const small=document.createElement('small');small.textContent=sub;main.append(small)}
+  row.append(main);if(control)row.append(control);return row;
+}
+function withMotionCaption(checked){return checked?'做动作时扫过也会按':'做动作时扫过不按，防误触'}
+// 行名旁边的小标签：改过默认值的高级设置写在这里，不用展开也知道这一行动过。
+function paintRowTags(row){
+  const tags=row.querySelector('.binding-tags');if(!tags)return;
+  const out=[];
+  const box=row.querySelector('.zone-with-motion-box');
+  if(box){const byDefault=JUMP_ZONE_IDS.has(String(row.dataset.trigger).slice(5));if(box.checked!==byDefault)out.push(box.checked?'扫过也按':'扫过不按')}
+  if(row.querySelector('.zone-trigger-choices')?.dataset.explicit==='1')out.push('改过触发部位');
+  const alternate=row.querySelector('.binding-alternate');
+  if(alternate)out.push(alternate.querySelector('.binding-alternate-mode')?.value==='cycle'?'按次数换键':'配合动作换键');
+  const key=out.join('|');if(tags.dataset.key===key)return;tags.dataset.key=key;
+  tags.replaceChildren(...out.map(text=>{const tag=document.createElement('span');tag.className='tag info';tag.textContent=text;return tag}));
+}
 function buildBindingRow(trigger){
   const binding=bindingFor(trigger);
   let action=binding?.disabled?null:binding?.action;
   if(action?.behavior==='release')action={type:'voice_release',target:legacyReleaseTarget(action),behavior:'tap'};
   const row=document.createElement('div');row.className='binding-row';row.dataset.trigger=trigger.key;
-  const name=document.createElement('div');name.className='trigger-name';name.textContent=trigger.name;
+  // 一行只露四样：叫什么、按哪个键、按住还是点一下、「更多」。
+  const main=document.createElement('div');main.className='binding-main';
+  const name=document.createElement('div');name.className='trigger-name';
+  let phrase=null;
   if(trigger.group==='voice'){
     const game=isGameVoiceKey(trigger.key);
-    const phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=game?normalizeGameVoicePhrase(binding?.phrase||trigger.phrase||''):(binding?.phrase||trigger.phrase||'');phrase.placeholder=game?'例如：爬绳':'完整口令';phrase.title=game?'直接说这句，不用唤醒词':'说出的完整口令';name.replaceChildren(document.createTextNode(trigger.name),phrase);watchVoicePhrase(phrase);
-  }
+    phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=game?normalizeGameVoicePhrase(binding?.phrase||trigger.phrase||''):(binding?.phrase||trigger.phrase||'');phrase.placeholder=game?'说什么，例如：爬绳':'完整口令';phrase.title=game?'直接说这句，不用唤醒词':'说出的完整口令';name.append(phrase);watchVoicePhrase(phrase);
+  }else name.textContent=trigger.name;
+  const tags=document.createElement('span');tags.className='binding-tags';name.append(tags);
   const type=makeTypeSelect(action?{action}:binding);
   const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;fillTargetControl(target,type.value,action?.target??'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
   const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
@@ -1322,47 +1398,65 @@ function buildBindingRow(trigger){
   // 换了另一条宏，「跑一遍还是循环」要跟着那条宏重算——那一格写的必须是现在
   // 选中这条的，否则界面说一套、实际跑另一套。
   target.addEventListener('change',()=>{if(type.value==='macro')fillBehaviorControl(behavior,trigger,'macro',behavior.querySelector('.binding-behavior')?.value,pickedMacro())});
-  row.append(name,type,target,behavior);
+  const output=document.createElement('div');output.className='binding-output';output.append(type,target);
+  main.append(name,output,behavior);row.append(main);
   row.querySelectorAll('input,select').forEach(control=>control.setAttribute('aria-label',trigger.name+' '+(control.className.includes('type')?'输出类型':'键位或触发方式')));
+  if(phrase)phrase.setAttribute('aria-label',trigger.name+' 说法');
   if(trigger.group==='motions'){const note=document.createElement('div');note.className='motion-conflict-note';note.hidden=true;row.appendChild(note)}
+  // 「更多」里放为特殊需要加的那些：触发部位、扫过也按、条件换键。新手用不着，默认收着。
+  const adv=document.createElement('div');adv.className='binding-adv';let hasAdv=false;
+  if(trigger.group==='zones'){
+    const pointPicker=buildZonePointPicker(trigger,binding);
+    if(pointPicker)adv.append(advRow('触发部位','身体哪个部位进框才算按下',pointPicker));
+    // 「扫过也按」：没设过的，要跳才碰得到的框（头顶）默认是，别的默认不是——
+    // 和电脑那边 _zone_with_motion_locked 同一条规则。
+    const box=document.createElement('input');box.type='checkbox';box.className='switch zone-with-motion-box';
+    box.checked=typeof binding?.with_motion==='boolean'?binding.with_motion:JUMP_ZONE_IDS.has(trigger.id);
+    box.setAttribute('aria-label',trigger.name+' 动作扫过时也按');
+    const item=advRow('动作扫过时也按',withMotionCaption(box.checked),box);
+    box.addEventListener('change',()=>{item.querySelector('small').textContent=withMotionCaption(box.checked)});
+    const note=document.createElement('div');note.className='zone-conflict-note';note.hidden=true;item.append(note);
+    adv.append(item);hasAdv=true;
+  }
   if(isBodyTrigger(trigger)){
     const add=document.createElement('button');add.type='button';add.className='binding-alternate-add';
-    add.textContent='＋ 配合动作或按次数换键';add.disabled=!type.value;
+    add.textContent='＋ 条件换键：配合另一个动作，或按次数换键';add.disabled=!type.value;
     const show=ruleBinding=>{
       const second=buildAlternateActionRow(trigger,ruleBinding,()=>{
         second.remove();add.hidden=false;row.dispatchEvent(new Event('change',{bubbles:true}));
       });
-      row.appendChild(second);add.hidden=true;
+      adv.appendChild(second);add.hidden=true;
     };
+    adv.appendChild(add);
     if(binding?.alternate_action)show(binding);
     add.addEventListener('click',()=>{
       let first;
       try{first=readBindingAction(row,trigger)}catch(error){notice(error.message);return}
-      show({alternate_action:first});
+      show({alternate_action:first});paintRowTags(row);
     });
     type.addEventListener('change',()=>{
       add.disabled=!type.value;
       if(!type.value){row.querySelector('.binding-alternate')?.remove();add.hidden=false}
     });
-    row.appendChild(add);
+    hasAdv=true;
   }
-  if(trigger.group==='zones'){
-    const pointPicker=buildZonePointPicker(trigger,binding);if(pointPicker)name.appendChild(pointPicker);
-    // 「做动作时也要按」：没设过的，要跳才碰得到的框（头顶）默认是，别的默认不是——
-    // 和电脑那边 _zone_with_motion_locked 同一条规则。
-    const label=document.createElement('label');label.className='zone-with-motion';
-    const box=document.createElement('input');box.type='checkbox';box.className='zone-with-motion-box';
-    box.checked=typeof binding?.with_motion==='boolean'?binding.with_motion:JUMP_ZONE_IDS.has(trigger.id);
-    label.append(box,document.createTextNode('做动作时也要按'));
-    label.title='不勾：做会扫过这个框的动作时，框让路不按。勾上：做动作时扫过也照样按（比如开合跳时想同时跳起来）。';
-    const note=document.createElement('div');note.className='zone-conflict-note';note.hidden=true;
-    row.append(label,note);
+  if(hasAdv){
+    const more=document.createElement('button');more.type='button';more.className='binding-more';more.innerHTML=CHEVRON_SVG;
+    more.title='更多设置';more.setAttribute('aria-label',trigger.name+' 更多设置');
+    const open=expandedRows.has(trigger.key);more.setAttribute('aria-expanded',String(open));adv.hidden=!open;
+    more.addEventListener('click',()=>{
+      const next=adv.hidden;adv.hidden=!next;more.setAttribute('aria-expanded',String(next));
+      if(next)expandedRows.add(trigger.key);else expandedRows.delete(trigger.key);
+    });
+    main.append(more);row.append(adv);
   }
+  row.addEventListener('change',()=>paintRowTags(row));
+  paintRowTags(row);
   return row;
 }
-// 要跳才碰得到的框。人在空中只停一瞬间，等不起，默认「做动作时也要按」。
+// 要跳才碰得到的框。人在空中只停一瞬间，等不起，默认「扫过也按」。
 const JUMP_ZONE_IDS=new Set(['headJump']);
-// 映射表里框那几行下面的一句话：哪些动作会扫过它、录的时候几次里扫过几次、让不让路。
+// 框那几行「更多」里的一句话：哪些动作会扫过它、录的时候几次里扫过几次。
 function paintZoneConflictNotes(){
   const overlaps=kernelState?.zone_overlaps||{};
   for(const row of document.querySelectorAll('.binding-row[data-trigger^="zone."]')){
@@ -1376,57 +1470,74 @@ function zoneConflictText(info){
   const parts=(info.triggers||[]).map(trigger=>{
     const name=(profileTriggers().find(t=>t.key===trigger)||{}).name||trigger;
     const rate=info.rates?.[trigger]||{};
-    return rate.source==='recorded'?`${name}（录的 ${rate.reps} 次里扫过 ${rate.hits} 次）`:`${name}（没录过，按动作说明）`;
+    return rate.source==='recorded'?`${name}（录的 ${rate.reps} 次扫过 ${rate.hits} 次）`:name;
   });
-  if(!parts.length)return '';
-  return `会扫过这个框：${parts.join('、')}。`+(info.yields?'做这些动作时框让路不按。':'做这些动作时照样按。');
+  return parts.length?`会扫过这里的动作：${parts.join('、')}`:'';
 }
-function syncBodyGroup(){
-  const details=document.querySelector('.binding-group[data-group="body"]');if(!details)return;
-  const hidden=profileTriggers().filter(t=>isBodyTrigger(t)&&!shownBodyRows.keys.has(t.key)).length;
-  details.querySelector('summary').textContent=`身体动作 · ${details.querySelectorAll('.binding-row').length} 项`;
-  const more=details.querySelector('.binding-group-more');more.hidden=!hidden;
-  more.querySelector('span').textContent=`还有 ${hidden} 个动作没放进来：在下面「动作库」「自定义动作」的卡片上点「加到映射」`;
+// 三个页签上的数字：这一栏现在有几行。
+function updateMapCounts(){
+  for(const group of ['zones','body','voice']){
+    const el=document.querySelector(`#mapTabs [data-count="${group}"]`);if(!el)continue;
+    const n=[...document.querySelectorAll(`.binding-group[data-group="${group}"] .binding-row`)].filter(row=>!row.hidden).length;
+    el.textContent=n?String(n):'';
+  }
+  const hiddenVoice=document.querySelector('.binding-group[data-group="voice"] .binding-row[hidden]');
+  $('#addGameVoiceBtn').hidden=mapTab!=='voice'||!hiddenVoice;
 }
-// 从动作库、自定义动作、动作测试点过来，而表里还没有这一行：现加一行，不整表重画——
+function syncBodyGroup(){updateMapCounts()}
+let mapTab='zones';
+function showMapTab(tab){
+  mapTab=['zones','body','voice'].includes(tab)?tab:'zones';
+  document.querySelectorAll('#mapTabs [data-tab]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.tab===mapTab)));
+  document.querySelectorAll('#profileBindingRows .binding-group').forEach(group=>{group.hidden=group.dataset.group!==mapTab});
+  $('#poseLibraryPanel').hidden=mapTab!=='body';
+  document.querySelectorAll('[data-tab-caption]').forEach(el=>{el.hidden=el.dataset.tabCaption!==mapTab});
+  updateMapCounts();
+}
+// 从动作库、自定义动作、开始页点过来，而表里还没有这一行：现加一行，不整表重画——
 // 重画会冲掉别的行里还没存的改动。
 function addBodyRow(triggerKey){
   const trigger=profileTriggers().find(t=>t.key===triggerKey&&isBodyTrigger(t));
   const rows=document.querySelector('.binding-group[data-group="body"] .binding-group-rows');
   if(!trigger||!rows)return null;
+  rows.querySelector('.profile-empty')?.remove();
   const row=buildBindingRow(trigger);rows.appendChild(row);shownBodyRows.keys.add(trigger.key);
   syncBodyGroup();syncMotionConflictChoices();syncVoiceReleaseChoices();
   return row;
 }
+// 本游戏口令有十二个空位，没用的先不列：列十二行「不绑」，要找的那一行反而看不见。
+function voiceSlotUsed(trigger){
+  const binding=bindingFor(trigger);
+  return !!(String(binding?.phrase||trigger.phrase||'').trim()||(binding&&!binding.disabled&&binding.action));
+}
+function emptyNote(text){const el=document.createElement('div');el.className='profile-empty';el.textContent=text;return el}
 function renderProfileBindingRows(){
   const box=$('#profileBindingRows');if(!box)return;box.replaceChildren();
-  if(!gameProfile.selected){box.innerHTML='<div class="profile-empty">还没有可编辑的游戏配置。</div>';return}
+  if(!gameProfile.selected){const group=document.createElement('div');group.className='binding-group';group.append(emptyNote('还没有可编辑的游戏配置。'));box.append(group);return}
   const profileId=gameProfile.selected.selected_id||gameProfile.selected.id;
   if(shownBodyRows.profile!==profileId){shownBodyRows.profile=profileId;shownBodyRows.keys.clear()}
   const triggers=profileTriggers();
   const groups=[
-    {id:'zones',title:'身体区域',help:'手、脚或头部进入对应区域时触发',filter:t=>t.group==='zones',open:true},
-    {id:'body',title:'身体动作',help:'识别到动作时触发；开合跳与双手举过头不能同时映射',filter:isBodyTrigger,open:true},
-    {id:'voice',title:'本游戏口令',help:'只在这个游戏里生效，会跟着配置一起分享。说法不能和通用口令、内置口令重复。',filter:t=>t.group==='voice',open:false},
+    {id:'zones',filter:t=>t.group==='zones',empty:'没有区域'},
+    {id:'body',filter:isBodyTrigger,empty:'还没绑身体动作。在下面动作库里点「加到映射」。'},
+    {id:'voice',filter:t=>t.group==='voice',empty:'还没有本游戏口令。'},
   ];
   for(const group of groups){
-    const all=triggers.filter(group.filter);if(!all.length)continue;
+    const all=triggers.filter(group.filter);
     const items=group.id==='body'?all.filter(bodyRowWanted):all;
-    const details=document.createElement('details');details.className='binding-group';details.dataset.group=group.id;details.open=group.open;
-    const summary=document.createElement('summary');summary.textContent=`${group.title} · ${items.length} 项`;
-    const help=document.createElement('div');help.className='binding-group-help';help.textContent=group.help;
+    const wrap=document.createElement('div');wrap.className='binding-group';wrap.dataset.group=group.id;
     const rows=document.createElement('div');rows.className='binding-group-rows';
-    for(const trigger of items)rows.appendChild(buildBindingRow(trigger));
-    details.append(summary,help,rows);box.appendChild(details);
-    if(group.id==='body'){
-      for(const trigger of items)shownBodyRows.keys.add(trigger.key);
-      const more=document.createElement('div');more.className='binding-group-more';
-      const go=document.createElement('button');go.type='button';go.className='btn';go.textContent='去动作库';
-      go.addEventListener('click',()=>$('#poseLibraryPanel')?.scrollIntoView({behavior:'smooth',block:'start'}));
-      more.append(document.createElement('span'),go);details.appendChild(more);
-      syncBodyGroup();
+    let shown=0;
+    for(const trigger of items){
+      const row=buildBindingRow(trigger);
+      if(group.id==='voice'&&!voiceSlotUsed(trigger))row.hidden=true;else shown++;
+      rows.appendChild(row);
     }
+    if(!shown)rows.prepend(emptyNote(group.empty));
+    wrap.append(rows);box.appendChild(wrap);
+    if(group.id==='body')for(const trigger of items)shownBodyRows.keys.add(trigger.key);
   }
+  showMapTab(mapTab);
   syncMotionConflictChoices();
   syncVoiceReleaseChoices();
   paintPoseMissingNotice();
@@ -1507,14 +1618,18 @@ async function saveProfileBindings(){
   try{await profileFlight}
   catch(error){
     profileConflict=error.status===409;
-    $('#profileSaveStatus').textContent='保存失败，草稿已保留：'+error.message;
-    $('#retryProfileSaveBtn').textContent=profileConflict?'重新选择本游戏并保存草稿':'重试保存映射';
+    clearTimeout(profileSavedTimer);
+    $('#profileSaveStatus').textContent='没保存上：'+error.message;$('#profileSaveStatus').classList.add('error');
+    $('#retryProfileSaveBtn').textContent=profileConflict?'重新选择本游戏再保存':'重试保存';
     $('#retryProfileSaveBtn').hidden=false;throw error;
   }finally{profileFlight=null}
   if(profileDirty.size)return saveProfileBindings();
   profileConflict=false;
-  $('#profileSaveStatus').textContent='已自动保存';
+  // 存好了说一声就走，不在页头一直挂着。
+  $('#profileSaveStatus').classList.remove('error');$('#profileSaveStatus').textContent='已保存';
+  clearTimeout(profileSavedTimer);profileSavedTimer=setTimeout(()=>{if($('#profileSaveStatus').textContent==='已保存')$('#profileSaveStatus').textContent=''},1800);
 }
+let profileSavedTimer=0;
 async function retryProfileBindings(){
   if(!profileConflict)return saveProfileBindings();
   await profileOperation(async()=>{
@@ -1534,10 +1649,10 @@ function scheduleProfileAutoSave(event){
   clearTimeout(profileAutoSaveTimer);
   const pendingRule=row.querySelector('.binding-alternate .binding-rule-trigger');
   if(pendingRule&&!pendingRule.value){
-    $('#profileSaveStatus').textContent='先选择配合动作或重置区域';
+    $('#profileSaveStatus').textContent='先选好配合的动作，才能保存';
     return;
   }
-  $('#profileSaveStatus').textContent='有待保存的修改';
+  $('#profileSaveStatus').textContent='正在保存…';
   profileAutoSaveTimer=setTimeout(()=>saveProfileBindings().catch(()=>{}),350);
 }
 async function resetProfileBindings(){
@@ -1550,20 +1665,27 @@ async function resetProfileBindings(){
     // 恢复默认就是回到默认那几行，这次手动加进来的没绑的动作一起收回动作库。
     shownBodyRows.keys.clear();
     await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
-    $('#profileSaveStatus').textContent='当前游戏已恢复默认';
+    notice('已恢复这个游戏的默认按键');
   });
 }
 function formatPerf(value,suffix=''){return value===null||value===undefined||value===''?'—':`${value}${suffix}`}
 function renderPerformance(data){
+  // 画面左上角只写一个数：每秒认几帧。毫秒、丢帧、CPU 这些排查问题才看，放在「实验与诊断」。
+  // 手机那边不报推理帧率，用每秒收到几帧代替——人看到的就是这个。
+  const fps=Number(data.inference_fps??data.network_fps);
+  const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
+  const hud=$('#fpsHud');
+  if(hud){
+    const show=live&&Number.isFinite(fps)&&fps>0;hud.hidden=!show;
+    if(show){const text=`${Math.round(fps)} 帧/秒`;if(hud.textContent!==text)hud.textContent=text;hud.classList.toggle('slow',fps<15)}
+  }
   const line=$('#recognitionStatus');
-  if(line)line.textContent=data.inference_fps
-    ?`识别：${data.inference_fps} 帧/秒 · 每帧 ${formatPerf(data.inference_avg_ms,' 毫秒')} · 本程序占 CPU ${formatPerf(data.process_cpu_percent,'%')}`
-    :'识别：未开始';
-  $('#perfSummary').textContent='实时诊断';
+  if(line)line.textContent=live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):'未开始';
+  $('#perfSummary').textContent='识别';
   $('#perfDetails').textContent=[
-    `采集帧率：${formatPerf(data.capture_fps)} · 推理帧率：${formatPerf(data.inference_fps)}`,
+    `采集帧率：${formatPerf(data.capture_fps)} · 推理帧率：${formatPerf(data.inference_fps)}${data.network_fps!=null?` · 手机传来：${formatPerf(data.network_fps)}`:''}`,
     `总延迟：${formatPerf(data.total_latency_ms,' 毫秒')} · 推理平均：${formatPerf(data.inference_avg_ms,' 毫秒')}`,
-    `预览：${data.preview_ready?'已就绪':'未就绪'} · 丢帧：${data.dropped_frames??0}`,
+    `预览：${data.preview_ready?'已就绪':'未就绪'} · 丢帧：${data.dropped_frames??0} · 本程序占 CPU：${formatPerf(data.process_cpu_percent,'%')}`,
   ].join('\n');
 }
 
@@ -1579,7 +1701,7 @@ function renderStereo(data){
   calibrate.disabled=!data.enabled||data.state==='solving';
   let status;
   if(!data.enabled)status=data.body_mode==='phone'?'未开启':'未开启：双目以手机为主画面，先把摄像头来源切到手机';
-  else if(!data.pc_camera_running)status=data.pc_camera_error?'电脑摄像头打不开：'+data.pc_camera_error:'已开启：点「连接并开始识别」，电脑摄像头会一起打开当第二视角';
+  else if(!data.pc_camera_running)status=data.pc_camera_error?'电脑摄像头打不开：'+data.pc_camera_error:'已开启：在「设备」里点「连接」，电脑摄像头会一起打开';
   else if(data.message&&(busy||data.state==='failed'||/标定/.test(data.message)))status=data.message;
   else if(!data.calibrated)status='还没有标定：站到平时玩的位置，点「标定」，然后活动双臂 30 秒';
   else status='运行中';
@@ -1640,7 +1762,7 @@ function renderCameraDevices(devices,current){
 }
 function syncCameraDeviceRow(){
   const computer=($('#poseSource')?.value||'computer')==='computer';
-  for(const id of ['cameraDeviceRow','cameraScanRow']){const el=$('#'+id);if(el)el.hidden=!computer}
+  for(const id of ['cameraDeviceRow','cameraScanRow','cameraRotationRow']){const el=$('#'+id);if(el)el.hidden=!computer}
 }
 // --- hand mouse -----------------------------------------------------------
 // The fist thresholds shipped as estimates rather than measurements, so the
@@ -1667,10 +1789,17 @@ function renderViewControl(force=false){
   $('#viewVerticalSource option[value="legacy"]').hidden=!head.verticalLookEnabled;
   $('#viewHorizontalSource').value=horizontal;$('#viewVerticalSource').value=vertical;
   const horizontalInfo=viewChoice(VIEW_CONTROL_CONTENT.horizontal,horizontal),verticalInfo=viewChoice(VIEW_CONTROL_CONTENT.vertical,vertical);
-  const rows=[['左右：'+horizontalInfo.label,horizontalInfo.description],['上下：'+verticalInfo.label,verticalInfo.description]];
-  if(head.verticalLookEnabled)rows.push(['更多设置',VIEW_CONTROL_CONTENT.legacyVerticalNote]);
-  $('#viewControlDescription').replaceChildren(...rows.map(([title,text])=>{const p=document.createElement('p');const b=document.createElement('b');b.textContent=title+' ';p.append(b,text);return p}));
-  const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='当前设置已读取';
+  $('#viewHorizontalDesc').textContent=horizontalInfo.description;
+  $('#viewVerticalDesc').textContent=verticalInfo.description;
+  // 转头有三种算法，只在选了「左右转头」时才用得着。
+  $('#turnAlgorithmRow').hidden=horizontal!=='head_turn';
+  // 手感那几行只列眼下用得着的：用头就给头的，用握拳就给握拳的。
+  const headOn=!horizontalHand&&horizontal!=='off',handOn=!!(horizontalHand||verticalHand);
+  document.querySelectorAll('#headSettings .head-only').forEach(el=>{el.hidden=!headOn});
+  document.querySelectorAll('#headSettings .hand-only').forEach(el=>{el.hidden=!handOn});
+  // 旧版上下视角：只有还开着的人才看得到这一块，里面有一键换到握拳。
+  $('#legacyVertical').hidden=!head.verticalLookEnabled;
+  const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='';
 }
 // 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
 // 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
@@ -1739,6 +1868,7 @@ function tutorialState(){
     // 这个数，就退回比最后一句。
     voiceReady:voiceInputReady,voiceIssue,voiceHeard:String(vs.commands_heard??vs.last_command??''),
     stopPhrase:(vs.emergency_stop_phrases||[])[0]||'体感紧急停止',voiceListOpen:!!$('#voiceCommandsMask')?.open,
+    gamePickerOpen:!$('#gamePicker')?.hidden,
   };
 }
 function initViewControl(){
@@ -1752,32 +1882,26 @@ function renderHandMouse(state){
   handMouseConfig={...handMouseConfig,...c};
   // 合流模式下摇杆归物理手柄，手控鼠标接不上任何东西——勾着不起作用比灰着更糟。
   const blocked=mergeOwnsSticks();
-  $('#handMouseEnabled').disabled=blocked||viewControlSaving;
-  $('#handMouseEnabled').checked=Boolean(c.enabled);
   renderOutputMix();
-  $('#handMouseHorizontalHand').value=c.horizontal_hand||'off';
-  $('#handMouseVerticalHand').value=c.vertical_hand||'left';
-  for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone],['handMouseClose',c.fist_close],['handMouseOpen',c.fist_open],['handMouseCurlClose',c.curl_close],['handMouseCurlOpen',c.curl_open]]){
-    if(value!==undefined)$('#'+id).value=value;
+  // 握拳的松紧阈值不在这里手调了：「身体识别 → 量身 → 只量握拳」量出来的就是这两个值。
+  for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone]]){
+    if(value!==undefined&&document.activeElement!==$('#'+id))$('#'+id).value=value;
   }
   $('#handMouseSensitivityValue').textContent=Number(c.sensitivity||0).toFixed(0);
   $('#handMouseDeadzoneValue').textContent=Number(c.deadzone||0).toFixed(2);
-  $('#handMouseCloseValue').textContent=Number(c.fist_close||0).toFixed(2);
-  $('#handMouseOpenValue').textContent=Number(c.fist_open||0).toFixed(2);
-  $('#handMouseCurlCloseValue').textContent=Number(c.curl_close||0).toFixed(2);
-  $('#handMouseCurlOpenValue').textContent=Number(c.curl_open||0).toFixed(2);
   const readings=Object.values(state.axes||{});
   const byHand=readings.some(s=>s.grip_source==='hand');
-  $('#handMouseCurlRow').hidden=!byHand;
-  $('#handMouseSpreadRow').hidden=readings.length>0&&readings.every(s=>s.grip_source==='hand');
   const reading=byHand
     ?(state.curl==null?'看不到手':`手指伸展 ${Number(state.curl).toFixed(2)}`)
     :(state.spread==null?'看不到手':`张开度 ${Number(state.spread).toFixed(3)}`);
   const axisLabel=(axis,name)=>{const s=state.axes?.[axis];if(!s)return '';const hand={left:'左手',right:'右手',off:'关闭'}[s.hand]||'关闭';const phase=({disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'})[s.state]||s.state;const measure=s.grip_source==='hand'?`手指伸展 ${Number(s.curl).toFixed(2)}`:s.spread==null?'看不到手':`张开度 ${Number(s.spread).toFixed(3)}`;return `${name}：${hand} · ${phase} · ${measure}`;};
   const label={disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'}[state.state]||state.state;
-  $('#handMouseStatus').textContent=blocked?'物理手柄合流占着摇杆，手控鼠标用不了':(c.enabled
-    ?(state.axes?`${axisLabel('horizontal','水平')}；${axisLabel('vertical','垂直')}`:`${label} · ${reading} · 输出 ${Number(state.output_x||0).toFixed(2)} / ${Number(state.output_y||0).toFixed(2)}`)
-    :'未启用');
+  // 握着没握着，看得到手时才说；一直「看不到手」就不说。
+  const phaseName={idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'};
+  const live=Object.values(state.axes||{}).filter(s=>['left','right'].includes(s.hand)&&s.state!=='disabled');
+  const seen=live.filter(s=>s.state!=='lost');
+  $('#handMouseStatus').textContent=blocked?'实体手柄合流占着摇杆，握拳控制用不了'
+    :c.enabled&&seen.length?[...new Map(seen.map(s=>[s.hand,`${s.hand==='left'?'左手':'右手'}${phaseName[s.state]||s.state}`])).values()].join(' · '):'';
   renderViewControl();
 }
 // --- skeleton recording ---------------------------------------------------
@@ -1880,7 +2004,11 @@ function setViewControlBusy(busy){
   viewControlSaving=busy;
   document.querySelectorAll('#headSettings input,#headSettings select,#headHorizontalAlgorithm').forEach(el=>el.disabled=busy);
   for(const id of ['viewHorizontalSource','viewVerticalSource'])$('#'+id).disabled=busy||!viewControlReady;
-  $('#handMouseEnabled').disabled=busy||mergeOwnsSticks();
+}
+// 存好了说一句「已保存」，两秒后自己没了；出错的话留着。
+function flashStatus(el,text){
+  if(!el)return;el.textContent=text;clearTimeout(el.flashTimer);
+  el.flashTimer=setTimeout(()=>{if(el.textContent===text)el.textContent=''},2000);
 }
 async function postViewHead(payload){return post('/api/head/config',payload)}
 async function saveHandMouseFields(payload){
@@ -1890,7 +2018,7 @@ async function saveHandMouseFields(payload){
   try{
     const data=await post('/api/hand-mouse/config',payload);
     renderHandMouse(data.hand_mouse);
-    $('#handMouseSaveStatus').textContent='已保存';
+    flashStatus($('#handMouseSaveStatus'),'已保存');
   }catch(error){
     let refreshed=true;try{await reloadViewControlState()}catch{refreshed=false}
     $('#handMouseSaveStatus').textContent='保存失败，'+(refreshed?'已读取当前设置：':'暂时无法读取当前设置：')+(error.message||'请重试');
@@ -1925,10 +2053,10 @@ async function saveViewControlAxis(axis){
       if(currentVertical!=='off')await post('/api/hand-mouse/config',{vertical_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentHorizontal!=='off')});
       if(head.verticalLookEnabled)await postViewHead({vertical_look_source:'off'});
     }
-    await reloadViewControlState();$('#viewControlStatus').textContent='已保存';
+    await reloadViewControlState();flashStatus($('#viewControlStatus'),'已保存');
   }catch(error){
     let refreshed=true;try{await reloadViewControlState()}catch{refreshed=false}
-    $('#viewControlStatus').textContent=`保存失败，${refreshed?'已恢复服务器当前设置':'当前设置无法重新读取'}：${error.message||'请重试'}`;
+    $('#viewControlStatus').textContent=`没保存上，${refreshed?'已恢复原来的设置':'读不到当前设置'}：${error.message||'请重试'}`;
   }finally{setViewControlBusy(false);headDirty=false;renderViewControl(true)}
 }
 async function saveLegacyVertical(){
@@ -1942,26 +2070,6 @@ async function saveLegacyVertical(){
   }catch(error){
     let refreshed=true;try{await reloadViewControlState()}catch{refreshed=false}
     $('#viewControlStatus').textContent=`保存失败，${refreshed?'已恢复服务器当前设置':'当前设置无法重新读取'}：${error.message||'请重试'}`;
-  }finally{setViewControlBusy(false);headDirty=false;renderViewControl(true)}
-}
-async function saveAdvancedHandAxis(axis){
-  const field=axis==='horizontal'?'horizontal_hand':'vertical_hand',value=$('#handMouse'+(axis==='horizontal'?'Horizontal':'Vertical')+'Hand').value;
-  if(value!=='off'){
-    $('#'+(axis==='horizontal'?'viewHorizontalSource':'viewVerticalSource')).value=value;
-    await saveViewControlAxis(axis);return;
-  }
-  const other=axis==='horizontal'?handMouseConfig.vertical_hand:handMouseConfig.horizontal_hand;
-  await saveHandMouseFields({[field]:'off',enabled:Boolean(handMouseConfig.enabled&&['left','right'].includes(other))});
-}
-async function saveHeadEnabled(){
-  if(viewControlSaving)return;
-  setViewControlBusy(true);headDirty=true;$('#headSaveStatus').textContent='正在保存…';
-  try{
-    await post('/api/head/config',{enabled:$('#headEnable').checked});
-    await reloadViewControlState();$('#headSaveStatus').textContent='已保存';
-  }catch(error){
-    try{await reloadViewControlState()}catch{}
-    $('#headSaveStatus').textContent='保存失败，已重新读取当前设置：'+(error.message||'请重试');
   }finally{setViewControlBusy(false);headDirty=false;renderViewControl(true)}
 }
 async function refreshPreview(){
@@ -1979,8 +2087,8 @@ async function refreshPreview(){
 }
 
 
-function renderXinputStatus(s=output.xinputStatus){if(document.activeElement?.closest('#outputSettings'))return;const select=$('#xinputMerge'),line=$('#xinputStatus');if(!select||!line)return;const users=Array.isArray(s?.connected_users)?s.connected_users:[];const current=s?.enabled&&s?.selected_user!==null&&s?.selected_user!==undefined?String(s.selected_user):'';const values=[['','关闭体感合流']];for(const user of users)values.push([String(user),`物理手柄 ${Number(user)+1}`]);if(current&&!values.some(([v])=>v===current))values.push([current,`手柄 ${Number(current)+1}（未连接）`]);const keep=current&&values.some(([v])=>v===current);select.replaceChildren(...values.map(([value,label])=>{const o=document.createElement('option');o.value=value;o.textContent=label;return o}));select.value=keep?current:(s?.enabled?'':'');output.xinputEnabled=!!s?.enabled;output.xinputUser=s?.selected_user??null;output.xinputMotionLeft=!!s?.motion_left_enabled;renderXinputMotionLeft();line.textContent=!s?.enabled?'未启用物理手柄合流':(s?.connected?`物理手柄已合流 · 手柄 ${Number(s.active_user??s.selected_user)+1}`:'已启用，等待物理手柄连接');if(s?.last_error)line.textContent+=' · '+s.last_error;line.className='statusline '+(s?.connected?'ok':'')}
-function renderXinputMotionLeft(){const box=$('#xinputMotionLeft');if(box){box.checked=output.xinputMotionLeft;box.disabled=!output.xinputEnabled||output.mode!=='gamepad'}}
+function renderXinputStatus(s=output.xinputStatus){if(document.activeElement?.closest('#outputSettings'))return;const select=$('#xinputMerge'),line=$('#xinputStatus');if(!select||!line)return;const users=Array.isArray(s?.connected_users)?s.connected_users:[];const current=s?.enabled&&s?.selected_user!==null&&s?.selected_user!==undefined?String(s.selected_user):'';const values=[['','关闭']];for(const user of users)values.push([String(user),`手柄 ${Number(user)+1}`]);if(current&&!values.some(([v])=>v===current))values.push([current,`手柄 ${Number(current)+1}（未连接）`]);const keep=current&&values.some(([v])=>v===current);select.replaceChildren(...values.map(([value,label])=>{const o=document.createElement('option');o.value=value;o.textContent=label;return o}));select.value=keep?current:(s?.enabled?'':'');output.xinputEnabled=!!s?.enabled;output.xinputUser=s?.selected_user??null;output.xinputMotionLeft=!!s?.motion_left_enabled;renderXinputMotionLeft();line.textContent=!s?.enabled?'':(s?.connected?`已合流 · 手柄 ${Number(s.active_user??s.selected_user)+1}`:'等手柄连上');if(s?.last_error)line.textContent+=(line.textContent?' · ':'')+s.last_error;line.className='sub'+(s?.enabled&&!s?.connected?' warn':'')}
+function renderXinputMotionLeft(){const box=$('#xinputMotionLeft');if(box){box.checked=output.xinputMotionLeft;box.disabled=!output.xinputEnabled||output.mode!=='gamepad'}const row=$('#xinputMotionLeftRow');if(row)row.hidden=!output.xinputEnabled}
 async function setXinputMotionLeft(){try{output.server=await post('/api/output/xinput',{motion_left_enabled:!!$('#xinputMotionLeft')?.checked});renderOutput(output.server);await refreshXinput();notice(output.xinputMotionLeft?'体感左摇杆合成已开启，双方输入相加':'已关闭体感左摇杆合成')}catch(e){notice('左摇杆合成设置失败：'+(e?.message||e));await refreshXinput()}}
 async function refreshXinput(){try{output.xinputStatus=await api('/api/output/xinput');renderXinputStatus(output.xinputStatus)}catch{}}
 async function setXinputMerge(){const select=$('#xinputMerge');const value=select?.value||'';try{const data=await post('/api/output/xinput',{enabled:!!value,user:value===''?null:Number(value)});output.server=data;renderOutput(data);await refreshXinput();notice(value?`已选择物理手柄 ${Number(value)+1}；${output.xinputMotionLeft?'体感按键与左摇杆合成已开启':'体感只叠加手柄按键'}`:'已关闭物理手柄合流')}catch(e){notice('物理手柄合流失败：'+(e?.message||e));await refreshXinput()}}
@@ -1994,9 +2102,13 @@ function renderOutput(s=output.server){
     if(Number.isFinite(gain)&&gain>0)$('#strength').value=Math.round(gain*100);
   }
   $('#strengthValue').textContent=$('#strength').value+'%';
-  $('#outputPill').textContent=output.enabled?'游戏控制已开启':'游戏控制已暂停';
-  $('#outputPill').className='pill '+(output.enabled?'ok':'');
-  $('#outputStatus').textContent=(voiceLatchText(s)?voiceLatchText(s)+' · 说松开才会放 · ':'')+`${s.mouse_available?'鼠标可用':'鼠标不可用'} · ${s.gamepad_connected?'虚拟手柄已连接':'虚拟手柄未连接'}`+(s.last_error?' · '+s.last_error:'');
+  // 一切正常就不说；鼠标用不了、手柄没接上、语音还按着键，才在「游戏输出」底下点名。
+  const problems=[];
+  if(voiceLatchText(s))problems.push(voiceLatchText(s)+'，说松开才会放');
+  if(s.mouse_available===false)problems.push('鼠标输出用不了');
+  if(output.mode==='gamepad'&&!s.gamepad_connected)problems.push('虚拟手柄没接上');
+  if(s.last_error)problems.push(s.last_error);
+  $('#outputStatus').textContent=problems.join(' · ');
   if(s.xinput_merge_enabled!==undefined){
     output.xinputEnabled=!!s.xinput_merge_enabled;output.xinputUser=s.xinput_selected_user??null;
     output.xinputMotionLeft=!!s.xinput_motion_left_enabled;renderXinputMotionLeft();
@@ -2020,20 +2132,25 @@ function gamepadBindingCount(){
 }
 function renderOutputMix(){
   const el=$('#outputMixWarn');if(!el)return;
-  const handMouseOn=!!$('#handMouseEnabled')?.checked;
+  const handMouseOn=!!handMouseConfig.enabled&&(['left','right'].includes(handMouseConfig.horizontal_hand)||['left','right'].includes(handMouseConfig.vertical_hand));
   const pads=gamepadBindingCount();
-  let text='';
+  let text='',fix=null;
   if(output.mode==='gamepad'&&handMouseOn){
-    text='视角输出是 Xbox 右摇杆，握拳控制的是摇杆，鼠标不会动。想让握拳控制鼠标，把视角输出改成「鼠标视角」。';
+    text='视角走 Xbox 右摇杆时，握拳推的是摇杆，桌面鼠标不会动。';fix=['视角改用鼠标','mouse'];
   }else if(output.mode==='mouse'&&pads>0){
-    text=`视角走鼠标，但这个游戏还有 ${pads} 个动作输出 Xbox 按键，游戏会在手柄和键鼠提示之间来回切换。把视角输出改成 Xbox，或把这些动作改成键鼠按键。`;
+    text=`有 ${pads} 个动作绑的是手柄键，视角却走鼠标，游戏的按键提示会来回切换。`;fix=['视角改用手柄','gamepad'];
   }
-  el.hidden=!text;el.textContent=text;
+  el.hidden=!text;
+  if(el.dataset.key===text)return;el.dataset.key=text;el.replaceChildren();if(!text)return;
+  const words=document.createElement('span');words.textContent=text;el.append(words);
+  const button=document.createElement('button');button.type='button';button.className='btn';button.textContent=fix[0];
+  button.addEventListener('click',()=>runAction(async()=>{++outputEpoch;renderOutput(await post('/api/output/config',{mode:fix[1]}));await refreshXinput()}));
+  el.append(button);
 }
 async function refreshOutput(){
   const epoch=outputEpoch;
   try{const data=await api('/api/output-status');if(epoch===outputEpoch)renderOutput(data)}
-  catch{$('#outputPill').textContent='控制状态无法确认';outputConnected=false;renderMainStatus()}
+  catch{outputConnected=false;renderMainStatus()}
 }
 async function setOutput(enabled){
   if(enabled&&zoneEditMode)throw new Error('请先保存或取消区域调整');
@@ -2054,8 +2171,7 @@ async function emergencyStop(){
     if(result.enabled!==false)throw new Error('服务尚未确认');
     ++outputEpoch;renderOutput(result);notice(output.xinputEnabled?'体感已停止，实体手柄继续透传。':'游戏控制已紧急停止。');
   }catch(error){
-    $('#outputPill').textContent='尚未确认停止';
-    notice('尚未确认停止：'+error.message+'。请重试紧急停止。');
+    notice('还没确认停下：'+error.message+'。再按一次 F9');
   }
 }
 async function setSource(source,enabled=true){
@@ -2068,11 +2184,11 @@ async function setSource(source,enabled=true){
     // 没有摄像头的电脑在这里是死路：报一句"无法打开"然后没有下文。所以失败时
     // 直接把另外两条出路说出来——换一个摄像头，或者改用手机。
     throw new Error((result.camera?.last_error||'摄像头启动失败')
-      +'。没有摄像头的话，把「摄像头来源」改成手机摄像头；有好几个的话，点「扫描摄像头」换一个试试。');
+      +'。没有摄像头就把来源改成手机；有好几个就点「扫描」换一个。');
   }
   ++kernelEpoch;desiredSource=source;
   renderKernelState(result);await refreshInput();
-  notice(enabled?(source==='phone'?'已选择手机摄像头，等待手机连接':'摄像头识别已启动，游戏控制保持暂停'):'识别已停止');
+  notice(enabled?(source==='phone'?'已切到手机摄像头，等手机连上':'摄像头连上了'):'识别已停止');
 }
 
 async function handleMainAction(){
@@ -2103,8 +2219,8 @@ function renderZoneFit(k=kernelState||{}){
   const hands=fistHands();
   const grip=!hands.length?'握拳控制没开':fit.grip_measured_at_unix?`握拳：${day(fit.grip_measured_at_unix)}量过`:'握拳：还没量过，认不准就量一下';
   const text=`${zones} · ${grip}`;if(status.textContent!==text)status.textContent=text;
-  $('#zoneFitResetBtn').hidden=!fit.custom;
-  $('#zoneFitGripBtn').hidden=!hands.length;
+  $('#zoneFitResetRow').hidden=!fit.custom;
+  $('#zoneFitGripRow').hidden=!hands.length;
 }
 // 定住了没有、区域怎么算按下：电脑那边说了算，这里只照着画。
 function renderZoneFreeze(k=kernelState||{}){
@@ -2119,6 +2235,34 @@ function renderZoneFreeze(k=kernelState||{}){
     if(!input||!Number.isFinite(value)||document.activeElement===input)continue;
     const percent=String(Math.round(value*100));
     if(input.value!==percent){input.value=percent;$('#'+id+'Value').textContent=percent+'%'}
+  }
+  renderBodyDescs();
+}
+// 二选一的设置底下一句话，跟着选的那个变。
+const ZONE_MODE_DESC={smart:'分辨是故意伸进框，还是做动作时顺路扫过；最多多等 0.25 秒',simple:'进框就按、出框就松；反应最快，也最容易误按'};
+const MARCH_DESC={legacy:'稳，停步稍慢',responsive:'交替抬脚时提前响应，停步更快'};
+function renderBodyDescs(){
+  const mode=$('#zoneTriggerMode')?.value||'smart';
+  const desc=$('#zoneTriggerDesc');if(desc&&desc.textContent!==ZONE_MODE_DESC[mode])desc.textContent=ZONE_MODE_DESC[mode]||'';
+  // 「录我的动作」只对智能判定有用；选了进去就按，这一块就收起来。
+  $('#zoneTriggerSettings')?.classList.toggle('simple-mode',mode==='simple');
+  const march=$('#marchDesc'),text=MARCH_DESC[$('#marchAlgorithm')?.value]||'';if(march&&march.textContent!==text)march.textContent=text;
+  syncSegSelects();
+}
+// 二选一的下拉换成分段按钮。下拉还在（藏着），读写、存盘的代码照旧用它。
+function syncSegSelects(){
+  for(const select of document.querySelectorAll('select.seg-select')){
+    let seg=select.nextElementSibling?.classList.contains('seg')?select.nextElementSibling:null;
+    if(!seg){
+      seg=document.createElement('div');seg.className='seg';seg.setAttribute('role','radiogroup');seg.setAttribute('aria-label',select.getAttribute('aria-label')||'');
+      for(const option of select.options){
+        const button=document.createElement('button');button.type='button';button.dataset.value=option.value;button.textContent=option.textContent;
+        button.addEventListener('click',()=>{if(select.disabled||select.value===option.value)return;select.value=option.value;select.dispatchEvent(new Event('change',{bubbles:true}));renderBodyDescs()});
+        seg.append(button);
+      }
+      select.after(seg);
+    }
+    for(const button of seg.children){button.setAttribute('aria-pressed',String(button.dataset.value===select.value));button.disabled=select.disabled}
   }
 }
 // 「录我的动作」：开始前先停掉游戏控制，和量身一样——人要做一整套动作，别让游戏里跟着乱按。
@@ -2135,7 +2279,7 @@ function renderIntent(k=kernelState||{}){
   const learning=k.zone_learning||{},rec=k.intent_recording||{};
   const all=items.all||[],missing=items.missing||[],done=all.length-missing.length;
   const missingActions=all.filter(item=>item.kind==='action'&&missing.includes(item.key)).map(item=>item.name);
-  let text=!done?'还没录过。智能判定现在按动作说明判断哪些动作会扫过哪些框。'
+  let text=!done?'还没录过，智能判定先按动作说明来分'
     :`录过 ${done} / ${all.length} 项`+(missingActions.length?`；还没录：${missingActions.slice(0,4).join('、')}${missingActions.length>4?' 等':''}`:'');
   if(rec.active)text='正在录…';
   else if(rec.saving)text='正在保存…';
@@ -2195,7 +2339,7 @@ $('#marchAlgorithm')?.addEventListener('change',e=>runAction(async()=>{
   const select=e.target,status=$('#marchSaveStatus');select.disabled=true;
   try{
     renderKernelState(await post('/api/march/config',{algorithm:select.value}));
-    status.textContent='已保存';
+    flashStatus(status,'已保存');
   }catch(error){
     select.value=kernelState?.march_algorithm==='responsive'?'responsive':'legacy';
     status.textContent='未保存：'+error.message;throw error;
@@ -2205,7 +2349,7 @@ $('#zoneTriggerMode')?.addEventListener('change',e=>runAction(async()=>{
   const status=$('#zoneTriggerStatus');
   try{
     renderKernelState(await post('/api/zones/trigger-mode',{mode:e.target.value}));
-    status.textContent=e.target.value==='simple'?'已改成进去就按':'已改成智能';
+    flashStatus(status,e.target.value==='simple'?'已改成进去就按':'已改成智能');
   }catch(error){status.textContent='没改成：'+error.message;renderZoneFreeze();throw error}
 }));
 async function centerHead(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('视角中心已更新。')}catch(e){notice('视角回正失败：'+(e?.message||e))}}
@@ -2231,31 +2375,28 @@ function renderOverlay(map=currentPoseMap){
 async function toggleOverlay(){if(overlay.win&&!overlay.win.closed){try{overlay.win.close()}catch{}overlay.win=null;overlay.canvas=null;overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗';return}if(!window.documentPictureInPicture?.requestWindow){notice('当前浏览器不支持置顶游戏悬浮窗。');return}try{const pip=await window.documentPictureInPicture.requestWindow({width:420,height:315});pip.document.title='MotionControl';pip.document.body.style.cssText='margin:0;overflow:hidden;background:#050608;width:100vw;height:100vh';const c=pip.document.createElement('canvas');c.width=640;c.height=480;c.style.cssText='display:block;width:100vw;height:100vh;object-fit:contain;background:#050608';pip.document.body.appendChild(c);overlay.win=pip;overlay.canvas=c;overlay.ctx=c.getContext('2d');pip.addEventListener('pagehide',()=>{overlay.win=overlay.canvas=overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗'},{once:true});$('#overlayBtn').textContent='关闭悬浮';renderOverlay(currentPoseMap)}catch(e){notice('悬浮窗启动失败：'+(e?.message||e))}}
 
 
-function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=document.createElement('div');row.className='voice-row';const phrase=document.createElement('input');phrase.className='voice-phrase';phrase.placeholder='动作词，例如 地图';phrase.title='这里填写唤醒词后面的动作词';phrase.value=mapping.phrase||'';const phraseBox=document.createElement('div');phraseBox.className='voice-phrase-wrap';const prefix=document.createElement('span');prefix.className='voice-prefix';prefix.textContent=currentVoiceWakeWord();phraseBox.append(prefix,phrase);const type=document.createElement('select');type.className='voice-type';for(const[value,label]of[['keyboard','键盘/组合键'],['gamepad','Xbox 键'],['system','系统命令']]){const o=document.createElement('option');o.value=value;o.textContent=label;type.appendChild(o)}type.value=mapping.type||'keyboard';const target=document.createElement('span');target.className='voice-target-cell';const fillVoiceTarget=value=>{
+function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=document.createElement('div');row.className='voice-row';const phrase=document.createElement('input');phrase.className='voice-phrase';phrase.placeholder='例：地图';phrase.title='唤醒词后面说的那句';phrase.value=mapping.phrase||'';const phraseBox=document.createElement('div');phraseBox.className='voice-phrase-wrap';const prefix=document.createElement('span');prefix.className='voice-prefix';prefix.textContent=currentVoiceWakeWord();phraseBox.append(prefix,phrase);const type=document.createElement('select');type.className='voice-type';for(const[value,label]of[['keyboard','键盘'],['gamepad','手柄'],['system','系统']]){const o=document.createElement('option');o.value=value;o.textContent=label;type.appendChild(o)}type.value=mapping.type||'keyboard';const target=document.createElement('span');target.className='voice-target-cell';const fillVoiceTarget=value=>{
   if(type.value==='system'){target.replaceChildren();const sel=document.createElement('select');sel.className='binding-target';for(const[v,t]of VOICE_SYSTEM_TARGETS){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}if([...sel.options].some(o=>o.value===value))sel.value=value;target.appendChild(sel);return}
   // Voice rows can be built before the action catalog arrives.  Gamepad falls
   // back to its own built-in key list, but keyboard is only free text because
   // the catalog says so, and without it the picker would come out empty.
   if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){target.replaceChildren(makeKeyCaptureInput('binding-target',value||''));return}
   fillTargetControl(target,type.value,value);
-};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');const legacyBehavior={hold:'持续按住（旧设置）',release:'松开（旧设置）'}[mapping.behavior];for(const[value,label]of [['tap','点按'],...(legacyBehavior?[[mapping.behavior,legacyBehavior]]:[])]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';behavior.title=legacyBehavior?'通用口令不再新设持续按住、松开。旧的照常生效；要按住某个键，放到「本游戏」的口令里，那边能选用哪个动作停住它':'通用口令只能点按。要按住某个键，放到「本游戏」的口令里设持续按住';const syncBehavior=()=>{behavior.disabled=type.value==='system'||behavior.options.length<2;if(type.value==='system')behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phraseBox,type,target,behavior,remove);$('#voiceRows').appendChild(row);watchVoicePhrase(phrase)}
+};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');const legacyBehavior={hold:'持续按住（旧设置）',release:'松开（旧设置）'}[mapping.behavior];for(const[value,label]of [['tap','点一下'],...(legacyBehavior?[[mapping.behavior,legacyBehavior]]:[])]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';behavior.title=legacyBehavior?'通用口令不再新设持续按住、松开。旧的照常生效；要按住某个键，放到「本游戏」的口令里，那边能选用哪个动作停住它':'通用口令只能点按。要按住某个键，放到「本游戏」的口令里设持续按住';const syncBehavior=()=>{behavior.disabled=type.value==='system'||behavior.options.length<2;if(type.value==='system')behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phraseBox,type,target,behavior,remove);$('#voiceRows').appendChild(row);watchVoicePhrase(phrase)}
 function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=(row.querySelector('.binding-target')?.value||'').trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('每条口令都要填「说什么」和「输出什么」');const behavior=type==='system'?'tap':row.querySelector('.voice-behavior').value;const item={phrase,type,target,behavior},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
 function renderVoiceRows(items){$('#voiceRows').replaceChildren();for(const m of items||[])addVoiceRow(m);if(!$('#voiceRows').children.length)addVoiceRow()}
 function renderVoiceStatus(s=voice.status){
   if(!s)return;voice.status=s;renderVoiceGuide(s);const has=!!s.model_ready,connected=!!s.connected;const isSingleKws=String(s.recognizer_mode||'').includes('single_stage')||String(s.recognizer_mode||'').includes('kws');
-  $('#voiceMode').textContent=has?(isSingleKws?`短语识别 · ${s.supported_count||0} 条`:`语音 · ${s.supported_count||0} 条`):'未就绪';$('#voiceMode').className='pill '+(has?'ok':'warn');
+  $('#voiceMode').textContent=has?(isSingleKws?`短语识别 · ${s.supported_count||0} 条`:`语音 · ${s.supported_count||0} 条`):'未就绪';$('#voiceMode').className='tag '+(has?'ok':'warn');
   const pcOk=connected&&s.source_kind==='computer'&&s.available&&s.model_ready&&s.audio_ready&&(s.audio_alive||s.stream_alive);const phoneOk=connected&&s.source_kind!=='computer';const ready=pcOk||phoneOk;voiceInputReady=ready;
-  $('#voicePill').textContent=ready?'语音 ✓':(connected?'语音准备中':'语音');$('#voicePill').className='pill '+(ready?'ok':(connected?'warn':'optional'));
+  $('#voicePill').textContent=ready?'在听':(connected?'准备中':'没开');$('#voicePill').className='tag '+(ready?'ok':(connected?'warn':'plain'));
   const partial=String(s.last_partial||s.partial||'').trim();
   const phrase=String(s.last_final||s.final||s.last_command||'').trim();
-  let voiceText=ready?'语音已就绪':'语音尚未准备好';
-  if(phrase){
-    if(s.last_action==='wake')voiceText=`已听到唤醒词「${currentVoiceWakeWord(s)}」，请再说动作口令`;
-    else if(s.last_executed===true)voiceText=`已听到「${phrase}」 · 电脑已执行`;
-    else if(s.last_executed===false)voiceText=`已听到「${phrase}」 · 电脑未执行${s.last_error?`：${s.last_error}`:''}`;
-    else voiceText=`已听到「${phrase}」 · 电脑执行状态尚未确认`;
-  }
-  $('#voiceStatus').textContent=voiceText;
+  // 卡片上只写怎么说；没准备好时写卡在哪。听到的那一句浮在页面底下，几秒后自己走。
+  const voiceText=ready?`先说「${currentVoiceWakeWord(s)}」，再说口令`
+    :!s.available||!has?'语音模型没装好':!connected?(s.source_kind==='phone'?'等手机连上':'麦克风没打开'):'麦克风没声音，或者还在准备';
+  if($('#voiceStatus').textContent!==voiceText)$('#voiceStatus').textContent=voiceText;
+  announceVoice(s,phrase);
   const modelPath=s.model_path||s.command_model_path||'—';const mp=$('#voiceModelPath');if(mp){mp.textContent='模型：'+modelPath;mp.title=modelPath}
   renderPersonalVoice(s);
   const clash=$('#voiceConflicts');if(clash){const list=s.phrase_conflicts||[];clash.hidden=!list.length;clash.textContent=list.length?`${list.join('；')}。同名的只有一条会生效，改掉其中一条的说法。`:''}
@@ -2306,6 +2447,16 @@ async function saveWakeWord(){
 }
 document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
 if($('#wakeWord'))watchVoicePhrase($('#wakeWord'));
+let voiceHeardKey=null;
+function announceVoice(s,phrase){
+  const key=[s.commands_heard??'',phrase,s.last_action||'',s.last_executed??''].join('|');
+  if(voiceHeardKey===null){voiceHeardKey=key;return}
+  if(key===voiceHeardKey)return;voiceHeardKey=key;
+  if(!phrase)return;
+  if(s.last_action==='wake')notice(`听到「${currentVoiceWakeWord(s)}」，接着说口令`);
+  else if(s.last_executed===true)notice(`「${phrase}」✓`);
+  else if(s.last_executed===false)notice(`听到「${phrase}」，没执行${s.last_error?`：${s.last_error}`:''}`);
+}
 async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
 function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandNames(action.target).join('、')}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 function renderVoiceCommandCard(command){const card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');const phrase=document.createElement('div');phrase.textContent=command.phrase||'';const label=document.createElement('small');label.textContent=command.system_fixed?(command.label||''):[command.label,voiceActionLabel(command.effective_action)].filter(Boolean).join(' · ');card.append(phrase,label);return card}
@@ -2331,7 +2482,7 @@ function renderVoiceCommandCatalog(commands){
 }
 async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
 
-function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';if($('#rollTiltHint'))$('#rollTiltHint').hidden=head.horizontalAlgorithm!=='roll_tilt';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.enabled=$('#headEnable').checked;head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>el.style.setProperty('display',head.verticalLookSource==='head'?'block':'none','important'));$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>{el.hidden=head.verticalLookSource!=='head'});$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 async function pushHeadConfig(){
   syncControlLabels();
   renderKernelState(await post('/api/head/config',{
@@ -2351,14 +2502,14 @@ function autosaver(save,statusId,retryId,onDirty=()=>{}){
     const version=revision;status.textContent='正在保存…';retry.hidden=true;
     flight=save();
     try{await flight;saved=version}
-    catch(error){status.textContent='保存失败，修改已保留：'+error.message;retry.hidden=false;throw error}
+    catch(error){status.textContent='没保存上：'+error.message;retry.hidden=false;throw error}
     finally{flight=null}
     if(saved!==revision)return flush();
-    onDirty(false);status.textContent='已自动保存';
+    onDirty(false);flashStatus(status,'已保存');
   }
   retry.addEventListener('click',()=>flush().catch(()=>{}));
   return {
-    dirty(){revision++;onDirty(true);status.textContent='有待保存的修改';clearTimeout(timer);timer=setTimeout(()=>flush().catch(()=>{}),500)},
+    dirty(){revision++;onDirty(true);status.textContent='正在保存…';clearTimeout(timer);timer=setTimeout(()=>flush().catch(()=>{}),500)},
     flush,pending:()=>saved!==revision,
   };
 }
@@ -2481,14 +2632,15 @@ async function runAction(action){
 }
 function bind(id,action){$('#'+id).addEventListener('click',()=>runAction(action))}
 function showView(view){
-  if(zoneEditMode&&view!=='play'){notice('请先保存或取消区域调整');return}
+  // 「动作测试」已经并进开始页：画面上大字显示触发，右边列最近触发。
+  if(view==='range')view='play';
+  if(zoneEditMode&&view!=='play'){notice('先保存或取消区域调整');return}
   currentView=view;
   document.querySelectorAll('[data-panel]').forEach(el=>el.hidden=el.dataset.panel!==view);
   document.querySelectorAll('[data-view]').forEach(el=>{
     if(el.dataset.view===view)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');
   });
-  const tab=document.querySelector(`[data-view="${view}"]`);
-  $('#viewHint').textContent=tab?.dataset.viewHint||'';
+  closeMenus();
   if(view==='devices'){void refreshXinput();void refreshHandMouse();void refreshPoseRecord()}
   if(view==='games')loadCloudEndpoint().catch(()=>{});
   window.scrollTo(0,0);
@@ -2516,15 +2668,15 @@ async function init(){
     reloadViewControlState().then(()=>{setViewControlBusy(false);renderViewControl(true)}),
     api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
-      $('#modelStatus').textContent=modelAvailable?'电脑人体模型可用':'电脑人体模型不可用；手机输入、实体手柄不受此项影响';
+      $('#modelStatus').textContent=modelAvailable?'':'这台电脑的人体识别模型用不了，只能用手机摄像头';
     }),
   ]);
   if(results.some(result=>result.status==='rejected'))notice('部分设备信息尚未读取，可继续使用已连接的输入');
-  await loadProfiles();renderVoiceRows(voiceRowsFromStatus(voice.status));
+  await loadProfiles();renderVoiceRows(voiceRowsFromStatus(voice.status));renderBodyDescs();
   poll(refreshKernel,250);poll(async()=>{await refreshInput();await refreshOutput();await refreshVoice()},900);
   poll(refreshXinput,1500,()=>currentView==='devices');
-  // 识别帧率和 CPU 占用常驻在"输入来源"里，设备页开着就刷新。
-  poll(refreshPerformance,1500,()=>currentView==='devices');
+  // 帧数写在开始页的画面角上，诊断细节在设置里；这两页开着才刷新。
+  poll(refreshPerformance,1500,()=>currentView==='devices'||currentView==='play');
   poll(refreshStereo,300,()=>currentView==='devices');
   poll(refreshPreview,150);
 }
@@ -2555,31 +2707,38 @@ $('#audioDevice').addEventListener('change',e=>runAction(async()=>{
   notice(value?'已切换电脑音频输入设备':'已恢复系统默认音频输入设备');
 }));
 bind('overlayBtn',toggleOverlay);
-for(const [id,key] of [['handMouseEnabled','enabled'],['handMouseSensitivity','sensitivity'],['handMouseDeadzone','deadzone'],['handMouseClose','fist_close'],['handMouseOpen','fist_open'],['handMouseCurlClose','curl_close'],['handMouseCurlOpen','curl_open']]){
-  $('#'+id).addEventListener('change',e=>void saveHandMouseFields({[key]:key==='enabled'?e.target.checked:Number(e.target.value)}));
+for(const [id,key,digits] of [['handMouseSensitivity','sensitivity',0],['handMouseDeadzone','deadzone',2]]){
+  $('#'+id).addEventListener('input',e=>{$('#'+id+'Value').textContent=Number(e.target.value).toFixed(digits)});
+  $('#'+id).addEventListener('change',e=>void saveHandMouseFields({[key]:Number(e.target.value)}));
 }
 for(const axis of ['horizontal','vertical']){
   $('#view'+(axis==='horizontal'?'Horizontal':'Vertical')+'Source').addEventListener('change',()=>void saveViewControlAxis(axis));
-  $('#handMouse'+(axis==='horizontal'?'Horizontal':'Vertical')+'Hand').addEventListener('change',()=>void saveAdvancedHandAxis(axis));
 }
+$('#legacyToFistBtn').addEventListener('click',()=>{$('#viewVerticalSource').value='left';void saveViewControlAxis('vertical')});
 $('#verticalLookSource').addEventListener('change',()=>void saveLegacyVertical());
-$('#headEnable').addEventListener('change',()=>void saveHeadEnabled());
 // 教学只指路不代劳：连接、校准都由人去点真按钮。它自己只会做一件事——扫一遍
 // 摄像头，好知道该建议什么。
 const tutorial=createTutorial({state:tutorialState,scanCameras,
   zoneFitStart:()=>zoneFit('start'),zoneFitGripOnly:()=>zoneFit('start',{body:false}),
   zoneFitSkip:()=>zoneFit('skip'),zoneFitCancel:()=>zoneFit('cancel'),
   intentStart:keys=>intentAction('start',keys?{keys}:{}),intentSkip:()=>intentAction('skip'),
-  intentCancel:()=>intentAction('cancel')});
+  intentCancel:()=>intentAction('cancel'),reveal:revealTargets});
 $('#zoneFitBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.currentTarget));
 $('#zoneFitGripBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.currentTarget,{gripOnly:true}));
 bind('zoneFitResetBtn',async()=>{renderKernelState(await post('/api/zones/fit/reset',{}));notice('区域已恢复默认大小。')});
-for(const id of ['tutorialBtn','tutorialSettingsBtn'])$('#'+id).addEventListener('click',e=>tutorial.open(e.currentTarget));
+$('#tutorialBtn').addEventListener('click',()=>{closeMenus();tutorial.open($('#helpBtn'))});
 bind('poseRecordBtn',startPoseRecord);
 bind('poseRecordCancelBtn',cancelPoseRecord);
-bind('profileSearchBtn',searchProfiles);
-$('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(searchProfiles)});
-bind('profileApplyBtn',applySelectedProfile);bind('resetProfileBindingsBtn',resetProfileBindings);
+$('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){clearTimeout(profileSearchTimer);void runAction(searchProfiles)}});
+let profileSearchTimer=0;
+$('#profileSearch').addEventListener('input',()=>{clearTimeout(profileSearchTimer);profileSearchTimer=setTimeout(()=>searchProfiles().catch(error=>notice(error.message)),250)});
+// 选游戏只有一个列表：点哪个就换成哪个。
+$('#profileResults').addEventListener('click',event=>{
+  const item=event.target.closest('.game-result');if(!item||item.disabled||profileSwitching)return;
+  $('#profileSelect').value=item.dataset.id;
+  void runAction(async()=>{await applySelectedProfile();togglePanel('switchGameBtn','gamePicker',false)});
+});
+bind('resetProfileBindingsBtn',resetProfileBindings);
 bind('profileLaunchBtn',toggleGameLaunchMode);
 bind('customGameAddBtn',addCustomGame);
 bind('customGameRenameBtn',renameCustomGame);
@@ -2600,7 +2759,7 @@ document.querySelectorAll('.zone').forEach(el=>{
     rectEdit.selected=el.dataset.zone;nudgeRect(el.dataset.zone,e.key,e.shiftKey);
   });
 });
-// 上下视角的范围、死区。原来在参考场景的编辑栏里，现在归通用设置，拖完就存。
+// 上下视角的范围、死区（旧版上下视角）。在「设置 → 视角」里，拖完就存。
 for(const [id,key] of [['verticalRange','range_y'],['verticalDeadzone','deadzone']]){
   const input=$('#'+id);if(!input)continue;
   input.addEventListener('input',()=>{$('#'+id+'Value').textContent=input.value+'%'});
@@ -2614,13 +2773,13 @@ $('#voiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').show
 $('#closeVoiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').close());
 $('#poseSource').addEventListener('change',()=>{
   desiredSource=$('#poseSource').value;$('#phoneGuide').open=desiredSource==='phone';
-  syncCameraDeviceRow();
-  notice('已选择'+(desiredSource==='phone'?'手机摄像头':'电脑摄像头')+'，点「连接并开始识别」生效');
+  syncCameraDeviceRow();renderInputStatus(inputStatus);
+  notice('已选'+(desiredSource==='phone'?'手机摄像头':'电脑摄像头')+'，点「连接」生效');
 });
 $('#cameraDevice').addEventListener('change',e=>runAction(async()=>{
   const data=await post('/api/camera/config',{index:Number(e.target.value)});
   cameraIndex=Number(data.camera_index??e.target.value);
-  notice('已选择摄像头 '+cameraIndex+'，点「连接并开始识别」看看画面对不对');
+  notice('已选摄像头 '+cameraIndex+'，点「连接」看画面对不对');
 }));
 // 按钮和新手教学用的是同一个扫描：结果记在 cameraScan 里，教学据此判断这台电脑有几个摄像头。
 async function scanCameras(){
@@ -2633,8 +2792,8 @@ async function scanCameras(){
     const n=(data.devices||[]).length;
     Object.assign(cameraScan,{state:'done',count:n,error:''});
     if(!status)return;
-    status.textContent=n?`找到 ${n} 个。选一个，连接之后看画面里是不是你。`
-      :'一个也没找到。可能没有摄像头，或者被别的软件占着；也可以把来源改成手机摄像头。';
+    status.textContent=n?`找到 ${n} 个，选一个再点「连接」`
+      :'一个也没找到：可能被别的软件占着，或者改用手机摄像头';
   }catch(e){Object.assign(cameraScan,{state:'failed',error:String(e?.message||e)});if(status)status.textContent='扫描失败：'+cameraScan.error}
 }
 bind('cameraScanBtn',scanCameras);
@@ -2681,6 +2840,85 @@ window.addEventListener('beforeunload',e=>{
   if(profileDirty.size||headSaver.pending()||voiceSaver.pending()||zoneEditMode){e.preventDefault();e.returnValue=''}
   try{overlay.win?.close()}catch{}
 });
+/* --- 顶栏菜单、白天/夜间、设置分类、本游戏页签 ------------------------------------ */
+function closeMenus(except){
+  document.querySelectorAll('.menu').forEach(menu=>{
+    if(menu===except)return;
+    menu.hidden=true;menu.parentElement?.querySelector('[aria-haspopup]')?.setAttribute('aria-expanded','false');
+  });
+}
+for(const [buttonId,menuId] of [['helpBtn','helpMenu'],['gameMenuBtn','gameMenu']]){
+  const button=$('#'+buttonId),menu=$('#'+menuId);
+  button.addEventListener('click',event=>{event.stopPropagation();const open=menu.hidden;closeMenus(menu);menu.hidden=!open;button.setAttribute('aria-expanded',String(open))});
+  menu.addEventListener('click',event=>{if(event.target.closest('.menu-item'))closeMenus()});
+}
+document.addEventListener('click',event=>{if(!event.target.closest('.menu-wrap'))closeMenus()});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMenus()});
+
+// 白天（月白）/ 夜间（石墨）。默认跟着系统；手动选的记在这台电脑的浏览器里。
+const THEME_KEY='motioncontrol_theme';
+function applyTheme(choice){
+  const fixed=choice==='light'||choice==='dark';
+  if(fixed)document.documentElement.dataset.theme=choice;else delete document.documentElement.dataset.theme;
+  try{if(fixed)localStorage.setItem(THEME_KEY,choice);else localStorage.removeItem(THEME_KEY)}catch{}
+  document.querySelectorAll('#themeSeg [data-theme-choice]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.themeChoice===(fixed?choice:'auto'))));
+}
+document.querySelectorAll('#themeSeg [data-theme-choice]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();applyTheme(button.dataset.themeChoice)}));
+applyTheme(document.documentElement.dataset.theme||'auto');
+
+// 设置页左边的分类，一次只看一类。
+function showSettingsPane(name){
+  const known=[...document.querySelectorAll('.settings-pane')].some(pane=>pane.dataset.pane===name);
+  const pane=known?name:'devices';
+  document.querySelectorAll('#settingsNav [data-pane]').forEach(button=>button.setAttribute('aria-current',String(button.dataset.pane===pane)));
+  document.querySelectorAll('.settings-pane').forEach(section=>{section.hidden=section.dataset.pane!==pane});
+  if(pane==='lab')void refreshPoseRecord();
+}
+document.querySelectorAll('#settingsNav [data-pane]').forEach(button=>button.addEventListener('click',()=>{showSettingsPane(button.dataset.pane);window.scrollTo(0,0)}));
+
+// 本游戏：区域 / 身体动作 / 口令三个页签。
+document.querySelectorAll('#mapTabs [data-tab]').forEach(button=>button.addEventListener('click',()=>showMapTab(button.dataset.tab)));
+$('#addGameVoiceBtn').addEventListener('click',()=>{
+  const row=document.querySelector('.binding-group[data-group="voice"] .binding-row[hidden]');if(!row)return;
+  row.hidden=false;row.closest('.binding-group-rows')?.querySelector('.profile-empty')?.remove();
+  updateMapCounts();row.querySelector('.voice-trigger-phrase')?.focus();
+});
+
+// 动作库能收起来：绑好了就不用每次都看一墙卡片。
+const LIBRARY_KEY='motioncontrol_library_open';
+function setLibraryOpen(open){
+  $('#libraryBody').hidden=!open;
+  $('#libToggle').setAttribute('aria-expanded',String(open));$('#libToggle').textContent=open?'收起':'展开';
+  try{localStorage.setItem(LIBRARY_KEY,open?'1':'0')}catch{}
+}
+$('#libToggle').addEventListener('click',()=>setLibraryOpen($('#libraryBody').hidden));
+try{if(localStorage.getItem(LIBRARY_KEY)==='0')setLibraryOpen(false)}catch{}
+
+// 「换游戏」「云端配置」两块平时收着，点了才展开，一次只开一块。
+function togglePanel(buttonId,panelId,open){
+  const panel=$('#'+panelId),button=$('#'+buttonId);
+  const next=open??panel.hidden;panel.hidden=!next;button.setAttribute('aria-expanded',String(next));
+  return next;
+}
+$('#switchGameBtn').addEventListener('click',()=>{
+  if(!togglePanel('switchGameBtn','gamePicker'))return;
+  togglePanel('cloudOpenBtn','cloudPanel',false);$('#profileSearch').focus();void runAction(searchProfiles);
+});
+$('#cloudOpenBtn').addEventListener('click',()=>{
+  if(!togglePanel('cloudOpenBtn','cloudPanel'))return;
+  togglePanel('switchGameBtn','gamePicker',false);void cloudRefresh();
+});
+
+// 新手教学要指的东西可能收在别处：设置的另一类、本游戏的另一个页签、收起的动作库、
+// 没展开的换游戏面板。先把它亮出来，教学的亮框才找得到它。
+function revealTargets(elements){
+  for(const el of elements||[]){
+    const pane=el.closest?.('.settings-pane');if(pane?.hidden)showSettingsPane(pane.dataset.pane);
+    const group=el.closest?.('.binding-group');if(group?.hidden)showMapTab(group.dataset.group);
+    if(el.closest?.('#libraryBody')&&$('#libraryBody').hidden)setLibraryOpen(true);
+    if(el.closest?.('#gamePicker')&&$('#gamePicker').hidden){togglePanel('switchGameBtn','gamePicker',true);void runAction(searchProfiles)}
+  }
+}
 init();
 
 /* --- 云端配置 -----------------------------------------------------------
@@ -3198,7 +3436,11 @@ function paintCustomPoseScores() {
     row.classList.toggle('firing', active.has(id));
     // 键位标签跟着一起刷。上面改了绑定，这里得马上跟上，不然就是两处各说各的。
     const bound = row.querySelector('.custom-pose-key');
-    if (bound) bound.textContent = libraryKeyLabel('pose.' + id);
+    if (bound) {
+      const label = libraryKeyLabel('pose.' + id);
+      if (bound.textContent !== label) bound.textContent = label;
+      bound.classList.toggle('add', label === '加到映射' || label === '没绑键');
+    }
   }
 }
 
@@ -3221,7 +3463,6 @@ document.getElementById('customPoseCaptureBtn')?.addEventListener('click', captu
  */
 const poseLibraryEl = document.getElementById('poseLibraryList');
 const poseCloudEl = document.getElementById('poseCloudList');
-const ZONE_NAMES_CN = {leftHand: '左手区', rightHand: '右手区', leftFoot: '左脚区', rightFoot: '右脚区', headJump: '头顶区'};
 let ratingNames = {intensity: '运动强度', recognition: '识别度', difficulty: '上手难度'};
 let bodyPartNames = {legs: '腿部', glutes: '臀部', core: '核心', arms: '手臂', shoulders: '肩背'};
 
@@ -3277,30 +3518,30 @@ setInterval(() => {
 }, 80);
 
 /** 星级：三项 1~5 星，锻炼部位各自打星。一个动作卡片上都是同一套写法。 */
+const RATING_SHORT = {intensity: '强度', recognition: '识别', difficulty: '难度'};
 function poseRatings(item) {
   const box = document.createElement('div');
   box.className = 'pose-ratings';
-  const stars = count => '★'.repeat(count) + '☆'.repeat(Math.max(0, 5 - count));
   for (const [key, label] of Object.entries(ratingNames)) {
     const count = Number(item.ratings?.[key] || 0);
     if (!count) continue;
     const row = document.createElement('div');
     row.className = 'pose-rating';
-    row.title = `${label} ${count} 星（满分 5 星）`;
+    row.title = `${label}：${count} / 5`;
     const name = document.createElement('span');
-    name.textContent = label;
-    const value = document.createElement('span');
-    value.className = 'pose-stars';
-    value.textContent = stars(count);
-    row.append(name, value);
+    name.textContent = RATING_SHORT[key] || label;
+    const dots = document.createElement('span');
+    dots.className = 'pose-dots';
+    for (let i = 1; i <= 5; i++) { const dot = document.createElement('i'); if (i <= count) dot.className = 'on'; dots.append(dot); }
+    row.append(name, dots);
     box.appendChild(row);
   }
   const parts = Object.entries(item.body_parts || {}).sort((a, b) => b[1] - a[1]);
   if (parts.length) {
     const row = document.createElement('div');
     row.className = 'pose-parts';
-    row.textContent = '锻炼：' + parts.map(([key, count]) => `${bodyPartNames[key] || key} ${'★'.repeat(count)}`).join(' · ');
-    row.title = '锻炼部位，星越多练得越多';
+    row.textContent = '练 ' + parts.map(([key]) => bodyPartNames[key] || key).join(' · ');
+    row.title = '锻炼部位，越靠前练得越多';
     box.appendChild(row);
   }
   return box;
@@ -3314,24 +3555,7 @@ function poseCardBody(...parts) {
   return body;
 }
 
-// 「开始」页画面下面那排小标签：本机动作库里有什么就列什么，做着的那个亮起来。
-// 名字太长的几个用短一点的叫法，一排放得下。
-const TRIGGER_CHIP_NAMES = {march: '踏步', calf_back: '小腿后抬', hands_up: '双手过头'};
-function renderTriggerChips() {
-  const box = document.getElementById('triggerChips');
-  if (!box) return;
-  box.replaceChildren(...poseLibrary.map(item => {
-    const chip = document.createElement('span');
-    chip.className = 'trigger-chip';
-    chip.dataset.id = item.id;
-    chip.dataset.group = item.group;
-    chip.textContent = TRIGGER_CHIP_NAMES[item.id] || item.name;
-    return chip;
-  }));
-}
-
 function renderPoseLibrary() {
-  renderTriggerChips();
   if (!poseLibraryEl) return;
   poseLibraryEl.replaceChildren();
   for (const item of poseLibrary) {
@@ -3360,7 +3584,7 @@ function renderPoseLibrary() {
     const source = document.createElement('div');
     source.className = 'pose-library-source';
     if (item.source === 'cloud') {
-      source.append(`官方动作库 · 第 ${item.revision} 版`);
+      source.append(`官方 · 第 ${item.revision} 版`);
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'btn pose-library-remove';
@@ -3368,17 +3592,10 @@ function renderPoseLibrary() {
       remove.addEventListener('click', () => removePoseAction(item));
       source.append(remove);
     } else {
-      source.textContent = '程序自带';
+      source.textContent = '自带';
     }
+    // 会扫过哪些框不写在卡片上：绑了键以后，那个框「更多」里会写。
     card.append(poseDemo(item.demo), poseCardBody(head, how, poseRatings(item)), source);
-
-    // 做这个动作会扫过哪些圈。两边都绑了键时，下面那行 paintPoseLibrary 会写清楚怎么让。
-    if ((item.passes_zones || []).length) {
-      const zones = document.createElement('div');
-      zones.className = 'pose-library-zones';
-      zones.textContent = '做的时候会经过：' + item.passes_zones.map(zone => ZONE_NAMES_CN[zone] || zone).join('、');
-      card.append(zones);
-    }
     poseLibraryEl.appendChild(card);
   }
   paintPoseLibrary();
@@ -3420,8 +3637,8 @@ async function openPoseCloud() {
     for (const item of poseCloudItems) poseLibraryNames.cloud[item.id] = item.name;
     const fresh = poseCloudItems.filter(item => !item.installed_revision).length;
     poseCloudSay(poseCloudItems.length
-      ? (fresh ? `官方动作库里有 ${poseCloudItems.length} 个动作，${fresh} 个还没下载。` : '官方动作库里的动作都下载了。')
-      : '官方动作库里暂时还没有发布的动作。');
+      ? (fresh ? `${poseCloudItems.length} 个动作，${fresh} 个还没下载` : '都下载了')
+      : '暂时还没有发布的动作');
     renderPoseCloud();
     paintPoseMissingNotice();
   } catch (error) {
@@ -3473,7 +3690,7 @@ async function installPoseAction(item, button) {
     const data = await post('/api/pose/cloud/install', { id: item.id }, 20000);
     item.installed_revision = item.revision;
     item.update_available = false;
-    poseCloudSay(`「${item.name}」已下载。在上面它的卡片上点「加到映射」就能绑键。`);
+    poseCloudSay(`「${item.name}」已下载，点它卡片上的「加到映射」绑键`);
     await afterPoseLibraryChange(data.library);
   } catch (error) {
     button.disabled = false;
@@ -3500,70 +3717,38 @@ function paintPoseMissingNotice() {
   }
   box.hidden = !missing.length;
   const text = missing.length
-    ? `这份配置用到了还没下载的动作：${missing.join('、')}。${missing.length > 1 ? '它们' : '它'}现在不会触发，先到下面的「官方动作库」下载。`
+    ? `这份配置用到了还没下载的动作：${missing.join('、')}，现在不会触发`
     : '';
   const label = box.querySelector('span');
   if (label && label.textContent !== text) label.textContent = text;
 }
 document.getElementById('poseMissingGo')?.addEventListener('click', () => {
+  showMapTab('body');
+  setLibraryOpen(true);
   document.getElementById('poseCloudPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   if (!poseCloudItems.length) openPoseCloud();
 });
 
-/** 框给动作让路时说的那句话。电脑那边算好哪些框在让、让谁，这里只翻译成人话。 */
-function zoneYieldText(trigger) {
-  const overlaps = kernelState?.zone_overlaps || {};
-  const paused = [], sharing = [];
-  for (const [zone, info] of Object.entries(overlaps)) {
-    if (!(info.triggers || []).includes(trigger)) continue;
-    const name = ZONE_NAMES_CN[zone] || zone;
-    (info.yields ? paused : sharing).push(name);
-  }
-  const parts = [];
-  if (paused.length) parts.push(`${paused.join('、')}也绑了键：做这个动作扫过时不按，平时照常按`);
-  if (sharing.length) parts.push(`${sharing.join('、')}也绑了键：做这个动作时会一起按到`);
-  return parts.join('；');
-}
-
 /** 只改键位和提醒，不重建。 */
 function paintPoseLibrary() {
   if (!poseLibraryEl) return;
+  let used = 0;
   for (const card of poseLibraryEl.querySelectorAll('.pose-library-item')) {
     const item = poseLibrary.find(entry => entry.id === card.dataset.id);
     if (!item) continue;
     const bound = card.querySelector('.custom-pose-key');
     const label = libraryKeyLabel(item.trigger);
-    if (bound && bound.textContent !== label) bound.textContent = label;
-    let warn = card.querySelector('.pose-library-warn');
-    const text = triggerMapped(item.trigger) ? zoneYieldText(item.trigger) : '';
-    if (text && !warn) {
-      warn = document.createElement('div');
-      warn.className = 'pose-library-warn';
-      card.append(warn);
+    if (bound) {
+      if (bound.textContent !== label) bound.textContent = label;
+      bound.classList.toggle('add', label === '加到映射' || label === '没绑键');
     }
-    if (warn) {
-      warn.hidden = !text;
-      if (warn.textContent !== text) warn.textContent = text;
-    }
+    if (triggerMapped(item.trigger)) used++;
   }
-  paintZoneYieldNotice();
+  const count = document.getElementById('libraryCount');
+  const text = `${poseLibrary.length} 个${used ? ` · ${used} 个在用` : ''}`;
+  if (count && count.textContent !== text) count.textContent = text;
 }
 
-/** 映射表上方那一行：绑了会互相碰到的动作和圈时，在绑键的地方就说清楚。 */
-function paintZoneYieldNotice() {
-  const box = document.getElementById('zoneYieldNotice');
-  if (!box) return;
-  const lines = poseLibrary
-    .filter(item => triggerMapped(item.trigger))
-    .map(item => {
-      const text = zoneYieldText(item.trigger);
-      return text ? `「${item.name}」和${text}` : '';
-    })
-    .filter(Boolean);
-  const text = lines.join('\n');
-  box.hidden = !text;
-  if (box.textContent !== text) box.textContent = text;
-}
 document.getElementById('cloudSiteBtn')?.addEventListener('click', () => openOnSite('/'));
 
 /* --- 键盘宏 -------------------------------------------------------------
@@ -3578,9 +3763,9 @@ document.getElementById('cloudSiteBtn')?.addEventListener('click', () => openOnS
 const macroListEl = document.getElementById('macroList');
 const macroStatusEl = document.getElementById('macroStatus');
 const MACRO_STEP_TYPES = [
-  ['keyboard', '键盘'], ['mouse_button', '鼠标按键'], ['mouse_wheel', '鼠标滚轮'],
-  ['gamepad', 'Xbox 按键'], ['gamepad_trigger', 'Xbox 扳机'], ['gamepad_axis', 'Xbox 左摇杆'],
-  ['macro', '跑另一条宏'],
+  ['keyboard', '键盘'], ['mouse_button', '鼠标'], ['mouse_wheel', '滚轮'],
+  ['gamepad', '手柄'], ['gamepad_trigger', '手柄扳机'], ['gamepad_axis', '左摇杆'],
+  ['macro', '另一条宏'],
 ];
 const MACRO_STEP_TARGETS = {
   mouse_button: ['LEFT', 'RIGHT', 'MIDDLE', 'X1', 'X2'],
@@ -3873,7 +4058,7 @@ document.getElementById('macroName')?.addEventListener('keydown', event => {
  * 它就放在映射表正上方，不另开一页：看到「左手区 → Y」不对，往下一眼就是改它的
  * 那一行。点一条还能直接跳过去。两件事本来就是同一件事，分两个地方只会让人来回找。
  */
-// 默认只给绑了键的；「动作测试」页要的是认出来的全部，传 all。区域的 pressed 本身
+// 默认只给绑了键的；开始页的触发显示要的是认出来的全部，传 all。区域的 pressed 本身
 // 就不含没绑键的，那一页要看 recognized。
 function activeTriggerKeys({all = false} = {}) {
   const k = kernelState || {};
@@ -3904,7 +4089,7 @@ function renderTriggerLive() {
   const names = new Map(profileTriggers().map(item => [item.key, item.name]));
   const bindings = bindingsForDisplay();
   const now = Number(kernelState?.now) || 0;
-  // 记录里的动作是触发那一刻绑的键；没绑的那几条不在这里显示，只在「动作测试」页。
+  // 记录里的动作是触发那一刻绑的键；没绑的那几条不在这里显示，只在开始页。
   const events = (kernelState?.recent_triggers || []).filter(event => actionKeyText(event.action));
   const active = [...activeTriggerKeys()].filter(key => names.has(key));
 
@@ -3952,160 +4137,127 @@ function renderTriggerLive() {
   }
 }
 
-/* --- 动作测试 ---------------------------------------------------------------
- * 站到镜头前做个动作，看打中了什么、按的是哪个键。
+/* --- 开始页上的触发显示（原来的「动作测试」页） ------------------------------------
+ * 站到镜头前做个动作，看打中了什么、按的是哪个键。人在几米外，所以字必须大。
  *
- * 它单独一个页签，不挤在映射表旁边。两个原因：
- *
- * 一是你做动作的时候人在几米外，字必须大。挤在编辑器旁边的那种一行小字，走近了
- * 才看得清，而走近了就做不成动作了。
- * 二是"试"和"改"是两回事。试的时候要看的是"这一下到底认出来没有"，改的时候要看的
- * 是一整张表。混在一起两边都憋屈。
- *
- * 靶子墙上把没映射的也列出来，这是整个页面最有用的一条信息：动作亮了、键位写着
- * 「未映射」，说明识别是好的，只是没绑——而这两种情况在游戏里的表现完全一样，
- * 都是"我做了但没反应"。
+ * 没绑键的动作也列出来，这是最有用的一条信息：动作亮了、键位写着「没绑」，说明识别
+ * 是好的，只是没绑——而这两种情况在游戏里的表现完全一样，都是"我做了但没反应"。
  */
 
-/** 打中之后大字停留多久。太短了人还没把视线从镜头挪回屏幕就已经没了。 */
-const RANGE_HIT_HOLD_S = 3.0;
-/** 靶子亮多久。比大字短，因为连着做动作时它要跟得上。 */
+/* 大字停多久。太短了人还没把视线从镜头挪回屏幕就已经没了。 */
+const RANGE_HIT_HOLD_S = 2.0;
+/** 动作格子亮多久。比大字短，因为连着做动作时它要跟得上。 */
 const RANGE_FLASH_S = 0.8;
-
-const RANGE_GROUPS = [
-  { key: 'zones', name: '身体区域' },
-  { key: 'motions', name: '身体动作' },
-  { key: 'poses', name: '自定义动作' },
-  { key: 'voice', name: '本游戏口令' },
-];
+/** 名字太长的几个用短一点的叫法，一排放得下。 */
+const TRIGGER_CHIP_NAMES = {march: '踏步', calf_back: '小腿后抬', hands_up: '双手过头'};
 
 let rangeTargetKeys = '';
+let rangeLogKey = '';
 
+// 画面下面那排：本机认得的身体动作全列上。区域不列——画面里的框自己会亮。
 function rangeTriggers() {
-  const bindings = bindingsForDisplay();
-  return profileTriggers().filter(item => {
-    // 身体那三类全列出来——"动作认出来了但没绑键"正是这一页要让人看见的。
-    if (item.group !== 'voice') return true;
-    // 语音有二十多条，全铺上去就成了一面墙。只列绑了键的。
-    const binding = bindings[item.key];
-    return !!(binding && !binding.disabled && binding.action);
-  });
+  return profileTriggers().filter(item => item.group === 'motions' || item.group === 'poses');
 }
 
 function buildRangeTargets(triggers) {
   const wall = document.getElementById('rangeTargets');
   if (!wall) return;
   wall.replaceChildren();
-  for (const group of RANGE_GROUPS) {
-    const items = triggers.filter(item => item.group === group.key);
-    if (!items.length) continue;
-    const block = document.createElement('div');
-    block.className = 'range-group';
-    const title = document.createElement('div');
-    title.className = 'range-group-title';
-    title.textContent = group.name;
-    const grid = document.createElement('div');
-    grid.className = 'range-grid';
-    for (const item of items) {
-      const target = document.createElement('button');
-      target.type = 'button';
-      target.className = 'range-target';
-      target.dataset.trigger = item.key;
-      target.title = '点一下去改它的键';
-      const name = document.createElement('span');
-      name.className = 'range-target-name';
-      name.textContent = item.name;
-      const key = document.createElement('b');
-      key.className = 'range-target-key';
-      target.append(name, key);
-      target.addEventListener('click', () => revealBindingRow(item.key));
-      grid.appendChild(target);
-    }
-    block.append(title, grid);
-    wall.appendChild(block);
+  for (const item of triggers) {
+    const target = document.createElement('button');
+    target.type = 'button';
+    target.className = 'range-target';
+    target.dataset.trigger = item.key;
+    target.title = '点一下去改它的键';
+    const name = document.createElement('span');
+    name.className = 'range-target-name';
+    name.textContent = TRIGGER_CHIP_NAMES[item.id] || String(item.name).replace(/^自定义 · /, '');
+    const key = document.createElement('b');
+    key.className = 'range-target-key';
+    target.append(name, key);
+    target.addEventListener('click', () => revealBindingRow(item.key));
+    wall.appendChild(target);
   }
 }
 
+/* 「动作测试」并进了开始页：
+ * - 做了动作、说了口令，画面上用大字写「原地踏步 → W」，几米外也看得清；
+ * - 画面下面那排动作，认出来就亮——没绑键的也亮，键位写「没绑」，这正是
+ *   「做了但游戏没反应」最常见的原因；
+ * - 右边「最近触发」列出最近几次，点一条去改它的键。
+ * 游戏控制没开时照样显示，大字下面补一句「游戏里不会按」。 */
 function renderRange() {
-  const panel = document.getElementById('rangePanel');
-  if (!panel || panel.hidden) return;
-
+  if (currentView !== 'play') return;
   const triggers = rangeTriggers();
-  // 只在靶子本身变了的时候重建。每 250ms 重建一次的话，鼠标压根点不中。
+  // 只在格子本身变了的时候重建。每 250ms 重建一次的话，鼠标压根点不中。
   const signature = triggers.map(item => item.key).join('|');
   if (signature !== rangeTargetKeys) {
     rangeTargetKeys = signature;
     buildRangeTargets(triggers);
   }
 
-  const names = new Map(triggers.map(item => [item.key, item.name]));
+  const names = new Map(profileTriggers().map(item => [item.key, item.name]));
   const bindings = bindingsForDisplay();
   const now = Number(kernelState?.now) || 0;
   const events = kernelState?.recent_triggers || [];
   const held = activeTriggerKeys({all: true});
+  const keyText = action => actionKeyText(action) || '没绑键';
 
-  const warn = document.getElementById('rangeOutputWarn');
-  // 输出关着的时候这一页照样亮——这正是人要排查的那种情况，所以说清楚。
-  if (warn) warn.hidden = !!output.enabled;
-
-  // 大字：正按着的优先，其次是刚打中的那一下。
+  // 大字：正按着的优先，其次是刚打中的那一下；都没有就不出现。
+  const hit = document.getElementById('rangeHit');
   const holding = [...held].filter(key => names.has(key));
   const latest = events.length ? events[events.length - 1] : null;
   const since = latest ? Math.max(0, now - Number(latest.at || 0)) : Infinity;
-  const what = document.getElementById('rangeHitWhat');
-  const when = document.getElementById('rangeHitWhen');
-  const hit = document.getElementById('rangeHit');
-  if (holding.length) {
-    what.textContent = holding
-      .map(key => `${names.get(key)} → ${actionKeyText(bindings[key]?.action) || '未映射'}`)
-      .join('　');
-    when.textContent = '正按着';
-    hit.className = 'range-hit on';
-  } else if (latest && since <= RANGE_HIT_HOLD_S) {
+  let text = '';
+  if (holding.length) text = holding.map(key => `${names.get(key)} → ${keyText(bindings[key]?.action)}`).join('　');
+  else if (latest && since <= RANGE_HIT_HOLD_S) {
     const key = String(latest.trigger || '');
-    what.textContent = `${latest.label || names.get(key) || key} → ${actionKeyText(latest.action) || '未映射'}`;
-    when.textContent = agoText(since);
-    hit.className = 'range-hit on';
-  } else if (latest) {
-    const key = String(latest.trigger || '');
-    what.textContent = `${latest.label || names.get(key) || key} → ${actionKeyText(latest.action) || '未映射'}`;
-    when.textContent = agoText(since);
-    hit.className = 'range-hit';
-  } else {
-    what.textContent = '站到镜头前，做个动作试试';
-    when.textContent = '';
-    hit.className = 'range-hit';
+    text = `${latest.label || names.get(key) || key} → ${keyText(latest.action)}`;
+  }
+  if (hit) {
+    hit.hidden = !text;
+    if (text && text !== hit.dataset.text) {
+      document.getElementById('rangeHitWhat').textContent = text;
+      hit.classList.remove('on'); void hit.offsetWidth; hit.classList.add('on');
+    }
+    hit.dataset.text = text;
+    const when = document.getElementById('rangeHitWhen');
+    const note = text && !output.enabled ? '游戏控制没开，游戏里不会按' : '';
+    if (when.textContent !== note) when.textContent = note;
   }
 
-  // 靶子：按着的常亮，刚打中的闪一下。没绑键的写「未映射」并且压暗。
+  // 动作格子：按着的常亮，刚打中的闪一下。没绑键的写「没绑」。
   const fresh = new Set(events.filter(event => now - Number(event.at || 0) <= RANGE_FLASH_S)
                               .map(event => String(event.trigger || '')));
   for (const target of document.querySelectorAll('.range-target')) {
     const key = target.dataset.trigger;
-    const text = actionKeyText(bindings[key]?.action);
-    target.querySelector('.range-target-key').textContent = text || '未映射';
-    target.classList.toggle('unmapped', !text);
+    const label = actionKeyText(bindings[key]?.action);
+    const keyEl = target.querySelector('.range-target-key');
+    const want = label || '没绑';
+    if (keyEl.textContent !== want) keyEl.textContent = want;
+    target.classList.toggle('unmapped', !label);
     target.classList.toggle('on', held.has(key));
     target.classList.toggle('flash', !held.has(key) && fresh.has(key));
   }
 
+  // 最近触发：有了才出现。
+  const card = document.getElementById('recentCard');
   const log = document.getElementById('rangeLog');
-  if (!log) return;
+  if (!card || !log) return;
+  card.hidden = !events.length;
+  if (!events.length) return;
+  const recent = events.slice(-6).reverse();
+  const logKey = recent.map(event => `${event.at}:${event.trigger}`).join('|') + '@' + Math.floor(now);
+  if (logKey === rangeLogKey) return;
+  rangeLogKey = logKey;
   log.replaceChildren();
-  if (!events.length) {
-    const empty = document.createElement('span');
-    empty.className = 'fineprint';
-    empty.textContent = '还没打中过。';
-    log.appendChild(empty);
-    return;
-  }
-  for (const event of events.slice(-8).reverse()) {
+  for (const event of recent) {
     const key = String(event.trigger || '');
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'range-log-item';
     row.textContent = `${agoText(Math.max(0, now - Number(event.at || 0)))} · `
-      + `${event.label || names.get(key) || key} → ${actionKeyText(event.action) || '未映射'}`;
+      + `${event.label || names.get(key) || key} → ${keyText(event.action)}`;
     row.title = '点一下去改它的键';
     row.addEventListener('click', () => revealBindingRow(key));
     log.appendChild(row);

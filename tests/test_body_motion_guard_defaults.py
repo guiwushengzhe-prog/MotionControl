@@ -95,5 +95,5 @@ def test_web_defaults_missing_guard_state_to_off():
     assert re.search(r"bodyMotionGuard:false", app)
     assert "k.body_motion_guard_enabled??false" in app
     assert "k.vertical_look?.body_motion_guard===true" in app
-    assert re.search(r'<input id="bodyMotionGuard" type="checkbox"', page)
+    assert re.search(r'<input[^>]*id="bodyMotionGuard"[^>]*type="checkbox"', page)
     assert not re.search(r'<input[^>]*checked=""[^>]*id="bodyMotionGuard"', page)
