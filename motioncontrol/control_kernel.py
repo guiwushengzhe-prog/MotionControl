@@ -3658,7 +3658,9 @@ class NativeCameraService:
     BACKEND_DSHOW = "dshow"
     REQUESTED_WIDTH = 640
     REQUESTED_HEIGHT = 480
-    REQUESTED_FPS = 30
+    # 请求较高供帧速度，实际帧率按到达的独立画面统计。
+    # 这台设备在请求 30 帧时曾降到约 17，请求 60 时稳定供给约 30。
+    REQUESTED_FPS = 60
     PROBE_SECONDS = 2.5
     # The browser requests preview frames at roughly 6.7 Hz.  Keep a small
     # server-side headroom while avoiding an unconditional 15 Hz JPEG encoder
@@ -3693,7 +3695,11 @@ class NativeCameraService:
         self._rotation_changed_at = 0.0
         # 辅助模式：手机是身体源，这台摄像头只给双目深度当第二视角，识别结果不进控制。
         self.assist = False
-        self.backend_preference = self.BACKEND_AUTO
+        # 默认直接采集以减少图形开销；显式选过的兼容模式继续沿用。
+        # 旧的自动测速缓存不应把新的默认选择带回系统媒体采集。
+        self.backend_preference = self._normalize_backend(
+            self._remembered("camera_backend", self.BACKEND_DSHOW)
+        )
         self.selected_backend: str | None = None
         self.selected_backend_name: str | None = None
         self.selected_fourcc: str | None = None
@@ -3836,6 +3842,7 @@ class NativeCameraService:
             if self.running and preference != self.backend_preference:
                 raise CameraUnavailable("摄像头运行中不能切换采集后端，请先停止摄像头")
             self.backend_preference = preference
+            self._remember("camera_backend", preference)
             return self.backend_config()
 
     def set_camera_index(self, index: int) -> dict:
@@ -4126,7 +4133,7 @@ class NativeCameraService:
             if not ok or not self._valid_frame(frame):
                 capture.release()
                 return None
-            actual_fourcc = fourcc or self._decode_fourcc(capture.get(cv2.CAP_PROP_FOURCC))
+            actual_fourcc = self._decode_fourcc(capture.get(cv2.CAP_PROP_FOURCC)) or fourcc
             return capture, frame, actual_fourcc
         except Exception:
             try:
@@ -4221,14 +4228,19 @@ class NativeCameraService:
                 return capture, first_frame
 
         if preference != self.BACKEND_AUTO:
+            backend = preference
             opened = self._open_capture(
-                cv2, preference, "MJPG" if preference == self.BACKEND_DSHOW else None,
+                cv2, backend, "MJPG" if backend == self.BACKEND_DSHOW else None,
             )
+            # 不支持直接采集的设备仍能打开；实际使用的方式由状态如实报告。
+            if opened is None and preference == self.BACKEND_DSHOW:
+                backend = self.BACKEND_MSMF
+                opened = self._open_capture(cv2, backend)
             if opened is None:
                 raise CameraUnavailable(f"电脑摄像头 {self.camera_index} 的 {self._backend_display_name(preference)} 无法打开")
             capture, first_frame, actual_fourcc = opened
-            self.selected_backend = preference
-            self.selected_backend_name = preference
+            self.selected_backend = backend
+            self.selected_backend_name = backend
             self.selected_fourcc = actual_fourcc
             self.actual_capture_fps = None
             return capture, first_frame
@@ -4515,6 +4527,7 @@ class NativeCameraService:
             return {
                 "running": self.running, "camera_index": self.camera_index,
                 "frames": self.frames, "last_frame_age_ms": round(max(0.0, (time.monotonic() - self.last_frame_at) * 1000.0)) if self.last_frame_at else None,
+                "captured_frames": self._latest_sequence,
                 "last_error": self.last_error, "model_path": str(self.model_path) if self.model_path else None,
                 "resolution": {"width": self.capture_width, "height": self.capture_height},
                 "backend_preference": self.backend_preference,
@@ -4543,6 +4556,8 @@ class NativeCameraService:
                 "requested_fps": self.requested_fps,
                 "actual_capture_fps": self._round_or_none(self.actual_capture_fps, 2),
                 "inference_fps": self._round_or_none(self._rate(self._inference_times), 2),
+                "captured_frames": int(self._latest_sequence),
+                "processed_frames": int(self.frames),
                 "inference_avg_ms": self._round_or_none(
                     sum(self._inference_durations_ms) / len(self._inference_durations_ms)
                     if self._inference_durations_ms else None,

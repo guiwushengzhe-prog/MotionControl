@@ -164,10 +164,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--camera", type=int, default=0)
-    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--fps", type=int, help="不传时使用程序默认请求帧率")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--backend", choices=("auto", "msmf", "dshow"), default="auto")
+    parser.add_argument("--backend", choices=("auto", "msmf", "dshow"), help="不传时使用程序默认采集方式")
     parser.add_argument("--seconds", type=float, default=20)
     parser.add_argument("--warmup", type=float, default=5)
     parser.add_argument("--preview", action="store_true")
@@ -176,7 +176,8 @@ def main():
     parser.add_argument("--opencv-threads", type=int)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.seconds <= 0 or args.warmup < 0 or min(args.width, args.height, args.fps) <= 0:
+    if (args.seconds <= 0 or args.warmup < 0 or min(args.width, args.height) <= 0
+            or (args.fps is not None and args.fps <= 0)):
         parser.error("测试时间、分辨率、请求帧率必须大于零，预热时间不能为负数")
     args.output.mkdir(parents=True, exist_ok=True)
     saved = Path(os.environ.get("LOCALAPPDATA", "")) / "MotionControl" / "general_settings.json"
@@ -242,9 +243,11 @@ def main():
         if key in settings:
             kernel.remember_general_setting(key, settings[key])
     camera = Camera(kernel, args.model, args.camera)
-    camera.requested_fps = args.fps
+    if args.fps is not None:
+        camera.requested_fps = args.fps
     camera.requested_width, camera.requested_height = args.width, args.height
-    camera.backend_preference = args.backend
+    if args.backend is not None:
+        camera.backend_preference = args.backend
     samples, idle = [], []
     error = None
     started = time.monotonic()
@@ -344,8 +347,30 @@ def main():
 
 
 def measure_live(camera, process, detector_times, resource_sample, samples, args):
+    import cv2
+
+    def capture_properties():
+        return {name: camera._capture.get(key) for name, key in (
+            ("reported_fps", cv2.CAP_PROP_FPS), ("exposure", cv2.CAP_PROP_EXPOSURE),
+            ("auto_exposure", cv2.CAP_PROP_AUTO_EXPOSURE), ("gain", cv2.CAP_PROP_GAIN),
+            ("fourcc", cv2.CAP_PROP_FOURCC))}
+
+    def frame_boundary():
+        # 同一时刻的输入/完成计数会差一帧正在计算的画面。
+        # 在短暂空档取起止点，把窗口首尾跨界的一帧排除出比较。
+        deadline = time.monotonic() + .2
+        while True:
+            perf = camera.performance()
+            if (perf["captured_frames"] == perf["processed_frames"] + perf["skipped_frames"]
+                    or time.monotonic() >= deadline):
+                return perf
+            time.sleep(.001)
+
+    properties_start = capture_properties()
     detector_times.clear()
-    frame_start = camera.frames
+    initial = frame_boundary()
+    frame_start = initial["processed_frames"]
+    capture_start = initial["captured_frames"]
     measured_at = time.monotonic()
     process.cpu_percent()
     while time.monotonic() - measured_at < args.seconds:
@@ -357,8 +382,18 @@ def measure_live(camera, process, detector_times, resource_sample, samples, args
                         "gpu_process_percent", "gpu_total_percent")}, ensure_ascii=False), flush=True)
         if row.get("last_error"):
             raise RuntimeError(row["last_error"])
+    final = frame_boundary()
     measured_s = time.monotonic() - measured_at
-    return {"actual_completed_fps": (camera.frames - frame_start) / measured_s,
+    captured = final["captured_frames"] - capture_start
+    processed = final["processed_frames"] - frame_start
+    return {"actual_completed_fps": processed / measured_s,
+            "actual_capture_fps": captured / measured_s,
+            "captured_frames": captured, "processed_frames": processed,
+            "processed_capture_ratio": processed / captured if captured else None,
+            "skipped_during_measurement": final["skipped_frames"] - initial["skipped_frames"],
+            "dropped_during_measurement": final["dropped_frames"] - initial["dropped_frames"],
+            "capture_properties_start": properties_start,
+            "capture_properties_end": capture_properties(),
             "detector_ms_median": statistics.median(detector_times) if detector_times else None,
             "detector_ms_p95": sorted(detector_times)[int(.95 * (len(detector_times) - 1))]
             if detector_times else None,
