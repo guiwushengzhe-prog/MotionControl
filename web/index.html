@@ -155,12 +155,14 @@
 <div class="controls">
 <label>摄像头来源<select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></label>
 <label id="cameraDeviceRow">使用的摄像头<select id="cameraDevice"></select></label>
+<label id="cameraRotationRow">画面方向<select id="cameraRotation"><option value="auto">自动转正</option><option value="none">不旋转</option><option value="cw">顺时针 90°</option><option value="ccw">逆时针 90°</option><option value="180">180°</option></select></label>
 <label>音频来源<select id="audioSource"><option value="computer">电脑麦克风</option><option value="phone">手机麦克风</option></select></label>
 <label id="audioDeviceRow" hidden="">输入设备<select id="audioDevice"><option value="">系统默认设备</option></select></label>
 </div>
 <div class="settings-actions" id="cameraScanRow"><button class="btn" id="cameraScanBtn">扫描摄像头</button><span class="fineprint" id="cameraScanStatus">有多个摄像头（外接、采集卡、虚拟摄像头）时，在这里切换。</span></div>
 <div class="pill bad" id="mobileStatus">手机未连接</div>
 <p class="statusline" id="audioStatus">音频：正在检查…</p>
+<p class="statusline" id="recognitionStatus">识别：未开始</p>
 <p class="fineprint" id="phonePerf"></p>
 <div class="settings-actions"><button class="btn primary" id="sourceStartBtn">连接并开始识别</button><button class="btn" id="sourceStopBtn">停止识别</button></div><p class="fineprint" id="modelStatus"></p>
 <details id="phoneGuide"><summary>手机连不上怎么办</summary><p class="fineprint">在手机上打开 MotionControl，选「固定摄像头」，点「连接并开始」，它会自己找到这台电脑。第一次要授权、加载模型，几十秒都正常；之后几秒就能连上。</p><p class="fineprint">连不上的话检查两点：手机和电脑在<b>同一个 Wi-Fi</b>；或者插上数据线，并在手机上打开「<b>USB 网络共享</b>」，只插线不打开是连不上的。</p><div class="statusline" id="usbTetherStatus"></div><label>可用连接地址<select id="phoneWsUrl"></select></label><div class="settings-actions"><button class="btn" id="copyPhoneUrlBtn">复制地址</button></div></details>
@@ -176,6 +178,17 @@
 <p class="fineprint">两边的左摇杆相加：同向限幅、异向合成、反向抵消。右摇杆和扳机始终由物理手柄控制。</p>
 <div class="slider"><label>游戏速度倍率 <b id="strengthValue">160%</b></label><input aria-label="游戏速度倍率" id="strength" max="300" min="60" step="10" type="range" value="160"/></div>
 </div>
+</div>
+
+<div class="settings-section" id="stereoSettings">
+<h3 class="title">双目深度（实验）</h3>
+<p class="lede">手机照常识别，电脑摄像头从另一个角度同时看你，两路一合就能算出手往前推了多远——单个摄像头看不准前后。两台设备摆好后不要再动，挪过就重新标定。</p>
+<div class="settings-actions"><button class="btn" id="stereoToggleBtn">开启双目</button><button class="btn" id="stereoCalibrateBtn">标定（30 秒）</button></div>
+<p class="statusline" id="stereoStatus">未开启</p>
+<p class="fineprint" id="stereoQuality"></p>
+<p class="statusline" id="stereoReadout"></p>
+<div class="stereo-views" id="stereoViews" hidden><figure><canvas id="stereoPcView"></canvas><figcaption>电脑摄像头</figcaption></figure><figure><canvas id="stereoPhoneView"></canvas><figcaption>手机</figcaption></figure></div>
+<p class="fineprint" id="stereoLegend" hidden>绿点：两台相机都看到，能算前后；橙点：只有这一台看到，要让另一台也拍到。</p>
 </div>
 
 <h2 class="group-head">手感</h2>
