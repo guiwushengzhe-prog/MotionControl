@@ -63,11 +63,14 @@ onMounted(load);
 
 <style scoped>
 .row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.list { list-style: none; padding: 0; margin: 1.5rem 0 0; }
-.list li { padding: 0.9rem 0; border-top: 1px solid var(--line); }
+/* 一组圆角卡片，行与行之间一条缩进的细线，和电脑端的列表一样。 */
+.list { list-style: none; padding: 0; margin: 1.5rem 0 0; border-radius: 16px;
+        background: var(--card); box-shadow: var(--shadow); overflow: hidden; }
+.list li { position: relative; padding: 0.9rem 1.15rem; }
+.list li + li::before { content: ""; position: absolute; top: 0; left: 1.15rem; right: 0; border-top: 1px solid var(--line); }
 .title { font-size: 1.05rem; font-weight: 600; }
 .summary { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.9rem; }
-.meta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.35rem;
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.35rem;
         font-size: 0.85rem; color: var(--muted); }
-.tag { background: var(--chip); padding: 0.1rem 0.5rem; border-radius: 4px; }
+.tag { background: var(--fill); color: var(--text); padding: 0.05rem 0.55rem; border-radius: 999px; font-size: 0.8rem; }
 </style>

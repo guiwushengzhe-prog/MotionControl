@@ -77,10 +77,10 @@ onMounted(load);
   display: grid;
   gap: 0.8rem;
   margin-top: 1.4rem;
-  padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--chip);
+  padding: 1.1rem;
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: var(--shadow);
 }
 .invite-result code {
   overflow-wrap: anywhere;

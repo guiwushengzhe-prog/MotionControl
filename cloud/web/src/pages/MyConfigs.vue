@@ -337,36 +337,51 @@ onMounted(load);
 <style scoped>
 .row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .upload { display: flex; flex-direction: column; gap: 1rem; margin: 1.5rem 0;
-          padding: 1.25rem; border: 1px solid var(--line); border-radius: 8px; }
+          padding: 1.25rem; border-radius: 18px; background: var(--card); box-shadow: var(--shadow); }
 .upload label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.9rem; }
 .upload small { color: var(--muted); font-size: 0.8rem; }
+.upload > button[type="submit"] { align-self: flex-start; }
+.muted { color: var(--muted); }
 
 .dropzone {
   display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
   padding: 1.75rem 1.25rem; text-align: center;
-  border: 2px dashed var(--line); border-radius: 10px;
+  border: 2px dashed var(--line-strong); border-radius: 14px;
   transition: border-color .12s, background .12s;
 }
-.dropzone.dragging { border-color: var(--accent); background: var(--chip); }
-.dropzone.loaded { border-style: solid; }
+.dropzone.dragging { border-color: var(--accent); background: var(--tint); }
+.dropzone.loaded { border-style: solid; border-color: var(--line); }
 /* 真正的 input 是隐藏的，这个 label 就是那颗按钮——点它等于点 input。 */
 .pick {
-  display: inline-block; padding: 0.45rem 0.9rem; border-radius: 6px;
-  background: var(--accent); color: #fff; font-size: 0.9rem; cursor: pointer;
+  display: inline-block; padding: 0.5rem 1.1rem; border-radius: 10px;
+  background: var(--accent); color: #fff; font-size: 0.9rem; font-weight: 600; cursor: pointer;
 }
 .where { margin-top: 0.4rem; font-size: 0.82rem; }
 .path { display: flex; align-items: center; justify-content: center;
         gap: 0.5rem; margin: 0.4rem 0; }
 .path code { font-size: 0.85rem; }
-.ghost { background: none; border: 1px solid var(--line); color: var(--accent);
-         padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+.ghost { background: var(--fill); color: var(--text); font-weight: 500;
+         padding: 0.2rem 0.7rem; border-radius: 999px; font-size: 0.8rem; }
+.ghost:hover:not(:disabled) { background: var(--fill-2); }
 .where ul { list-style: none; padding: 0; margin: 0.3rem 0 0;
             display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
-.list { list-style: none; padding: 0; margin: 1.5rem 0 0; }
-.list li { padding: 0.9rem 0; border-top: 1px solid var(--line); }
+.bundle-hint { padding: 0.9rem 1rem; border-radius: 12px; background: var(--tint); }
+.bundle-hint p { margin: 0.25rem 0 0.7rem; font-size: 0.88rem; }
+.bundle-pick { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.pending { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.6rem; }
+.pending li { display: grid; gap: 0.4rem; padding: 0.75rem; border-radius: 12px; background: var(--fill); }
+.pending .head { display: flex; align-items: center; gap: 0.6rem; }
+.pending .head .ghost { margin-left: auto; background: var(--card); }
+.pending input { background: var(--card); }
+
+/* 一组圆角卡片，行与行之间一条缩进的细线，和电脑端的列表一样。 */
+.list { list-style: none; padding: 0; margin: 1.5rem 0 0; border-radius: 16px;
+        background: var(--card); box-shadow: var(--shadow); overflow: hidden; }
+.list li { position: relative; padding: 0.9rem 1.15rem; }
+.list li + li::before { content: ""; position: absolute; top: 0; left: 1.15rem; right: 0; border-top: 1px solid var(--line); }
 .title { font-size: 1.05rem; font-weight: 600; }
-.meta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.35rem;
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.35rem;
         font-size: 0.85rem; color: var(--muted); }
-.tag { background: var(--chip); padding: 0.1rem 0.5rem; border-radius: 4px; }
+.tag { background: var(--fill); color: var(--text); padding: 0.05rem 0.55rem; border-radius: 999px; font-size: 0.8rem; }
 .vis.public { color: var(--accent); }
 </style>

@@ -102,8 +102,8 @@ function parts(item: PoseAction) {
       <div>
         <h1>官方动作库</h1>
         <p class="hint">
-          官方发布的身体动作。电脑端自带原地踏步和小腿向后抬起，别的动作在电脑端
-          「本游戏 → 动作库 → 官方动作库」里点「下载」，下载了才认得出来。
+          在电脑端「本游戏 → 动作库 → 官方动作库」里下载，下载后才能识别。
+          电脑端自带原地踏步和小腿向后抬起。
         </p>
       </div>
     </header>
@@ -162,23 +162,24 @@ function parts(item: PoseAction) {
 
 <style scoped>
 .row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.filters { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0 0.5rem; font-size: 0.9rem; color: var(--muted); }
+.filters { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.25rem 0 0.5rem; font-size: 0.9rem; color: var(--muted); }
 .filters label { display: flex; align-items: center; gap: 0.5rem; }
+/* 和电脑端动作库一样的卡片：上面是一直在做示范的火柴人，下面是名字和说明。 */
 .grid { list-style: none; padding: 0; margin: 1rem 0 0; display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr)); gap: 0.9rem; }
-.action { display: flex; gap: 0.9rem; padding: 0.9rem; border: 1px solid var(--line);
-          border-radius: var(--radius); }
-.figure { flex: none; width: 6.5rem; height: 6.5rem; background: var(--chip); border-radius: 6px; }
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
+.action { display: flex; flex-direction: column; gap: 0.8rem; padding: 0.75rem 0.75rem 1rem;
+          border-radius: 18px; background: var(--card); box-shadow: var(--shadow); }
+.figure { flex: none; width: 100%; height: 10rem; background: var(--fill); border-radius: 12px; }
 .figure line { stroke: var(--text); stroke-width: 2.4; stroke-linecap: round; opacity: 0.75; }
 .figure circle { fill: var(--text); }
-.body { min-width: 0; }
+.body { min-width: 0; padding: 0 0.25rem; }
 .body h2 { margin: 0; font-size: 1.05rem; }
-.how { margin: 0.25rem 0 0.5rem; font-size: 0.88rem; color: var(--muted); }
+.how { margin: 0.2rem 0 0.6rem; font-size: 0.88rem; color: var(--muted); line-height: 1.5; }
 .ratings { display: grid; grid-template-columns: auto auto; justify-content: start; column-gap: 0.8rem;
            margin: 0; font-size: 0.85rem; }
 .ratings dt { color: var(--muted); white-space: nowrap; }
 .ratings dd { margin: 0; color: var(--accent); letter-spacing: 1px; white-space: nowrap; }
-.parts { margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
-.tag { background: var(--chip); color: var(--text); padding: 0.05rem 0.45rem; border-radius: 4px; }
-.meta { margin: 0.4rem 0 0; font-size: 0.8rem; color: var(--muted); }
+.parts { margin: 0.6rem 0 0; font-size: 0.85rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.tag { background: var(--fill); color: var(--text); padding: 0.05rem 0.55rem; border-radius: 999px; font-size: 0.8rem; }
+.meta { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--text-3); }
 </style>

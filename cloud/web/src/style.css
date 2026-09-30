@@ -1,27 +1,59 @@
 /* One stylesheet, no framework.
    The desktop UI is plain CSS too, and a component library would be more bytes
-   than this entire site. */
+   than this entire site.
+
+   配色和电脑端是同一套：白天「月白」，夜间「石墨」，跟随系统。页面里只用这些变量，
+   不写死颜色。--muted / --chip / --error / --radius 是旧名字，各页还在用，指到新值上。 */
 
 :root {
-  --bg: #ffffff;
-  --text: #1a1a1a;
-  --muted: #6b7280;
-  --line: #e5e7eb;
-  --chip: #f3f4f6;
-  --accent: #2563eb;
-  --error: #b91c1c;
-  --radius: 8px;
+  --bg: #f5f5f7;
+  --bar: rgba(245, 245, 247, .82);
+  --card: #ffffff;
+  --fill: #f2f2f5;
+  --fill-2: #e6e6eb;
+  --line: rgba(60, 60, 67, .12);
+  --line-strong: rgba(60, 60, 67, .24);
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #8e8e93;
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
+  --tint: rgba(0, 113, 227, .10);
+  --on-tint: #0066cc;
+  --ok: #1f8a3b;
+  --warn: #b25000;
+  --danger: #d70015;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 4px 16px rgba(0, 0, 0, .05);
+
+  --muted: var(--text-2);
+  --chip: var(--fill);
+  --error: var(--danger);
+  --radius: 14px;
+
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14161a;
-    --text: #e8eaed;
-    --muted: #9aa3af;
-    --line: #2a2e35;
-    --chip: #1e2228;
-    --accent: #5b9bff;
-    --error: #f87171;
+    --bg: #0b0b0c;
+    --bar: rgba(18, 18, 20, .78);
+    --card: #1c1c1e;
+    --fill: #2c2c2e;
+    --fill-2: #3a3a3c;
+    --line: rgba(255, 255, 255, .09);
+    --line-strong: rgba(255, 255, 255, .17);
+    --text: #f5f5f7;
+    --text-2: #a1a1a6;
+    --text-3: #6e6e73;
+    --accent: #0a84ff;
+    --accent-hover: #409cff;
+    --tint: rgba(10, 132, 255, .18);
+    --on-tint: #64b1ff;
+    --ok: #30d158;
+    --warn: #ff9f0a;
+    --danger: #ff6961;
+    --shadow: none;
+    color-scheme: dark;
   }
 }
 
@@ -31,59 +63,74 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
-h2 { font-size: 1.1rem; margin: 2rem 0 0.5rem; }
+h1 { font-size: 1.75rem; line-height: 1.25; letter-spacing: -.01em; margin: 0 0 .35rem; }
+h2 { font-size: 1.15rem; margin: 2rem 0 .5rem; }
 
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-input, select, button {
+input, select, textarea, button {
   font: inherit;
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg);
   color: var(--text);
 }
 
-input[type="file"] { padding: 0.4rem; }
+input, select, textarea {
+  padding: .55rem .75rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--fill);
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); background: var(--card); }
+input[type="file"] { padding: .4rem; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 button {
+  padding: .55rem 1.1rem;
+  border: 0;
+  border-radius: 10px;
   background: var(--accent);
-  border-color: var(--accent);
   color: #fff;
+  font-weight: 600;
   cursor: pointer;
 }
-button:disabled { opacity: 0.55; cursor: default; }
+button:hover:not(:disabled) { background: var(--accent-hover); }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 次要按钮：灰底 */
+button.secondary { background: var(--fill); color: var(--text); }
+button.secondary:hover:not(:disabled) { background: var(--fill-2); }
 
 button.link {
   background: none;
   border: none;
   color: var(--accent);
   padding: 0;
+  font-weight: 400;
   cursor: pointer;
 }
-button.link:hover { text-decoration: underline; }
+button.link:hover:not(:disabled) { background: none; text-decoration: underline; }
 
-.card { padding: 0.5rem 0; }
-.hint { color: var(--muted); font-size: 0.9rem; }
+.card { padding: .5rem 0; }
+.hint { color: var(--muted); font-size: .9rem; }
 .time { color: var(--muted); }
-.error { color: var(--error); font-size: 0.9rem; }
+.error { color: var(--error); font-size: .9rem; }
 
 .notice {
-  background: var(--chip);
-  border-left: 3px solid var(--accent);
-  padding: 0.6rem 0.9rem;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  font-size: 0.9rem;
+  background: var(--tint);
+  padding: .75rem 1rem;
+  border-radius: 12px;
+  font-size: .9rem;
 }
 
 code {
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  background: var(--chip);
-  padding: 0.05rem 0.3rem;
-  border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  font-size: .88em;
+  background: var(--fill);
+  padding: .05rem .35rem;
+  border-radius: 5px;
 }

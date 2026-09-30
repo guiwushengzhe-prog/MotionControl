@@ -148,6 +148,7 @@ export async function init(){
     reloadViewControlState().then(()=>{setViewControlBusy(false);renderViewControl(true)}),
     api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
+      if(data.version)$('#appVersion').textContent=data.version;
       $('#modelStatus').textContent=modelAvailable?'':'这台电脑的人体识别模型用不了，只能用手机摄像头';
     }),
   ]);

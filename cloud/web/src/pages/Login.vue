@@ -195,13 +195,13 @@ async function submit() {
 </template>
 
 <style scoped>
-/* 这一页自己定颜色，不跟站点的浅色主题走：整页是深色的一张图。 */
+/* 这一页自己定颜色，不跟站点的白天 / 夜间走：整页是深色的一张图，用电脑端「石墨」那套深色。 */
 .signin {
-  --ink: #eaf2ff;
-  --dim: #9ebed8;
-  --sky: #0f87ff;
-  --sheet: rgba(11, 22, 44, 0.78);
-  --edge: rgba(94, 150, 220, 0.22);
+  --ink: #f5f5f7;
+  --dim: #a1a1a6;
+  --sky: #0a84ff;
+  --sheet: rgba(28, 28, 30, 0.82);
+  --edge: rgba(255, 255, 255, 0.1);
 
   position: fixed;
   inset: 0;
@@ -213,9 +213,9 @@ async function submit() {
   overflow: auto;
   color: var(--ink);
   background:
-    radial-gradient(90% 70% at 20% 48%, rgba(20, 84, 168, 0.32), transparent 62%),
-    radial-gradient(70% 60% at 82% 38%, rgba(16, 62, 132, 0.28), transparent 65%),
-    #051022;
+    radial-gradient(90% 70% at 20% 48%, rgba(10, 132, 255, 0.16), transparent 62%),
+    radial-gradient(70% 60% at 82% 38%, rgba(10, 132, 255, 0.10), transparent 65%),
+    #0b0b0c;
 }
 
 /* --- 左边：这是什么 --- */
@@ -247,7 +247,7 @@ async function submit() {
 .features li:first-child { border-left: 0; padding-left: 0; }
 .features svg {
   width: 2rem; height: 2rem;
-  fill: none; stroke: #3ea0ff; stroke-width: 1.6;
+  fill: none; stroke: var(--sky); stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round;
 }
 .features b { display: block; margin-top: 0.6rem; font-size: 0.95rem; }
@@ -261,7 +261,7 @@ async function submit() {
   width: min(28rem, 100%);
   padding: clamp(1.8rem, 3vw, 2.8rem);
   border: 1px solid var(--edge);
-  border-radius: 14px;
+  border-radius: 20px;
   background: var(--sheet);
   backdrop-filter: blur(6px);
 }
@@ -276,11 +276,11 @@ form { display: flex; flex-direction: column; gap: 0.9rem; }
   gap: 0.7rem;
   padding: 0 0.9rem;
   border: 1px solid var(--edge);
-  border-radius: 9px;
-  background: #0f192e;
+  border-radius: 12px;
+  background: #2c2c2e;
 }
 .field:focus-within { border-color: var(--sky); }
-.glyph { display: flex; color: #7fa8d8; }
+.glyph { display: flex; color: var(--dim); }
 .glyph svg, .reveal svg {
   width: 1.15rem; height: 1.15rem;
   fill: none; stroke: currentColor; stroke-width: 1.6;
@@ -295,14 +295,14 @@ form { display: flex; flex-direction: column; gap: 0.9rem; }
   color: var(--ink);
 }
 .field input:focus { outline: none; }
-.field input::placeholder { color: #91aacf; }
+.field input::placeholder { color: #8e8e93; }
 
 .reveal {
   display: flex;
   padding: 0;
   border: 0;
   background: none;
-  color: #7fa8d8;
+  color: var(--dim);
   cursor: pointer;
 }
 
@@ -315,18 +315,18 @@ form { display: flex; flex-direction: column; gap: 0.9rem; }
   margin-top: 0.6rem;
   padding: 0.95rem;
   border: 0;
-  border-radius: 9px;
+  border-radius: 12px;
   background: var(--sky);
   color: #fff;
   font-size: 1.02rem;
   font-weight: 600;
   cursor: pointer;
 }
-.go:hover:not(:disabled) { background: #2b96ff; }
+.go:hover:not(:disabled) { background: #409cff; }
 .go:disabled { opacity: 0.55; cursor: default; }
 
 .switch { margin: 1.4rem 0 0; text-align: center; color: var(--dim); font-size: 0.9rem; }
-.switch a { color: #4ea6ff; }
+.switch a { color: #64b1ff; }
 
 /* 窄屏：插画和卖点收起来，只留能用的那部分。 */
 @media (max-width: 900px) {

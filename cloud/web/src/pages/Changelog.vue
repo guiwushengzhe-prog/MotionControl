@@ -95,11 +95,11 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-h1 { margin: 0 0 6px; font-size: 22px; }
+h1 { margin: 0 0 6px; }
 .lede { margin: 0 0 26px; color: var(--muted); line-height: 1.7; }
 .lede code {
   padding: 1px 5px; border-radius: 4px;
-  background: rgba(255, 255, 255, .07); font-size: 13px;
+  background: var(--fill); font-size: 13px;
 }
 .release { margin: 0 0 34px; }
 .release header {
@@ -111,7 +111,7 @@ h1 { margin: 0 0 6px; font-size: 22px; }
 /* 版本号本身看不出这一节只影响手机。不标出来，读的人会以为电脑端也得更新。 */
 .release .chan {
   padding: 2px 8px; border-radius: 999px; font-size: 12px;
-  color: var(--accent); background: rgba(255, 255, 255, .07);
+  color: var(--on-tint); background: var(--tint);
 }
 .release time { font-size: 13px; color: var(--muted); margin-left: auto; }
 .group { margin: 0 0 18px; }
@@ -121,10 +121,10 @@ ul { margin: 0; padding-left: 20px; }
 li { margin-bottom: 7px; line-height: 1.75; }
 li code {
   padding: 1px 5px; border-radius: 4px;
-  background: rgba(255, 255, 255, .07); font-size: 13px;
+  background: var(--fill); font-size: 13px;
 }
 .muted { color: var(--muted); }
-.error { color: #ff6b6b; }
+.error { color: var(--error); }
 .fineprint {
   margin: 30px 0 0; padding-top: 16px;
   border-top: 1px solid var(--line);

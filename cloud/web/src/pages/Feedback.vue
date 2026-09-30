@@ -151,7 +151,7 @@ function again() {
       <label class="field">
         <span>你用的版本<em>选填</em></span>
         <input v-model="appVersion" maxlength="32" placeholder="例如 2.0.0" />
-        <small>在软件界面左上角能看到。</small>
+        <small>在电脑端右上角「？」菜单的最下面。</small>
       </label>
     </div>
 
@@ -170,7 +170,7 @@ function again() {
 </template>
 
 <style scoped>
-h1 { margin: 0 0 6px; font-size: 22px; }
+h1 { margin: 0 0 6px; }
 .lede { margin: 0 0 18px; color: var(--muted); line-height: 1.7; }
 .field { display: block; margin-bottom: 18px; }
 .field > span {
@@ -185,14 +185,15 @@ textarea { resize: vertical; min-height: 120px; line-height: 1.7; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
 .kinds { display: flex; flex-wrap: wrap; gap: 8px; }
 .kind {
-  padding: 7px 14px; border-radius: 999px; cursor: pointer;
-  background: transparent; border: 1px solid var(--line); color: var(--text);
+  padding: 7px 14px; border-radius: 999px; cursor: pointer; font-weight: 500;
+  background: var(--fill); color: var(--text);
 }
-.kind.on { border-color: var(--accent); color: var(--accent); }
+.kind:hover:not(:disabled) { background: var(--fill-2); }
+.kind.on, .kind.on:hover { background: var(--accent); color: #fff; }
 .group {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   margin: 0 0 22px; padding: 14px 16px;
-  border: 1px solid var(--line); border-radius: 10px;
+  border-radius: 16px; background: var(--card); box-shadow: var(--shadow);
 }
 .group p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
 .group .num { font-variant-numeric: tabular-nums; letter-spacing: .5px; }
@@ -200,6 +201,6 @@ textarea { resize: vertical; min-height: 120px; line-height: 1.7; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .note { font-size: 13px; color: var(--muted); }
 .link { display: inline-block; text-decoration: none; }
-.error { color: #ff6b6b; margin: 0 0 14px; }
+.error { color: var(--error); margin: 0 0 14px; }
 @media (max-width: 640px) { .two { grid-template-columns: 1fr; } }
 </style>
