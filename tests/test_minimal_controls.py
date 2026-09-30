@@ -3,6 +3,7 @@ import json
 import sys
 import time
 import types
+from web_source import read_web_js
 
 import pytest
 
@@ -26,7 +27,7 @@ def test_only_full_model_is_registered():
 
 def test_main_ui_stays_compact_and_settings_hold_complex_options():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩（动作测试也并在这里），
     # 本游戏 = 换游戏会变的，设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
     for required in ['2.0', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', '急停 <kbd>F9</kbd>', '通用口令', '三维头姿', '挪动区域', 'profileBindingRows']:
@@ -52,7 +53,7 @@ def test_v2_command_catalog_and_head_ui():
     # 内置口令只留系统功能和每个游戏的 12 句。按游戏键的那些和通用口令是同一件事，
     # 留着只会同名打架——见 tests/test_voice_phrase_exclusive.py。
     assert sum(item['id'].startswith('game.profile_slot_') for item in catalog['commands']) == 12
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert "开始控制" in app and "暂停控制" in app
     assert "· Y ${Number(hs.output_y)" not in app
@@ -61,7 +62,7 @@ def test_v2_command_catalog_and_head_ui():
 
 def test_body_relative_zones_use_both_wrists_and_both_feet():
     kernel = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     for name in ['left_wrist','right_wrist','left_ankle','right_ankle','left_foot_index','right_foot_index']:
         assert name in kernel
     for zone in ['leftHandUpper','leftHandLower','rightHandUpper','rightHandLower','leftFoot','rightFoot']:
@@ -83,7 +84,7 @@ def test_body_relative_zones_use_both_wrists_and_both_feet():
 
 def test_seventh_look_gate_follows_and_freezes_like_the_other_zones():
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     kernel_text = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
     assert 'data-zone="lookGate"' in page
     assert "lookGate:{label:'上下视角'" in app
@@ -94,7 +95,7 @@ def test_seventh_look_gate_follows_and_freezes_like_the_other_zones():
 
 def test_first_start_no_longer_records_a_reference_scene():
     """参考场景删了：开始游戏不再拍参考照片、不再问要不要切成固定区域。"""
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     assert 'ensureInitialSceneLayout' not in app
     assert '/api/scene/' not in app
     assert 'await setOutput(!output.enabled)' in app
@@ -102,7 +103,7 @@ def test_first_start_no_longer_records_a_reference_scene():
 
 
 def test_four_motion_rules_and_settings_exist():
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     kernel = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     for action in ['march','calf_back']:
@@ -121,7 +122,7 @@ def test_four_motion_rules_and_settings_exist():
 
 
 def test_head_calibration_uses_default_until_atomic_success():
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     kernel = (ROOT / "motioncontrol" / 'control_kernel.py').read_text(encoding='utf-8')
     head_control = (ROOT / "motioncontrol" / 'head_control.py').read_text(encoding='utf-8')
     assert 'head-control-v4.3-reference-video-tuned' in head_control
@@ -297,7 +298,7 @@ def test_voice_api_uses_local_mic_or_phone_command_not_browser_audio():
     assert '/api/voice/audio' in server
     assert 'browser voice endpoint disabled' in server
     assert '/ws/input voice_command(command_id)' in server
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     assert 'getUserMedia' not in app
     assert 'postBinary' not in app
     assert 'createScriptProcessor' not in app
@@ -313,7 +314,7 @@ def test_output_api_is_loopback_only_and_has_buttons_route():
 
 
 def test_game_overlay_uses_same_body_relative_zones():
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     assert 'documentPictureInPicture.requestWindow' in app
     assert 'renderOverlay' in app
     assert 'renderKernelZones' in app
@@ -827,7 +828,7 @@ def test_foot_and_hand_zones_do_not_overlap_each_other(monkeypatch):
 def test_adjusting_zones_freezes_them_first_and_can_be_undone():
     """挪动区域先把跟随框定住（一直在动的东西没法拖）；取消回到点之前，恢复跟随随时能点。"""
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     assert 'id="followZonesBtn"' in page and 'id="zoneMoveHereBtn"' in page
     opener = app[app.index('async function openFrozenZoneEditor()'):]
     assert "post('/api/zones/freeze',{frozen:true})" in opener.split('\n}')[0]
@@ -852,7 +853,7 @@ def test_start_script_detects_wireless_adb_devices_too():
 
 def test_spare_voice_slots_are_editable_not_only_displayable():
     """The spare slots are the single editable voice-command editor."""
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     assert "filter(item=>!item.system_fixed&&!String(item.id||'').startsWith('game.profile_slot_'))" not in app
     assert "slot:String(item.id||'').startsWith('game.profile_slot_')" in app
     assert "{id:'voice',filter:t=>t.group==='voice'" in app
@@ -867,7 +868,7 @@ def test_gamepad_combo_is_picked_not_typed_and_poses_can_hold():
     included.  A checkbox sends no input event, so the guard that stops a text
     blur from re-saving must not swallow its change.
     """
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     assert "GAMEPAD_STICK_TARGETS=['LS_UP','LS_DOWN','LS_LEFT','LS_RIGHT']" in app
     assert "picker.className='combo-picker'" in app or "picker.className=\"combo-picker\"" in app
     assert "combo.type='hidden'" in app
@@ -890,7 +891,7 @@ def test_mouse_is_the_default_output_mode_everywhere(tmp_path):
         assert out.status()['mode'] == 'mouse'
     finally:
         out.close()
-    app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+    app = read_web_js(ROOT)
     assert "mode:'mouse'" in app
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     modes = page.split('id="outputMode"', 1)[1].split('</select>', 1)[0]

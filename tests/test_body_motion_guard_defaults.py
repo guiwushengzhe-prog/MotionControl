@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from web_source import read_web_js
 
 from motioncontrol.control_kernel import ControlKernel
 from conftest import apply_layout
@@ -90,7 +91,7 @@ def test_explicit_true_keeps_guard_with_vertical_look_disabled():
 
 
 def test_web_defaults_missing_guard_state_to_off():
-    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    app = read_web_js(ROOT)
     page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
     assert re.search(r"bodyMotionGuard:false", app)
     assert "k.body_motion_guard_enabled??false" in app

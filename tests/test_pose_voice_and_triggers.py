@@ -9,6 +9,7 @@
 """
 
 from __future__ import annotations
+from web_source import read_web_js
 
 import json
 import re
@@ -23,7 +24,7 @@ from motioncontrol_shared.user_layout import USER_DATA_FILES
 
 ROOT = Path(__file__).resolve().parent.parent
 SERVER = (ROOT / "server.py").read_text(encoding="utf-8")
-APP_JS = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+APP_JS = read_web_js(ROOT)
 
 
 # --- 个人语音不跟着分享走 ---------------------------------------------------

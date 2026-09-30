@@ -11,6 +11,7 @@
 import re
 import sys
 from pathlib import Path
+from web_source import read_web_js
 
 import pytest
 
@@ -25,7 +26,7 @@ def page():
 
 @pytest.fixture(scope="module")
 def app():
-    return (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    return read_web_js(ROOT)
 
 
 @pytest.mark.parametrize("element", [

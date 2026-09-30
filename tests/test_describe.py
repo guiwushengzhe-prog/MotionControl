@@ -6,6 +6,7 @@
 """
 
 from __future__ import annotations
+from web_source import read_web_js
 
 import json
 import re
@@ -47,7 +48,7 @@ def test_voice_command_names_match_the_shipped_catalog():
 
 def test_trigger_names_match_the_desktop_ui():
     """web/app.js 的 BASE_PROFILE_TRIGGERS 是桌面界面上显示的那套名字。"""
-    source = (REPO / "web" / "app.js").read_text(encoding="utf-8")
+    source = read_web_js(REPO)
     block = re.search(r"const BASE_PROFILE_TRIGGERS=\[(.*?)\];", source, re.S)
     assert block, "web/app.js 里找不到 BASE_PROFILE_TRIGGERS"
     pairs = re.findall(r"key:'(\w+)\.(\w+)'.*?name:'([^']+)'", block.group(1))

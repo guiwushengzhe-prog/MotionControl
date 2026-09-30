@@ -5,6 +5,7 @@
 """
 
 from __future__ import annotations
+from web_source import read_web_js
 
 from pathlib import Path
 
@@ -167,20 +168,20 @@ def test_macro_edits_are_loopback_only():
 
 def test_the_binding_editor_offers_macros_everywhere():
     """下拉是遍历 ACTION_TYPE_LABELS 建的，所以加进去就是四组触发器都有。"""
-    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    app = read_web_js(ROOT)
     assert "macro:'键盘宏'" in app
 
 
 def test_a_pose_card_shows_the_key_it_is_bound_to():
     """录完的姿势在卡片上看不出绑了什么，人得滚到上面那张表里一行行找。"""
-    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    app = read_web_js(ROOT)
     assert "custom-pose-key" in app
     assert "revealBindingRow('pose.' + item.id)" in app
 
 
 def test_the_pose_card_key_is_read_only():
     """同一个东西两处能改，就一定会有一处是旧的。卡片只显示，改在映射表里。"""
-    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    app = read_web_js(ROOT)
     start = app.index("const bound = document.createElement('button')")
     card = app[start:start + 500]
     assert "createElement('select')" not in card, "卡片上放了第二个能改的控件"
@@ -188,7 +189,7 @@ def test_the_pose_card_key_is_read_only():
 
 def test_the_zone_circles_and_the_pose_cards_use_the_same_wording():
     """两处各写一份的话，同一个绑定在圈上和卡片上会显示成两种说法。"""
-    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    app = read_web_js(ROOT)
     assert "function triggerKeyLabel(" in app
     assert app.count("actionKeyText(binding.action)") >= 1
 
@@ -213,7 +214,7 @@ def test_the_trigger_inputs_load_before_anything_can_render_rows():
     旧毛病，只是之前靠时机碰对的次数多。中间多一次 await 就会碰错，
     2026-09-22 真碰上了。
     """
-    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    app = read_web_js(ROOT)
     init = app.index("async function init(){")
     poses = app.index("refreshCustomPoses({rebuild:false})", init)
     macros = app.index("refreshMacros({rebuild:false})", init)

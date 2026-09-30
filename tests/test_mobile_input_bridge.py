@@ -1,6 +1,7 @@
 import time
 
 import pytest
+from web_source import read_web_js
 
 from motioncontrol.input_bridge import (
     InputBridge,
@@ -409,7 +410,7 @@ def test_web_mobile_pose_uses_same_body_action_and_head_pipeline():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    text = (root / "web" / "app.js").read_text(encoding="utf-8")
+    text = read_web_js(root)
     kernel = (root / "motioncontrol" / "control_kernel.py").read_text(encoding="utf-8")
     assert "renderKernelState" in text and "/api/kernel/status" in text
     assert "handle_pose_message" in kernel and "_update_zones_locked" in kernel
