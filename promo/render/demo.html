@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>MotionControl 风格 demo</title>
+<link rel="stylesheet" href="../node_modules/@fontsource/noto-sans-sc/400.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/noto-sans-sc/500.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/noto-sans-sc/700.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/noto-sans-sc/900.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/zcool-qingke-huangyou/400.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/zcool-kuaile/400.css">
+<link rel="stylesheet" href="../node_modules/lxgw-wenkai-webfont/lxgwwenkai-bold.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/jetbrains-mono/500.css">
+<link rel="stylesheet" href="../node_modules/@fontsource/jetbrains-mono/700.css">
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script type="module">
+  import { boot } from './stage.js';
+  const style = new URLSearchParams(location.search).get('style') || 'neon';
+  boot(document.getElementById('stage'), style).then(() => { window.__ready = true; });
+  // 手动预览：?style=clean&play=1 直接在浏览器里播
+  if (new URLSearchParams(location.search).get('play')) {
+    const start = performance.now();
+    const loop = () => {
+      if (window.renderAt) window.renderAt(((performance.now() - start) / 1000) % 15);
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  }
+</script>
+</body>
+</html>

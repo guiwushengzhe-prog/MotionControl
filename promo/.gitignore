@@ -1,0 +1,3 @@
+# 字体包从 npm 装，渲染产物（静帧、wav、mp4）随时可以重出，都不进仓库。
+node_modules/
+out/

@@ -1,0 +1,16 @@
+{
+  "name": "motioncontrol-promo",
+  "private": true,
+  "type": "module",
+  "description": "宣传与教学视频的渲染管线：模拟关键点 → 画面 → 视频。",
+  "scripts": {
+    "render": "node render/render.mjs"
+  },
+  "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/noto-sans-sc": "^5.3.0",
+    "@fontsource/zcool-kuaile": "^5.3.0",
+    "@fontsource/zcool-qingke-huangyou": "^5.3.0",
+    "lxgw-wenkai-webfont": "^1.7.0"
+  }
+}
