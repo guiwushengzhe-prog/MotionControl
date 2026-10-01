@@ -69,7 +69,7 @@ def _prepare_head(kernel):
 
 
 
-def test_a_frozen_gate_enables_right_wrist_vertical_but_head_only_drives_x(monkeypatch):
+def test_a_frozen_gate_arms_and_head_only_drives_x(monkeypatch):
     output = FakeOutput()
     kernel = ControlKernel(output)
     try:
@@ -92,24 +92,19 @@ def test_a_frozen_gate_enables_right_wrist_vertical_but_head_only_drives_x(monke
                 "leftFoot": {"shape": "circle", "cx": 0.1, "cy": 0.9, "r": 0.03},
                 "rightFoot": {"shape": "circle", "cx": 0.9, "cy": 0.9, "r": 0.03},
             },
-            "vertical_look": {"enabled": True, "gate_zone_id": "lookGate", "point": "right_wrist", "center_x": 0.70, "center_y": 0.50, "range_y": 0.20, "deadzone": 0.05},
+            "vertical_look": {"enabled": True, "gate_zone_id": "lookGate", "deadzone": 0.05},
         }
         apply_layout(kernel, layout)
         _prepare_head(kernel)
         neutral = pose()
-        neutral["right_wrist"]["y"] = 0.62
         state = feed("test", neutral, 8)
         assert state["head"]["vertical_gate_active"] is True
-        assert state["head"]["vertical_wrist_anchor_rel_y"] is not None
         assert state["head"]["output_x"] == 0.0
-        neutral["right_wrist"]["y"] = 0.76
-        state = feed("test", neutral, 3)
-        assert state["head"]["output_y"] > 0
-        # Move the left wrist out of the gate; vertical output decays toward zero.
+        # Move the left wrist out of the gate; vertical output stops.
         neutral["left_wrist"]["x"] = 0.05
         state = feed("test", neutral, 10)
         assert state["head"]["vertical_gate_active"] is False
-        assert abs(state["head"]["output_y"]) < 1.0
+        assert state["head"]["output_y"] == 0.0
     finally:
         kernel.close()
 
@@ -128,9 +123,9 @@ def test_the_following_gate_is_there_from_the_first_frame_and_arms(monkeypatch):
             return state
 
         _prepare_head(kernel)
-        # 上下视角默认是关的（它和手控鼠标抢同一只右手）。这条钉的是"开着的时候
-        # 首次启动也有一个能用的临时闸"，所以先把它打开。
-        kernel.configure_head(vertical_look_source="hand")
+        # 上下视角（抬头低头）默认是关的。这条钉的是"开着的时候首次启动也有一个
+        # 能用的临时闸"，所以先把它打开。
+        kernel.configure_head(vertical_look_source="head")
         base = pose()
         state = feed(base, 1)
         assert state["zones_frozen"] is False
@@ -141,13 +136,7 @@ def test_the_following_gate_is_there_from_the_first_frame_and_arms(monkeypatch):
         armed = pose()
         armed["left_wrist"]["x"] = (gate["x1"] + gate["x2"]) / 2.0
         armed["left_wrist"]["y"] = (gate["y1"] + gate["y2"]) / 2.0
-        armed["right_wrist"]["y"] = 0.50
         state = feed(armed, 8)
         assert state["vertical_gate_active"] is True
-        assert state["head"]["vertical_wrist_anchor_rel_y"] is not None
-
-        armed["right_wrist"]["y"] = 0.70
-        state = feed(armed, 3)
-        assert state["head"]["output_y"] > 0.0
     finally:
         kernel.close()

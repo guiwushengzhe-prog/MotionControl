@@ -1,4 +1,4 @@
-"""Focused product checks for the selectable frozen22 horizontal source."""
+"""frozen22 不能再单独选；它的 22 维脸部测量只作为「多信号融合」（gesture_v188）的佐证之一。"""
 
 from __future__ import annotations
 
@@ -35,20 +35,20 @@ def _pose(*, nose_x: float = 0.50, omit_inner: bool = False) -> dict[str, dict]:
     return pose
 
 
-def test_frozen22_is_explicit_and_switch_requires_new_center(tmp_path):
+def test_removed_turn_routes_select_the_remaining_one(tmp_path):
     controller = HeadController(tmp_path / "head.json")
-    controller.configure(algorithm="ratio", horizontal_algorithm="frozen22")
-    state = controller.status()
-    assert state["horizontal_algorithm"] == "frozen22"
-    assert state["horizontal_algorithm_version"] == "v5.1-fixed22-stable-units"
-    assert state["frozen22_controls_mouse"] is True
-    assert state["calibrated"] is False
-    assert state["frozen22_calibration_valid"] is False
+    for name in ("frozen22", "gesture_v153", "classic", "gesture"):
+        controller.configure(algorithm="ratio", horizontal_algorithm="roll_tilt")
+        controller.configure(horizontal_algorithm=name)
+        state = controller.status()
+        assert state["horizontal_algorithm"] == "gesture_v188"
+    assert state["available_horizontal_algorithms"] == ["gesture_v188", "roll_tilt", "head_responsive"]
+    assert "frozen22_controls_mouse" not in state
 
 
 def test_frozen22_calibration_uses_neutral_center_and_fixed_signature(tmp_path):
     controller = HeadController(tmp_path / "head.json")
-    controller.configure(algorithm="ratio", horizontal_algorithm="frozen22")
+    controller.configure(algorithm="ratio", horizontal_algorithm="gesture_v188")
     pose = _pose()
     controller.start_center(now=0.0, kind="test")
     for index in range(40):
@@ -65,25 +65,3 @@ def test_frozen22_calibration_uses_neutral_center_and_fixed_signature(tmp_path):
     assert state["frozen22_calibration_valid"] is True
     assert state["frozen22_frame_valid"] is True
     assert math.isfinite(float(state["frozen22_yaw_median_deg"]))
-
-
-def test_frozen22_missing_11_point_neutralizes_horizontal_output(tmp_path):
-    controller = HeadController(tmp_path / "head.json")
-    controller.configure(algorithm="ratio", horizontal_algorithm="frozen22")
-    pose = _pose()
-    controller.start_center(now=0.0, kind="test")
-    for index in range(40):
-        controller.update(pose, 640, 480, now=1.05 + index * 0.08)
-        if not controller.calibrating:
-            break
-    assert controller.frozen22_calibration_valid
-    controller.output_x = 42.0
-    controller.update(_pose(omit_inner=True), 640, 480, now=5.0)
-    assert controller.output_x == 0.0
-    state = controller.status()
-    assert state["frozen22_frame_valid"] is False
-    assert state["horizontal_calibrated"] is True
-    assert state["frozen22_missing_points"] == ["left_eye_inner"]
-    # 少了哪些点是诊断，走 frozen22_missing_points（上一行已经断言）。
-    # quality 是摆在"准备开玩"第一眼的那行字，只说人该做什么。
-    assert state["quality"] == "看不清脸，请正对摄像头"

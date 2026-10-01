@@ -496,57 +496,6 @@ def test_pure_head_pitch_never_reaches_final_mouse_y():
         kernel.close()
 
 
-def test_look_gate_captures_stable_body_relative_anchor_without_freezing_horizontal_head(monkeypatch):
-    output = KernelOutput()
-    kernel = ControlKernel(output)
-    try:
-        clock = [0.0]
-        monkeypatch.setattr('motioncontrol.control_kernel.time.monotonic', lambda: clock[0])
-        def feed(pose, count):
-            for _ in range(count):
-                clock[0] += 0.10
-                kernel.handle_pose_map('camera', pose, width=640, height=480)
-
-        _stub_head_controller(kernel, pitch=-.9)
-        apply_layout(kernel, {
-            'zones': {'lookGate': {'cx': .2, 'cy': .2, 'r': .15}},
-            'vertical_look': {'enabled': True, 'point': 'right_wrist', 'range_y': .18, 'deadzone': .08},
-        })
-        neutral = _head_only_pose(left_wrist_y=.2, right_wrist_y=.5, right_shoulder_y=.32)
-        feed(neutral, 8)
-        assert kernel.vertical_gate_active is True
-        assert kernel.vertical_wrist_anchor_rel_y is not None
-        assert abs(kernel.vertical_wrist_anchor_rel_y - .18) < 1e-6
-        # The left-hand gate authorizes only Y; yaw remains independent so
-        # simultaneous horizontal + vertical control is possible.
-        assert output.applied[-1][0] == pytest.approx(.2)
-        assert output.applied[-1][1] == 0.0
-
-        moved = _head_only_pose(left_wrist_y=.2, right_wrist_y=.62, right_shoulder_y=.32)
-        feed(moved, 3)
-        assert output.applied[-1][0] == pytest.approx(.2)
-        assert output.applied[-1][1] > 0.0
-
-        before = output.applied[-1][1]
-        horizontal = _head_only_pose(left_wrist_y=.2, right_wrist_y=.62, right_wrist_x=.95, right_shoulder_y=.32)
-        feed(horizontal, 1)
-        assert abs(output.applied[-1][1] - before) < .20
-
-        # Body bobbing: wrist and shoulder move together, so relative Y returns
-        # toward neutral instead of following absolute image coordinates.
-        bobbed = _head_only_pose(left_wrist_y=.2, right_wrist_y=.60, right_shoulder_y=.42)
-        feed(bobbed, 8)
-        assert abs(output.applied[-1][1]) < .08
-
-        outside = _head_only_pose(left_wrist_x=.9, left_wrist_y=.2, right_wrist_y=.60, right_shoulder_y=.42)
-        feed(outside, 1)
-        assert kernel.vertical_gate_active is False
-        assert kernel.vertical_wrist_anchor_rel_y is None
-        assert output.applied[-1][1] == 0.0
-    finally:
-        kernel.close()
-
-
 def test_optional_vertical_gate_exclusivity_pauses_only_horizontal_output():
     output = KernelOutput()
     kernel = ControlKernel(output)

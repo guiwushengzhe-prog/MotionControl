@@ -219,13 +219,12 @@ const STEPS = [
         return fistGuide(s, memo, now, {hand: s.vertical, state: s.vHandState, level: s.vLevel, want,
           words: {axis: 'y', up: '往上移', down: '往下移', negative: 'up', effect: {up: '视角往上', down: '视角往下'}, done: '✓ 握拳就能上下看'}});
       }
-      // 原有的上下方案：左手放进绿框才开闸，闸开着的时候右手（或者头）管上下。
+      // 抬头低头：左手放进绿框才开闸，闸开着的时候头管上下。
       if (!s.gateActive) return {target: '#viewer', mark: '.zone[data-zone="lookGate"]', say: '左手伸进绿框'};
-      const byHead = s.legacySource === 'head';
       const toward = Number.isFinite(s.vLevel) ? (want === 'up' ? -s.vLevel : s.vLevel) : 0;
       return {
         target: '#viewer', ready: true, cursor: virtualCursor(s, 'y', s.vLevel),
-        say: want === 'up' ? (byHead ? '抬头 → 视角往上' : '右手往上抬 → 视角往上') : (byHead ? '低头 → 视角往下' : '右手往下放 → 视角往下'),
+        say: want === 'up' ? '抬头 → 视角往上' : '低头 → 视角往下',
         hint: toward >= MORE && toward < LEVEL ? '再大一点' : '左手留在绿框里',
       };
     },

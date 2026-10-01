@@ -46,7 +46,7 @@ def test_off_is_accepted_and_saved_in_general_settings(kernel):
 def test_turning_it_off_hides_the_gate_zone(kernel):
     kernel.zone_rects["lookGate"] = (0.1, 0.1, 0.2, 0.2)
 
-    kernel.configure_head(vertical_look_source="hand")
+    kernel.configure_head(vertical_look_source="head")
     assert kernel._gate_available() is True, "开着的时候闸应该在"
 
     kernel.configure_head(vertical_look_source="off")
@@ -56,28 +56,25 @@ def test_turning_it_off_hides_the_gate_zone(kernel):
 def test_off_is_also_honoured_for_frozen_zones(kernel):
     kernel.set_frozen_zones({"lookGate": {"x1": 0.1, "y1": 0.1, "x2": 0.3, "y2": 0.3}})
 
-    kernel.configure_head(vertical_look_source="hand")
+    kernel.configure_head(vertical_look_source="head")
     assert kernel._gate_available() is True
 
     kernel.configure_head(vertical_look_source="off")
     assert kernel._gate_available() is False
 
 
-def test_turning_it_back_on_remembers_which_side_was_chosen(kernel):
-    kernel.configure_head(vertical_look_source="head")
-    kernel.configure_head(vertical_look_source="off")
-    assert kernel.vertical_look["source"] == "head", "关掉不该顺手把选择也抹了"
-
-    kernel.configure_head(vertical_look_source="head")
-    assert kernel.vertical_look["enabled"] is True
-    assert kernel.vertical_look["source"] == "head"
+def test_the_removed_right_hand_source_is_refused(kernel):
+    """「右手配合绿框」删掉了：再发 hand 过来要报错，不能悄悄换成抬头低头。"""
+    with pytest.raises(ValueError):
+        kernel.configure_head(vertical_look_source="hand")
+    assert kernel.vertical_look["enabled"] is False
 
 
 def test_a_real_source_turns_it_back_on(kernel):
     kernel.configure_head(vertical_look_source="off")
-    kernel.configure_head(vertical_look_source="hand")
+    kernel.configure_head(vertical_look_source="head")
     assert kernel.vertical_look["enabled"] is True
-    assert kernel.vertical_look["source"] == "hand"
+    assert kernel.vertical_look["source"] == "head"
 
 
 def test_nonsense_still_raises(kernel):

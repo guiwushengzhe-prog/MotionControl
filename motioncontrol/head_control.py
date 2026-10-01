@@ -1,14 +1,15 @@
 """Head-control v5: comparable yaw routes plus an independent roll mode.
 
-- gesture_v153: personal (or generic) PnP yaw with a pitch-aware evidence guard.
-- frozen22: fixed 22-D image-feature yaw with explicitly selected pitch units.
-- gesture_v188: PnP yaw corroborated by calibrated 2D/world cues.
+- gesture_v188: PnP yaw corroborated by calibrated 2D/world cues (the fixed
+  frozen22 22-D face feature is one of those cues, never a route of its own).
 - roll_tilt: eye-line tilt drives a sustained turn until the head is upright.
+- head_responsive: tilt or face turn, with a quick return brake.
 
-All three use the same relative gesture: outward turn moves, a held pose stops,
+The yaw route uses a relative gesture: outward turn moves, a held pose stops,
 and returning to a quiet neutral center rearms without reverse mouse output.
-Legacy profile/API IDs are accepted; ``classic`` now selects gesture_v153.
-One valid capture can be reused across the three horizontal policies and across
+The removed routes (``classic``, ``gesture``, ``gesture_v153``, ``frozen22``)
+are still accepted from old profiles/clients and select gesture_v188.
+One valid capture can be reused across the horizontal policies and across
 program starts. A new estimator (pnp/ratio) still requires a new neutral capture.
 """
 
@@ -123,23 +124,17 @@ PITCH_INTENT_STOP_VELOCITY = 0.026
 # ---------------------------------------------------------------------------
 # Selectable horizontal (yaw) policies.
 #
-# Keep the three established API IDs so old clients remain compatible.
-# Their v5 versions below share the same movement/return semantics, but use
-# distinct signal evidence. The removed classic mode aliases to gesture_v153.
+# 转头只留一种（gesture_v188，多信号融合）。另外两种（个性化 PnP 单独出、
+# 固定特征 2D 单独出）已经删掉；老档案和老客户端发来的这些名字都按 gesture_v188 算。
 
-HORIZONTAL_ALGORITHMS = ("gesture_v153", "frozen22", "gesture_v188", "roll_tilt", "head_responsive")
-V153_POLICIES = frozenset(("gesture_v153", "gesture_v188"))
-FROZEN22_POLICIES = frozenset(("frozen22",))
+HORIZONTAL_ALGORITHMS = ("gesture_v188", "roll_tilt", "head_responsive")
+REMOVED_HORIZONTAL_ALGORITHMS = frozenset(("classic", "gesture", "gesture_v153", "frozen22"))
 HORIZONTAL_ALGORITHM_VERSIONS = {
-    "gesture_v153": "v5.1-pnp-optional-personal",
-    "frozen22": "v5.1-fixed22-stable-units",
     "gesture_v188": "v5.1-consensus-shared-calibration",
     "roll_tilt": "roll-tilt-v1",
     "head_responsive": "head-responsive-v4",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
-    "gesture_v153": "个性化 PnP（灵敏）",
-    "frozen22": "固定特征 2D（独立）",
     "gesture_v188": "多信号融合（稳健）",
     "roll_tilt": "侧倾转向（实验）",
     "head_responsive": "侧倾＋转脸（新版灵敏）",
@@ -148,8 +143,7 @@ HORIZONTAL_ALGORITHM_LABELS = {
 
 def _horizontal_policy(value: Any) -> str:
     policy = str(value).lower().strip()
-    # Legacy web clients can still send the removed classic selector.
-    return "gesture_v153" if policy in {"classic", "gesture"} else policy
+    return "gesture_v188" if policy in REMOVED_HORIZONTAL_ALGORITHMS else policy
 
 
 # frozen22 is the audited R3 11-point / 22-dimensional horizontal
@@ -169,9 +163,6 @@ FROZEN22_MEDIAN_WINDOW = 3
 FROZEN22_MAX_CAL_SIGMA_DEG = 2.5
 FROZEN22_MIN_SAMPLES = 20
 FROZEN22_SIGMA_FLOOR = 1e-4
-# frozen22 returns a degree-like yaw measurement.  This is only the output
-# normalization span; it does not alter the audited 22-D signature.
-FROZEN22_YAW_SPAN_DEG = PNP_YAW_SPAN_DEG
 FROZEN22_GATE_FAST_WINDOW_S = 0.267
 FROZEN22_GATE_FAST_BASE_DELTA_DEG = 1.40
 FROZEN22_GATE_FAST_SIGMA_MULT = 1.50
@@ -2514,9 +2505,6 @@ class HeadController:
         return self.config["algorithm"]
 
     def _span(self) -> tuple[float, float]:
-        if self.config.get("horizontal_algorithm") in FROZEN22_POLICIES:
-            pitch_span = PNP_PITCH_SPAN_DEG if self._effective_estimator_algorithm() == "pnp" else RATIO_PITCH_SPAN
-            return FROZEN22_YAW_SPAN_DEG, pitch_span
         if self.config["algorithm"] == "pnp":
             return PNP_YAW_SPAN_DEG, PNP_PITCH_SPAN_DEG
         return RATIO_YAW_SPAN, RATIO_PITCH_SPAN
@@ -2775,13 +2763,6 @@ class HeadController:
         set_model = getattr(self.estimator, "set_pnp_model", None)
         personal_active = bool(getattr(self.estimator, "personal_model_active", False))
         entry = self._personal_policy_store.get(policy)
-        if entry is None and policy in V153_POLICIES:
-            # Both PnP policies consume the same source model and center from
-            # this calibration. The cache is replaced on each new calibration.
-            entry = next((
-                self._personal_policy_store[name] for name in V153_POLICIES
-                if name in self._personal_policy_store
-            ), None)
         if (
             set_model is not None
             and entry is not None
@@ -2800,12 +2781,7 @@ class HeadController:
                 set_model(None)
         self.personal_pnp_active = False
         self.personal_pnp_center_depth = math.nan
-        if policy == "classic" or policy in FROZEN22_POLICIES:
-            # Classic is an intentional compatibility policy, not a rejected
-            # personal model.  Frozen22 has its own fixed 2D signature and does
-            # not use the personal PnP model either.
-            self.personal_pnp_rejection_reason = ""
-        elif not self.personal_pnp_rejection_reason:
+        if not self.personal_pnp_rejection_reason:
             self.personal_pnp_rejection_reason = "未启用个人模型"
         self.center_yaw, self.noise_yaw, self.center_pitch, self.noise_pitch = self._generic_center
         self._recompute_deadzone()
@@ -2840,14 +2816,11 @@ class HeadController:
                 self._reset_filters()
                 self._apply_policy_model()
                 self.calibrated = reusable
-                fixed_needs_center = value in FROZEN22_POLICIES and not self.frozen22_calibration_valid
                 tilt_needs_center = value in {"roll_tilt", "head_responsive"} and not math.isfinite(self.center_tilt)
-                self.center_pending = not reusable or fixed_needs_center or tilt_needs_center
+                self.center_pending = not reusable or tilt_needs_center
                 if not reusable:
                     self.center_quality = "未校准"
                     self.notice = "当前没有兼容的中心，请先校准"
-                elif fixed_needs_center:
-                    self.notice = "固定特征校准样本不足，请重新校准；其他模式的中心仍保留"
                 elif tilt_needs_center:
                     self.notice = "侧倾中心尚未采集，请自然正视屏幕并校准"
                 else:
@@ -3182,7 +3155,7 @@ class HeadController:
                 # an older capture. Rollback restores the whole previous cache.
                 self._personal_policy_store = {}
                 active_policy = str(self.config.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"]))
-                personal_required = active_policy in V153_POLICIES
+                personal_required = active_policy == "gesture_v188"
                 had_previous_personal = bool(
                     self._calibration_restore_personal_active
                     and self._calibration_restore_model is not None
@@ -3403,10 +3376,6 @@ class HeadController:
         self.v202_pitch_output_veto_active = False
         self.v202_return_output_veto_active = False
         self.v205_same_side_rescue_active = False
-        if policy in FROZEN22_POLICIES:
-            self.frozen22_gate_scale = 1.0
-            self.frozen22_gate_source = "FIXED22_2D"
-            return 1.0
 
         sign = -1.0 if self.config["invert_x"] else 1.0
         is_pnp = self._effective_estimator_algorithm() == "pnp"
@@ -3435,10 +3404,6 @@ class HeadController:
             return stop("RETURNING")
         if not direction or not math.isfinite(main):
             return stop("ZERO")
-        if policy == "gesture_v153" and not pitch_active:
-            self.frozen22_gate_scale = 1.0
-            self.frozen22_gate_source = "PNP"
-            return 1.0
 
         main_threshold = max(0.65, 2.0 * self.noise_yaw * degree_scale)
         main_ok = direction * main >= main_threshold
@@ -3519,10 +3484,7 @@ class HeadController:
     def _recompute_deadzone(self) -> None:
         span_x, span_y = self._span()
         base = float(self.config["deadzone"])
-        yaw_noise = self.noise_yaw
-        if self.config.get("horizontal_algorithm") in FROZEN22_POLICIES:
-            yaw_noise = self.frozen22_cal_sigma_deg if math.isfinite(self.frozen22_cal_sigma_deg) else 0.0
-        auto_x = (3.2 * yaw_noise / span_x + 0.015) if span_x > 0 else base
+        auto_x = (3.2 * self.noise_yaw / span_x + 0.015) if span_x > 0 else base
         auto_y = (3.2 * self.noise_pitch / span_y + 0.015) if span_y > 0 else base
         self.effective_deadzone_x = _clamp(max(base, auto_x), 0.03, 0.28)
         self.effective_deadzone_y = _clamp(max(base, auto_y), 0.03, 0.30)
@@ -3663,17 +3625,13 @@ class HeadController:
                 self.current_world_rigid_fit = rfit
         policy = str(self.config.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"]))
         estimate_pose = pose
-        if policy in V153_POLICIES:
+        if policy == "gesture_v188":
             estimate_pose = self._head_point_filter.apply(pose, HeadPoseEstimator._PNP_NAMES, now)
         estimate = self.estimator.estimate(estimate_pose, width, height, self._effective_estimator_algorithm())
         self.raw = estimate
-        fixed_yaw_available = bool(
-            policy in FROZEN22_POLICIES and self.calibrated and not self.calibrating
-            and self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
-        )
         tilt_available = bool(policy in {"roll_tilt", "head_responsive"} and self.calibrated and not self.calibrating
                               and math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt))
-        if not estimate.valid and not fixed_yaw_available and not tilt_available:
+        if not estimate.valid and not tilt_available:
             self.last_error = estimate.error
             self._reset_filters()
             if self.calibrating:
@@ -3690,13 +3648,7 @@ class HeadController:
 
         span_x, span_y = self._span()
 
-        if self.calibrated and policy in FROZEN22_POLICIES:
-            # The fixed-signature projection is already neutral-centred; do
-            # not feed the unrelated sparse-PnP yaw into this policy.
-            control_yaw = self.frozen22_yaw_median
-            span_x = FROZEN22_YAW_SPAN_DEG
-        else:
-            control_yaw = self._diagnostic_yaw(estimate) if self.calibrated else estimate.yaw
+        control_yaw = self._diagnostic_yaw(estimate) if self.calibrated else estimate.yaw
         self.control_yaw = control_yaw
 
         # Keep filtered raw signals alive for both calibrated horizontal
@@ -3805,19 +3757,13 @@ class HeadController:
             self._capture_runtime_neutral(now)
         yaw_gain = (
             PERSONAL_PNP_YAW_GAIN
-            if (policy in V153_POLICIES and self.config["algorithm"] == "pnp" and self.personal_pnp_active)
+            if (policy == "gesture_v188" and self.config["algorithm"] == "pnp" and self.personal_pnp_active)
             else 1.0
-        )
-        frozen22_ready = bool(
-            self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
         )
         sign = -1.0 if self.config["invert_x"] else 1.0
         if policy in {"roll_tilt", "head_responsive"}:
             raw_x = sign * (self.tilt_angle - self.center_tilt) / TILT_SPAN_DEG if (
                 math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt)) else 0.0
-            intent_raw_x = raw_x
-        elif policy in FROZEN22_POLICIES:
-            raw_x = sign * self.frozen22_yaw_median / span_x if frozen22_ready else 0.0
             intent_raw_x = raw_x
         else:
             raw_x = sign * yaw_gain * (self.signal_yaw - self._runtime_reference("main", self.center_yaw)) / span_x
@@ -3866,11 +3812,6 @@ class HeadController:
         elif runtime_muted:
             self._x_intent_v153.reset()
             vx = 0.0
-        elif policy in FROZEN22_POLICIES and not frozen22_ready:
-            self._x_intent_v153.reset()
-            vx = 0.0
-            self.frozen22_gate_source = "FIXED22_NOT_READY"
-            self.frozen22_gate_scale = 0.0
         else:
             settle_before = getattr(self._x_intent_v153, "_neutral_settle_serial", 0)
             vx = self._x_intent_v153.update(
@@ -3937,31 +3878,24 @@ class HeadController:
     def _horizontal_diagnostics(self) -> dict:
         """Describe the controller stage, not whether the OS received a mouse event."""
         policy = self.config["horizontal_algorithm"]
-        fixed = policy in FROZEN22_POLICIES
         responsive = policy == "head_responsive"
         tilt = policy in {"roll_tilt", "head_responsive"}
-        frame_valid = bool(
-            self.frozen22_calibration_valid and math.isfinite(self.frozen22_yaw_median)
-        ) if fixed else bool(self.raw.valid)
+        frame_valid = bool(self.raw.valid)
         if tilt:
             frame_valid = math.isfinite(self.tilt_angle) or (responsive and self.raw.valid and self.raw.confidence >= .6)
-        ready = bool(self.calibrated and (not fixed or self.frozen22_calibration_valid)
-                     and (not tilt or math.isfinite(self.center_tilt)))
+        ready = bool(self.calibrated and (not tilt or math.isfinite(self.center_tilt)))
         if not self.config["enabled"]:
             code, message = "DISABLED", "头控已关闭"
         elif self.calibrating:
             code, message = "CALIBRATING", "正在校准，暂不输出"
         elif not self.calibrated:
             code, message = "NEEDS_CALIBRATION", "尚未校准中心；原始角度有值也不会输出，请先校准"
-        elif fixed and not self.frozen22_calibration_valid:
-            code, message = "FIXED22_NEEDS_CALIBRATION", "固定特征校准未通过或样本不足，请重新校准"
         elif tilt and not math.isfinite(self.center_tilt):
             code, message = "TILT_NEEDS_CALIBRATION", "请自然正视屏幕，校准侧倾中心"
         elif tilt and not frame_valid:
             code, message = "TILT_MISSING_EYES", "看不清双眼，请正对摄像头"
         elif not frame_valid:
-            code = "FIXED22_MISSING_POINTS" if fixed else "ESTIMATE_INVALID"
-            message = "固定特征所需关键点不完整" if fixed else (self.raw.error or "当前姿态无效")
+            code, message = "ESTIMATE_INVALID", self.raw.error or "当前姿态无效"
         elif policy == "gesture_v188" and self._runtime_neutral_pending and self._runtime_neutral is None:
             code, message = "RUNTIME_NEUTRAL_WAIT", "请自然正视屏幕并静止，正在确认运行中心"
         elif abs(self.output_x) > 1e-12:
@@ -3977,14 +3911,14 @@ class HeadController:
             code = self.frozen22_gate_source
             message = {
                 "PITCH_UNCONFIRMED": "俯仰动作中的横向证据不足，已拦截",
-                "AUX_UNCONFIRMED": "融合模式尚无足够辅助依据；可切换个性化 PnP 对比",
+                "AUX_UNCONFIRMED": "融合模式尚无足够辅助依据",
                 "DIRECTION_CONFLICT": "不同来源的方向冲突，已拦截",
                 "CONFIRMING": "正在确认连续同向证据",
             }.get(code, "横向输出被证据检查拦截")
         else:
             code, message = "OUTPUT_TRANSITION", "正在等待有效帧间隔或完成方向切换"
         yaw_unit = "degrees" if self.config["algorithm"] == "pnp" else "ratio"
-        active_value = self.frozen22_yaw_median if fixed else self.control_yaw
+        active_value = self.control_yaw
         if tilt:
             active_value = self.tilt_angle
         return {
@@ -4013,9 +3947,9 @@ class HeadController:
             "horizontal_block_message": message,
             "raw_yaw_units": yaw_unit,
             "raw_pitch_units": yaw_unit,
-            "horizontal_signal_source": self._responsive_head.source if responsive else "eye_line" if tilt else "frozen22" if fixed else self.config["algorithm"],
+            "horizontal_signal_source": self._responsive_head.source if responsive else "eye_line" if tilt else self.config["algorithm"],
             "horizontal_signal_value": self._responsive_head.raw if responsive else active_value if math.isfinite(active_value) else None,
-            "horizontal_signal_units": "normalized" if responsive else "degrees" if tilt else "degree_like" if fixed else yaw_unit,
+            "horizontal_signal_units": "normalized" if responsive else "degrees" if tilt else yaw_unit,
             "intent_drive_x": round(float(self._last_intent_drive), 6),
             "evidence_scale_x": round(float(self._last_evidence_scale), 6),
             "target_output_x": round(float(self._last_target_x), 6),
@@ -4043,16 +3977,8 @@ class HeadController:
             remaining = None
             quality = "等待校准（可说“开始校准”）"
         policy_name = str(self.config.get("horizontal_algorithm", DEFAULT_CONFIG["horizontal_algorithm"]))
-        if policy_name in FROZEN22_POLICIES and not self.calibrating:
-            if self.frozen22_missing_points:
-                # 这行字第一次开机就摆在"准备开玩"里。少了哪些点属于诊断，
-                # 已经在 frozen22_missing_points 里；这里只说人该做什么。
-                quality = "看不清脸，请正对摄像头"
-            elif self.calibrated and not self.frozen22_calibration_valid:
-                quality = "Frozen22 校准无效，请正视并保持稳定后重试"
         horizontal_calibrated = bool(
             self.calibrated
-            and (policy_name not in FROZEN22_POLICIES or self.frozen22_calibration_valid)
             and (policy_name not in {"roll_tilt", "head_responsive"} or math.isfinite(self.center_tilt))
         )
         yaw_latched = policy_name not in {"roll_tilt", "head_responsive"} and bool(getattr(self._x_intent_v153, "return_latched", False))
@@ -4070,7 +3996,6 @@ class HeadController:
                                     else "转动时移动，偏头停住时停止，回到中心短暂停稳后重新触发"),
             "active_pitch_estimator": self._effective_estimator_algorithm(),
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
-            "frozen22_controls_mouse": bool(policy_name in FROZEN22_POLICIES),
             "v188_pitch_guard_active": bool(getattr(self, "v188_pitch_guard_active", False)),
             "v202_pitch_output_veto_active": bool(getattr(self, "v202_pitch_output_veto_active", False)),
             "v202_return_output_veto_active": bool(getattr(self, "v202_return_output_veto_active", False)),
@@ -4108,13 +4033,13 @@ class HeadController:
             "personal_pnp_active": bool(self.personal_pnp_active),
             "personal_pnp_template_quality": (
                 "active" if self.personal_pnp_active
-                else "unavailable" if policy_name not in V153_POLICIES
+                else "unavailable" if policy_name != "gesture_v188"
                 else "rejected" if self.personal_pnp_rejection_reason not in {"", "未尝试", "校准数据检查中", "未启用个人模型"}
                 else "unavailable"
             ),
             "personal_pnp_rejection_reason": (
                 self.personal_pnp_rejection_reason or None
-            ) if policy_name in V153_POLICIES else None,
+            ) if policy_name == "gesture_v188" else None,
             "frozen22_gate_source": self.frozen22_gate_source,
             "frozen22_gate_scale": round(float(self.frozen22_gate_scale), 5),
             "frozen22_gate_fast_delta_deg": (
@@ -4151,7 +4076,7 @@ class HeadController:
                 if math.isfinite(self.personal_pnp_center_depth) else None
             ),
             "personal_pnp_far_depth_ratio": round(float(self.personal_pnp_far_depth_ratio), 4),
-            "cross_axis_mode": "FIXED22_2D" if policy_name in FROZEN22_POLICIES else "V5_PITCH_AWARE_CONSENSUS",
+            "cross_axis_mode": "V5_PITCH_AWARE_CONSENSUS",
             "cross_axis_lock_mode": str(getattr(self._cross_axis_lock, "last_mode", "")),
             "multi2d_calibrated": bool(self.center_multi2d_proxy is not None and self.noise_multi2d_proxy is not None),
             "world_rigid_yaw": (
@@ -4261,15 +4186,8 @@ class HeadController:
             algorithm = str(params.get("algorithm", "pnp"))
             if algorithm not in HEAD_ALGORITHMS:
                 return
-            horizontal_algorithm = str(
-                params.get("horizontal_algorithm", "gesture_v153")
-            ).lower().strip()
-            # Profiles written before the v153 policy used a few transient
-            # names (for example ``gesture``).  Do not let those silently
-            # select a different signal path; use the production v153 policy
-            # unless the persisted value is one of the explicit choices.
-            if horizontal_algorithm in {"gesture", "classic"}:
-                horizontal_algorithm = "gesture_v153"
+            # 存的是已删掉的转头算法（老档案）就换成留下的那一种。
+            horizontal_algorithm = _horizontal_policy(params.get("horizontal_algorithm", "gesture_v188"))
             if horizontal_algorithm not in HORIZONTAL_ALGORITHMS:
                 horizontal_algorithm = DEFAULT_CONFIG["horizontal_algorithm"]
             self.config.update({
@@ -4361,8 +4279,7 @@ class HeadController:
         policy = self.config["horizontal_algorithm"]
         self.calibrated = True
         self.center_pending = bool(
-            (policy in FROZEN22_POLICIES and not self.frozen22_calibration_valid)
-            or (policy in {"roll_tilt", "head_responsive"} and not math.isfinite(self.center_tilt))
+            policy in {"roll_tilt", "head_responsive"} and not math.isfinite(self.center_tilt)
         )
         self.calibration_from_last_session = True
         self._saved_calibration = saved

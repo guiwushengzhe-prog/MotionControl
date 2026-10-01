@@ -16,7 +16,7 @@ export const cameraScan={state:'idle',count:0,error:''};
 
 export const output={enabled:false,mode:'mouse',strength:160,server:null,xinputEnabled:false,xinputMotionLeft:false,xinputUser:null,xinputStatus:null};
 
-export const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookSource:'hand',verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
+export const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
 
 export const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
 

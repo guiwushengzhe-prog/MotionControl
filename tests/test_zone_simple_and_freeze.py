@@ -282,7 +282,9 @@ def test_a_recorded_scene_is_migrated_once_on_upgrade():
         status = first.status()
         assert status["zones_frozen"] and status["zones_anchor_known"]
         assert status["zones"]["leftFoot"]["rect"] == {"x1": .24, "y1": .79, "x2": .36, "y2": .91}
-        assert first.vertical_look["range_y"] == .25 and first.body_motion_guard_enabled is True
+        assert first.vertical_look["deadzone"] == .05 and first.body_motion_guard_enabled is True
+        # 旧场景用的是已删掉的「右手配合绿框」，迁过来是关着的。
+        assert first.vertical_look["enabled"] is False
         first.freeze_zones(False)
     finally:
         first.close()

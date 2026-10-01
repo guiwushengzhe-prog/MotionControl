@@ -97,8 +97,12 @@ def test_first_head_calibration_save_does_not_restore_two_hand_defaults():
         second.close()
 
 
-@pytest.mark.parametrize('policy', ['gesture_v188', 'gesture_v153', 'frozen22', 'roll_tilt', None])
-def test_existing_settings_are_preserved(policy):
+# 删掉的两种转头（gesture_v153、frozen22）和没写的老档案都换成留下的 gesture_v188。
+@pytest.mark.parametrize('policy, expected', [
+    ('gesture_v188', 'gesture_v188'), ('roll_tilt', 'roll_tilt'),
+    ('gesture_v153', 'gesture_v188'), ('frozen22', 'gesture_v188'), (None, 'gesture_v188'),
+])
+def test_existing_settings_are_preserved(policy, expected):
     params = {'enabled': False}
     if policy is not None:
         params['horizontal_algorithm'] = policy
@@ -109,7 +113,7 @@ def test_existing_settings_are_preserved(policy):
     }}), encoding='utf-8')
     kernel = ControlKernel(_Output())
     try:
-        assert kernel.head_controller.config['horizontal_algorithm'] == (policy or 'gesture_v153')
+        assert kernel.head_controller.config['horizontal_algorithm'] == expected
         assert not kernel.head_controller.config['enabled']
         assert kernel.hand_mouse_controller.config['horizontal_hand'] == 'right'
         assert kernel.hand_mouse_controller.config['vertical_hand'] == 'right'

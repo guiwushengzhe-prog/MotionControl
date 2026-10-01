@@ -228,7 +228,6 @@
 <div class="group">
 <div class="list">
 <div class="row"><label class="row-main" for="viewHorizontalSource"><span class="name">左右</span><span class="sub" id="viewHorizontalDesc"></span></label><span class="sel"><select id="viewHorizontalSource"><option value="roll_tilt">头部侧倾</option></select></span></div>
-<div class="row" hidden="" id="turnAlgorithmRow"><label class="row-main" for="headHorizontalAlgorithm">转头算法</label><span class="sel"><select id="headHorizontalAlgorithm"><option value="gesture_v188">多信号融合</option><option value="gesture_v153">个性化 PnP</option><option value="frozen22">固定特征 2D</option><option hidden="" selected="" value="roll_tilt">侧倾转向</option><option hidden="" value="head_responsive">侧倾＋转脸</option></select></span></div>
 <div class="row"><label class="row-main" for="viewVerticalSource"><span class="name">上下</span><span class="sub" id="viewVerticalDesc"></span></label><span class="sel"><select id="viewVerticalSource"><option value="left">左手握拳</option></select></span></div>
 </div>
 <p class="group-foot" id="viewControlStatus" role="status">正在读取当前设置…</p>
@@ -245,17 +244,12 @@
 <p class="group-foot hand-only" id="handMouseStatus">未启用</p>
 <p class="group-foot"><span class="statusline" id="headSaveStatus" role="status"></span><span class="statusline" id="handMouseSaveStatus" role="status"></span><button class="btn link" hidden="" id="retryHeadBtn">重试保存</button></p>
 </div>
-<div class="group" hidden="" id="legacyVertical">
-<h2 class="group-title">旧版上下视角</h2>
+<div class="group" hidden="" id="headPitchSettings">
+<h2 class="group-title">抬头低头</h2>
 <div class="list">
-<div class="row-note"><span>你在用旧版上下视角（绿框或抬低头）。握拳上下更稳，建议换过去。</span><button class="btn" id="legacyToFistBtn" type="button">改用左手握拳</button></div>
-<div class="row"><label class="row-main" for="verticalLookSource">方案</label><span class="sel"><select id="verticalLookSource"><option value="off">关闭</option><option value="hand">右手配合绿色区域</option><option value="head">抬低头</option></select></span></div>
-<div id="verticalLookTuning">
-<div class="row"><label class="row-main" for="verticalRange">上下范围</label><div class="range-in"><input aria-label="上下视角范围" id="verticalRange" max="40" min="6" step="1" type="range" value="18"/><b id="verticalRangeValue">18%</b></div></div>
-<div class="row"><label class="row-main" for="verticalDeadzone">上下中心死区</label><div class="range-in"><input aria-label="上下视角中心死区" id="verticalDeadzone" max="35" min="0" step="1" type="range" value="10"/><b id="verticalDeadzoneValue">10%</b></div></div>
-</div>
-<div class="row head-vertical-setting"><label class="row-main" for="speedY">头部上下速度</label><div class="range-in"><input aria-label="头部上下速度" id="speedY" max="100" min="15" step="2" type="range" value="46"/><b id="speedYValue">46%</b></div></div>
-<div class="row head-vertical-setting"><label class="row-main" for="invertY">抬低头方向反转</label><input class="switch" id="invertY" type="checkbox"/></div>
+<div class="row"><label class="row-main" for="speedY">上下速度</label><div class="range-in"><input aria-label="抬头低头的上下速度" id="speedY" max="100" min="15" step="2" type="range" value="46"/><b id="speedYValue">46%</b></div></div>
+<div class="row"><label class="row-main" for="verticalDeadzone"><span class="name">中心稳定区</span><span class="sub">头在这个范围内不动</span></label><div class="range-in"><input aria-label="抬头低头的中心稳定区" id="verticalDeadzone" max="22" min="3" step="1" type="range" value="10"/><b id="verticalDeadzoneValue">10%</b></div></div>
+<div class="row"><label class="row-main" for="invertY">方向反转</label><input class="switch" id="invertY" type="checkbox"/></div>
 <div class="row"><label class="row-main" for="verticalExclusive">上下时暂停左右</label><input class="switch" id="verticalExclusive" type="checkbox"/></div>
 </div>
 </div>

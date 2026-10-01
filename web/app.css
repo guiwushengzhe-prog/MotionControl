@@ -310,7 +310,6 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .hud-fps.slow::before { background: #ff9f0a; }
 .hud-view { top: .75rem; right: .75rem; }
 .hud-gate { top: 2.75rem; right: .75rem; }
-.hud-gate.active { background: rgba(48, 209, 88, .5); }
 /* 触发时大字像字幕一样压在画面底边：人站在几米外，要一眼看清是哪个动作、按了哪个键，
    又不能把人挡住。 */
 .range-hit { position: absolute; left: .75rem; right: .75rem; bottom: .75rem; display: grid; justify-items: center; gap: 0; width: fit-content; margin: 0 auto;

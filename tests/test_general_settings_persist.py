@@ -61,7 +61,7 @@ def test_vertical_look_off_survives_a_restart(home):
     assert second._gate_available() is False
 
 
-def test_which_side_survives_too(home):
+def test_head_pitch_on_survives_a_restart(home):
     first = ControlKernel(Output())
     first.configure_head(vertical_look_source="head")
 
@@ -75,10 +75,20 @@ def test_off_then_on_again_across_restarts(home):
     middle = ControlKernel(Output())
     assert middle.vertical_look["enabled"] is False
 
-    middle.configure_head(vertical_look_source="hand")
+    middle.configure_head(vertical_look_source="head")
     last = ControlKernel(Output())
     assert last.vertical_look["enabled"] is True
-    assert last.vertical_look["source"] == "hand"
+    assert last.vertical_look["source"] == "head"
+
+
+def test_a_saved_right_hand_source_comes_back_off(home):
+    """「右手配合绿框」删掉了。存着它的老设置开机是关着的，不悄悄换成抬头低头。"""
+    path = settings_file(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"vertical_look": {"enabled": True, "source": "hand"}}), encoding="utf-8")
+    kernel = ControlKernel(Output())
+    assert kernel.vertical_look["enabled"] is False
+    assert kernel._gate_available() is False
 
 
 @pytest.mark.parametrize("rubbish", ["{ 这不是 json", json.dumps(["不是字典"])])
@@ -93,7 +103,7 @@ def test_a_broken_file_does_not_stop_the_program(home, rubbish):
 
     kernel = ControlKernel(Output())          # 不该抛
     assert kernel.vertical_look["enabled"] is default
-    assert kernel.vertical_look["source"] in {"hand", "head"}
+    assert kernel.vertical_look["source"] == "head"
 
 
 def test_no_file_at_all_is_normal(home):

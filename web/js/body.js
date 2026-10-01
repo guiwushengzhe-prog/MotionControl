@@ -40,7 +40,7 @@ export function renderZoneFreeze(k=kernelState||{}){
   if(adjust){const text=frozen?'调整定住的区域':'挪动区域';if(adjust.textContent!==text)adjust.textContent=text}
   const mode=$('#zoneTriggerMode');
   if(mode&&k.zone_trigger_mode&&document.activeElement!==mode&&mode.value!==k.zone_trigger_mode)mode.value=k.zone_trigger_mode;
-  for(const [id,key] of [['verticalRange','range_y'],['verticalDeadzone','deadzone']]){
+  for(const [id,key] of [['verticalDeadzone','deadzone']]){
     const input=$('#'+id),value=Number(k.vertical_look?.[key]);
     if(!input||!Number.isFinite(value)||document.activeElement===input)continue;
     const percent=String(Math.round(value*100));

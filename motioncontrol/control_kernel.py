@@ -75,7 +75,6 @@ def _stereo_calibration_path():
 
     return user_data_root() / "stereo_calibration.json"
 from motioncontrol.stereo_depth import StereoDepth
-from motioncontrol.vertical_hand_control import VerticalHandController
 
 
 # Head control lives in head_control.py.  Keep only the exported signal-version
@@ -505,40 +504,24 @@ class ControlKernel:
         self.head_jump_prev: tuple[float, float, float] | None = None
         self.head_jump_torso_ref: float | None = None
         self.vertical_look = {
-            # lookGate 和别的区域一样跟着人走，定住时一起定住。
-            # 默认关。上下视角这道闸抢的是右手，而手控鼠标默认就在用右手——两个
-            # 一起开着，第一屏就会弹一条"绿框白放"的提示，而第一次打开的人根本
-            # 不知道那个绿框是什么。要用它的人去打开，开了会存盘。
-            "enabled": False, "gate_zone_id": "lookGate", "point": "right_wrist",
-            "source": "hand", "verticalLookSource": "hand",
+            # 上下视角用头（抬头低头）只剩这一种：左手伸进 lookGate 那道闸才开。
+            # lookGate 和别的区域一样跟着人走，定住时一起定住；只有开着时才上报、才画。
+            # 默认关，要用的人在「设置 → 视角 → 上下」里选，选了会存盘。
+            # 原来还有一种「右手配合绿框」，已经删掉。
+            "enabled": False, "gate_zone_id": "lookGate",
+            "source": "head", "verticalLookSource": "head",
             # Optional axis exclusivity: entering the left-hand gate may pause
             # horizontal head output while vertical view control is active.
             "exclusive_axes": False,
             "body_motion_guard": False,
-            "center_x": 0.5, "center_y": 0.5, "range_y": 0.18, "deadzone": 0.10,
+            "deadzone": 0.10,
         }
         self.vertical_gate_active = False
-        self.vertical_wrist_norm = 0.0
-        self.vertical_hand_controller = VerticalHandController()
         self.hand_mouse_controller = HandMouseController()
         self.pose_recorder = PoseRecorder(_user_recordings_dir())
         self.trigger_recorder = TriggerRecorder(_user_recordings_dir() / "triggered")
         # 手机为主、电脑摄像头为第二视角时的真实前后深度；没开双目时它只是闲着。
         self.stereo = StereoDepth(_stereo_calibration_path())
-        # The left-wrist lookGate is a deliberate arm/hand gate.  When it
-        # becomes active we capture the right wrist's current Y as the
-        # neutral anchor; head pitch is never allowed to reach final output.
-        self.vertical_wrist_anchor_y: float | None = None
-        # v0.9.6 vertical look is body-relative: right-wrist Y is measured
-        # against right-shoulder Y.  This removes whole-body bobbing and makes
-        # natural arm arcs much less likely to disturb the view.
-        self.vertical_wrist_anchor_rel_y: float | None = None
-        # Keep the historical attribute as an alias for compatibility with
-        # status consumers and focused kernel tests.  The state is owned by
-        # VerticalHandController from here on.
-        self.vertical_anchor_samples = self.vertical_hand_controller.anchor_samples
-        self.vertical_wrist_filtered = 0.0
-        self.vertical_filter_last_at = 0.0
         self.vertical_head_anchor_pitch: float | None = None
         # A gate re-entry must wait for a short, stable filtered-pitch
         # center.  Capturing one frame lets the filter's old tail look like a
@@ -755,11 +738,11 @@ class ControlKernel:
         vertical = data.get("vertical_look")
         if isinstance(vertical, dict):
             if "enabled" in vertical:
-                self.vertical_look["enabled"] = bool(vertical["enabled"])
-            source = str(vertical.get("source", "")).lower()
-            if source in {"hand", "head"}:
-                self.vertical_look["source"] = source
-                self.vertical_look["verticalLookSource"] = source
+                # 存着「右手配合绿框」（老版本没写来源时也是它）的当成关着：
+                # 那种已经删了，不悄悄换成抬头低头。
+                self.vertical_look["enabled"] = (
+                    bool(vertical["enabled"]) and str(vertical.get("source", "hand")).lower() == "head"
+                )
             # 这几项原来只存在参考场景文件里，没记录过场景的人每次重启都回到默认。
             self._apply_vertical_extras_locked(vertical)
 
@@ -785,18 +768,17 @@ class ControlKernel:
                 self.zone_rects = self._frozen_zone_rects_locked()
 
     def _apply_vertical_extras_locked(self, vertical: dict) -> None:
-        """上下视角里除了开关、来源以外的那几项：暂停左右、身体动作保护、范围、死区。"""
+        """上下视角里除了开关以外的那几项：暂停左右、身体动作保护、死区。"""
         if "exclusive_axes" in vertical:
             self.vertical_look["exclusive_axes"] = bool(vertical["exclusive_axes"])
         if "body_motion_guard" in vertical:
             self.body_motion_guard_enabled = bool(vertical["body_motion_guard"])
             self.vertical_look["body_motion_guard"] = self.body_motion_guard_enabled
-        for key, low, high in (("range_y", 0.06, 0.40), ("deadzone", 0.0, 0.35)):
-            if key in vertical:
-                try:
-                    self.vertical_look[key] = _clamp(float(vertical[key]), low, high)
-                except (TypeError, ValueError):
-                    pass
+        if "deadzone" in vertical:
+            try:
+                self.vertical_look["deadzone"] = _clamp(float(vertical["deadzone"]), 0.0, 0.35)
+            except (TypeError, ValueError):
+                pass
 
     def _migrate_scene_layout_locked(self) -> None:
         """记录过旧版「参考场景」的人：固定圆圈换成定住的框，只做一次。
@@ -850,10 +832,9 @@ class ControlKernel:
             "hand_mouse": dict(self.hand_mouse_controller.config),
             "vertical_look": {
                 "enabled": bool(self.vertical_look.get("enabled", True)),
-                "source": str(self.vertical_look.get("source", "hand")),
+                "source": "head",
                 "exclusive_axes": bool(self.vertical_look.get("exclusive_axes", False)),
                 "body_motion_guard": bool(self.body_motion_guard_enabled),
-                "range_y": float(self.vertical_look.get("range_y", 0.18)),
                 "deadzone": float(self.vertical_look.get("deadzone", 0.10)),
             },
             "action_chain": self.action_chain.config,
@@ -881,24 +862,6 @@ class ControlKernel:
             self.head = self.head_controller.status(time.monotonic())
             self._safe_output(self.output.apply, 0.0, 0.0)
             return self.status_locked(time.monotonic())
-
-    def _sync_vertical_hand_locked(self, state: dict | None = None) -> None:
-        """Mirror vertical-hand diagnostics kept for the public kernel API."""
-        snapshot = state or self.vertical_hand_controller.status()
-        # v160.reset() rebuilds its bounded anchor deque.  Refresh the
-        # historical alias on every sync so status consumers never retain the
-        # deque from before a gate transition, source switch, or watchdog reset.
-        self.vertical_anchor_samples = self.vertical_hand_controller.anchor_samples
-        self.vertical_wrist_anchor_y = snapshot.get("anchor_y")
-        self.vertical_wrist_anchor_rel_y = snapshot.get("anchor_rel_y")
-        self.vertical_wrist_filtered = float(snapshot.get("filtered", 0.0) or 0.0)
-        self.vertical_filter_last_at = float(snapshot.get("filter_last_at", 0.0) or 0.0)
-
-    def _reset_vertical_hand_locked(self, now: float | None = None) -> None:
-        """Reset hand vertical-look state and its legacy diagnostic mirrors."""
-        self.vertical_hand_controller.reset(now)
-        self._sync_vertical_hand_locked()
-        self.vertical_wrist_norm = 0.0
 
     def _reset_vertical_head_locked(self) -> None:
         """Clear the gated head-pitch center and all vertical intent state."""
@@ -1092,22 +1055,14 @@ class ControlKernel:
                 if source in {"off", "none", "关闭"}:
                     # 开关必须走这条路，不能只存进场景布局：没定位过区域的玩家
                     # 根本不会保存布局，那样「关闭」点了等于没点。
-                    # 保留上一次选的是右手还是头部，重新打开不用再选一次。
                     self.vertical_look["enabled"] = False
                     self.vertical_gate_active = False
-                    self._reset_vertical_hand_locked()
+                    self._reset_vertical_head_locked()
+                elif source in {"head", "头部"}:
+                    self.vertical_look["enabled"] = True
                     self._reset_vertical_head_locked()
                 else:
-                    if source in {"right_wrist", "hand", "右手"}:
-                        source = "hand"
-                    elif source in {"head", "头部"}:
-                        source = "head"
-                    else:
-                        raise ValueError("vertical_look_source must be hand, head or off")
-                    self.vertical_look["enabled"] = True
-                    self.vertical_look["source"] = source
-                    self.vertical_look["verticalLookSource"] = source
-                    self._reset_vertical_head_locked()
+                    raise ValueError("vertical_look_source must be head or off")
                 self._save_general_settings()
             if vertical_exclusive is not None:
                 self.vertical_look["exclusive_axes"] = bool(vertical_exclusive)
@@ -1123,24 +1078,21 @@ class ControlKernel:
             return self.status_locked(time.monotonic())
 
     def configure_vertical_look(self, updates: dict | None) -> dict:
-        """上下视角的设置：开关、右手还是头部、暂停左右、身体动作保护、范围、死区。
+        """上下视角（抬头低头）的设置：开关、暂停左右、身体动作保护、死区。
 
         原来这几项跟着参考场景存，参考场景删了以后都在通用设置里。只改送来的那几项。
         """
         updates = updates if isinstance(updates, dict) else {}
         with self._lock:
             if "enabled" in updates:
-                self.vertical_look["enabled"] = bool(updates["enabled"])
-            raw_source = str(updates.get("source", updates.get("verticalLookSource", ""))).strip().lower()
-            if raw_source in {"hand", "head", "头部", "右手", "right_wrist"}:
-                source = "head" if raw_source in {"head", "头部"} else "hand"
-                self.vertical_look["source"] = source
-                self.vertical_look["verticalLookSource"] = source
+                # 老参考场景迁移过来时可能带着已删掉的「右手配合绿框」，那就是关着。
+                self.vertical_look["enabled"] = (
+                    bool(updates["enabled"]) and str(updates.get("source", "head")).lower() != "hand"
+                )
             self._apply_vertical_extras_locked(updates)
             if not self.body_motion_guard_enabled:
                 self._reset_body_motion_guard_locked()
             self.vertical_gate_active = False
-            self._reset_vertical_hand_locked()
             self.vertical_head_anchor_samples.clear()
             self._reset_vertical_head_locked()
             self._save_general_settings()
@@ -2297,14 +2249,12 @@ class ControlKernel:
                 changed = True
         self.vertical_gate_active = bool(self.zone_state.get("lookGate", {}).get("pressed")) if gate_available else False
         if not self.vertical_gate_active:
-            self._reset_vertical_hand_locked()
             self.vertical_head_anchor_samples.clear()
             self._reset_vertical_head_locked()
         elif not previous_gate:
             # Do not capture one arbitrary frame as the neutral point.  The
             # next few stable frames are collected in _update_head_locked and
             # their median becomes the anchor.
-            self._reset_vertical_hand_locked(now)
             self._reset_vertical_head_locked()
         if changed:
             self.last_zone_emit = now
@@ -3269,63 +3219,55 @@ class ControlKernel:
         self.head = self.head_controller.status(now)
 
         y = 0.0
-        self.vertical_wrist_norm = 0.0
         self.vertical_pitch_norm = 0.0
         self.vertical_pitch_relative = 0.0
-        source = "head" if str(self.vertical_look.get("source", "hand")).lower() == "head" else "hand"
         if bool(self.vertical_look.get("enabled")) and self.vertical_gate_active:
             vcfg = self.vertical_look
-            if source == "head":
-                # A new gate entry establishes a temporary center from the
-                # current filtered pitch.  This prevents an already-held nod
-                # from causing a jump when the user authorizes vertical look.
-                signal_pitch = getattr(self.head_controller, "signal_pitch", math.nan)
-                if not math.isfinite(signal_pitch):
-                    signal_pitch = _finite(self.head.get("raw_pitch"), math.nan)
-                if self.vertical_head_anchor_pitch is None and math.isfinite(signal_pitch):
-                    self.vertical_head_anchor_samples.append(float(signal_pitch))
-                    if len(self.vertical_head_anchor_samples) >= 3:
-                        self.vertical_head_anchor_pitch = float(statistics.median(self.vertical_head_anchor_samples))
-                        self.vertical_head_anchor_samples.clear()
-                        self.vertical_pitch_intent.reset()
-                if self.vertical_head_anchor_pitch is not None and math.isfinite(signal_pitch):
-                    try:
-                        pitch_span = float(self.head_controller._span()[1])
-                    except Exception:
-                        pitch_span = 1.0
-                    pitch_span = max(1e-6, pitch_span)
-                    relative = _clamp((float(signal_pitch) - self.vertical_head_anchor_pitch) / pitch_span, -1.0, 1.0)
-                    if bool(self.head_controller.config.get("invert_y")):
-                        relative = -relative
-                    deadzone = _clamp(vcfg.get("deadzone", 0.08), 0.03, 0.22)
-                    intent = self.vertical_pitch_intent.step(
-                        relative, now,
-                        angle_threshold=PITCH_INTENT_ANGLE,
-                        start_velocity=PITCH_INTENT_START_VELOCITY,
-                        stop_velocity=PITCH_INTENT_STOP_VELOCITY,
-                        release_threshold=deadzone * 0.62,
+            # A new gate entry establishes a temporary center from the
+            # current filtered pitch.  This prevents an already-held nod
+            # from causing a jump when the user authorizes vertical look.
+            signal_pitch = getattr(self.head_controller, "signal_pitch", math.nan)
+            if not math.isfinite(signal_pitch):
+                signal_pitch = _finite(self.head.get("raw_pitch"), math.nan)
+            if self.vertical_head_anchor_pitch is None and math.isfinite(signal_pitch):
+                self.vertical_head_anchor_samples.append(float(signal_pitch))
+                if len(self.vertical_head_anchor_samples) >= 3:
+                    self.vertical_head_anchor_pitch = float(statistics.median(self.vertical_head_anchor_samples))
+                    self.vertical_head_anchor_samples.clear()
+                    self.vertical_pitch_intent.reset()
+            if self.vertical_head_anchor_pitch is not None and math.isfinite(signal_pitch):
+                try:
+                    pitch_span = float(self.head_controller._span()[1])
+                except Exception:
+                    pitch_span = 1.0
+                pitch_span = max(1e-6, pitch_span)
+                relative = _clamp((float(signal_pitch) - self.vertical_head_anchor_pitch) / pitch_span, -1.0, 1.0)
+                if bool(self.head_controller.config.get("invert_y")):
+                    relative = -relative
+                deadzone = _clamp(vcfg.get("deadzone", 0.08), 0.03, 0.22)
+                intent = self.vertical_pitch_intent.step(
+                    relative, now,
+                    angle_threshold=PITCH_INTENT_ANGLE,
+                    start_velocity=PITCH_INTENT_START_VELOCITY,
+                    stop_velocity=PITCH_INTENT_STOP_VELOCITY,
+                    release_threshold=deadzone * 0.62,
+                )
+                self.vertical_pitch_relative = relative
+                self.vertical_pitch_velocity = intent["velocity"]
+                self.vertical_pitch_acceleration = intent["acceleration"]
+                self.vertical_pitch_intent_state = intent["state"]
+                # The look gate is already the player's explicit vertical
+                # permission.  Inside it, a calibrated head-pitch
+                # deflection controls view velocity directly; the intent
+                # state remains diagnostic and cannot silence a held nod.
+                if abs(relative) > deadzone:
+                    amount = (abs(relative) - deadzone) / max(1e-6, 1.0 - deadzone)
+                    shaped = _clamp(amount, 0.0, 1.0) ** 1.12
+                    y = math.copysign(shaped, relative) * _clamp(
+                        float(self.head_controller.config.get("sensitivity_y", 46.0)) / 100.0,
+                        0.15, 1.0,
                     )
-                    self.vertical_pitch_relative = relative
-                    self.vertical_pitch_velocity = intent["velocity"]
-                    self.vertical_pitch_acceleration = intent["acceleration"]
-                    self.vertical_pitch_intent_state = intent["state"]
-                    # The look gate is already the player's explicit vertical
-                    # permission.  Inside it, a calibrated head-pitch
-                    # deflection controls view velocity directly; the intent
-                    # state remains diagnostic and cannot silence a held nod.
-                    if abs(relative) > deadzone:
-                        amount = (abs(relative) - deadzone) / max(1e-6, 1.0 - deadzone)
-                        shaped = _clamp(amount, 0.0, 1.0) ** 1.12
-                        y = math.copysign(shaped, relative) * _clamp(
-                            float(self.head_controller.config.get("sensitivity_y", 46.0)) / 100.0,
-                            0.15, 1.0,
-                        )
-                    self.vertical_pitch_norm = _clamp(y, -1.0, 1.0)
-            else:
-                self._reset_vertical_head_locked()
-                hand_state = self.vertical_hand_controller.update(pose_map, now, vcfg)
-                self._sync_vertical_hand_locked(hand_state)
-                y = float(hand_state["output"])
+                self.vertical_pitch_norm = _clamp(y, -1.0, 1.0)
 
         if not self.vertical_gate_active:
             self._reset_vertical_head_locked()
@@ -3333,13 +3275,12 @@ class ControlKernel:
         if horizontal_paused:
             x = 0.0
         x = self._guard_horizontal_output_locked(x, now)
-        self.vertical_wrist_norm = _clamp(y, -1.0, 1.0)
         self.head["normalized_x"] = round(float(x), 4)
         self.head["output_x"] = round(float(x), 3)
         self.head["normalized_y"] = round(float(y), 4)
         self.head["output_y"] = round(float(y), 3)
-        self.head["vertical_look_source"] = source
-        self.head["verticalLookSource"] = source
+        self.head["vertical_look_source"] = "head"
+        self.head["verticalLookSource"] = "head"
         self.head["horizontal_paused_by_vertical_gate"] = horizontal_paused
         self.head["horizontal_paused_by_body_motion"] = bool(self.body_motion_guard_output_blocked)
         self.head["body_motion_guard_veto_reason"] = str(self.body_motion_guard_veto_reason)
@@ -3352,15 +3293,6 @@ class ControlKernel:
             round(float(self.vertical_head_anchor_pitch), 5)
             if self.vertical_head_anchor_pitch is not None else None
         )
-        self.head["vertical_wrist_anchor_y"] = (
-            round(float(self.vertical_wrist_anchor_y), 4)
-            if self.vertical_wrist_anchor_y is not None else None
-        )
-        self.head["vertical_wrist_anchor_rel_y"] = (
-            round(float(self.vertical_wrist_anchor_rel_y), 4)
-            if self.vertical_wrist_anchor_rel_y is not None else None
-        )
-        self.head["vertical_anchor_samples"] = len(self.vertical_anchor_samples)
         # 每个方向只由一个来源输出；垂直握拳不阻断头部左右转向。
         x, y = self.hand_mouse_controller.compose_output(x, y)
         # Reporting belongs in status_locked, not here: that function rebuilds
@@ -3385,7 +3317,6 @@ class ControlKernel:
         self.head_jump_torso_ref = None
         self.vertical_gate_active = False
         self._reset_body_motion_guard_locked()
-        self._reset_vertical_hand_locked()
         self.vertical_head_anchor_samples.clear()
         self._reset_vertical_head_locked()
         self.motion_active.clear()
@@ -3488,11 +3419,10 @@ class ControlKernel:
         zones = self.runtime_zones_locked()
         self.head = self.head_controller.status(now)
         self.head["hand_mouse"] = self.hand_mouse_controller.status()
-        source = "head" if str(self.vertical_look.get("source", "hand")).lower() == "head" else "hand"
-        vertical_output = self.vertical_pitch_norm if source == "head" else self.vertical_wrist_norm
-        self.head["vertical_source"] = "head_pitch" if self.vertical_look.get("enabled") and source == "head" else "right_wrist" if self.vertical_look.get("enabled") else "off"
-        self.head["vertical_look_source"] = source
-        self.head["verticalLookSource"] = source
+        vertical_output = self.vertical_pitch_norm
+        self.head["vertical_source"] = "head_pitch" if self.vertical_look.get("enabled") else "off"
+        self.head["vertical_look_source"] = "head"
+        self.head["verticalLookSource"] = "head"
         self.head["vertical_gate_active"] = bool(self.vertical_gate_active)
         horizontal_paused = bool(self.vertical_gate_active and self.vertical_look.get("exclusive_axes", False))
         self.head["horizontal_paused_by_vertical_gate"] = horizontal_paused
@@ -3501,7 +3431,6 @@ class ControlKernel:
             self.head["output_x"] = 0.0
         self.head["horizontal_paused_by_body_motion"] = bool(self.body_motion_guard_output_blocked)
         self.head["body_motion_guard_veto_reason"] = str(self.body_motion_guard_veto_reason)
-        self.head["vertical_wrist_norm"] = round(float(self.vertical_wrist_norm), 4)
         self.head["vertical_pitch_relative"] = round(float(self.vertical_pitch_relative), 4)
         self.head["vertical_pitch_norm"] = round(float(self.vertical_pitch_norm), 4)
         self.head["vertical_pitch_velocity"] = round(float(self.vertical_pitch_velocity), 4)
@@ -3511,15 +3440,6 @@ class ControlKernel:
             round(float(self.vertical_head_anchor_pitch), 5)
             if self.vertical_head_anchor_pitch is not None else None
         )
-        self.head["vertical_wrist_anchor_y"] = (
-            round(float(self.vertical_wrist_anchor_y), 4)
-            if self.vertical_wrist_anchor_y is not None else None
-        )
-        self.head["vertical_wrist_anchor_rel_y"] = (
-            round(float(self.vertical_wrist_anchor_rel_y), 4)
-            if self.vertical_wrist_anchor_rel_y is not None else None
-        )
-        self.head["vertical_anchor_samples"] = len(self.vertical_anchor_samples)
         self.head["body_motion_guard_enabled"] = bool(self.body_motion_guard_enabled)
         self.head["body_motion_guard_active"] = bool(self.body_motion_guard_active)
         self.head["body_motion_guard_version"] = BODY_MOTION_GUARD_VERSION
@@ -3589,17 +3509,12 @@ class ControlKernel:
             "body_motion_guard_version": BODY_MOTION_GUARD_VERSION,
             "body_motion_guard_score": round(float(self.body_motion_guard_score), 4),
             "body_motion_action_risk": sorted(self.body_motion_action_risk),
-            "vertical_wrist_norm": round(float(self.vertical_wrist_norm), 4),
-            "vertical_look_source": source,
+            "vertical_look_source": "head",
             "vertical_pitch_relative": round(float(self.vertical_pitch_relative), 4),
             "vertical_pitch_norm": round(float(self.vertical_pitch_norm), 4),
             "vertical_pitch_velocity": round(float(self.vertical_pitch_velocity), 4),
             "vertical_pitch_acceleration": round(float(self.vertical_pitch_acceleration), 4),
             "vertical_pitch_intent_state": self.vertical_pitch_intent_state,
-            "vertical_wrist_anchor_y": (
-                round(float(self.vertical_wrist_anchor_y), 4)
-                if self.vertical_wrist_anchor_y is not None else None
-            ),
             "head": copy.deepcopy(self.head),
             "handheld_sources": sensors,
             "last_error": self.last_error,

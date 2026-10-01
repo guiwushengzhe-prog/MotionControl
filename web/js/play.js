@@ -18,7 +18,6 @@ export let cameraRunning=false;
 export let sessionStarted=false;
 // 摄像头的完整状态。新手教学要按它判断画面来没来。
 export let cameraInfo=null;
-export let lastTurnAlgorithm='gesture_v188';
 let serviceReady=false;
 let kernelConnected=false;
 export let zoneEditMode=false;
@@ -64,7 +63,8 @@ export function renderKernelZones(zones={}){
   for(const[id,def]of Object.entries(BODY_ZONES)){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
     if(def.gate&&!kernelState?.vertical_look?.enabled){el.style.display='none';continue}
-    const active=!zoneEditMode&&!!state?.pressed;
+    // 绿框是闸不是键：左手伸进去不亮。
+    const active=!def.gate&&!zoneEditMode&&!!state?.pressed;
     el.classList.toggle('active',active);
     // 智能判定：判断中（黄）、判定是扫过（闪红）。系统功能要稳住，底下的条是稳住走到哪了。
     const phase=zoneEditMode?'idle':String(state?.phase||'idle');
@@ -181,10 +181,6 @@ function setupConflicts(){
     items.push(['手机在传画面，但来源选的是电脑摄像头，手机的画面没有用上。','改用手机',()=>setSource('phone',true)]);
   if(mergeOwnsSticks()&&hand.enabled)
     items.push(['物理手柄合流占着两个摇杆，手控鼠标不会动。','关掉合流',async()=>{$('#xinputMerge').value='';await setXinputMerge()}]);
-  const verticalHand=hand.config?.vertical_hand??hand.vertical_hand;
-  if((hand.config?.enabled??hand.enabled)&&verticalHand!=='off'&&head.verticalLookEnabled&&head.verticalLookSource==='hand')
-    items.push(['手控鼠标握拳时会接管视角，与单独的上下视角控制同时开启可能相互干扰。','关掉上下视角',
-      async()=>{const s=$('#verticalLookSource');if(s){s.value='off';s.dispatchEvent(new Event('change',{bubbles:true}))}}]);
   return items;
 }
 
@@ -251,18 +247,12 @@ export function renderKernelState(runtime,force=false){
   if(hs.algorithm&&(force||(!S.headDirty&&!document.activeElement?.closest('#headSettings,[data-pane="lab"]')))){
     $('#headAlgorithm').value=hs.algorithm;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
-    head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
-    if(['gesture_v153','frozen22','gesture_v188'].includes(head.horizontalAlgorithm))lastTurnAlgorithm=head.horizontalAlgorithm;
-    if($('#headHorizontalAlgorithm'))$('#headHorizontalAlgorithm').value=head.horizontalAlgorithm;
-    const verticalLookSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'off');
-    head.verticalLookSource=verticalLookSource==='head'?'head':'hand';
-    head.verticalLookEnabled=verticalLookSource!=='off'&&(k.vertical_look?.enabled??hs.vertical_look_enabled??true)!==false;
+    head.horizontalAlgorithm=['gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
+    head.verticalLookEnabled=k.vertical_look?.enabled===true;
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
     head.bodyMotionGuard=k.vertical_look?.body_motion_guard===true;
-    if($('#verticalLookSource'))$('#verticalLookSource').value=head.verticalLookEnabled?head.verticalLookSource:'off';
     if($('#verticalExclusive'))$('#verticalExclusive').checked=head.verticalExclusive;
     if($('#bodyMotionGuard'))$('#bodyMotionGuard').checked=head.bodyMotionGuard;
-    document.querySelectorAll('.head-vertical-setting').forEach(el=>{el.hidden=head.verticalLookSource!=='head'});
     $('#deadzone').value=Math.round(Number(hs.deadzone||.10)*100);
     $('#speedX').value=Number(hs.sensitivity_x||58);$('#speedY').value=Number(hs.sensitivity_y||46);
     // 头控开没开由「左右」那个下拉决定（选头部方案 = 开，选握拳或关闭 = 关），这里只记下来。
@@ -284,7 +274,7 @@ export function renderKernelState(runtime,force=false){
   // 真在识别才给「停止」。
   $('#sourceStopBtn').hidden=!(sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning);
   // 旧版上下视角（绿框）开着才有这一块。
-  const gateActive=!!k.vertical_gate_active;const verticalSource=String(hs.verticalLookSource||hs.vertical_look_source||k.vertical_look?.source||'hand')==='head'?'头部':'右手';const gateStatus=$('#lookGateStatus');if(gateStatus){gateStatus.hidden=!k.vertical_look?.enabled||!head.verticalLookEnabled||!currentPoseMap;const paused=!!hs.horizontal_paused_by_vertical_gate;const text=gateActive?`上下视角开 · ${verticalSource}控制${paused?' · 左右暂停':''}`:'左手放进绿框开上下视角';if(gateStatus.textContent!==text)gateStatus.textContent=text;gateStatus.className='hud hud-gate'+(gateActive?' active':'')}renderOverlay(currentPoseMap);renderMainStatus();
+  const gateActive=!!k.vertical_gate_active;const gateStatus=$('#lookGateStatus');if(gateStatus){gateStatus.hidden=!k.vertical_look?.enabled||!head.verticalLookEnabled||!currentPoseMap;const paused=!!hs.horizontal_paused_by_vertical_gate;const text=gateActive?`上下视角开${paused?' · 左右暂停':''}`:'左手放进绿框开上下视角';if(gateStatus.textContent!==text)gateStatus.textContent=text;gateStatus.className='hud hud-gate'+(gateActive?' active':'')}renderOverlay(currentPoseMap);renderMainStatus();
 
 }
 
@@ -322,7 +312,7 @@ function drawOverlayZones(octx,w,h,zones={}){
     // 悬浮窗里按下一直是红的（游戏画面上最显眼）；判断中黄、扫过灰掉，免得和按下混。
     const stroke=active?'#ff5966':phase==='pending'?'#ffcc33':phase==='swept'?'rgba(255,255,255,.35)':'rgba(255,255,255,.78)';
     const fill=active?'rgba(255,70,80,.26)':phase==='pending'?'rgba(255,204,51,.22)':'rgba(0,0,0,.12)';
-    octx.save();octx.lineWidth=Math.max(2,w/220);octx.strokeStyle=isGate?(active?'#62ff91':'#62d982'):stroke;octx.fillStyle=isGate?(active?'rgba(45,210,95,.30)':'rgba(30,150,75,.15)'):fill;if(isGate&&!active)octx.setLineDash([Math.max(4,w/100),Math.max(3,w/140)]);
+    octx.save();octx.lineWidth=Math.max(2,w/220);octx.strokeStyle=isGate?'#62d982':stroke;octx.fillStyle=isGate?'rgba(30,150,75,.15)':fill;if(isGate)octx.setLineDash([Math.max(4,w/100),Math.max(3,w/140)]);
     let x=0,y=0,ww=0,hh=0;const r=state.rect;
     if(r){x=(1-Number(r.x2))*w;y=Number(r.y1)*h;ww=(Number(r.x2)-Number(r.x1))*w;hh=(Number(r.y2)-Number(r.y1))*h}
     if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.34,w/9)))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):zoneKeyLabel(id,def),x+ww/2,y+hh/2);octx.restore();

@@ -2,7 +2,7 @@
 import {VIEW_CONTROL_CONTENT} from '../view-control-guide.js';
 import {$,api,flashStatus,notice,post} from './core.js';
 import {renderOutputMix} from './devices.js';
-import {lastTurnAlgorithm,mergeOwnsSticks,renderKernelState} from './play.js';
+import {mergeOwnsSticks,renderKernelState} from './play.js';
 import {headSaver,tutorial} from './shell.js';
 import {S,head,output} from './state.js';
 
@@ -33,20 +33,17 @@ export function renderViewControl(force=false){
   const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
   const verticalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:null;
   const horizontal=horizontalHand||(head.enabled?(['roll_tilt','head_responsive'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off');
-  const vertical=verticalHand||(head.verticalLookEnabled?'legacy':'off');
-  $('#viewVerticalSource option[value="legacy"]').hidden=!head.verticalLookEnabled;
+  const vertical=verticalHand||(head.verticalLookEnabled?'head':'off');
   $('#viewHorizontalSource').value=horizontal;$('#viewVerticalSource').value=vertical;
   const horizontalInfo=viewChoice(VIEW_CONTROL_CONTENT.horizontal,horizontal),verticalInfo=viewChoice(VIEW_CONTROL_CONTENT.vertical,vertical);
   $('#viewHorizontalDesc').textContent=horizontalInfo.description;
   $('#viewVerticalDesc').textContent=verticalInfo.description;
-  // 转头有三种算法，只在选了「左右转头」时才用得着。
-  $('#turnAlgorithmRow').hidden=horizontal!=='head_turn';
   // 手感那几行只列眼下用得着的：用头就给头的，用握拳就给握拳的。
   const headOn=!horizontalHand&&horizontal!=='off',handOn=!!(horizontalHand||verticalHand);
   document.querySelectorAll('#headSettings .head-only').forEach(el=>{el.hidden=!headOn});
   document.querySelectorAll('#headSettings .hand-only').forEach(el=>{el.hidden=!handOn});
-  // 旧版上下视角：只有还开着的人才看得到这一块，里面有一键换到握拳。
-  $('#legacyVertical').hidden=!head.verticalLookEnabled;
+  // 抬头低头的手感只在选了它的时候列出来。
+  $('#headPitchSettings').hidden=vertical!=='head';
   const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='';
 }
 
@@ -94,7 +91,7 @@ export async function reloadViewControlState(){
 
 export function setViewControlBusy(busy){
   viewControlSaving=busy;
-  document.querySelectorAll('#headSettings input,#headSettings select,#headHorizontalAlgorithm').forEach(el=>el.disabled=busy);
+  document.querySelectorAll('#headSettings input,#headSettings select').forEach(el=>el.disabled=busy);
   for(const id of ['viewHorizontalSource','viewVerticalSource'])$('#'+id).disabled=busy||!viewControlReady;
 }
 
@@ -125,7 +122,7 @@ export async function saveViewControlAxis(axis){
     if(axis==='horizontal'){
       if(['roll_tilt','head_turn','head_responsive'].includes(desiredHorizontal)){
         if(currentHorizontal!=='off')await post('/api/hand-mouse/config',{horizontal_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentVertical!=='off')});
-        await post('/api/head/config',{enabled:true,horizontal_algorithm:desiredHorizontal==='head_turn'?lastTurnAlgorithm:desiredHorizontal});
+        await post('/api/head/config',{enabled:true,horizontal_algorithm:desiredHorizontal==='head_turn'?'gesture_v188':desiredHorizontal});
       }else if(desiredHorizontal==='left'||desiredHorizontal==='right'){
         if(head.enabled)await post('/api/head/config',{enabled:false});
         await post('/api/hand-mouse/config',{enabled:true,horizontal_hand:desiredHorizontal,vertical_hand:currentVertical});
@@ -133,9 +130,9 @@ export async function saveViewControlAxis(axis){
         if(currentHorizontal!=='off')await post('/api/hand-mouse/config',{horizontal_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentVertical!=='off')});
         if(head.enabled)await post('/api/head/config',{enabled:false});
       }
-    }else if(desiredVertical==='legacy'){
-      $('#headSettings .view-control-more').open=true;
-      $('#verticalLookSource').focus();
+    }else if(desiredVertical==='head'){
+      if(currentVertical!=='off')await post('/api/hand-mouse/config',{vertical_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentHorizontal!=='off')});
+      await postViewHead({vertical_look_source:'head'});
     }else if(desiredVertical==='left'||desiredVertical==='right'){
       if(head.verticalLookEnabled)await postViewHead({vertical_look_source:'off'});
       await post('/api/hand-mouse/config',{enabled:true,vertical_hand:desiredVertical,horizontal_hand:currentHorizontal});
@@ -150,28 +147,14 @@ export async function saveViewControlAxis(axis){
   }finally{setViewControlBusy(false);S.headDirty=false;renderViewControl(true)}
 }
 
-export async function saveLegacyVertical(){
-  if(viewControlSaving)return;
-  const source=$('#verticalLookSource').value,currentVertical=['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:'off';
-  setViewControlBusy(true);S.headDirty=true;$('#viewControlStatus').textContent='正在保存…';
-  try{
-    if(source!=='off'&&currentVertical!=='off')await post('/api/hand-mouse/config',{vertical_hand:'off',enabled:Boolean(handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand))});
-    await postViewHead({vertical_look_source:source});
-    await reloadViewControlState();$('#viewControlStatus').textContent='已保存';
-  }catch(error){
-    let refreshed=true;try{await reloadViewControlState()}catch{refreshed=false}
-    $('#viewControlStatus').textContent=`保存失败，${refreshed?'已恢复服务器当前设置':'当前设置无法重新读取'}：${error.message||'请重试'}`;
-  }finally{setViewControlBusy(false);S.headDirty=false;renderViewControl(true)}
-}
-
-export function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;const horizontalAlgorithm=$('#headHorizontalAlgorithm')?.value;head.horizontalAlgorithm=['gesture_v153','frozen22','gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';const pickedVertical=$('#verticalLookSource')?.value;head.verticalLookEnabled=pickedVertical!=='off';if(head.verticalLookEnabled)head.verticalLookSource=pickedVertical==='head'?'head':'hand';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.invertY=$('#invertY').checked;document.querySelectorAll('.head-vertical-setting').forEach(el=>{el.hidden=head.verticalLookSource!=='head'});$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+export function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.invertY=$('#invertY').checked;$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
 
 export async function pushHeadConfig(){
   syncControlLabels();
   renderKernelState(await post('/api/head/config',{
     algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,
     sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,
-    invert_y:head.invertY,vertical_look_source:head.verticalLookEnabled?head.verticalLookSource:'off',
+    invert_y:head.invertY,vertical_look_source:head.verticalLookEnabled?'head':'off',
     vertical_exclusive:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard,
   }));
 }

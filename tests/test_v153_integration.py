@@ -58,7 +58,8 @@ def _world_face(estimator: HeadPoseEstimator, *, bad_ear: bool = False) -> dict[
 
 
 def _calibrate(controller: HeadController, *, world: dict[str, dict], base_pose: dict[str, dict]) -> None:
-    controller.configure(horizontal_algorithm="gesture_v153")
+    # 个人 PnP 模型现在只给「多信号融合」用。
+    controller.configure(horizontal_algorithm="gesture_v188")
     controller.start_center(now=0.0, kind="test")
     for index in range(48):
         controller.update(base_pose, 640, 480, now=1.05 + index * 0.07, world_pose=world)
@@ -141,7 +142,7 @@ def test_kernel_forwards_optional_world_pose_without_replacing_image_pose(tmp_pa
         kernel.close()
 
 
-def test_v153_personal_pnp_activates_from_world_pose_and_exposes_diagnostics(tmp_path):
+def test_personal_pnp_activates_from_world_pose_and_exposes_diagnostics(tmp_path):
     estimator = HeadPoseEstimator()
     if not estimator.pnp_available:
         pytest.skip(estimator.pnp_error)
@@ -150,7 +151,7 @@ def test_v153_personal_pnp_activates_from_world_pose_and_exposes_diagnostics(tmp
     _calibrate(controller, world=_world_face(estimator), base_pose=pose)
 
     state = controller.status()
-    assert state["horizontal_algorithm"] == "gesture_v153"
+    assert state["horizontal_algorithm"] == "gesture_v188"
     assert state["personal_pnp_active"] is True
     assert state["personal_pnp_template_quality"] == "active"
     assert state["personal_pnp_rejection_reason"] is None

@@ -10,8 +10,7 @@ export const VIEW_CONTROL_CONTENT = {
   vertical: [
     {value:'left',label:'左手握拳',description:'左手握拳后上下移动，松开就停'},
     {value:'right',label:'右手握拳',description:'右手握拳后上下移动，松开就停'},
+    {value:'head',label:'抬头低头',description:'左手伸进画面里的绿框，再抬头低头'},
     {value:'off',label:'关闭',description:'不控制上下视角'},
-    {value:'legacy',label:'旧版方案',description:'左手放进绿框才开，设置在下面「旧版上下视角」'},
   ],
-  legacyVerticalNote:'旧版上下视角还开着，它和握拳上下是两套方案。',
 };

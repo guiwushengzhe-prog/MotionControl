@@ -11,7 +11,7 @@ import {refreshMacros} from './macros.js';
 import {addCustomGame,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
 import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
-import {handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,reloadViewControlState,renderViewControl,saveHandMouseFields,saveLegacyVertical,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
+import {handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,reloadViewControlState,renderViewControl,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
 import {addVoiceRow,refreshVoice,refreshVoiceCommands,renderVoiceRows,saveVoiceMappings,voice,voiceInputReady,voiceRowsFromStatus} from './voice.js';
 
 let modelAvailable=false;
@@ -34,14 +34,14 @@ function tutorialState(){
   const seen=name=>Number(pose[name]?.score??pose[name]?.visibility??0)>=.5;
   const finite=v=>Number.isFinite(Number(v))&&v!==null&&v!==undefined;
   // 各方案的读数量纲不一样，这里统一折算成 -1…1（满量程）再交给教学：
-  // 头控左右的读数上限是左右灵敏度；握拳的上限是握拳灵敏度/100；老的上下方案
-  // 用头时上限是上下灵敏度/100，用手时本来就是 -1…1。
+  // 头控左右的读数上限是左右灵敏度；握拳的上限是握拳灵敏度/100；抬头低头的上限是
+  // 上下灵敏度/100。
   const handMax=Math.min(1,Math.max(.01,Number(handMouseConfig.sensitivity??hand.config?.sensitivity??70)/100));
   const hLevel=horizontalHand?(finite(axes.horizontal?.output)?Number(axes.horizontal.output)/handMax:null)
     :(finite(hs.output_x)?Number(hs.output_x)/Math.max(1,Number(hs.sensitivity_x||head.sensitivityX||58)):null);
-  const legacyMax=head.verticalLookSource==='head'?clamp(Number(hs.sensitivity_y||head.sensitivityY||46)/100,.15,1):1;
+  const pitchMax=clamp(Number(hs.sensitivity_y||head.sensitivityY||46)/100,.15,1);
   const vLevel=verticalHand?(finite(axes.vertical?.output)?Number(axes.vertical.output)/handMax:null)
-    :(head.verticalLookEnabled&&finite(hs.output_y)?Number(hs.output_y)/legacyMax:null);
+    :(head.verticalLookEnabled&&finite(hs.output_y)?Number(hs.output_y)/pitchMax:null);
   const events=k.recent_triggers||[],last=events[events.length-1];
   const lastTrigger=last?{key:String(last.trigger||''),at:Number(last.at),keyText:actionKeyText(last.action)||'',
     name:(profileTriggers().find(t=>t.key===String(last.trigger||''))||{}).name||String(last.trigger||'')}:null;
@@ -67,8 +67,8 @@ function tutorialState(){
     calibrating:!!hs.calibrating,calibrationNote:String(hs.notice||''),
     horizontal:horizontalHand||(head.enabled?(['roll_tilt','head_responsive'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off'),
     hLevel,hHandState:String(axes.horizontal?.state||''),guardBlocked:!!hs.horizontal_paused_by_body_motion,
-    vertical:verticalHand||(head.verticalLookEnabled?'legacy':'off'),
-    vLevel,vHandState:String(axes.vertical?.state||''),gateActive:!!k.vertical_gate_active,legacySource:head.verticalLookSource,
+    vertical:verticalHand||(head.verticalLookEnabled?'head':'off'),
+    vLevel,vHandState:String(axes.vertical?.state||''),gateActive:!!k.vertical_gate_active,
     zones,
     outputEnabled:!!output.enabled,driverMissing:output.mode==='gamepad'&&output.server?.vigembus_running===false,
     stops:emergencyStops,
@@ -209,10 +209,6 @@ for(const axis of ['horizontal','vertical']){
   $('#view'+(axis==='horizontal'?'Horizontal':'Vertical')+'Source').addEventListener('change',()=>void saveViewControlAxis(axis));
 }
 
-$('#legacyToFistBtn').addEventListener('click',()=>{$('#viewVerticalSource').value='left';void saveViewControlAxis('vertical')});
-
-$('#verticalLookSource').addEventListener('change',()=>void saveLegacyVertical());
-
 // 教学只指路不代劳：连接、校准都由人去点真按钮。它自己只会做一件事——扫一遍
 // 摄像头，好知道该建议什么。
 export const tutorial=createTutorial({state:tutorialState,scanCameras,
@@ -284,8 +280,8 @@ document.querySelectorAll('.zone').forEach(el=>{
   });
 });
 
-// 上下视角的范围、死区（旧版上下视角）。在「设置 → 视角」里，拖完就存。
-for(const [id,key] of [['verticalRange','range_y'],['verticalDeadzone','deadzone']]){
+// 抬头低头的中心稳定区。在「设置 → 视角」里，拖完就存。
+for(const [id,key] of [['verticalDeadzone','deadzone']]){
   const input=$('#'+id);if(!input)continue;
   input.addEventListener('input',()=>{$('#'+id+'Value').textContent=input.value+'%'});
   input.addEventListener('change',()=>runAction(async()=>{renderKernelState(await post('/api/vertical-look',{[key]:Number(input.value)/100}))}));
@@ -371,7 +367,7 @@ $('#strength').addEventListener('change',()=>runAction(async()=>{
   renderOutput(await post('/api/output/config',{mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain}));
 }));
 
-for(const id of ['headAlgorithm','headHorizontalAlgorithm','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','invertY']){
+for(const id of ['headAlgorithm','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','invertY']){
   $('#'+id).addEventListener('input',()=>{headSaver.dirty();syncControlLabels()});
   $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels()});
 }

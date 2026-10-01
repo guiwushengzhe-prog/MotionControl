@@ -406,7 +406,10 @@ def test_center_timeout_is_finite_and_safe(tmp_path):
 
 def _ready_controller(tmp_path, *, yaw=0.0, pitch=0.0):
     c = HeadController(tmp_path / "head.json")
-    c.configure(horizontal_algorithm="gesture_v153")  # 本组验证转头，侧倾另有专项测试。
+    c.configure(horizontal_algorithm="gesture_v188")  # 本组验证转头，侧倾另有专项测试。
+    # 本组只验证转头本身（转了才动、回正就停、符号只有一个开关）。这里的假估计器
+    # 给不出融合要的辅助佐证，佐证检查另有 test_head_v188_gate 专门测。
+    c._horizontal_evidence_scale = lambda drive, now, policy: 1.0
     c.estimator = NumericEstimator()
     c.center_pending = False
     c.calibrated = True

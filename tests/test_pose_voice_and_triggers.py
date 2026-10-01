@@ -292,7 +292,8 @@ def test_only_the_rising_edge_is_recorded():
     """按住不放的时候每帧记一条，一秒就是三十条，真正有用的那几条立刻被顶掉。"""
     source = (ROOT / "motioncontrol" / "control_kernel.py").read_text(encoding="utf-8")
     start = source.index("def _dispatch_controls_locked")
-    block = source[start:start + 3000]
+    # 整个函数，不是开头固定几千个字：函数一长，原来那个窗口就够不到这一行了。
+    block = source[start:source.index("\n    def ", start)]
     assert "active - self.trigger_previous" in block, "记的不是上升沿"
 
 
