@@ -1,6 +1,5 @@
 // 本游戏：选游戏、按键映射的每一行、保存。
 import {$,api,notice,post} from './core.js';
-import {renderOutputMix} from './devices.js';
 import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
 import {paintPoseMissingNotice} from './library.js';
 import {kernelState,renderKernelZones} from './play.js';
@@ -123,7 +122,6 @@ function profileMetaText(profile){
 
 function renderProfileHeader(){
   const p=gameProfile.selected;
-  renderOutputMix();
   // 改名和删除只对自己加的那些有意义：内置那两百个删不得也改不得。
   const mine=p?.source==='custom';
   document.querySelectorAll('.custom-only').forEach(el=>{el.hidden=!mine});

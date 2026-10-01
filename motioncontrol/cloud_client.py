@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -77,6 +78,19 @@ class RemoteConfig:
     document: dict
 
 
+def _unreachable(reason) -> str:
+    """把连不上的底层原因说成人话。
+
+    原来原样转出 `_ssl.c:1015: The handshake operation timed out` 这种英文，玩家
+    看了只会以为云端坏了；其实多半是自己的网络或代理那一下慢。
+    """
+    if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
+        return "连不上云端：网络太慢，没等到回应"
+    if isinstance(reason, socket.gaierror):
+        return "连不上云端：找不到云端地址，网络可能没连上"
+    return "连不上云端：网络不通"
+
+
 def _request(url: str, timeout: float) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
@@ -92,7 +106,7 @@ def _request(url: str, timeout: float) -> bytes:
             pass
         raise CloudError(detail or f"云端返回 {exc.code}") from None
     except urllib.error.URLError as exc:
-        raise CloudError(f"连不上云端：{exc.reason}") from None
+        raise CloudError(_unreachable(exc.reason)) from None
     except TimeoutError:
         raise CloudError("云端响应超时") from None
     if len(payload) > MAX_DOWNLOAD_BYTES:

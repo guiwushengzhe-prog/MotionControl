@@ -82,6 +82,32 @@ def test_changed_model_produces_a_new_mirror(model, tmp_path):
     assert (second / "am" / "final.mdl").read_bytes() == b"\x01" * 2048
 
 
+def test_only_the_mirror_in_use_is_kept(model, tmp_path):
+    """每换一个安装位置或版本都会多一份拷贝，原来从不删：开发机上 6 份、390 MB。"""
+    cache = tmp_path / "cache"
+    first = amp.mirror_to_ascii(model, cache)
+    other_model = cache / "0123456789abcdef-some-other-model"
+    other_model.mkdir(parents=True)
+    (model / "am" / "final.mdl").write_bytes(b"" * 2048)
+    second = amp.mirror_to_ascii(model, cache)
+    assert second is not None and second.is_dir()
+    assert not first.exists(), "the superseded mirror of the same model is removed"
+    assert other_model.is_dir(), "mirrors of other models are not touched"
+
+
+def test_loading_in_place_drops_old_mirrors(model, tmp_path, monkeypatch):
+    """装在纯英文路径里就直接读，原来别处留下的拷贝在 C 盘白占地方。"""
+    monkeypatch.setattr(amp, "_cache_candidates", lambda: [tmp_path / "appdata"])
+    stale = tmp_path / "appdata" / "model-cache" / f"0123456789abcdef-{model.name}"
+    stale.mkdir(parents=True)
+    other = tmp_path / "appdata" / "model-cache" / "fedcba9876543210-another-model"
+    other.mkdir(parents=True)
+    path, tier = amp.resolve_loadable_model_path(model)
+    assert (path, tier) == (model, "direct")
+    assert not stale.exists()
+    assert other.is_dir()
+
+
 def test_interrupted_copy_is_never_reused(model, tmp_path):
     """The sentinel is written last, so a partial mirror is not mistaken for one."""
     cache = tmp_path / "cache"

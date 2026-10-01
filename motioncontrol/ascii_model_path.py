@@ -79,15 +79,7 @@ def windows_short_path(path: Path) -> Path | None:
     return None if result == source else Path(result)
 
 
-def ascii_cache_root() -> Path | None:
-    """A writable directory whose own path contains no non-ASCII characters.
-
-    %LOCALAPPDATA% is tried first but cannot be assumed: on a machine whose
-    user is named 张三 it is C:\\Users\\张三\\AppData\\Local, which is exactly
-    the problem being solved.  C:\\Users\\Public and C:\\ProgramData keep ASCII
-    filesystem names on localized Windows -- the translated names seen in
-    Explorer are display names, not paths.
-    """
+def _cache_candidates() -> list[Path]:
     candidates = []
     for variable, suffix in (("LOCALAPPDATA", "MotionControl"),
                              ("PUBLIC", "MotionControl"),
@@ -97,8 +89,19 @@ def ascii_cache_root() -> Path | None:
         if value:
             candidates.append(Path(value + os.sep if variable == "SystemDrive" else value) / suffix)
     candidates.append(Path("C:/MotionControl-cache"))
+    return candidates
 
-    for candidate in candidates:
+
+def ascii_cache_root() -> Path | None:
+    """A writable directory whose own path contains no non-ASCII characters.
+
+    %LOCALAPPDATA% is tried first but cannot be assumed: on a machine whose
+    user is named 张三 it is C:\\Users\\张三\\AppData\\Local, which is exactly
+    the problem being solved.  C:\\Users\\Public and C:\\ProgramData keep ASCII
+    filesystem names on localized Windows -- the translated names seen in
+    Explorer are display names, not paths.
+    """
+    for candidate in _cache_candidates():
         if not is_ascii_path(candidate):
             continue
         try:
@@ -137,6 +140,7 @@ def mirror_to_ascii(source: Path, cache_root: Path | None = None) -> Path | None
     fingerprint = _fingerprint(source)
     target = root / f"{fingerprint}-{_ascii_name(source.name)}"
     if (target / _SENTINEL).is_file():
+        _prune_other_mirrors(target)
         return target
 
     staging = target.with_name(target.name + ".partial")
@@ -151,10 +155,52 @@ def mirror_to_ascii(source: Path, cache_root: Path | None = None) -> Path | None
         # for a usable model on the next run.
         (staging / _SENTINEL).write_text(fingerprint, encoding="ascii")
         staging.rename(target)
+        _prune_other_mirrors(target)
         return target
     except OSError:
         shutil.rmtree(staging, ignore_errors=True)
         return None
+
+
+def _drop_mirrors_of(source: Path) -> None:
+    """This install opens the model in place, so any mirror of it is dead weight.
+
+    Mirrors left by an earlier install in a Chinese path would otherwise stay
+    on C: for good.  If such an install is still in use it mirrors again on its
+    next start.  Only existing cache folders are looked at -- nothing is created.
+    """
+    suffix = _ascii_name(source.name)
+    for candidate in _cache_candidates():
+        root = candidate / "model-cache"
+        try:
+            entries = list(root.iterdir()) if root.is_dir() else []
+        except OSError:
+            continue
+        for entry in entries:
+            name = entry.name.removesuffix(".partial")
+            if entry.is_dir() and "-" in name and name.split("-", 1)[1] == suffix:
+                shutil.rmtree(entry, ignore_errors=True)
+
+
+def _prune_other_mirrors(keep: Path) -> None:
+    """Delete earlier mirrors of the same model; only the one in use is kept.
+
+    The fingerprint includes the source path and file times, so every new
+    install location or re-extracted version mirrored the model again and the
+    old copies were never removed.  Measured on the developer machine: six
+    copies, 390 MB on C: for one 66 MB model.  A mirror that another copy of the
+    program still has loaded cannot be deleted on Windows; ignore_errors leaves
+    it, and that program simply mirrors again on its next start.
+    """
+    suffix = keep.name.split("-", 1)[1] if "-" in keep.name else keep.name
+    try:
+        siblings = list(keep.parent.iterdir())
+    except OSError:
+        return
+    for entry in siblings:
+        name = entry.name.removesuffix(".partial")
+        if entry != keep and entry.is_dir() and name.split("-", 1)[-1] == suffix:
+            shutil.rmtree(entry, ignore_errors=True)
 
 
 def _ascii_name(name: str) -> str:
@@ -168,10 +214,12 @@ def resolve_loadable_model_path(source: Path) -> tuple[Path, str]:
     """Return (path a native loader can open, which tier produced it)."""
     source = Path(source)
     if is_ascii_path(source):
+        _drop_mirrors_of(source)
         return source, "direct"
 
     short = windows_short_path(source)
     if short is not None and is_ascii_path(short):
+        _drop_mirrors_of(source)
         return short, "short-path"
 
     mirrored = mirror_to_ascii(source)

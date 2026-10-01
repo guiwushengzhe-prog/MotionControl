@@ -219,13 +219,13 @@ export function renderOutput(s=output.server){
     output.xinputEnabled=!!s.xinput_merge_enabled;output.xinputUser=s.xinput_selected_user??null;
     output.xinputMotionLeft=!!s.xinput_motion_left_enabled;renderXinputMotionLeft();
   }
-  renderOutputMix();
   renderMainStatus();
 }
 
 // 一台电脑上只能有一套"当前输入设备"。体感这边一半出鼠标、一半出 Xbox，游戏
 // 就会在两种按键提示之间来回跳；而全都出 Xbox 的时候，右摇杆推不动桌面鼠标，
-// 握拳看上去像是坏了。两种都不报错，只是怎么弄都不对——所以得写出来。
+// 握拳看上去像是坏了。两种都不报错，所以要说一声——但只在人改的那一下说：
+// 握拳加一堆手柄键的时候两个选项各有代价，原来挂一条常驻的黄条，怎么选都消不掉。
 function gamepadBindingCount(){
   const bindings=gameProfile.selected?.bindings||{};let n=0;
   for(const group of ['zones','poses','motions','voice']){
@@ -237,22 +237,12 @@ function gamepadBindingCount(){
   return n;
 }
 
-export function renderOutputMix(){
-  const el=$('#outputMixWarn');if(!el)return;
+/** 改完视角输出或握拳以后提醒一次；没有要说的就不说。 */
+export function noteOutputMix(){
   const handMouseOn=!!handMouseConfig.enabled&&(['left','right'].includes(handMouseConfig.horizontal_hand)||['left','right'].includes(handMouseConfig.vertical_hand));
   const pads=gamepadBindingCount();
-  let text='',fix=null;
-  if(output.mode==='gamepad'&&handMouseOn){
-    text='视角走 Xbox 右摇杆时，握拳推的是摇杆，桌面鼠标不会动。';fix=['视角改用鼠标','mouse'];
-  }else if(output.mode==='mouse'&&pads>0){
-    text=`有 ${pads} 个动作绑的是手柄键，视角却走鼠标，游戏的按键提示会来回切换。`;fix=['视角改用手柄','gamepad'];
-  }
-  el.hidden=!text;
-  if(el.dataset.key===text)return;el.dataset.key=text;el.replaceChildren();if(!text)return;
-  const words=document.createElement('span');words.textContent=text;el.append(words);
-  const button=document.createElement('button');button.type='button';button.className='btn';button.textContent=fix[0];
-  button.addEventListener('click',()=>runAction(async()=>{++S.outputEpoch;renderOutput(await post('/api/output/config',{mode:fix[1]}));await refreshXinput()}));
-  el.append(button);
+  if(output.mode==='gamepad'&&handMouseOn)notice('视角走 Xbox 右摇杆：握拳推的是右摇杆，桌面上的鼠标不会动。');
+  else if(output.mode==='mouse'&&pads>0)notice(`有 ${pads} 个动作是手柄键，视角走鼠标时，游戏的按键提示可能在键鼠和手柄之间来回切换。`);
 }
 
 export async function refreshOutput(){

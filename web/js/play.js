@@ -63,8 +63,7 @@ export function renderKernelZones(zones={}){
   for(const[id,def]of Object.entries(BODY_ZONES)){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
     if(def.gate&&!kernelState?.vertical_look?.enabled){el.style.display='none';continue}
-    // 绿框是闸不是键：左手伸进去不亮。
-    const active=!def.gate&&!zoneEditMode&&!!state?.pressed;
+    const active=!zoneEditMode&&!!state?.pressed;
     el.classList.toggle('active',active);
     // 智能判定：判断中（黄）、判定是扫过（闪红）。系统功能要稳住，底下的条是稳住走到哪了。
     const phase=zoneEditMode?'idle':String(state?.phase||'idle');
@@ -312,7 +311,7 @@ function drawOverlayZones(octx,w,h,zones={}){
     // 悬浮窗里按下一直是红的（游戏画面上最显眼）；判断中黄、扫过灰掉，免得和按下混。
     const stroke=active?'#ff5966':phase==='pending'?'#ffcc33':phase==='swept'?'rgba(255,255,255,.35)':'rgba(255,255,255,.78)';
     const fill=active?'rgba(255,70,80,.26)':phase==='pending'?'rgba(255,204,51,.22)':'rgba(0,0,0,.12)';
-    octx.save();octx.lineWidth=Math.max(2,w/220);octx.strokeStyle=isGate?'#62d982':stroke;octx.fillStyle=isGate?'rgba(30,150,75,.15)':fill;if(isGate)octx.setLineDash([Math.max(4,w/100),Math.max(3,w/140)]);
+    octx.save();octx.lineWidth=Math.max(2,w/220);octx.strokeStyle=isGate?(active?'#62ff91':'#62d982'):stroke;octx.fillStyle=isGate?(active?'rgba(45,210,95,.30)':'rgba(30,150,75,.15)'):fill;if(isGate&&!active)octx.setLineDash([Math.max(4,w/100),Math.max(3,w/140)]);
     let x=0,y=0,ww=0,hh=0;const r=state.rect;
     if(r){x=(1-Number(r.x2))*w;y=Number(r.y1)*h;ww=(Number(r.x2)-Number(r.x1))*w;hh=(Number(r.y2)-Number(r.y1))*h}
     if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.34,w/9)))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):zoneKeyLabel(id,def),x+ww/2,y+hh/2);octx.restore();

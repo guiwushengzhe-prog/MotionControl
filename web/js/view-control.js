@@ -1,7 +1,7 @@
 // 设置 → 视角：左右、上下方案，头控和握拳的手感。
 import {VIEW_CONTROL_CONTENT} from '../view-control-guide.js';
 import {$,api,flashStatus,notice,post} from './core.js';
-import {renderOutputMix} from './devices.js';
+import {noteOutputMix} from './devices.js';
 import {mergeOwnsSticks,renderKernelState} from './play.js';
 import {headSaver,tutorial} from './shell.js';
 import {S,head,output} from './state.js';
@@ -59,26 +59,18 @@ function renderHandMouse(state){
   handMouseConfig={...handMouseConfig,...c};
   // 合流模式下摇杆归物理手柄，手控鼠标接不上任何东西——勾着不起作用比灰着更糟。
   const blocked=mergeOwnsSticks();
-  renderOutputMix();
   // 握拳的松紧阈值不在这里手调了：「身体识别 → 量身 → 只量握拳」量出来的就是这两个值。
   for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone]]){
     if(value!==undefined&&document.activeElement!==$('#'+id))$('#'+id).value=value;
   }
   $('#handMouseSensitivityValue').textContent=Number(c.sensitivity||0).toFixed(0);
   $('#handMouseDeadzoneValue').textContent=Number(c.deadzone||0).toFixed(2);
-  const readings=Object.values(state.axes||{});
-  const byHand=readings.some(s=>s.grip_source==='hand');
-  const reading=byHand
-    ?(state.curl==null?'看不到手':`手指伸展 ${Number(state.curl).toFixed(2)}`)
-    :(state.spread==null?'看不到手':`张开度 ${Number(state.spread).toFixed(3)}`);
-  const axisLabel=(axis,name)=>{const s=state.axes?.[axis];if(!s)return '';const hand={left:'左手',right:'右手',off:'关闭'}[s.hand]||'关闭';const phase=({disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'})[s.state]||s.state;const measure=s.grip_source==='hand'?`手指伸展 ${Number(s.curl).toFixed(2)}`:s.spread==null?'看不到手':`张开度 ${Number(s.spread).toFixed(3)}`;return `${name}：${hand} · ${phase} · ${measure}`;};
-  const label={disabled:'未启用',idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'}[state.state]||state.state;
-  // 握着没握着，看得到手时才说；一直「看不到手」就不说。
-  const phaseName={idle:'待机',open:'手张开',engaged:'已握拳',moving:'握拳移动中',opened:'刚松开',lost:'看不到手'};
-  const live=Object.values(state.axes||{}).filter(s=>['left','right'].includes(s.hand)&&s.state!=='disabled');
-  const seen=live.filter(s=>s.state!=='lost');
-  $('#handMouseStatus').textContent=blocked?'实体手柄合流占着摇杆，握拳控制用不了'
-    :c.enabled&&seen.length?[...new Map(seen.map(s=>[s.hand,`${s.hand==='left'?'左手':'右手'}${phaseName[s.state]||s.state}`])).values()].join(' · '):'';
+  // 握没握拳、手张没张开，玩的时候画面上看得到，这里不再挂一行「左手待机」。
+  // 只在握拳真用不了的时候说一句。
+  const fistOn=!!c.enabled&&(['left','right'].includes(c.horizontal_hand)||['left','right'].includes(c.vertical_hand));
+  const status=$('#handMouseStatus');
+  status.textContent=blocked?'实体手柄合流占着摇杆，握拳控制用不了':'';
+  status.hidden=!(blocked&&fistOn);
   renderViewControl();
 }
 
@@ -140,7 +132,9 @@ export async function saveViewControlAxis(axis){
       if(currentVertical!=='off')await post('/api/hand-mouse/config',{vertical_hand:'off',enabled:Boolean(handMouseConfig.enabled&&currentHorizontal!=='off')});
       if(head.verticalLookEnabled)await postViewHead({vertical_look_source:'off'});
     }
-    await reloadViewControlState();flashStatus($('#viewControlStatus'),'已保存');
+    await reloadViewControlState();
+    if(['left','right'].includes(axis==='horizontal'?desiredHorizontal:desiredVertical))noteOutputMix();
+    flashStatus($('#viewControlStatus'),'已保存');
   }catch(error){
     let refreshed=true;try{await reloadViewControlState()}catch{refreshed=false}
     $('#viewControlStatus').textContent=`没保存上，${refreshed?'已恢复原来的设置':'读不到当前设置'}：${error.message||'请重试'}`;

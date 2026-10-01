@@ -3,7 +3,7 @@ import {createTutorial} from '../tutorial.js';
 import {fistHands,intentAction,renderBodyDescs,zoneFit} from './body.js';
 import {cloudRefresh,loadCloudEndpoint} from './cloud.js';
 import {$,api,autosaver,clamp,notice,post} from './core.js';
-import {emergencyStop,emergencyStops,inputStatus,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow} from './devices.js';
+import {emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow} from './devices.js';
 import {cancelPoseRecord,refreshPoseRecord,refreshTriggerRecord,startPoseRecord} from './diagnostics.js';
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
@@ -228,6 +228,7 @@ $('#tutorialBtn').addEventListener('click',()=>{closeMenus();tutorial.open($('#h
 bind('poseRecordBtn',startPoseRecord);
 
 bind('poseRecordCancelBtn',cancelPoseRecord);
+bind('openRecordingsBtn',async()=>{await post('/api/recordings/open',{})});
 
 $('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){clearTimeout(profileSearchTimer);void runAction(searchProfiles)}});
 
@@ -354,6 +355,7 @@ $('#cameraBackend').addEventListener('change',e=>runAction(async()=>{
 
 $('#outputMode').addEventListener('change',e=>runAction(async()=>{
   ++S.outputEpoch;renderOutput(await post('/api/output/config',{mode:e.target.value}));await refreshXinput();
+  noteOutputMix();
 }));
 
 $('#xinputMerge').addEventListener('change',()=>runAction(setXinputMerge));

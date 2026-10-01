@@ -1917,6 +1917,22 @@ class AdminHandler(_BaseHandler):
             except (ValueError, TypeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
+        if route == "/api/recordings/open":
+            # 录下来的骨骼数据是玩家要去找的东西（发给别人看、自己删）。界面上不摆 C 盘
+            # 用户目录那一长串路径，给一个按钮直接在资源管理器里打开。
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "只能在本机打开"}, 403)
+                return
+            folder = user_data_root() / "recordings"
+            if body.get("which") == "triggered":
+                folder = folder / "triggered"
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+                os.startfile(str(folder))  # type: ignore[attr-defined]  # Windows only
+                self._send_json({"ok": True})
+            except (AttributeError, OSError):
+                self._send_json({"ok": False, "error": "打不开这个文件夹"}, 500)
+            return
         if route == "/api/pose/trigger-recording":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "只能在本机修改录制设置"}, 403)

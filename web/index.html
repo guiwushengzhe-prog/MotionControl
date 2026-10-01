@@ -214,7 +214,6 @@
 <h2 class="group-title">游戏输出</h2>
 <div class="list">
 <div class="row"><label class="row-main" for="outputMode">视角输出</label><span class="sel"><select id="outputMode"><option value="mouse">鼠标</option><option value="gamepad">Xbox 右摇杆</option></select></span></div>
-<div class="row-note warn" hidden="" id="outputMixWarn"></div>
 <div class="row"><label class="row-main" for="xinputMerge"><span class="name">实体手柄合流</span><span class="sub" id="xinputStatus"></span></label><span class="sel"><select id="xinputMerge"><option value="">关闭</option></select></span></div>
 <div class="row" hidden="" id="xinputMotionLeftRow"><label class="row-main" for="xinputMotionLeft"><span class="name">体感也推左摇杆</span><span class="sub">和手柄的左摇杆相加</span></label><input class="switch" disabled="" id="xinputMotionLeft" type="checkbox"/></div>
 <div class="row"><label class="row-main" for="strength">游戏速度倍率</label><div class="range-in"><input aria-label="游戏速度倍率" id="strength" max="300" min="60" step="10" type="range" value="160"/><b id="strengthValue">160%</b></div></div>
@@ -241,7 +240,7 @@
 <div class="row hand-only"><label class="row-main" for="handMouseDeadzone"><span class="name">握拳中心死区</span><span class="sub">握住后手在这个范围内不转</span></label><div class="range-in"><input id="handMouseDeadzone" max="0.6" min="0" step="0.02" type="range"/><b id="handMouseDeadzoneValue">—</b></div></div>
 <div class="row head-only"><label class="row-main" for="bodyMotionGuard"><span class="name">做动作时稳住视角</span><span class="sub">踏步、下蹲时左右视角不跟着晃</span></label><input class="switch" id="bodyMotionGuard" type="checkbox"/></div>
 </div>
-<p class="group-foot hand-only" id="handMouseStatus">未启用</p>
+<p class="group-foot" hidden="" id="handMouseStatus"></p>
 <p class="group-foot"><span class="statusline" id="headSaveStatus" role="status"></span><span class="statusline" id="handMouseSaveStatus" role="status"></span><button class="btn link" hidden="" id="retryHeadBtn">重试保存</button></p>
 </div>
 <div class="group" hidden="" id="headPitchSettings">
@@ -334,7 +333,7 @@
 <h2 class="group-title">排查问题</h2>
 <div class="list">
 <div class="row"><label class="row-main" for="triggerRecordEnabled"><span class="name">触发录制</span><span class="sub">只存选中触发前后各 1 秒的骨骼数据</span></label><input class="switch" id="triggerRecordEnabled" type="checkbox"/></div>
-<div class="row stack"><details class="trigger-record-picker" id="triggerRecordPicker"><summary id="triggerRecordSummary">选择要录的触发</summary><div aria-label="选择要录制的触发" aria-multiselectable="true" class="trigger-record-menu" id="triggerRecordChoices" role="listbox"></div></details><span class="sub" id="triggerRecordStatus" role="status">未开启</span><span class="sub" id="triggerRecordFile"></span></div>
+<div class="row stack"><details class="trigger-record-picker" id="triggerRecordPicker"><summary id="triggerRecordSummary">选择要录的触发</summary><div aria-label="选择要录制的触发" aria-multiselectable="true" class="trigger-record-menu" id="triggerRecordChoices" role="listbox"></div></details><span class="sub" id="triggerRecordStatus" role="status">未开启</span><span class="sub" id="triggerRecordFile"></span><button class="btn link" id="openRecordingsBtn" type="button">打开文件夹</button></div>
 <div class="row" id="poseRecorder"><div class="row-main"><span class="name">录 15 秒骨骼数据</span><span class="sub" id="poseRecordStatus">未录制</span></div><button class="btn" id="poseRecordCancelBtn">取消</button><button class="btn" id="poseRecordBtn">开始</button></div>
 </div>
 </div>

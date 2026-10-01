@@ -35,7 +35,7 @@ export async function cloudRefresh() {
     const status = await api('/api/cloud/status', { timeoutMs: 12000 });
     cloudEndpoint = status.endpoint || '';
     if (!status.reachable) {
-      cloudSay(`连不上 ${status.endpoint}：${status.error || '未知原因'}`, 'error');
+      cloudSay(`${status.error || '连不上云端'}。过一会儿点「刷新」再试。`, 'error');
       return;
     }
 

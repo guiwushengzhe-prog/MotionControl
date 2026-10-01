@@ -12,7 +12,7 @@ function renderPoseRecord(state){
     idle:'未录制',waiting:`倒计时 ${state.remaining_s.toFixed(1)} 秒`,
     recording:`录制中 ${state.remaining_s.toFixed(1)} 秒 · 已 ${state.frames} 帧`,
     saving:'正在保存…',cancelled:'已取消',
-    done:`已保存 ${state.frames} 帧 → ${state.file}`,
+    done:`已保存 ${state.frames} 帧`,
     error:state.error||'录制失败',
   }[state.state]||state.state;
   $('#poseRecordStatus').textContent=label;
@@ -49,7 +49,8 @@ export function renderTriggerRecord(state){
   for(const option of menu.children){const chosen=selected.includes(option.dataset.trigger);option.classList.toggle('selected',chosen);option.setAttribute('aria-selected',String(chosen))}
   const phase={off:'未开启',waiting:selected.length?'监听中，等待选中触发':'请先选择要保存的触发',recording:'正在录制选中触发',tail:'保留收尾，等待相邻片段',error:state.error||'保存失败'}[state.state]||state.state;
   $('#triggerRecordStatus').textContent=phase+` · 本次已保存 ${state.saved_clips||0} 段`+(state.saving?' · 正在保存':'');
-  $('#triggerRecordFile').textContent=state.file?'最近文件：'+state.file:'保存目录：'+state.directory;
+  // 不摆路径：存在 C 盘的用户目录里，路径又长又吓人。要找就点「打开文件夹」。
+  $('#triggerRecordFile').textContent=state.file?'最近一段已保存':'';
 }
 
 export async function refreshTriggerRecord(){
