@@ -4,7 +4,7 @@ import {fistHands,intentAction,renderBodyDescs,zoneFit} from './body.js';
 import {cloudRefresh,loadCloudEndpoint} from './cloud.js';
 import {$,api,autosaver,clamp,notice,post} from './core.js';
 import {emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow} from './devices.js';
-import {cancelPoseRecord,refreshPoseRecord,refreshTriggerRecord,startPoseRecord} from './diagnostics.js';
+import {cancelPoseRecord,refreshPoseRecord,refreshRecordings,refreshTriggerRecord,startPoseRecord} from './diagnostics.js';
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
@@ -458,7 +458,7 @@ export function showSettingsPane(name){
   const pane=known?name:'devices';
   document.querySelectorAll('#settingsNav [data-pane]').forEach(button=>button.setAttribute('aria-current',String(button.dataset.pane===pane)));
   document.querySelectorAll('.settings-pane').forEach(section=>{section.hidden=section.dataset.pane!==pane});
-  if(pane==='lab')void refreshPoseRecord();
+  if(pane==='lab'){void refreshPoseRecord();void refreshRecordings()}
 }
 
 document.querySelectorAll('#settingsNav [data-pane]').forEach(button=>button.addEventListener('click',()=>{showSettingsPane(button.dataset.pane);window.scrollTo(0,0)}));

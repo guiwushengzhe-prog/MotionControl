@@ -460,6 +460,26 @@ def _instance_id() -> str:
 
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
 
+def recordings_summary(folder: Path) -> dict:
+    """录下的骨骼数据有几段、一共多大，给「排查问题」最下面那一行用。
+
+    只报数，不报路径：数据在 C 盘的用户目录里，要找就点「打开文件夹」。每段录制
+    是一个 .jsonl；大小把文件夹里所有文件都算上。
+    """
+    count = total = 0
+    if folder.is_dir():
+        for path in folder.rglob("*"):
+            try:
+                if not path.is_file():
+                    continue
+                total += path.stat().st_size
+            except OSError:
+                continue
+            if path.suffix == ".jsonl":
+                count += 1
+    return {"count": count, "bytes": total}
+
+
 def find_phone_web(root: Path) -> Path | None:
     """手机的网页包在哪：发布包里带着，开发时用隔壁仓库的构建产物。
 
@@ -1375,6 +1395,9 @@ class AdminHandler(_BaseHandler):
             return
         if route == "/api/pose/record":
             self._send_json({"version": VERSION, "recording": KERNEL.pose_recorder.status()})
+            return
+        if route == "/api/recordings":
+            self._send_json({"version": VERSION, **recordings_summary(user_data_root() / "recordings")})
             return
         if route == "/api/pose/trigger-recording":
             self._send_json({"version": VERSION, "recording": KERNEL.trigger_recorder.status(),

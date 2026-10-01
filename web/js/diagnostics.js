@@ -4,7 +4,7 @@ import {$,api,notice,post} from './core.js';
 // --- skeleton recording ---------------------------------------------------
 // Polls only while something is actually happening, so an idle settings page
 // is not making a request every second for nothing.
-let poseRecordTimer=null;
+let poseRecordTimer=null,lastPoseRecordState='';
 
 function renderPoseRecord(state){
   if(!state)return;
@@ -16,6 +16,8 @@ function renderPoseRecord(state){
     error:state.error||'录制失败',
   }[state.state]||state.state;
   $('#poseRecordStatus').textContent=label;
+  if(state.state==='done'&&lastPoseRecordState!=='done')void refreshRecordings();
+  lastPoseRecordState=state.state;
   const busy=state.state==='waiting'||state.state==='recording'||state.state==='saving';
   $('#poseRecordBtn').disabled=busy;
   if(busy&&poseRecordTimer==null){
@@ -27,7 +29,18 @@ function renderPoseRecord(state){
 
 export async function refreshPoseRecord(){try{const data=await api('/api/pose/record');renderPoseRecord(data.recording)}catch{}}
 
-let triggerRecordSaving=false,triggerRecordChoices=[],triggerRecordState=null,triggerRecordChoiceKey='';
+// 「录下的数据」：几段、多大，加一个打开文件夹。还没录过就整行不出现。
+// 不摆路径——在 C 盘的用户目录里，路径又长又吓人，要找点按钮就到。
+function formatBytes(n){return n>=1048576?`${(n/1048576).toFixed(1)} MB`:`${Math.max(1,Math.round(n/1024))} KB`}
+export async function refreshRecordings(){
+  try{
+    const data=await api('/api/recordings');
+    $('#recordingsRow').hidden=!data.count;
+    $('#recordingsSummary').textContent=data.count?`${data.count} 段 · ${formatBytes(data.bytes)}`:'';
+  }catch{}
+}
+
+let triggerRecordSaving=false,triggerRecordChoices=[],triggerRecordState=null,triggerRecordChoiceKey='',lastSavedClips=-1;
 
 export function renderTriggerRecord(state){
   if(!state||triggerRecordSaving)return;
@@ -49,6 +62,7 @@ export function renderTriggerRecord(state){
   for(const option of menu.children){const chosen=selected.includes(option.dataset.trigger);option.classList.toggle('selected',chosen);option.setAttribute('aria-selected',String(chosen))}
   const phase={off:'未开启',waiting:selected.length?'监听中，等待选中触发':'请先选择要保存的触发',recording:'正在录制选中触发',tail:'保留收尾，等待相邻片段',error:state.error||'保存失败'}[state.state]||state.state;
   $('#triggerRecordStatus').textContent=phase+` · 本次已保存 ${state.saved_clips||0} 段`+(state.saving?' · 正在保存':'');
+  if((state.saved_clips||0)!==lastSavedClips){lastSavedClips=state.saved_clips||0;void refreshRecordings()}
   // 不摆路径：存在 C 盘的用户目录里，路径又长又吓人。要找就点「打开文件夹」。
   $('#triggerRecordFile').textContent=state.file?'最近一段已保存':'';
 }
