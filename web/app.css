@@ -704,6 +704,9 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .model-path { overflow-wrap: anywhere; }
 
 .trigger-record-picker { position: relative; max-width: 32.5rem; }
+/* 状态在左、「打开文件夹」在右，同一行。 */
+.trigger-record-foot { display: flex; align-items: center; gap: .75rem; }
+.trigger-record-foot #openRecordingsBtn { margin-left: auto; }
 .trigger-record-picker > summary { position: relative; padding: .4375rem 2.125rem .4375rem .75rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
   background: var(--fill); cursor: pointer; list-style: none; }
 .trigger-record-picker > summary::-webkit-details-marker { display: none; }
