@@ -11,6 +11,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -142,3 +143,67 @@ def test_a_kernel_without_the_settings_hooks_still_works(kernel):
     assert camera.camera_index == 0
     camera.set_camera_index(2)
     assert camera.camera_index == 2
+
+
+def test_direct_capture_bypasses_an_old_automatic_media_cache(kernel, monkeypatch):
+    camera = NativeCameraService(kernel)
+    calls = []
+    monkeypatch.setattr(camera, "_load_backend_cache", lambda: {"backend": "msmf"})
+
+    def open_capture(_cv2, backend, fourcc=None):
+        calls.append((backend, fourcc))
+        return object(), object(), fourcc
+
+    monkeypatch.setattr(camera, "_open_capture", open_capture)
+    camera._select_capture(object())
+    assert calls == [("dshow", "MJPG")]
+    assert camera.selected_backend == "dshow"
+
+
+def test_a_device_without_direct_capture_can_use_media_capture(kernel, monkeypatch):
+    camera = NativeCameraService(kernel)
+    calls = []
+
+    def open_capture(_cv2, backend, fourcc=None):
+        calls.append(backend)
+        return None if backend == "dshow" else (object(), object(), None)
+
+    monkeypatch.setattr(camera, "_open_capture", open_capture)
+    camera._select_capture(object())
+    assert calls == ["dshow", "msmf"]
+    assert camera.backend_preference == "dshow"
+    assert camera.selected_backend == "msmf"
+
+
+def test_capture_reports_the_format_negotiated_by_the_driver(kernel):
+    """请求压缩格式成功不代表驱动真的采用它，不能把请求值当实测值。"""
+    class Capture:
+        def isOpened(self):
+            return True
+
+        def set(self, *_args):
+            return True
+
+        def get(self, _key):
+            return int.from_bytes(b"YUY2", "little")
+
+        def read(self):
+            return True, SimpleNamespace(size=1, shape=(480, 640, 3))
+
+    cv2 = SimpleNamespace(
+        VideoCapture=lambda *_args: Capture(), CAP_DSHOW=700,
+        CAP_PROP_FOURCC=6, CAP_PROP_FRAME_WIDTH=3, CAP_PROP_FRAME_HEIGHT=4,
+        CAP_PROP_FPS=5, CAP_PROP_BUFFERSIZE=38,
+        VideoWriter_fourcc=lambda *_args: int.from_bytes(b"MJPG", "little"))
+    _capture, _frame, actual = NativeCameraService(kernel)._open_capture(cv2, "dshow", "MJPG")
+    assert actual == "YUY2"
+
+
+@pytest.mark.parametrize("preference", ["msmf", "auto"])
+def test_a_chosen_compatibility_mode_survives_a_restart(kernel, preference):
+    NativeCameraService(kernel).configure_backend(preference)
+    again = ControlKernel(Output())
+    try:
+        assert NativeCameraService(again).backend_preference == preference
+    finally:
+        again.close()
