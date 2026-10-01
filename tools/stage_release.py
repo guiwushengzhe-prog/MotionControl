@@ -94,6 +94,17 @@ def local_module_files() -> set[Path]:
                 names = [node.module]
                 # "from pkg import mod" may name a submodule rather than a symbol.
                 names += [f"{node.module}.{alias.name}" for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level > 0:
+                # 相对 import 原来整个被跳过：head_control 里一句
+                # `from .roll_tilt_control import ...` 就让 2026-10-01 那次的发布包少了这个文件，
+                # 一启动就 ModuleNotFoundError——仓库里跑一切正常，只有发布包是坏的。
+                package = Path(relative).parent.parts
+                if len(package) < node.level - 1:
+                    continue
+                base = ".".join(package[:len(package) - (node.level - 1)])
+                module = ".".join(part for part in (base, node.module or "") if part)
+                names = [module] if module else []
+                names += [f"{module}.{alias.name}" if module else alias.name for alias in node.names]
             for name in names:
                 target = resolve(name)
                 if target is not None:
