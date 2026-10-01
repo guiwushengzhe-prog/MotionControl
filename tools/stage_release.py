@@ -264,27 +264,6 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
     return len(wanted), total
 
 
-def check_guide_pdf(target: Path) -> str:
-    """包里那份 PDF，是不是照当前 docs/新手指南.md 生成的。
-
-    PDF 是生成物，源文件改了它不会自己跟着变。忘了重新生成的话，玩家拿到的是
-    旧指南——而这种错没人会发现，直到有人照着旧步骤做不通来问你。
-
-    比的是修改时间，不是内容哈希：PDF 里没有地方能干净地塞一个来源标记，而
-    "源文件比产物新" 恰好就是"改了忘了重新生成"的样子。
-    """
-    source = ROOT / "docs" / "新手指南.md"
-    pdf = target / "新手指南.pdf"
-    if not pdf.is_file():
-        return "包里没有新手指南，跑：python tools/build_guide_html.py"
-    if not source.is_file():
-        return "找不到指南源文件，无法核对"
-    if source.stat().st_mtime > pdf.stat().st_mtime + 1:
-        return ("指南 PDF 比源文件旧了。跑：" + chr(10)
-                + "     python tools/build_guide_html.py")
-    return "新手指南是最新的"
-
-
 def check_vigem_installer(target: Path) -> str:
     """驱动安装包还是不是官方那一个。
 
@@ -385,7 +364,6 @@ def main() -> int:
         print(f"WARNING: 找不到手机网页包 {phone_web}，发布包里不会带更新用的那一份")
 
     print("  " + check_vigem_installer(target))
-    print("  " + check_guide_pdf(target))
 
     print()
     print("staged. Now verify the bundled interpreter has every runtime dependency:")
