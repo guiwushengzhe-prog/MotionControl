@@ -1,5 +1,5 @@
 // 本游戏：选游戏、按键映射的每一行、保存。
-import {$,api,notice,post} from './core.js';
+import {$,api,configurationOperation,notice,positionPopup,post,registerDraftFlusher} from './core.js';
 import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
 import {paintPoseMissingNotice} from './library.js';
 import {kernelState,renderKernelZones} from './play.js';
@@ -16,6 +16,8 @@ let profileFlight=null;
 let profileRevision=0;
 export let profileSwitching=false;
 let profileConflict=false;
+let profileSearchRevision=0;
+registerDraftFlusher(saveProfileBindings);
 
 // 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
 export function revealBindingRow(triggerKey){
@@ -208,7 +210,11 @@ function renderProfileCatalog(games){
 
 export async function searchProfiles(){
   const q=$('#profileSearch').value.trim();
-  const data=await api('/api/game-profiles/catalog'+(q?'?q='+encodeURIComponent(q):''));
+  const revision=++profileSearchRevision;
+  let data;
+  try{data=await api('/api/game-profiles/catalog'+(q?'?q='+encodeURIComponent(q):''))}
+  catch(error){if(revision!==profileSearchRevision||q!==$('#profileSearch').value.trim())return;throw error}
+  if(revision!==profileSearchRevision||q!==$('#profileSearch').value.trim())return;
   lastProfileQuery=q;
   renderProfileCatalog(data.games||[]);
   const count=Number(data.count||0);
@@ -289,15 +295,15 @@ export async function applySelectedProfile(){
   });
 }
 
-async function profileOperation(operation){
-  const controls=()=>[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn')];
-  profileSwitching=true;$('#mappingFields').disabled=true;
-  for(const el of controls())el.disabled=true;
-  try{await operation()}
-  finally{
-    profileSwitching=false;$('#mappingFields').disabled=false;
-    for(const el of controls())el.disabled=false;
-  }
+async function profileOperation(operation,{recoverConflict=false}={}){
+  return configurationOperation(async()=>{
+    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn')];
+    const disabled=controls.map(el=>el.disabled);
+    profileSwitching=true;
+    controls.forEach(el=>{el.disabled=true});
+    try{await operation()}
+    finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]})}
+  },{skipDrafts:recoverConflict?[saveProfileBindings]:[]});
 }
 
 function makeTypeSelect(binding){
@@ -323,6 +329,7 @@ function setVoiceReleasePickerOpen(picker,open){
   picker.classList.toggle('open',open);
   const button=picker.querySelector('.voice-release-picker-button');
   if(button)button.setAttribute('aria-expanded',open?'true':'false');
+  if(open&&button)positionPopup(button,picker.querySelector('.voice-release-picker-menu'));
 }
 
 function ensureVoiceReleasePickerEvents(){
@@ -356,7 +363,13 @@ function ensureVoiceReleasePickerEvents(){
     }
   });
   document.addEventListener('keydown',event=>{
-    if(event.key==='Escape')document.querySelectorAll('.voice-release-picker.open').forEach(item=>setVoiceReleasePickerOpen(item,false));
+    if(event.key==='Escape')document.querySelectorAll('.voice-release-picker.open').forEach(item=>{setVoiceReleasePickerOpen(item,false);item.querySelector('.voice-release-picker-button')?.focus()});
+    if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+      const picker=event.target.closest?.('.voice-release-picker.open');if(!picker)return;
+      const options=[...picker.querySelectorAll('.voice-release-option:not(:disabled)')];if(!options.length)return;
+      event.preventDefault();const index=options.indexOf(document.activeElement);
+      options[(index+(event.key==='ArrowDown'?1:options.length-1)+options.length)%options.length].focus();
+    }
   });
   voiceReleasePickerEventsReady=true;
 }
@@ -366,6 +379,7 @@ function updateVoiceReleasePicker(select){
   if(!picker)return;
   const button=picker.querySelector('.voice-release-picker-button');
   const menu=picker.querySelector('.voice-release-picker-menu');
+  const focused=menu?.contains(document.activeElement)?document.activeElement.dataset.value:null;
   const selected=voiceReleaseTargetIds(select);
   const labels=voiceCommandNames(selected);
   if(button){
@@ -383,6 +397,8 @@ function updateVoiceReleasePicker(select){
     item.classList.toggle('selected',option.selected);menu.appendChild(item);
   }
   if(!menu.children.length){const empty=document.createElement('div');empty.className='voice-release-empty';empty.textContent='没有可停住的口令';menu.appendChild(empty)}
+  if(focused)[...menu.children].find(item=>item.dataset.value===focused)?.focus();
+  if(picker.classList.contains('open'))positionPopup(button,menu);
 }
 
 function voiceHoldChoices(excludeKey=''){
@@ -701,10 +717,7 @@ function buildZonePointPicker(trigger,binding){
     }
   };
   picker.positionMenu=()=>{
-    const rect=summary.getBoundingClientRect(),width=Math.min(350,innerWidth*.8),below=innerHeight-rect.bottom-12,above=rect.top-12;
-    menu.style.left=Math.max(8,Math.min(rect.left,innerWidth-width-8))+'px';
-    menu.style.maxHeight=Math.max(120,Math.min(620,innerHeight*.75,Math.max(above,below)))+'px';
-    menu.style.top=below>=above?rect.bottom+5+'px':'auto';menu.style.bottom=below>=above?'auto':innerHeight-rect.top+5+'px';
+    positionPopup(summary,menu);
   };
   picker.addEventListener('toggle',()=>{if(picker.open)picker.positionMenu();else cancelGesture()});
   picker.addEventListener('keydown',event=>{if(event.key==='Escape')cancelGesture()});
@@ -722,11 +735,16 @@ document.addEventListener('keydown',event=>{
   if(event.key==='Escape')document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>{picker.open=false;picker.querySelector('summary').focus()});
 });
 
-const positionZonePointMenus=()=>document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>picker.positionMenu());
+const positionZonePointMenus=()=>{
+  document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>picker.positionMenu());
+  document.querySelectorAll('.voice-release-picker.open').forEach(picker=>positionPopup(picker.querySelector('.voice-release-picker-button'),picker.querySelector('.voice-release-picker-menu')));
+};
 
 window.addEventListener('resize',positionZonePointMenus);
 
 document.addEventListener('scroll',positionZonePointMenus,true);
+window.visualViewport?.addEventListener('resize',positionZonePointMenus);
+window.visualViewport?.addEventListener('scroll',positionZonePointMenus);
 
 function readZonePointChoices(row){
   const choices=row.querySelector('.zone-trigger-choices');
@@ -1129,7 +1147,7 @@ export async function retryProfileBindings(){
     await post('/api/game-profiles/select',{id});
     profileConflict=false;
     await saveProfileBindings();
-  });
+  },{recoverConflict:true});
 }
 
 export function scheduleProfileAutoSave(event){

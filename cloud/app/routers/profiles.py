@@ -26,6 +26,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query, Response, statu
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from motioncontrol_shared.canonical import canonicalize
 from motioncontrol_shared.describe import describe
@@ -67,6 +68,11 @@ async def _profile_out(db: AsyncSession, profile: Profile) -> ProfileOut:
     game = await db.get(Game, profile.game_id) if profile.game_id else None
     current = (await db.get(ProfileVersion, profile.current_version_id)
                if profile.current_version_id else None)
+    return _profile_response(profile, owner, game, current)
+
+
+def _profile_response(profile: Profile, owner: User | None, game: Game | None,
+                      current: ProfileVersion | None) -> ProfileOut:
     return ProfileOut(
         id=profile.id,
         doc_type=profile.doc_type,
@@ -81,6 +87,24 @@ async def _profile_out(db: AsyncSession, profile: Profile) -> ProfileOut:
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
+
+
+async def _profiles_out(db: AsyncSession, profiles: list[Profile]) -> list[ProfileOut]:
+    """Load list metadata in batches, without reading each version's document."""
+    if not profiles:
+        return []
+    owner_ids = {profile.owner_id for profile in profiles}
+    game_ids = {profile.game_id for profile in profiles if profile.game_id}
+    version_ids = {profile.current_version_id for profile in profiles if profile.current_version_id}
+    owners = {owner.id: owner for owner in (await db.execute(
+        select(User).where(User.id.in_(owner_ids)))).scalars()}
+    games = ({game.id: game for game in (await db.execute(
+        select(Game).where(Game.id.in_(game_ids)))).scalars()} if game_ids else {})
+    versions = ({version.id: version for version in (await db.execute(
+        select(ProfileVersion).where(ProfileVersion.id.in_(version_ids))
+        .options(defer(ProfileVersion.payload)))).scalars()} if version_ids else {})
+    return [_profile_response(profile, owners.get(profile.owner_id), games.get(profile.game_id),
+                              versions.get(profile.current_version_id)) for profile in profiles]
 
 
 def _validate_document(doc_type: str, document) -> tuple[bytes, str, str]:
@@ -205,7 +229,7 @@ async def list_my_profiles(user: CurrentUser, db: DbSession,
     rows = (await db.execute(
         query.order_by(Profile.updated_at.desc()).limit(limit)
     )).scalars().all()
-    return [await _profile_out(db, row) for row in rows]
+    return await _profiles_out(db, rows)
 
 
 @router.get("/profiles/{profile_id}", response_model=ProfileOut)
@@ -349,7 +373,7 @@ async def browse_public(db: DbSession,
     rows = (await db.execute(
         query.order_by(Profile.updated_at.desc()).limit(limit)
     )).scalars().all()
-    return [await _profile_out(db, row) for row in rows]
+    return await _profiles_out(db, rows)
 
 
 @router.get("/profiles/{profile_id}/versions/{version_id}/summary")

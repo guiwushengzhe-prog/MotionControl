@@ -2,16 +2,16 @@
 import {createTutorial} from '../tutorial.js';
 import {fistHands,intentAction,renderBodyDescs,zoneFit} from './body.js';
 import {cloudRefresh,loadCloudEndpoint} from './cloud.js';
-import {$,api,autosaver,clamp,notice,post} from './core.js';
-import {emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow} from './devices.js';
+import {$,api,autosaver,clamp,configurationOperation,isVisible,notice,post} from './core.js';
+import {emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow,updateInputConfig,updateOutputConfig} from './devices.js';
 import {cancelPoseRecord,refreshPoseRecord,refreshRecordings,refreshTriggerRecord,startPoseRecord} from './diagnostics.js';
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
-import {addCustomGame,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
-import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
+import {addCustomGame,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
+import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
-import {handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,reloadViewControlState,renderViewControl,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
+import {ensureViewControlReady,handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
 import {addVoiceRow,refreshVoice,refreshVoiceCommands,renderVoiceRows,saveVoiceMappings,voice,voiceInputReady,voiceRowsFromStatus} from './voice.js';
 
 let modelAvailable=false;
@@ -19,6 +19,9 @@ export let actionBusy=false;
 export let currentView='play';
 export let profileReady=false;
 export let profileLoading=false;
+let profileDependenciesReady=false;
+let profileLibrariesReady=false;
+let profileFailures=0,profileRetryAt=0;
 
 // 教学只看它自己那几件事，所以单独凑一份快照而不是把整个 kernelState 丢过去：
 // 判定写在 tutorial.js 里，字段名要是换了这边会直接报错，而不是悄悄一直不亮。
@@ -118,6 +121,7 @@ export function showView(view){
     if(el.dataset.view===view)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');
   });
   closeMenus();
+  renderVisibleState();
   if(view==='games')setTimeout(()=>showTipOnce('gameMenu',$('#gameMenuBtn'),'恢复默认按键、管理员权限启动在这里'),400);
   if(view==='devices'){void refreshXinput();void refreshHandMouse();void refreshPoseRecord()}
   if(view==='games')loadCloudEndpoint().catch(()=>{});
@@ -125,49 +129,75 @@ export function showView(view){
 }
 
 function poll(task,delay,enabled=()=>true){
+  let timer=0,busy=false,failures=0;
   async function next(){
-    try{if(enabled())await task()}catch{}
-    setTimeout(next,document.hidden?Math.max(delay,1500):delay);
+    if(busy)return;
+    busy=true;
+    try{if(enabled()){const success=await task();failures=success===false?failures+1:0}}catch{failures++}
+    finally{
+      busy=false;
+      const interval=Math.min(10000,delay*2**Math.min(failures,5));
+      timer=setTimeout(next,document.hidden?Math.max(interval,1500):interval);
+    }
   }
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!busy){clearTimeout(timer);failures=0;void next()}});
   void next();
 }
 
 export async function init(){
   initViewControl();setViewControlBusy(false);syncControlLabels();
-  // 自定义姿势和宏库要排在最前面，比 refreshKernel 还早。
-  //
-  // 原因不显眼：refreshKernel 里有一句 void loadProfiles()，它不被 await，会自己跑去
-  // 建映射行。那一刻这两份要是还没到，建出来的表就是缺的：录过的姿势没有对应的
-  // 行，每个「键盘宏」下拉都写着“还没有宏”。东西明明在，页面上却说没有。
-  //
-  // 这是个旧毛病，只是之前靠时机碰对的次数多——中间多一次 await 就会碰错。
-  await Promise.all([refreshCustomPoses({rebuild:false}), refreshMacros({rebuild:false})]);
-  await refreshKernel();await refreshOutput();
-  const results=await Promise.allSettled([
-    refreshInput(),refreshAudioDevices(),refreshXinput(),refreshVoice(),refreshVoiceCommands(),refreshCameraConfig(),refreshPoseLibrary(),refreshTriggerRecord(),
-    reloadViewControlState().then(()=>{setViewControlBusy(false);renderViewControl(true)}),
-    api('/api/models').then(data=>{
+  // 状态刷新先启动，某个可选设置读不到不会让连接/急停状态等它。
+  poll(refreshKernel,250);
+  poll(async()=>{const results=await Promise.all([refreshInput(),refreshOutput(),refreshVoice()]);return results.every(result=>result!==false)},900);
+  poll(refreshXinput,1500,()=>currentView==='devices'&&isVisible($('#outputSettings')));
+  poll(refreshPerformance,1500,()=>currentView==='play'||(currentView==='devices'&&currentSettingsPane==='lab'));
+  poll(refreshStereo,300,()=>currentView==='devices'&&currentSettingsPane==='lab'&&!document.hidden);
+  poll(refreshPreview,150);
+  poll(ensureViewControlReady,2500);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)renderVisibleState()});
+  // 状态先可用；映射等自定义姿势和宏的第一次读取结束再建，避免把已有动作漏掉。
+  // 某份库读取失败也不堵住整个页面，恢复后先存草稿再补齐映射行。
+  let customPosesReady=false,macrosReady=false;
+  const warmLibraries=async()=>{
+    const results=await Promise.all([customPosesReady||refreshCustomPoses({rebuild:false}),macrosReady||refreshMacros({rebuild:false})]);
+    customPosesReady=results[0]!==false;macrosReady=results[1]!==false;
+    const ready=results.every(result=>result!==false),firstAttempt=!profileDependenciesReady;
+    profileDependenciesReady=true;
+    if(!firstAttempt&&ready&&profileReady)await configurationOperation(async()=>{renderProfileBindingRows()});
+    profileLibrariesReady=ready;
+    await loadProfiles();
+    return ready;
+  };
+  poll(warmLibraries,2500,()=>!profileLibrariesReady);
+  const initialTasks=[refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshTriggerRecord,()=>api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
       if(data.version)$('#appVersion').textContent=data.version;
       $('#modelStatus').textContent=modelAvailable?'':'这台电脑的人体识别模型用不了，只能用手机摄像头';
-    }),
-  ]);
+    })];
+  const unfinished=new Set(initialTasks);
+  const inFlight=new Set();
+  const initialize=async(task)=>{
+    if(inFlight.has(task))return true;
+    inFlight.add(task);
+    try{const result=await task();if(result===false)return false;unfinished.delete(task);return true}
+    finally{inFlight.delete(task)}
+  };
+  const firstReads=Promise.allSettled(initialTasks.map(initialize));
+  poll(async()=>{
+    const retried=await Promise.allSettled([...unfinished].map(initialize));
+    return retried.every(result=>result.status==='fulfilled'&&result.value!==false);
+  },2500,()=>unfinished.size>0);
+  const results=await firstReads;
   if(results.some(result=>result.status==='rejected'))notice('部分设备信息尚未读取，可继续使用已连接的输入');
-  await loadProfiles();renderVoiceRows(voiceRowsFromStatus(voice.status));renderBodyDescs();
+  if(!voiceSaver.pending())renderVoiceRows(voiceRowsFromStatus(voice.status));renderBodyDescs();
   if(currentView==='play')setTimeout(()=>showTipOnce('help',$('#helpBtn'),'新手教学、白天 / 夜间在这里'),1200);
-  poll(refreshKernel,250);poll(async()=>{await refreshInput();await refreshOutput();await refreshVoice()},900);
-  poll(refreshXinput,1500,()=>currentView==='devices');
-  // 帧数写在开始页的画面角上，诊断细节在设置里；这两页开着才刷新。
-  poll(refreshPerformance,1500,()=>currentView==='devices'||currentView==='play');
-  poll(refreshStereo,300,()=>currentView==='devices');
-  poll(refreshPreview,150);
 }
 
 export async function loadProfiles(){
-  if(profileLoading||profileReady)return;
+  if(!profileDependenciesReady||profileLoading||profileReady||Date.now()<profileRetryAt)return;
   profileLoading=true;
-  try{await refreshVoiceCommands();await refreshProfile();profileReady=true}
-  catch(error){$('#profileMeta').textContent='游戏配置尚未读取，将自动重试：'+error.message}
+  try{await refreshVoiceCommands();await refreshProfile();profileReady=true;profileFailures=0}
+  catch(error){profileRetryAt=Date.now()+Math.min(10000,1000*2**Math.min(profileFailures++,4));$('#profileMeta').textContent='游戏配置尚未读取，将自动重试：'+error.message}
   finally{profileLoading=false}
 }
 
@@ -185,16 +215,13 @@ bind('sourceStopBtn',()=>setSource(sourceMode,false));
 
 $('#audioSource').addEventListener('change',e=>runAction(async()=>{
   const value=e.target.value;
-  const result=await post('/api/input/source',{audio_source:value});
-  S.audioSource=result.audio_source||value;S.audioMode=result.audio_mode||'waiting';
-  renderInputStatus(result);
+  await updateInputConfig('/api/input/source',{audio_source:value});
   notice(value==='phone'?'已选择手机麦克风，等待手机连接':'已选择电脑麦克风');
 }));
 
 $('#audioDevice').addEventListener('change',e=>runAction(async()=>{
   const value=e.target.value;
-  const result=await post('/api/input/audio-device',{audio_device:value||null});
-  renderInputStatus(result);
+  await updateInputConfig('/api/input/audio-device',{audio_device:value||null});
   notice(value?'已切换电脑音频输入设备':'已恢复系统默认音频输入设备');
 }));
 
@@ -354,7 +381,7 @@ $('#cameraBackend').addEventListener('change',e=>runAction(async()=>{
 }));
 
 $('#outputMode').addEventListener('change',e=>runAction(async()=>{
-  ++S.outputEpoch;renderOutput(await post('/api/output/config',{mode:e.target.value}));await refreshXinput();
+  await updateOutputConfig({mode:e.target.value});await refreshXinput();
   noteOutputMix();
 }));
 
@@ -365,8 +392,8 @@ $('#xinputMotionLeft').addEventListener('change',()=>runAction(setXinputMotionLe
 $('#strength').addEventListener('input',()=>{$('#strengthValue').textContent=$('#strength').value+'%'});
 
 $('#strength').addEventListener('change',()=>runAction(async()=>{
-  const gain=Number($('#strength').value)/100;++S.outputEpoch;
-  renderOutput(await post('/api/output/config',{mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain}));
+  const gain=Number($('#strength').value)/100;
+  await updateOutputConfig({mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain});
 }));
 
 for(const id of ['headAlgorithm','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','invertY']){
@@ -453,12 +480,16 @@ document.querySelectorAll('#themeSeg [data-theme-choice]').forEach(button=>butto
 applyTheme(document.documentElement.dataset.theme||'auto');
 
 // 设置页左边的分类，一次只看一类。
+export let currentSettingsPane='devices';
 export function showSettingsPane(name){
   const known=[...document.querySelectorAll('.settings-pane')].some(pane=>pane.dataset.pane===name);
   const pane=known?name:'devices';
+  currentSettingsPane=pane;
   document.querySelectorAll('#settingsNav [data-pane]').forEach(button=>button.setAttribute('aria-current',String(button.dataset.pane===pane)));
   document.querySelectorAll('.settings-pane').forEach(section=>{section.hidden=section.dataset.pane!==pane});
   if(pane==='lab'){void refreshPoseRecord();void refreshRecordings()}
+  if(pane==='view')void ensureViewControlReady();
+  renderVisibleState();
 }
 
 document.querySelectorAll('#settingsNav [data-pane]').forEach(button=>button.addEventListener('click',()=>{showSettingsPane(button.dataset.pane);window.scrollTo(0,0)}));

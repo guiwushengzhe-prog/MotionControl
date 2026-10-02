@@ -200,7 +200,10 @@ class FakeServer:
 
 
 def install_server(monkeypatch, server):
+    import io
     monkeypatch.setattr(app_update, "_fetch", server.fetch)
+    monkeypatch.setattr(app_update.urllib.request, "urlopen",
+                        lambda request, timeout: io.BytesIO(server.fetch(request.full_url, timeout)))
 
 
 def test_a_good_bundle_lands_in_staging(tmp_path, trust, monkeypatch):
@@ -302,3 +305,156 @@ def test_the_installs_own_paths_survive_an_update(tmp_path):
         == "../native/ViGEmClient.dll"
     # 跟着代码走的那些照常更新
     assert (app / "config" / "voice_commands_v094.json").is_file()
+
+
+def test_interrupted_update_reuses_verified_completed_files(tmp_path, trust, monkeypatch):
+    app = make_install(tmp_path)
+    server = FakeServer({"a.py": b"complete", "b.py": b"second"}, trust)
+    fetch = server.fetch
+    downloads = []
+    disconnected = True
+
+    def flaky(url, timeout):
+        if "?path=" in url:
+            downloads.append(url.split("?path=", 1)[1])
+            if disconnected and url.endswith("b.py"):
+                raise ConnectionResetError("disconnected")
+        return fetch(url, timeout)
+
+    server.fetch = flaky
+    install_server(monkeypatch, server)
+    assert app_update.check_and_stage(app, retries=0)["state"] == "failed"
+    staged = tmp_path / app_update.STAGING_NAME
+    assert (staged / "a.py").read_bytes() == b"complete"
+    assert not (staged / app_update.COMPLETE_MARKER).exists()
+    disconnected = False
+    assert app_update.check_and_stage(app)["state"] == "ready"
+    assert downloads.count("a.py") == 1, "completed file was downloaded again"
+    assert (staged / "b.py").read_bytes() == b"second"
+
+
+def test_unchanged_installed_file_does_not_use_network(tmp_path, trust, monkeypatch):
+    app = make_install(tmp_path)
+    (app / "server.py").write_bytes(b"same")
+    server = FakeServer({"server.py": b"same"}, trust)
+    install_server(monkeypatch, server)
+    monkeypatch.setattr(app_update.urllib.request, "urlopen",
+                        lambda *args, **kwargs: pytest.fail("unchanged file fetched"))
+    assert app_update.check_and_stage(app)["state"] == "ready"
+    assert (tmp_path / app_update.STAGING_NAME / "server.py").read_bytes() == b"same"
+
+
+def test_streamed_download_has_bounded_reads_and_honors_cancellation(tmp_path, trust, monkeypatch):
+    import io
+    import threading
+
+    app = make_install(tmp_path)
+    content = b"x" * (app_update._CHUNK * 3)
+    server = FakeServer({"large.py": content}, trust)
+    install_server(monkeypatch, server)
+    cancelled = threading.Event()
+    reads = []
+
+    class SlowFile(io.BytesIO):
+        def read1(self, size):
+            assert 0 < size <= app_update._CHUNK
+            reads.append(size)
+            cancelled.set()
+            return super().read1(size)
+
+    monkeypatch.setattr(app_update.urllib.request, "urlopen",
+                        lambda request, timeout: SlowFile(content))
+    result = app_update.check_and_stage(app, cancel_event=cancelled)
+    assert result["state"] == "cancelled"
+    assert len(reads) == 1
+    assert not (tmp_path / app_update.STAGING_NAME / app_update.COMPLETE_MARKER).exists()
+    assert not list(tmp_path.rglob(".download-*"))
+    assert (app / "server.py").read_text() == "v1"
+
+
+def test_total_budget_stops_slow_stream_and_keeps_completed_files(tmp_path, trust, monkeypatch):
+    import io
+
+    app = make_install(tmp_path)
+    server = FakeServer({"a.py": b"complete", "large.py": b"x" * (app_update._CHUNK * 3)}, trust)
+    install_server(monkeypatch, server)
+    clock = [0.0]
+    monkeypatch.setattr(app_update.time, "monotonic", lambda: clock[0])
+
+    class SlowFile(io.BytesIO):
+        def read1(self, size):
+            clock[0] += 0.2
+            return super().read1(size)
+
+    monkeypatch.setattr(app_update.urllib.request, "urlopen",
+                        lambda request, timeout: SlowFile(server.fetch(request.full_url, timeout)))
+    result = app_update.check_and_stage(app, total_timeout_s=0.7, retries=0)
+    assert result["state"] == "failed"
+    assert "时间预算" in result["error"]
+    staged = tmp_path / app_update.STAGING_NAME
+    assert (staged / "a.py").read_bytes() == b"complete"
+    assert not (staged / "large.py").exists()
+    assert not (staged / app_update.COMPLETE_MARKER).exists()
+
+
+def test_transient_file_failure_is_retried_with_a_limit(tmp_path, trust, monkeypatch):
+    app = make_install(tmp_path)
+    server = FakeServer({"server.py": b"new"}, trust)
+    fetch = server.fetch
+    attempts = []
+
+    def flaky(url, timeout):
+        if "?path=" in url:
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise ConnectionResetError("temporary disconnect")
+        return fetch(url, timeout)
+
+    server.fetch = flaky
+    install_server(monkeypatch, server)
+    assert app_update.check_and_stage(app, retries=1)["state"] == "ready"
+    assert len(attempts) == 2
+
+
+def test_permanent_disconnect_stops_after_configured_retries(tmp_path, trust, monkeypatch):
+    app = make_install(tmp_path)
+    server = FakeServer({"server.py": b"new"}, trust)
+    install_server(monkeypatch, server)
+    attempts = []
+
+    def disconnected(request, timeout):
+        attempts.append(request.full_url)
+        raise ConnectionResetError("still offline")
+
+    monkeypatch.setattr(app_update.urllib.request, "urlopen", disconnected)
+    result = app_update.check_and_stage(app, retries=1)
+    assert result["state"] == "failed"
+    assert len(attempts) == 2
+    assert not (tmp_path / app_update.STAGING_NAME / app_update.COMPLETE_MARKER).exists()
+
+
+def test_live_file_changed_during_copy_is_downloaded_again(tmp_path, trust, monkeypatch):
+    app = make_install(tmp_path)
+    (app / "server.py").write_bytes(b"same")
+    server = FakeServer({"server.py": b"same"}, trust)
+    install_server(monkeypatch, server)
+    copied = app_update.shutil.copy2
+
+    def changed(source, destination):
+        source.write_bytes(b"oops")
+        return copied(source, destination)
+
+    monkeypatch.setattr(app_update.shutil, "copy2", changed)
+    assert app_update.check_and_stage(app)["state"] == "ready"
+    assert (tmp_path / app_update.STAGING_NAME / "server.py").read_bytes() == b"same"
+
+
+def test_new_manifest_prunes_old_files_after_success(tmp_path, trust, monkeypatch):
+    app = make_install(tmp_path)
+    server = FakeServer({"server.py": b"new"}, trust)
+    install_server(monkeypatch, server)
+    staging = tmp_path / app_update.STAGING_NAME
+    staging.mkdir()
+    (staging / "retired.py").write_text("old")
+    assert app_update.check_and_stage(app)["state"] == "ready"
+    assert not (staging / "retired.py").exists()

@@ -1,5 +1,5 @@
 // 本游戏 → 云端配置。
-import {api,post} from './core.js';
+import {api,configurationOperation,post} from './core.js';
 import {refreshProfile} from './mapping.js';
 import {gameProfile} from './state.js';
 import {refreshVoice,renderVoiceRows,voice,voiceRowsFromStatus} from './voice.js';
@@ -26,12 +26,14 @@ function cloudSay(text, kind = '') {
 
 /** 云端地址，从服务端读一次，用来拼「在网站上打开」的链接。 */
 let cloudEndpoint = '';
+let installedRefresh=null;
 
 export async function cloudRefresh() {
   if (!cloudListEl) return;
   cloudSay('正在连接云端…');
   cloudListEl.innerHTML = '';
   try {
+    if(installedRefresh){await configurationOperation(installedRefresh);installedRefresh=null}
     const status = await api('/api/cloud/status', { timeoutMs: 12000 });
     cloudEndpoint = status.endpoint || '';
     if (!status.reachable) {
@@ -138,6 +140,7 @@ async function cloudInstall(item, button) {
   button.textContent = '安装中…';
   cloudSay('正在下载并校验…');
   try {
+    await configurationOperation(async()=>{
     const result = await post('/api/cloud/install', {
       profile_id: item.id,
       game_id: item.game_id || '',
@@ -151,16 +154,19 @@ async function cloudInstall(item, button) {
     // actually loaded rather than what was there before.
     // Re-read whichever panel the install changed, so the page shows what is
     // now actually loaded rather than what was there a moment ago.
-    try {
+    const refreshInstalled=async()=>{
       if (installed.doc_type === 'voice_mappings') {
-        await refreshVoice();
+        if(await refreshVoice()===false)throw new Error('语音配置暂时无法读取');
         renderVoiceRows(voiceRowsFromStatus(voice.status));
       } else {
         // Motions are not a panel of their own: they are the motion.* rows of
         // the game profile, so refreshing the profile covers them too.
         await refreshProfile();
       }
-    } catch { /* the install succeeded; a stale panel is not worth an error */ }
+    };
+    try{await refreshInstalled();installedRefresh=null}
+    catch{installedRefresh=refreshInstalled;cloudSay('配置已安装，页面暂时未更新；点「刷新」重新读取。','error')}
+    });
   } catch (error) {
     cloudSay(`安装失败：${error.message}`, 'error');
   } finally {

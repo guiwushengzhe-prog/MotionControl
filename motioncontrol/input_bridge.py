@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import ipaddress
+import inspect
 import json
 import math
 import socket
@@ -27,6 +28,7 @@ POSE_SOURCE_PREFIX = "mobile_pose:"
 SENSOR_SOURCE_PREFIX = "mobile_sensor:"
 VOICE_SOURCE_PREFIX = "mobile_voice:"
 VOICE_AUDIO_MAX_BYTES = 256 * 1024
+POSE_MAX_AGE_MS = 500.0
 
 # Compact mobile camera protocols.  Phones still run MediaPipe locally and the
 # bridge expands packed landmarks back to the canonical 33-point pose.  Keep
@@ -560,8 +562,9 @@ def _local_addresses() -> list[str]:
 class InputBridge:
     """Receives MotionBridge input and fans mobile poses to desktop consumers."""
 
-    def __init__(self, output, kernel=None, voice=None) -> None:
+    def __init__(self, output, kernel=None, voice=None, *, on_output_control=None) -> None:
         self.output = output
+        self._on_output_control = on_output_control
         self.kernel = kernel
         self._voice_service = voice
         self._control_config_provider = None
@@ -584,6 +587,21 @@ class InputBridge:
         self._last_trigger_held: list[dict] = []
         # The phone is the usual body source whether or not a kernel is wired in.
         self._body_mode = "phone"
+        self._body_enabled = True
+        # Sequence ownership belongs to a websocket session, not merely a
+        # device id: reconnects may legitimately restart their sequence at zero.
+        self._pose_sessions: dict[WebSocketPeer, dict] = {}
+        self._sensor_sessions: dict[tuple[WebSocketPeer, str], dict] = {}
+        self._superseded_sensor_sessions: set[tuple[WebSocketPeer, str]] = set()
+        self._voice_audio_sequences: dict[tuple[WebSocketPeer, str], int] = {}
+        self._superseded_voice_sessions: set[tuple[WebSocketPeer, str]] = set()
+        self._voice_owner_generations: dict[str, int] = {}
+        self._pending_voice_clears: list[tuple[object, str, int | None]] = []
+        self._superseded_pose_peers: set[WebSocketPeer] = set()
+        self._clock_synced_peers: set[WebSocketPeer] = set()
+        self._voice_clock_trusted_peers: set[WebSocketPeer] = set()
+        self._pose_rejected = {"disabled": 0, "owner": 0, "sequence": 0, "stale": 0}
+        self._sensor_rejected = {"owner": 0, "sequence": 0, "stale": 0}
         remembered_audio = "computer"
         if kernel is not None:
             try:
@@ -606,11 +624,32 @@ class InputBridge:
         self._port = 8765
         self._stop = threading.Event()
         self._watchdog = threading.Thread(target=self._watch_loop, name="motion-input-watchdog", daemon=True)
+        self.configure_voice(voice)
         self._watchdog.start()
 
     def configure_voice(self, voice) -> None:
         with self._lock:
             self._voice_service = voice
+            self._voice_generation_methods: set[str] = set()
+            try:
+                self._voice_audio_async = "result_callback" in inspect.signature(voice.accept_phone_audio).parameters
+            except (AttributeError, TypeError, ValueError):
+                self._voice_audio_async = False
+            if callable(getattr(voice, "phone_source_generation", None)):
+                for method in ("accept_phone_audio", "accept_phone_text", "accept_phone_command"):
+                    try:
+                        if "expected_generation" in inspect.signature(getattr(voice, method)).parameters:
+                            self._voice_generation_methods.add(method)
+                    except (AttributeError, TypeError, ValueError):
+                        pass
+
+    def _voice_submission_locked(self, method: str, source_id: str) -> tuple[object, dict]:
+        """Capture admission before dropping the bridge lock for voice work."""
+        voice = self._voice_service
+        kwargs = {}
+        if method in self._voice_generation_methods:
+            kwargs["expected_generation"] = voice.phone_source_generation(source_id)
+        return voice, kwargs
 
     @property
     def audio_source(self) -> str:
@@ -724,7 +763,10 @@ class InputBridge:
             self._send_game_output_state(peer, ok=False, error="enabled 必须是布尔值")
             return
         try:
-            self.output.set_config(enabled=enabled)
+            if self._on_output_control is not None:
+                self._on_output_control(enabled)
+            else:
+                self.output.set_config(enabled=enabled)
         except Exception as exc:
             self._send_game_output_state(peer, ok=False, error=str(exc))
             return
@@ -752,6 +794,25 @@ class InputBridge:
         for source_id in cleared:
             self._broadcast_pose_state(source_id, False, "source_switch")
 
+    def set_body_enabled(self, enabled: bool) -> None:
+        """Explicit stop wins over the automatic phone fallback.
+
+        The same admission lock covers pose submission to the kernel, so no
+        previously admitted mobile frame can resume output after this returns.
+        """
+        cleared: list[str] = []
+        with self._lock:
+            self._body_enabled = bool(enabled)
+            if not self._body_enabled:
+                for source_id in list(self._pose_sources):
+                    owner, active = self._clear_source_locked(source_id)
+                    if owner is not None:
+                        owner.source_ids.discard(source_id)
+                    if active:
+                        cleared.append(source_id)
+        for source_id in cleared:
+            self._broadcast_pose_state(source_id, False, "body_stopped")
+
     def set_audio_mode(self, mode: str) -> None:
         """Select the independent audio source and remember it for restart."""
         mode = str(mode).strip().lower()
@@ -760,6 +821,12 @@ class InputBridge:
         with self._lock:
             self._audio_mode = mode
             self._audio_source = mode
+            if mode != "phone":
+                for source_id in list(self._voice_sources):
+                    owner, _ = self._clear_source_locked(source_id)
+                    if owner is not None:
+                        owner.source_ids.discard(source_id)
+        self._flush_voice_clears()
         if self.kernel is not None:
             try:
                 self.kernel.remember_general_setting("audio_source", mode)
@@ -777,6 +844,7 @@ class InputBridge:
                 owner, _ = self._clear_source_locked(source_id)
                 if owner is not None:
                     owner.source_ids.discard(source_id)
+        self._flush_voice_clears()
         for source_id in cleared:
             self._broadcast_pose_state(source_id, False, "source_switch")
 
@@ -938,6 +1006,10 @@ class InputBridge:
             active_pose_source = self._active_pose_source
             audio_mode = self._audio_mode
             audio_source = self._audio_source
+            body_enabled = self._body_enabled
+            body_mode = self._body_mode
+            pose_rejected = dict(self._pose_rejected)
+            sensor_rejected = dict(self._sensor_rejected)
             host = self._host
             port = self._port
         pose_age = round(max(0.0, (now - latest_pose["received_at"]) * 1000)) if latest_pose else None
@@ -949,7 +1021,10 @@ class InputBridge:
             # 手机在传，但来源选的是电脑摄像头，所以它的画面正在被丢掉。
             "phone_ignored": bool(self._phone_ignored_at
                                   and now - self._phone_ignored_at < 2.0),
-            "body_mode": self._body_mode,
+            "body_mode": body_mode,
+            "body_enabled": body_enabled,
+            "pose_rejected": pose_rejected,
+            "sensor_rejected": sensor_rejected,
             "audio_mode": audio_mode,
             "audio_source": audio_source,
             "phone_ws_urls": self.phone_ws_urls(),
@@ -1085,14 +1160,44 @@ class InputBridge:
         last = float(getattr(kernel, "body_last_at", 0.0) or 0.0)
         return last > 0.0 and (time.monotonic() - last) < 1.0
 
+    def _accept_pose_sequence_locked(self, peer, source_id: str, message: dict) -> bool:
+        session = self._pose_sessions.get(peer)
+        if session is None or session["source_id"] != source_id:
+            session = {"source_id": source_id, "sequence": -1, "clock_trusted": False}
+            self._pose_sessions[peer] = session
+        return self._accept_frame_sequence_locked(peer, session, message, self._pose_rejected)
+
+    def _accept_frame_sequence_locked(self, peer, session: dict, message: dict, rejected: dict) -> bool:
+        sequence = int(message["sequence"])
+        if sequence <= session["sequence"]:
+            rejected["sequence"] += 1
+            return False
+        # Record seen sequences even if age validation below rejects them.
+        session["sequence"] = sequence
+        captured = float(message["captured_at_ms"])
+        sent = message.get("sent_at_ms")
+        if _is_number(sent):
+            sent = float(sent)
+            # This relative age is meaningful without synchronized clocks.
+            if sent - captured > POSE_MAX_AGE_MS:
+                rejected["stale"] += 1
+                return False
+        wall_ms = time.time() * 1000.0
+        reference = sent if _is_number(sent) else captured
+        if peer in self._clock_synced_peers and abs(wall_ms - reference) <= 1000.0:
+            session["clock_trusted"] = True
+        # Legacy clocks may be monotonic, unsynchronized, or synthetic replay
+        # timestamps. Do not compare those with our wall clock until validated.
+        if session["clock_trusted"]:
+            if reference - wall_ms > 1000.0:
+                session["clock_trusted"] = False
+            elif wall_ms - captured > POSE_MAX_AGE_MS:
+                rejected["stale"] += 1
+                return False
+        return True
+
     def _handle_pose(self, peer: WebSocketPeer, message: dict) -> None:
         _validate_pose_frame(message)
-        # 来源选的是电脑摄像头。只有它真的在出画面时才忽略手机——否则手机是唯一
-        # 的来源，丢掉就等于手机显示"已连接电脑"、电脑一动不动，两边看着都正常。
-        if self.kernel is not None and self._body_mode != "phone" and self._local_camera_live():
-            self._phone_ignored_at = time.monotonic()
-            self._accept_input(peer)
-            return
         device_id = message["device_id"].strip()
         source_id = POSE_SOURCE_PREFIX + device_id
         received_at = time.monotonic()
@@ -1106,12 +1211,40 @@ class InputBridge:
         switched_from = None
         activated = False
         with self._lock:
+            if getattr(peer, "_closed", False):
+                return
+            if not self._body_enabled:
+                self._pose_rejected["disabled"] += 1
+                return
+            # A selected but unavailable computer camera may still fall back
+            # to a phone. Explicit stop above always rejects that fallback.
+            if self.kernel is not None and self._body_mode != "phone" and self._local_camera_live():
+                self._phone_ignored_at = received_at
+                return
+            if peer in self._superseded_pose_peers:
+                self._pose_rejected["owner"] += 1
+                return
+            if self._active_pose_source and self._active_pose_source != source_id:
+                # The first healthy camera owns a 300 ms lease. New devices
+                # cannot alternate control frame by frame while it is active.
+                if self._latest_pose and received_at - self._latest_pose["received_at"] <= 0.30:
+                    self._pose_rejected["owner"] += 1
+                    return
+            if not self._accept_pose_sequence_locked(peer, source_id, message):
+                return
             if self._active_pose_source and self._active_pose_source != source_id:
                 old_source = self._active_pose_source
                 old_owner, _ = self._clear_source_locked(old_source)
                 if old_owner is not None:
                     old_owner.source_ids.discard(old_source)
                 switched_from = old_source
+            old_owner = self._source_peers.get(source_id)
+            if old_owner is not None and old_owner is not peer:
+                # A new websocket for the same device is a reconnect. Retire
+                # the previous socket so it cannot reclaim this device later.
+                old_owner.source_ids.discard(source_id)
+                self._superseded_pose_peers.add(old_owner)
+                self._reset_pose_metrics_locked()
             activated = self._active_pose_source != source_id
             if activated:
                 self._reset_pose_metrics_locked()
@@ -1148,8 +1281,8 @@ class InputBridge:
             if pose_count:
                 self._pose_frames_with_people += 1
             self._latest_pose = {"message": forwarded, "received_at": received_at, "source_id": source_id, "pose_count": pose_count}
-        if self.kernel is not None:
-            self.kernel.handle_pose_message(source_id, forwarded)
+            if self.kernel is not None:
+                self.kernel.handle_pose_message(source_id, forwarded, return_status=False)
         if switched_from:
             self._broadcast_pose_state(switched_from, False, "source_switch")
         if activated:
@@ -1172,29 +1305,34 @@ class InputBridge:
         rotation_rate = dict(message["rotation_rate"])
         acceleration = dict(message["acceleration"])
         recenter = bool(message["recenter"])
-        if self.kernel is not None:
-            self.kernel.handle_sensor(
-                output_source,
-                buttons,
-                left_trigger=left_trigger,
-                right_trigger=right_trigger,
-                stick_x=stick_x,
-                stick_y=stick_y,
-                quaternion=quaternion,
-                rotation_rate=rotation_rate,
-                acceleration=acceleration,
-                recenter=recenter,
-            )
-        else:
-            self.output.set_sensor_state(
-                output_source,
-                buttons,
-                left_trigger=left_trigger,
-                right_trigger=right_trigger,
-                stick_x=stick_x,
-                stick_y=stick_y,
-            )
         with self._lock:
+            if getattr(peer, "_closed", False):
+                return
+            session_key = (peer, source_id)
+            if session_key in self._superseded_sensor_sessions:
+                self._sensor_rejected["owner"] += 1
+                return
+            session = self._sensor_sessions.setdefault(session_key, {"sequence": -1, "clock_trusted": False})
+            if not self._accept_frame_sequence_locked(peer, session, message, self._sensor_rejected):
+                return
+            old_owner = self._source_peers.get(source_id)
+            if old_owner is not None and old_owner is not peer:
+                old_owner.source_ids.discard(source_id)
+                self._superseded_sensor_sessions.add((old_owner, source_id))
+            if self.kernel is not None:
+                self.kernel.handle_sensor(
+                    output_source, buttons,
+                    left_trigger=left_trigger, right_trigger=right_trigger,
+                    stick_x=stick_x, stick_y=stick_y, quaternion=quaternion,
+                    rotation_rate=rotation_rate, acceleration=acceleration,
+                    recenter=recenter, return_status=False,
+                )
+            else:
+                self.output.set_sensor_state(
+                    output_source, buttons,
+                    left_trigger=left_trigger, right_trigger=right_trigger,
+                    stick_x=stick_x, stick_y=stick_y,
+                )
             self._source_peers[source_id] = peer
             peer.source_ids.add(source_id)
             self._sensor_sources[source_id] = {
@@ -1208,6 +1346,28 @@ class InputBridge:
             }
         self._accept_input(peer)
 
+    def _claim_voice_source_locked(self, peer, source_id: str) -> bool:
+        if getattr(peer, "_closed", False):
+            return False
+        if (peer, source_id) in self._superseded_voice_sessions:
+            return False
+        if self._active_voice_source and self._active_voice_source != source_id:
+            old_source = self._active_voice_source
+            old_owner, _ = self._clear_source_locked(old_source)
+            if old_owner is not None:
+                old_owner.source_ids.discard(old_source)
+        old_owner = self._source_peers.get(source_id)
+        if old_owner is not None and old_owner is not peer:
+            self._clear_source_locked(source_id)
+            old_owner.source_ids.discard(source_id)
+            self._superseded_voice_sessions.add((old_owner, source_id))
+        if old_owner is not peer:
+            self._voice_owner_generations[source_id] = self._voice_owner_generations.get(source_id, 0) + 1
+        self._active_voice_source = source_id
+        self._source_peers[source_id] = peer
+        peer.source_ids.add(source_id)
+        return True
+
     def _handle_voice_audio(self, peer: WebSocketPeer, message: dict) -> None:
         pcm16 = _validate_voice_audio(message)
         device_id = message["device_id"].strip()
@@ -1219,42 +1379,73 @@ class InputBridge:
             # silently take over a computer microphone selection.
             if self._audio_mode != "phone":
                 return
-            if self._active_voice_source and self._active_voice_source != source_id:
-                old_source = self._active_voice_source
-                old_owner, _ = self._clear_source_locked(old_source)
-                if old_owner is not None:
-                    old_owner.source_ids.discard(old_source)
-            self._active_voice_source = source_id
-            self._source_peers[source_id] = peer
-            peer.source_ids.add(source_id)
+            if (peer, source_id) in self._superseded_voice_sessions:
+                return
+            sequence_key = (peer, source_id)
+            sequence = int(message["sequence"])
+            if sequence <= self._voice_audio_sequences.get(sequence_key, -1):
+                return
+            self._voice_audio_sequences[sequence_key] = sequence
+            if not self._claim_voice_source_locked(peer, source_id):
+                return
             state = self._voice_sources.setdefault(source_id, {"device_id": device_id})
             state.update({
                 "device_id": device_id,
                 "received_at": received_at,
                 "sequence": int(message["sequence"]),
             })
-        voice = self._voice_service
+            captured_at_ms = None
+            captured = float(message["captured_at_ms"])
+            wall_ms = time.time() * 1000.0
+            if peer in self._clock_synced_peers and abs(wall_ms - captured) <= 1000.0:
+                self._voice_clock_trusted_peers.add(peer)
+            if peer in self._voice_clock_trusted_peers:
+                if captured - wall_ms > 1000.0:
+                    self._voice_clock_trusted_peers.discard(peer)
+                else:
+                    captured_at_ms = captured
+            owner_generation = self._voice_owner_generations[source_id]
+            voice, submission_kwargs = self._voice_submission_locked("accept_phone_audio", source_id)
+        self._flush_voice_clears()
         if voice is None:
             self._send_error(peer, "本地语音解析器未配置")
             return
+
+        def deliver(event, result) -> None:
+            if not (event or result):
+                return
+            with self._lock:
+                if (self._source_peers.get(source_id) is not peer
+                        or self._active_voice_source != source_id or self._audio_mode != "phone"
+                        or self._voice_owner_generations.get(source_id) != owner_generation):
+                    return
+            event = event if isinstance(event, dict) else {}
+            payload = {
+                "type": "voice_result", "device_id": device_id,
+                "sequence": int(message["sequence"]),
+                "kind": str(event.get("kind", "match" if result else "status")),
+                "partial": str(event.get("text", "")) if event.get("kind") == "partial" else "",
+                "final": str(event.get("text", "")) if event.get("kind") == "final" else "",
+            }
+            if result is not None:
+                payload["matched"] = bool(result.get("matched", False))
+                payload["result"] = dict(result)
+            try:
+                peer.send_json(payload)
+            except (ConnectionError, OSError):
+                self.disconnect(peer)
+
         try:
-            _, event, result = voice.accept_phone_audio(source_id, device_id, pcm16)
+            if self._voice_audio_async:
+                _, event, result = voice.accept_phone_audio(
+                    source_id, device_id, pcm16, sequence=int(message["sequence"]),
+                    captured_at_ms=captured_at_ms, result_callback=deliver, **submission_kwargs,
+                )
+            else:
+                _, event, result = voice.accept_phone_audio(source_id, device_id, pcm16, **submission_kwargs)
             # Only recognition events and command matches go back to the phone;
             # ordinary PCM frames therefore do not create a response flood.
-            if event or result:
-                event = event if isinstance(event, dict) else {}
-                payload = {
-                    "type": "voice_result",
-                    "device_id": device_id,
-                    "sequence": int(message["sequence"]),
-                    "kind": str(event.get("kind", "match" if result else "status")),
-                    "partial": str(event.get("text", "")) if event.get("kind") == "partial" else "",
-                    "final": str(event.get("text", "")) if event.get("kind") == "final" else "",
-                }
-                if result is not None:
-                    payload["matched"] = bool(result.get("matched", False))
-                    payload["result"] = dict(result)
-                peer.send_json(payload)
+            deliver(event, result)
             self._accept_input(peer)
         except (ValueError, RuntimeError) as exc:
             self._send_error(peer, str(exc))
@@ -1278,13 +1469,13 @@ class InputBridge:
         device_id = message["device_id"].strip()
         source_id = VOICE_SOURCE_PREFIX + device_id
         with self._lock:
-            if self._active_voice_source and self._active_voice_source != source_id:
-                self._clear_source_locked(self._active_voice_source)
-            self._active_voice_source = source_id
-            self._source_peers[source_id] = peer
-            peer.source_ids.add(source_id)
+            if self.kernel is not None and self._audio_mode != "phone":
+                return
+            if not self._claim_voice_source_locked(peer, source_id):
+                return
             self._voice_sources[source_id] = {"device_id": device_id, "received_at": time.monotonic()}
-        voice = self._voice_service
+            voice, submission_kwargs = self._voice_submission_locked("accept_phone_text", source_id)
+        self._flush_voice_clears()
         if voice is None:
             self._send_error(peer, "本地语音解析器未配置")
             return
@@ -1292,6 +1483,7 @@ class InputBridge:
             _, result = voice.accept_phone_text(
                 source_id, device_id, message["text"],
                 float(message["confidence"]) if message.get("confidence") is not None else None,
+                **submission_kwargs,
             )
             if result and not result.get("matched", False):
                 self._send_error(peer, str(result.get("reason", "语音命令未匹配")))
@@ -1314,18 +1506,18 @@ class InputBridge:
         phrase = str(message.get("phrase", "")).strip()
         source_id = VOICE_SOURCE_PREFIX + device_id
         with self._lock:
-            if self._active_voice_source and self._active_voice_source != source_id:
-                self._clear_source_locked(self._active_voice_source)
-            self._active_voice_source = source_id
-            self._source_peers[source_id] = peer
-            peer.source_ids.add(source_id)
+            if self.kernel is not None and self._audio_mode != "phone":
+                return
+            if not self._claim_voice_source_locked(peer, source_id):
+                return
             self._voice_sources[source_id] = {"device_id": device_id, "received_at": time.monotonic()}
-        voice = self._voice_service
+            voice, submission_kwargs = self._voice_submission_locked("accept_phone_command", source_id)
+        self._flush_voice_clears()
         if voice is None:
             self._send_error(peer, "本地语音解析器未配置")
             return
         try:
-            _, result = voice.accept_phone_command(source_id, device_id, command_id, phrase)
+            _, result = voice.accept_phone_command(source_id, device_id, command_id, phrase, **submission_kwargs)
             if result and not result.get("matched", False):
                 self._send_error(peer, str(result.get("reason", "语音命令未匹配")))
             self._accept_input(peer)
@@ -1340,6 +1532,15 @@ class InputBridge:
             if message_type == "clock_sync":
                 if not _is_number(message.get("client_sent_ms")):
                     raise ValueError("client_sent_ms must be a number")
+                with self._lock:
+                    self._clock_synced_peers.add(peer)
+                    self._voice_clock_trusted_peers.discard(peer)
+                    session = self._pose_sessions.get(peer)
+                    if session is not None:
+                        session["clock_trusted"] = False
+                    for (owner, _source), sensor_session in self._sensor_sessions.items():
+                        if owner is peer:
+                            sensor_session["clock_trusted"] = False
                 peer.send_json({"type": "clock_sync", "client_sent_ms": message["client_sent_ms"], "server_ms": round(time.time() * 1000)})
             elif message_type == "pose_frame_v2":
                 self._handle_pose(peer, message)
@@ -1368,9 +1569,17 @@ class InputBridge:
         self._sensor_sources.pop(source_id, None)
         voice_source = source_id in self._voice_sources
         self._voice_sources.pop(source_id, None)
+        if voice_source:
+            self._voice_owner_generations[source_id] = self._voice_owner_generations.get(source_id, 0) + 1
         try:
             if voice_source and self._voice_service is not None:
-                self._voice_service.disconnect(source_id)
+                voice = self._voice_service
+                invalidate = getattr(voice, "invalidate_phone_source", None)
+                token = invalidate(source_id) if callable(invalidate) else None
+                self._pending_voice_clears.append((voice, source_id, token))
+                # Release latches before waiting for a busy recognizer. A late
+                # result is invalidated by the generation token above.
+                self.output.clear_source(f"voice:{source_id}")
             elif self.kernel is not None:
                 self.kernel.clear_source(source_id)
             else:
@@ -1387,16 +1596,39 @@ class InputBridge:
             self._latest_pose = None
         return owner, was_active_pose
 
+    def _flush_voice_clears(self) -> None:
+        """Recognizer cleanup may block; it must not hold pose admission's lock."""
+        with self._lock:
+            pending, self._pending_voice_clears = self._pending_voice_clears, []
+        for voice, source_id, token in pending:
+            try:
+                if token is None:
+                    voice.disconnect(source_id)
+                else:
+                    voice.disconnect(source_id, expected_generation=token)
+            except (AttributeError, RuntimeError, OSError):
+                pass
+
     def disconnect(self, peer: WebSocketPeer) -> None:
         cleared_pose_sources: list[str] = []
         with self._lock:
             self._peers.discard(peer)
+            self._pose_sessions.pop(peer, None)
+            self._superseded_pose_peers.discard(peer)
+            self._clock_synced_peers.discard(peer)
+            self._voice_clock_trusted_peers.discard(peer)
+            for sessions in (self._sensor_sessions, self._voice_audio_sequences):
+                for key in [key for key in sessions if key[0] is peer]:
+                    sessions.pop(key, None)
+            self._superseded_sensor_sessions = {key for key in self._superseded_sensor_sessions if key[0] is not peer}
+            self._superseded_voice_sessions = {key for key in self._superseded_voice_sessions if key[0] is not peer}
             for source_id in list(peer.source_ids):
                 if self._source_peers.get(source_id) is peer:
                     _, was_active_pose = self._clear_source_locked(source_id)
                     if was_active_pose:
                         cleared_pose_sources.append(source_id)
             peer.source_ids.clear()
+        self._flush_voice_clears()
         peer.close()
         for source_id in cleared_pose_sources:
             self._broadcast_pose_state(source_id, False, "disconnect")
@@ -1430,6 +1662,7 @@ class InputBridge:
                     owner, _ = self._clear_source_locked(source_id)
                     if owner is not None:
                         owner.source_ids.discard(source_id)
+            self._flush_voice_clears()
             for source_id in cleared_pose_sources:
                 self._broadcast_pose_state(source_id, False, "watchdog")
 
@@ -1476,6 +1709,9 @@ class InputBridge:
     def close(self) -> None:
         self._stop.set()
         with self._lock:
-            peers = list(self._peers)
+            self._body_enabled = False
+            peers = list(self._peers | set(self._source_peers.values()))
         for peer in peers:
             self.disconnect(peer)
+        if self._watchdog is not threading.current_thread():
+            self._watchdog.join(timeout=1.0)

@@ -24,7 +24,10 @@ rather than relying on anyone calling stop.
 
 from __future__ import annotations
 
+import copy
 import json
+import os
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -57,6 +60,10 @@ class PoseRecorder:
         self.last_frames = 0
         self.last_error = ""
         self.source = ""
+        self._writer: threading.Thread | None = None
+        self._saved = threading.Event()
+        self._saved.set()
+        self._closed = False
 
     # -- control -----------------------------------------------------------
 
@@ -70,7 +77,9 @@ class PoseRecorder:
         if not 0.1 <= duration <= MAX_DURATION_S:
             raise ValueError(f"录制时长必须在 0.1 到 {MAX_DURATION_S:.0f} 秒之间")
         with self._lock:
-            if self.state in {"waiting", "recording"}:
+            if self._closed:
+                raise ValueError("录制器已关闭")
+            if self.state in {"waiting", "recording", "saving"}:
                 raise ValueError("已经在录制中")
             self._frames = []
             self.delay_s = delay
@@ -122,37 +131,83 @@ class PoseRecorder:
                     for name, point in (pose_map or {}).items()
                     if isinstance(point, dict)
                 },
-                **({"extra": extra} if extra else {}),
+                **({"extra": copy.deepcopy(extra)} if extra else {}),
             })
 
     def _finish_locked(self) -> None:
         frames = self._frames
         self._frames = []
         self.state = "saving"
+        self.last_frames = len(frames)
+        self._saved.clear()
+        header = {
+            "schema": SCHEMA,
+            "recorded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "duration_s": round(self.duration_s, 3),
+            "delay_s": round(self.delay_s, 3),
+            "frames": len(frames),
+            "source": self.source,
+        }
+        # Capture owns these copied frames exclusively. Detaching the list is
+        # constant time; serialization and disk I/O belong to the writer.
+        self._writer = threading.Thread(target=self._save_snapshot, args=(header, frames),
+                                        name="pose-recording-save", daemon=True)
+        try:
+            self._writer.start()
+        except Exception as exc:
+            self.last_error = f"保存失败：{exc}"
+            self.state = "error"
+            self._saved.set()
+
+    def _save_snapshot(self, header: dict, frames: list[dict]) -> None:
+        temporary: Path | None = None
+        saved_path: Path | None = None
+        error = ""
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             path = self.directory / f"pose-{stamp}.jsonl"
-            header = {
-                "schema": SCHEMA,
-                "recorded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                "duration_s": round(self.duration_s, 3),
-                "delay_s": round(self.delay_s, 3),
-                "frames": len(frames),
-                "source": self.source,
-            }
             # JSON Lines: a header line then one line per frame, so a long
             # recording streams instead of needing to be parsed whole.
-            with path.open("w", encoding="utf-8", newline="\n") as stream:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                             dir=self.directory, suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
                 stream.write(json.dumps(header, ensure_ascii=False) + "\n")
                 for frame in frames:
                     stream.write(json.dumps(frame, ensure_ascii=False) + "\n")
-            self.last_path = path
-            self.last_frames = len(frames)
-            self.state = "done"
-        except OSError as exc:
-            self.last_error = f"保存失败：{exc}"
-            self.state = "error"
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            temporary = None
+            saved_path = path
+        except Exception as exc:
+            error = f"保存失败：{exc}"
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            with self._lock:
+                self.last_path = saved_path
+                self.last_error = error
+                self.state = "error" if error else "done"
+                self._saved.set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Wait for a detached recording to reach done/error without holding its lock."""
+        return self._saved.wait(timeout)
+
+    def close(self, timeout: float | None = 2.0) -> bool:
+        """Stop capture and allow an in-progress save a bounded shutdown interval."""
+        with self._lock:
+            self._closed = True
+            if self.state == "recording":
+                self._finish_locked()
+            elif self.state == "waiting":
+                self.state = "cancelled"
+                self._frames = []
+        return self.wait(timeout)
 
     # -- reporting ---------------------------------------------------------
 

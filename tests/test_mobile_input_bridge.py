@@ -93,6 +93,12 @@ def test_pose_source_is_forwarded_and_only_one_source_is_active():
         assert bridge.status()["mobile_pose_source_id"] == "mobile_pose:camera-a"
 
         bridge._handle_pose(second, pose_frame("camera-b", 2))
+        assert bridge.status()["mobile_pose_source_id"] == "mobile_pose:camera-a"
+        assert "mobile_pose:camera-a" in first.source_ids
+        assert "mobile_pose:camera-b" not in second.source_ids
+
+        bridge.disconnect(first)
+        bridge._handle_pose(second, pose_frame("camera-b", 3))
         assert bridge.status()["mobile_pose_source_id"] == "mobile_pose:camera-b"
         assert "mobile_pose:camera-a" not in first.source_ids
         states = [m for m in desktop.messages if m.get("type") == "pose_source_state"]
@@ -149,8 +155,8 @@ def test_handheld_socket_gets_ack_but_no_zone_updates():
     bridge = InputBridge(FakeOutput())
     handheld = FakePeer()
     try:
-        for _ in range(15):
-            bridge._handle_sensor(handheld, sensor_frame())
+        for sequence in range(15):
+            bridge._handle_sensor(handheld, dict(sensor_frame(), sequence=sequence))
         assert [message["type"] for message in handheld.messages] == ["ack"]
     finally:
         bridge.close()
@@ -500,9 +506,9 @@ class _KernelSpy:
         self.active_body_source = local_source
         self.body_last_at = (time.monotonic() - local_age) if local_source else 0.0
 
-    def handle_pose_message(self, source_id, message):
+    def handle_pose_message(self, source_id, message, *, return_status=True):
         self.frames.append(source_id)
-        return {}
+        return {} if return_status else None
 
     def handle_sensor(self, *args, **kwargs):
         return {}

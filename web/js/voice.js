@@ -1,5 +1,5 @@
 // 语音：唤醒词、口令检查、通用口令、口令列表。
-import {$,api,notice,post} from './core.js';
+import {$,api,configurationOperation,notice,post} from './core.js';
 import {ACTION_TYPE_LABELS,SYSTEM_TARGET_NAMES,VOICE_SYSTEM_TARGETS,bindingsForDisplay,targetLabel} from './labels.js';
 import {fillTargetControl,makeKeyCaptureInput} from './mapping.js';
 import {gameProfile} from './state.js';
@@ -8,6 +8,7 @@ export let voiceInputReady=false;
 export let voiceCatalog=[];
 
 export const voice={status:null};
+let voiceRevision=0;
 
 function currentVoiceWakeWord(status=voice.status){
   const wake=String(status?.wake_word||'体感').trim();
@@ -157,9 +158,10 @@ export function voiceRowsFromStatus(s){
 
 export async function saveVoiceMappings(){
   const rows=readVoiceMappings();
+  const revision=++voiceRevision;
   const s=await post('/api/voice/config',{mappings:rows.filter(item=>!isEmergencyRow(item)),
     emergency_stop_phrases:rows.filter(isEmergencyRow).map(item=>DEFAULT_WAKE+item.phrase)});
-  voice.status=s;renderVoiceStatus(s);return s;
+  if(revision===voiceRevision){++voiceRevision;voice.status=s;renderVoiceStatus(s)}return s;
 }
 
 // 唤醒词只属于你：不跟游戏走、也不跟配置分享出去。
@@ -176,11 +178,16 @@ async function saveWakeWord(){
   const value=String($('#wakeWord').value||'').trim();
   if(!value||value===voice.status?.wake_word)return;
   try{
+    await configurationOperation(async()=>{
     // mappings 要原样带上：configure 是整份替换，不带等于把口令全删了。
+    const revision=++voiceRevision;
     const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],wake_word:value});
+    if(revision!==voiceRevision)return;
+    ++voiceRevision;
     voice.status=s;renderVoiceStatus(s);say('唤醒词已保存');
     // 通用口令整句是「唤醒词+后半句」，唤醒词换了要重新查。
     document.querySelectorAll('.voice-phrase').forEach(queueVoiceCheck);
+    });
   }catch(error){say(error.message,'error')}
 }
 
@@ -200,7 +207,7 @@ function announceVoice(s,phrase){
   else if(s.last_executed===false)notice(`听到「${phrase}」，没执行${s.last_error?`：${s.last_error}`:''}`);
 }
 
-export async function refreshVoice(){try{voice.status=await api('/api/voice/status');renderVoiceStatus(voice.status)}catch{voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}}
+export async function refreshVoice(){const revision=voiceRevision;try{const data=await api('/api/voice/status');if(revision===voiceRevision){voice.status=data;renderVoiceStatus(data)}return true}catch{if(revision===voiceRevision){voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}return false}}
 
 function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandNames(action.target).join('、')}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 

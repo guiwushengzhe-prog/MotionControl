@@ -1,6 +1,6 @@
 // 开始页：画面、区域框、准备卡片、触发大字、挪动区域、悬浮窗。
 import {renderIntent,renderMisfireHint,renderZoneFit,renderZoneFreeze} from './body.js';
-import {$,agoText,api,clamp,notice,post} from './core.js';
+import {$,agoText,api,clamp,fitCanvas,isVisible,notice,post} from './core.js';
 import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMerge,syncCameraDeviceRow} from './devices.js';
 import {renderTriggerRecord} from './diagnostics.js';
 import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
@@ -22,6 +22,8 @@ let serviceReady=false;
 let kernelConnected=false;
 export let zoneEditMode=false;
 let liveZoneDrag=null;
+let latestRuntime=null;
+let latestConfigRevision=-1;
 
 const canvas = $('#canvas');
 
@@ -45,7 +47,7 @@ export const rectEdit={rects:{},backup:{},selected:'',wasFrozen:false};
 function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
   target.save();target.setTransform(1,0,0,1,0,0);target.clearRect(0,0,w,h);
   if(mirror){target.translate(w,0);target.scale(-1,1)}
-  target.strokeStyle='rgba(255,255,255,.82)';target.fillStyle='#fff';target.lineWidth=3;
+  target.strokeStyle='rgba(255,255,255,.82)';target.fillStyle='#fff';target.lineWidth=Math.max(2,w/640*3);
   if(map){
     for(const [a,b] of EDGES){
       const p=map[a],q=map[b];if(!p||!q||p.score<.3||q.score<.3)continue;
@@ -53,13 +55,14 @@ function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
     }
     for(const p of Object.values(map)){
       if(p.score<.3)continue;
-      target.beginPath();target.arc(p.x*w,p.y*h,3,0,Math.PI*2);target.fill();
+      target.beginPath();target.arc(p.x*w,p.y*h,Math.max(2,w/640*3),0,Math.PI*2);target.fill();
     }
   }
   target.restore();
 }
 
 export function renderKernelZones(zones={}){
+  if(!isVisible(viewer))return;
   for(const[id,def]of Object.entries(BODY_ZONES)){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
     if(def.gate&&!kernelState?.vertical_look?.enabled){el.style.display='none';continue}
@@ -112,9 +115,7 @@ export function renderMainStatus(){
   // 服务连着的时候什么都不说；断了才冒出来。
   $('#serviceStatus').textContent=serviceReady?'本地服务已连接':'服务断开，急停仍可重试';
   $('#serviceStatus').classList.toggle('online',serviceReady);$('#serviceStatus').classList.toggle('offline',!serviceReady);
-  renderViewerMessage();
-  renderReadiness();
-  renderConflicts();
+  if(isVisible(viewer)){renderViewerMessage();renderReadiness();renderConflicts()}
 }
 
 // 画面中间那句话只在没人、没画面时出现；有人站进来就让开。
@@ -183,11 +184,15 @@ function setupConflicts(){
   return items;
 }
 
+let conflictSignature='';
 function renderConflicts(){
   const box=$('#setupConflicts');
   if(!box)return;
   const items=setupConflicts();
   box.hidden=!items.length;
+  const signature=items.map(([text,label])=>text+'|'+label).join('\n');
+  if(signature===conflictSignature)return;
+  conflictSignature=signature;
   box.replaceChildren(...items.map(([text,label,action])=>{
     const row=document.createElement('div');row.className='conflict';
     const words=document.createElement('span');words.textContent=text;row.append(words);
@@ -210,19 +215,33 @@ function renderViewHud(hs,guardBlocked){
 }
 
 export function renderKernelState(runtime,force=false){
+  if(runtime?.config_revision!=null){
+    const revision=Number(runtime.config_revision);
+    if(Number.isFinite(revision)){
+      if(revision<latestConfigRevision)return;
+      latestConfigRevision=revision;
+    }
+  }
+  latestRuntime=runtime;
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
+  currentPoseMap=k.pose||null;
   // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
   paintPoseCountdown(runtime?.pose_capture);
   renderTriggerLive();
   renderRange();
   const marchSelect=$('#marchAlgorithm');
-  renderTriggerRecord(k.trigger_recording);
+  if(isVisible($('#triggerRecordStatus')))renderTriggerRecord(k.trigger_recording);
   if(marchSelect&&!marchSelect.disabled&&document.activeElement!==marchSelect)marchSelect.value=k.march_algorithm==='responsive'?'responsive':'legacy';
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
-  currentPoseMap=k.pose||null;if(canvas.width!==frameWidth||canvas.height!==frameHeight){canvas.width=frameWidth;canvas.height=frameHeight}viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));draw(currentPoseMap);renderKernelZones(k.zones||{});renderZoneFit(k);renderZoneFreeze(k);renderIntent(k);renderMisfireHint(k);paintZoneConflictNotes();
+  viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));
+  if(isVisible(viewer)){fitCanvas(canvas,frameWidth/frameHeight);draw(currentPoseMap);renderKernelZones(k.zones||{});renderMisfireHint(k)}
+  if(isVisible($('#zoneFitStatus')))renderZoneFit(k);
+  if(isVisible(viewer)||isVisible($('#zoneTriggerMode'))||isVisible($('#headSettings')))renderZoneFreeze(k);
+  if(isVisible($('#intentStatus')))renderIntent(k);
+  if(currentView==='games'&&!document.hidden)paintZoneConflictNotes();
   // 区域按没按，画面里的框自己会亮；动作按没按，画面下面那排动作自己会亮（renderRange）。
   // 自定义姿势的相似度跟着主状态一起来，不另开一路轮询。
-  S.customPoseScores=k.custom_pose_scores||{};paintCustomPoseScores();paintPoseLibrary();
+  S.customPoseScores=k.custom_pose_scores||{};if(isVisible($('#customPoseList')))paintCustomPoseScores();if(isVisible($('#poseLibraryList')))paintPoseLibrary();
   const hs=k.head||{};
   const guardVersion=String(hs.body_motion_guard_version||k.body_motion_guard_version||'未上报');
   const guardEnabled=hs.body_motion_guard_enabled??k.body_motion_guard_enabled??false;
@@ -281,11 +300,18 @@ export async function refreshKernel(){
   const epoch=kernelEpoch;
   try{
     const runtime=await api('/api/kernel/status');
-    kernelConnected=true;
-    if(epoch===kernelEpoch)renderKernelState(runtime);
+    if(epoch===kernelEpoch){kernelConnected=true;renderKernelState(runtime)}
     if(!profileReady&&!profileLoading)void loadProfiles();
-  }catch{kernelConnected=false;renderMainStatus()}
+    return true;
+  }catch{if(epoch===kernelEpoch){kernelConnected=false;renderMainStatus()}return false}
 }
+
+export function renderVisibleState(){if(latestRuntime)renderKernelState(latestRuntime)}
+
+if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>{
+  if(isVisible(viewer)){fitCanvas(canvas,(Number(kernelState?.width)||640)/(Number(kernelState?.height)||480));draw(currentPoseMap)}
+}).observe(viewer);
+window.addEventListener('resize',()=>{if(isVisible(viewer)){fitCanvas(canvas,(Number(kernelState?.width)||640)/(Number(kernelState?.height)||480));draw(currentPoseMap)}});
 
 export async function refreshPreview(){
   if(!cameraPreview||perfUi.previewBusy||sourceMode!=='computer'||!cameraRunning||currentView!=='play'||document.visibilityState!=='visible')return;
@@ -319,7 +345,7 @@ function drawOverlayZones(octx,w,h,zones={}){
 }
 
 function renderOverlay(map=currentPoseMap){
-  if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx,w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);
+  if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx;fitCanvas(c,4/3,500000);const w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);
   draw(map,octx,w,h,true);
   drawOverlayZones(octx,w,h,kernelState?.zones||{});const buttons=kernelState?.buttons||[],motions=kernelState?.motions||[];const gate=!!kernelState?.vertical_gate_active;const latch=voiceLatchText(output);const text=gate?'上下视角已开启':(buttons.length?`区域 ${buttons.join('+')}`:(motions.length?`动作 ${motions.join('+')}`:(map?'未触发':'未识别人体')));octx.fillStyle=latch?'rgba(70,32,0,.78)':'rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle=latch?'#ffc46b':'#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.textAlign='left';octx.textBaseline='alphabetic';octx.fillText(latch?`${latch} · 说松开才会放`:`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))
 }
@@ -479,6 +505,7 @@ function activeTriggerKeys({all = false} = {}) {
 const TRIGGER_FLASH_S = 1.2;
 
 function renderTriggerLive() {
+  if(currentView!=='games'||document.hidden)return;
   // 页上可能有两块：「开始」那页一块，映射表上方一块。两块写同一份东西。
   //
   // 为什么要两块：你站在摄像头前做动作时人在「开始」页，而改键在「本游戏」页。
@@ -529,6 +556,7 @@ function renderTriggerLive() {
                               .map(event => String(event.trigger || '')));
   const held = activeTriggerKeys();
   for (const row of document.querySelectorAll('.binding-row')) {
+    if(!isVisible(row))continue;
     const key = row.dataset.trigger;
     row.classList.toggle('firing', held.has(key));
     row.classList.toggle('just-fired', !held.has(key) && fresh.has(key));
@@ -590,7 +618,7 @@ function buildRangeTargets(triggers) {
  * - 右边「最近触发」列出最近几次，点一条去改它的键。
  * 游戏控制没开时照样显示，大字下面补一句「游戏里不会按」。 */
 function renderRange() {
-  if (currentView !== 'play') return;
+  if (currentView !== 'play'||document.hidden) return;
   const triggers = rangeTriggers();
   // 只在格子本身变了的时候重建。每 250ms 重建一次的话，鼠标压根点不中。
   const signature = triggers.map(item => item.key).join('|');

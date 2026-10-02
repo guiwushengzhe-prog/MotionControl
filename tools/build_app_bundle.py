@@ -73,11 +73,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="打包并签名电脑端更新包")
     parser.add_argument("--target", default=str(PC_DIR),
                         help="发布包目录")
-    # stage_release 默认去 ../switch/mobile/dist 拿网页包。同一个仓库开了多个工作树
-    # 之后那个默认值就是个陷阱：它指向的是**别人那份**构建产物，而这里没有任何东西
-    # 会说不对——打出来的包能签名、能安装，只是手机上跑的是别人分支的网页。
     parser.add_argument("--phone-web", default=None,
-                        help="手机网页包的构建产物目录（多工作树时必须显式指定）")
+                        help="明确指定手机网页产物目录，或设 MOTIONCONTROL_PHONE_WEB_DIR")
     parser.add_argument("--no-restage", action="store_true",
                         help="跳过对齐仓库这一步（只有你刚 stage 过才用）")
     parser.add_argument("--no-sign", action="store_true",
@@ -87,6 +84,12 @@ def main() -> int:
     target = Path(args.target)
     if not args.no_restage:
         restage(target, args.phone_web)
+    from tools.stage_release import verify_release_provenance
+    try:
+        provenance = verify_release_provenance(target / "app", check_sources=True)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"source: PC {provenance['pc']['commit']} / Android {provenance['android']['commit']}")
     # phone_web 现在在 app/ 里，于是它跟着这份更新包发给每一台电脑，再由电脑发给
     # 手机。手机只认签名：这里带出去一份没签名或签名过期的，所有手机都会安静地
     # 拒绝，而电脑端这边一切正常，没有任何地方会说话。重新 stage 会在内容变了的

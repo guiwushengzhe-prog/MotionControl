@@ -1,5 +1,5 @@
 // 动作库：自带、下载、自己录的动作卡片，官方动作库。
-import {api,notice,post} from './core.js';
+import {api,configurationOperation,isVisible,notice,post} from './core.js';
 import {MOTION_CONFLICT_NAMES,poseLibraryNames,profileTriggers,triggerMapped} from './labels.js';
 import {libraryKeyLabel,renderProfileBindingRows,revealBindingRow,saveProfileBindings,showMapTab} from './mapping.js';
 import {kernelState} from './play.js';
@@ -28,6 +28,11 @@ function customPoseSay(text, kind = '') {
 
 export async function refreshCustomPoses({ rebuild = true } = {}) {
   try {
+    if(rebuild)return await configurationOperation(async()=>{
+      const success=await refreshCustomPoses({rebuild:false});
+      if(success)renderProfileBindingRows();
+      return success;
+    });
     const data = await api('/api/pose/custom');
     customPoses = data.poses || [];
     S.customPoseScores = data.scores || {};
@@ -40,9 +45,10 @@ export async function refreshCustomPoses({ rebuild = true } = {}) {
     renderCustomPoses();
     // 触发器列表变了，映射界面要重建才能看到新姿势。轮询刷新分数时不重建，
     // 否则用户正在编辑的那一行会被冲掉。
-    if (rebuild) renderProfileBindingRows();
+    return true;
   } catch (error) {
     customPoseSay(error.message, 'error');
+    return false;
   }
 }
 
@@ -153,7 +159,7 @@ export function paintPoseCountdown(state) {
 
 async function removeCustomPoseFrame(item, index) {
   try {
-    applyPoses(await post('/api/pose/custom/frame/remove', { id: item.id, index }));
+    await configurationOperation(async()=>{applyPoses(await post('/api/pose/custom/frame/remove', { id: item.id, index }))});
   } catch (error) {
     customPoseSay(error.message, 'error');
   }
@@ -194,10 +200,12 @@ function poseThumbnail(preview) {
 
 async function updateCustomPose(id, changes) {
   try {
+    await configurationOperation(async()=>{
     const data = await post('/api/pose/custom/update', Object.assign({ id }, changes));
     customPoses = data.poses || [];
     renderCustomPoses();
     renderProfileBindingRows();
+    });
   } catch (error) {
     customPoseSay(error.message, 'error');
   }
@@ -206,11 +214,13 @@ async function updateCustomPose(id, changes) {
 async function removeCustomPose(item) {
   if (!confirm('删除「' + item.name + '」？绑在它上面的按键映射也会失效。')) return;
   try {
+    await configurationOperation(async()=>{
     const data = await post('/api/pose/custom/remove', { id: item.id });
     customPoses = data.poses || [];
     customPoseSay('已删除「' + item.name + '」');
     renderCustomPoses();
     renderProfileBindingRows();
+    });
   } catch (error) {
     customPoseSay(error.message, 'error');
   }
@@ -417,7 +427,7 @@ document.getElementById('customPoseCloseBtn')?.addEventListener('click', () => s
 
 /** 只改数字和进度条，不重建 DOM——每秒重建会把用户正在拖的滑块打断。 */
 export function paintCustomPoseScores() {
-  if (!customPoseListEl) return;
+  if (!isVisible(customPoseListEl)) return;
   const active = new Set(kernelState?.poses_active || []);
   for (const row of customPoseListEl.querySelectorAll('.custom-pose')) {
     const id = row.dataset.id;
@@ -464,8 +474,11 @@ let ratingNames = {intensity: '运动强度', recognition: '识别度', difficul
 
 let bodyPartNames = {legs: '腿部', glutes: '臀部', core: '核心', arms: '手臂', shoulders: '肩背'};
 
-export async function refreshPoseLibrary() {
+export async function refreshPoseLibrary({rebuild=true}={}) {
   if (!poseLibraryEl) return;
+  if(rebuild&&gameProfile.selected)return configurationOperation(async()=>{
+    await refreshPoseLibrary({rebuild:false});renderProfileBindingRows();
+  });
   const data = await api('/api/pose/library');
   poseLibrary = data.library || [];
   ratingNames = data.rating_names || ratingNames;
@@ -474,7 +487,7 @@ export async function refreshPoseLibrary() {
   if (data.error) poseCloudSay(data.error, 'error');
   renderPoseLibrary();
   // 映射表可能在动作库读回来之前就画好了，那时下载的动作还不在触发器里。
-  if (gameProfile.selected && poseLibrary.some(item => item.source === 'cloud')) renderProfileBindingRows();
+  if(rebuild&&gameProfile.selected&&poseLibrary.some(item=>item.source==='cloud'))await configurationOperation(async()=>{renderProfileBindingRows()});
   paintPoseMissingNotice();
 }
 
@@ -482,7 +495,7 @@ export async function refreshPoseLibrary() {
 async function afterPoseLibraryChange(library) {
   poseLibrary = library || poseLibrary;
   renderPoseLibrary();
-  try { await saveProfileBindings(); } catch { /* 存不上那边自己会报，这里不抢话 */ }
+  await saveProfileBindings();
   renderProfileBindingRows();
   paintPoseMissingNotice();
   if (poseCloudItems.length) renderPoseCloud();
@@ -605,9 +618,11 @@ async function removePoseAction(item) {
   const warning = bound ? '这个游戏里它绑着键，删掉后那一行会失效，直到重新下载。' : '以后要用再从官方动作库下载。';
   if (!confirm(`删掉「${item.name}」？${warning}`)) return;
   try {
+    await configurationOperation(async()=>{
     const data = await post('/api/pose/remove', { id: item.id });
     poseCloudSay(`已删掉「${item.name}」`);
     await afterPoseLibraryChange(data.library);
+    });
   } catch (error) { poseCloudSay(error.message, 'error'); }
 }
 
@@ -707,11 +722,13 @@ async function installPoseAction(item, button) {
   button.disabled = true;
   poseCloudSay(`正在下载「${item.name}」…`);
   try {
+    await configurationOperation(async()=>{
     const data = await post('/api/pose/cloud/install', { id: item.id }, 20000);
     item.installed_revision = item.revision;
     item.update_available = false;
     poseCloudSay(`「${item.name}」已下载，点它卡片上的「加到映射」绑键`);
     await afterPoseLibraryChange(data.library);
+    });
   } catch (error) {
     button.disabled = false;
     poseCloudSay(error.message, 'error');
@@ -754,7 +771,7 @@ document.getElementById('poseMissingGo')?.addEventListener('click', () => {
 
 /** 只改键位和提醒，不重建。 */
 export function paintPoseLibrary() {
-  if (!poseLibraryEl) return;
+  if (!isVisible(poseLibraryEl)) return;
   let used = 0;
   for (const card of poseLibraryEl.querySelectorAll('.pose-library-item')) {
     const item = poseLibrary.find(entry => entry.id === card.dataset.id);

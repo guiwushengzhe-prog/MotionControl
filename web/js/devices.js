@@ -12,6 +12,7 @@ export let emergencyStops=0;
 export let kernelEpoch=0;
 export let inputStatus={};
 export let outputConnected=false;
+export function invalidateKernelRequests(){return ++kernelEpoch}
 
 export function renderInputStatus(status){
   inputStatus=status||{};
@@ -61,8 +62,16 @@ export function renderInputStatus(status){
 }
 
 export async function refreshInput(){
-  try{renderInputStatus(await api('/api/input/status?brief=1'))}
-  catch{renderInputStatus({});$('#mobileStatus').textContent='状态未知'}
+  const epoch=S.inputEpoch;
+  try{const data=await api('/api/input/status?brief=1');if(epoch===S.inputEpoch)renderInputStatus(data);return true}
+  catch{if(epoch===S.inputEpoch){renderInputStatus({});$('#mobileStatus').textContent='状态未知'}return false}
+}
+
+export async function updateInputConfig(path,payload){
+  const epoch=++S.inputEpoch;
+  const result=await post(path,payload);
+  if(epoch!==S.inputEpoch)return;
+  ++S.inputEpoch;renderInputStatus(result);return result;
 }
 
 function renderAudioDevices(devices,current){
@@ -82,7 +91,7 @@ function renderAudioDevices(devices,current){
 }
 
 export async function refreshAudioDevices(){
-  try{const data=await api('/api/audio/devices');renderAudioDevices(data.devices,data.audio_device)}catch{}
+  try{const data=await api('/api/audio/devices');renderAudioDevices(data.devices,data.audio_device);return true}catch{return false}
 }
 
 function renderPerformance(data){
@@ -155,7 +164,7 @@ function drawStereoView(el,view,other,data){
 
 export async function refreshStereo(){try{renderStereo(await api('/api/stereo'))}catch{}}
 
-export async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference;renderCameraRotation(data);renderCameraDevices(null,data.camera_index)}catch{}}
+export async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference;renderCameraRotation(data);renderCameraDevices(null,data.camera_index);return true}catch{return false}}
 
 const ROTATION_LABELS={none:'不旋转',cw:'顺时针 90°',ccw:'逆时针 90°','180':'180°'};
 
@@ -192,11 +201,11 @@ function renderXinputStatus(s=output.xinputStatus){if(document.activeElement?.cl
 
 function renderXinputMotionLeft(){const box=$('#xinputMotionLeft');if(box){box.checked=output.xinputMotionLeft;box.disabled=!output.xinputEnabled||output.mode!=='gamepad'}const row=$('#xinputMotionLeftRow');if(row)row.hidden=!output.xinputEnabled}
 
-export async function setXinputMotionLeft(){try{output.server=await post('/api/output/xinput',{motion_left_enabled:!!$('#xinputMotionLeft')?.checked});renderOutput(output.server);await refreshXinput();notice(output.xinputMotionLeft?'体感左摇杆合成已开启，双方输入相加':'已关闭体感左摇杆合成')}catch(e){notice('左摇杆合成设置失败：'+(e?.message||e));await refreshXinput()}}
+export async function setXinputMotionLeft(){try{await updateOutputConfig({motion_left_enabled:!!$('#xinputMotionLeft')?.checked},'/api/output/xinput');await refreshXinput();notice(output.xinputMotionLeft?'体感左摇杆合成已开启，双方输入相加':'已关闭体感左摇杆合成')}catch(e){notice('左摇杆合成设置失败：'+(e?.message||e));await refreshXinput()}}
 
-export async function refreshXinput(){try{output.xinputStatus=await api('/api/output/xinput');renderXinputStatus(output.xinputStatus)}catch{}}
+export async function refreshXinput(){const epoch=S.outputEpoch;try{const data=await api('/api/output/xinput');if(epoch!==S.outputEpoch)return;output.xinputStatus=data;renderXinputStatus(data)}catch{}}
 
-export async function setXinputMerge(){const select=$('#xinputMerge');const value=select?.value||'';try{const data=await post('/api/output/xinput',{enabled:!!value,user:value===''?null:Number(value)});output.server=data;renderOutput(data);await refreshXinput();notice(value?`已选择物理手柄 ${Number(value)+1}；${output.xinputMotionLeft?'体感按键与左摇杆合成已开启':'体感只叠加手柄按键'}`:'已关闭物理手柄合流')}catch(e){notice('物理手柄合流失败：'+(e?.message||e));await refreshXinput()}}
+export async function setXinputMerge(){const select=$('#xinputMerge');const value=select?.value||'';try{await updateOutputConfig({enabled:!!value,user:value===''?null:Number(value)},'/api/output/xinput');await refreshXinput();notice(value?`已选择物理手柄 ${Number(value)+1}；${output.xinputMotionLeft?'体感按键与左摇杆合成已开启':'体感只叠加手柄按键'}`:'已关闭物理手柄合流')}catch(e){notice('物理手柄合流失败：'+(e?.message||e));await refreshXinput()}}
 
 export function renderOutput(s=output.server){
   if(!s)return;
@@ -247,8 +256,15 @@ export function noteOutputMix(){
 
 export async function refreshOutput(){
   const epoch=S.outputEpoch;
-  try{const data=await api('/api/output-status');if(epoch===S.outputEpoch)renderOutput(data)}
-  catch{outputConnected=false;renderMainStatus()}
+  try{const data=await api('/api/output-status');if(epoch===S.outputEpoch)renderOutput(data);return true}
+  catch{if(epoch===S.outputEpoch){outputConnected=false;renderMainStatus()}return false}
+}
+
+export async function updateOutputConfig(payload,path='/api/output/config'){
+  const epoch=++S.outputEpoch;
+  const result=await post(path,payload);
+  if(epoch!==S.outputEpoch)throw new Error('操作已被紧急停止中断');
+  ++S.outputEpoch;renderOutput(result);return result;
 }
 
 export async function setOutput(enabled){
@@ -278,6 +294,7 @@ export async function emergencyStop(){
 export async function setSource(source,enabled=true){
   await setOutput(false);
   const epoch=++kernelEpoch;
+  ++S.inputEpoch;
   const selectedAudio=$('#audioSource')?.value||S.audioSource||'computer';
   const result=await post('/api/input/source',{source,enabled,audio_source:selectedAudio});
   if(epoch!==kernelEpoch)throw new Error('操作已中断');
@@ -287,7 +304,7 @@ export async function setSource(source,enabled=true){
     throw new Error((result.camera?.last_error||'摄像头启动失败')
       +'。没有摄像头就把来源改成手机；有好几个就点「扫描」换一个。');
   }
-  ++kernelEpoch;S.desiredSource=source;
+  ++kernelEpoch;++S.inputEpoch;S.desiredSource=source;
   renderKernelState(result);await refreshInput();
   notice(enabled?(source==='phone'?'已切到手机摄像头，等手机连上':'摄像头连上了'):'识别已停止');
 }
