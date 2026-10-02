@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 ENTRY_POINTS = ("server.py",)
 BUILD_PROVENANCE_NAME = "build-provenance.json"
 RELEASE_PROVENANCE_NAME = "release-provenance.json"

@@ -1,7 +1,9 @@
 """A release identifies both source trees and refuses stale mobile assets."""
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -122,3 +124,19 @@ def test_manifest_only_is_not_enough_when_current_pc_source_changed(tmp_path, mo
     source.write_text("uncommitted new pc code")
     with pytest.raises(ValueError, match="来源已变化"):
         stage_release.verify_release_provenance(target / "app", check_sources=True)
+
+
+def test_stage_check_cli_imports_runtime_from_outside_repository(tmp_path, mobile_build):
+    dist, _manifest = mobile_build
+    bundle = tmp_path / "portable"
+    (bundle / "python").mkdir(parents=True)
+    script = Path(stage_release.__file__).resolve()
+    arguments = [sys.executable, str(script), "--target", str(bundle), "--phone-web", str(dist)]
+    environment = {**os.environ, "PYTHONPATH": ""}
+    staged = subprocess.run(arguments, cwd=tmp_path, env=environment, text=True,
+                            capture_output=True, timeout=30)
+    assert staged.returncode == 0, staged.stdout + staged.stderr
+    checked = subprocess.run([*arguments, "--check"], cwd=tmp_path, env=environment,
+                             text=True, capture_output=True, timeout=30)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert "0 to update" in checked.stdout
