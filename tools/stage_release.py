@@ -513,4 +513,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Redirected Windows output otherwise uses the machine's ANSI code page,
+    # which cannot encode the Chinese release messages on an English system.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())

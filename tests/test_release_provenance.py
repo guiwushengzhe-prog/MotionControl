@@ -132,11 +132,12 @@ def test_stage_check_cli_imports_runtime_from_outside_repository(tmp_path, mobil
     (bundle / "python").mkdir(parents=True)
     script = Path(stage_release.__file__).resolve()
     arguments = [sys.executable, str(script), "--target", str(bundle), "--phone-web", str(dist)]
-    environment = {**os.environ, "PYTHONPATH": ""}
-    staged = subprocess.run(arguments, cwd=tmp_path, env=environment, text=True,
+    environment = {**os.environ, "PYTHONPATH": "", "PYTHONIOENCODING": "cp1252"}
+    staged = subprocess.run(arguments, cwd=tmp_path, env=environment, text=True, encoding="utf-8",
                             capture_output=True, timeout=30)
     assert staged.returncode == 0, staged.stdout + staged.stderr
+    assert "个文件" in staged.stdout
     checked = subprocess.run([*arguments, "--check"], cwd=tmp_path, env=environment,
-                             text=True, capture_output=True, timeout=30)
+                             text=True, encoding="utf-8", capture_output=True, timeout=30)
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert "0 to update" in checked.stdout
