@@ -231,6 +231,7 @@ class VoiceService:
         self._catalog: list[dict] = []
         self._profile_bindings: dict = {}
         self._phrase_index: dict[str, dict] = {}
+        self._configuration_conflicts: tuple[str, ...] = ()
         self.recognizer: VoskCommandRecognizer | None = None
         self.recognizer_mode = "vosk_constrained_grammar"
         self.supported_count = 0
@@ -441,12 +442,13 @@ class VoiceService:
             candidate = copy.copy(self)
             candidate.mappings, candidate.wake_word, candidate.emergency_stop_phrases = mappings, wake, stops
             candidate._build_registry()
-            problems = candidate._phrase_conflicts(candidate._commands_for(candidate._profile_bindings))
+            problems = candidate._configuration_conflicts
             if problems:
                 raise ValueError(f"{problems[0]}，换一个说法")
             candidate._save_configuration()
             self.mappings, self.wake_word, self.emergency_stop_phrases = mappings, wake, stops
             self.command_registry, self._phrase_index = candidate.command_registry, candidate._phrase_index
+            self._configuration_conflicts = candidate._configuration_conflicts
             self._release_locked(self.source_id)
             with self._audio_submit_lock:
                 self._audio_generation += 1
@@ -531,8 +533,13 @@ class VoiceService:
         return commands
 
     def _build_registry(self) -> None:
+        commands = self._commands_for(self._profile_bindings)
         self.command_registry = {compact_text(item["phrase"]): item
-                                 for item in self._commands_for(self._profile_bindings)}
+                                 for item in commands}
+        # Conflicts only change with configuration. Compute from the complete
+        # list before equal primary phrases are collapsed by the registry;
+        # status/audio reads can then copy a small immutable result.
+        self._configuration_conflicts = tuple(self._phrase_conflicts(commands))
         self._rebuild_phrase_index()
 
     def _phrase_conflicts(self, commands: list[dict]) -> list[str]:
@@ -603,6 +610,7 @@ class VoiceService:
             kept.append(entry)
         if kept != self.mappings:
             self.mappings = kept
+            self._build_registry()
             try:
                 self._write_config()
             except OSError as exc:
@@ -1381,7 +1389,7 @@ class VoiceService:
             "mappings": list(self.mappings),
             # 换了游戏、装了别人的配置，都可能带进来一句和通用口令同名的。存的时候
             # 拦得住，这两条路拦不住，只能照实告诉界面。
-            "phrase_conflicts": self._phrase_conflicts(self._commands_for(self._profile_bindings)),
+            "phrase_conflicts": list(self._configuration_conflicts),
             "wake_word": self.wake_word,
             # 界面上要显示的是"要怎么说"，不是盘上存的那个写法。
             "emergency_stop_phrases": self.spoken_emergency_phrases(),

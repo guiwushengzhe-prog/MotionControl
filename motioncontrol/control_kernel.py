@@ -52,6 +52,48 @@ from motioncontrol.zone_fit import (
 from motioncontrol_shared import pose_library, pose_rules
 
 
+_SNAPSHOT_ATOMIC_TYPES = frozenset((type(None), bool, int, float, complex, str, bytes))
+_SNAPSHOT_MISSING = object()
+
+
+def _snapshot_copy(value, memo=None):
+    """Detach JSON-shaped status data, retaining deepcopy's graph semantics.
+
+    Atomic leaves skip copy dispatch. Exact dict/list containers
+    use a shared memo for aliases and cycles; extensions and subclasses retain
+    their existing deepcopy behavior.
+    """
+    kind = type(value)
+    if kind in _SNAPSHOT_ATOMIC_TYPES:
+        # An extension's __deepcopy__ or an explicitly supplied memo can
+        # replace even an atomic object; honor that just as deepcopy does.
+        return memo.get(id(value), value) if memo else value
+    if kind is not dict and kind is not list:
+        return copy.deepcopy(value, memo)
+    if memo is None:
+        memo = {}
+    identity = id(value)
+    existing = memo.get(identity, _SNAPSHOT_MISSING)
+    if existing is not _SNAPSHOT_MISSING:
+        return existing
+    if kind is dict:
+        result = {}
+        memo[identity] = result
+        for key, item in value.items():
+            result[_snapshot_copy(key, memo)] = _snapshot_copy(item, memo)
+    else:
+        result = []
+        memo[identity] = result
+        result.extend(_snapshot_copy(item, memo) for item in value)
+    # Extension hooks can create temporary objects while sharing this memo.
+    # Retain source containers as deepcopy does, so their ids cannot be reused.
+    try:
+        memo[id(memo)].append(value)
+    except KeyError:
+        memo[id(memo)] = [value]
+    return result
+
+
 def _user_intent_dir():
     """「录我的动作」录下来的东西。和游戏无关，见 intent_recording。"""
     from motioncontrol.user_paths import user_data_root
@@ -845,13 +887,13 @@ class ControlKernel:
     def general_settings_payload(self) -> dict:
         """A detached document for atomic settings transactions, without I/O."""
         with self._lock:
-            return copy.deepcopy(self._general_settings_payload_locked())
+            return _snapshot_copy(self._general_settings_payload_locked())
 
     def _general_settings_payload_locked(self) -> dict:
         payload = {
             **getattr(self, "_general_raw", {}),
             "saved_at_unix": time.time(),
-            "hand_mouse": dict(self.hand_mouse_controller.config),
+            "hand_mouse": self.hand_mouse_controller.config,
             "vertical_look": {
                 "enabled": bool(self.vertical_look.get("enabled", True)),
                 "source": "head",
@@ -862,10 +904,10 @@ class ControlKernel:
             "action_chain": self.action_chain.config,
             "zone_trigger_mode": self.zone_trigger_mode,
             "march_algorithm": self.march_algorithm,
-            "trigger_recording": copy.deepcopy(self.trigger_recorder.config),
+            "trigger_recording": self.trigger_recorder.config,
             "zone_freeze": {"frozen": bool(self.zones_frozen),
-                            "rects": copy.deepcopy(self.frozen_rects),
-                            "anchor": copy.deepcopy(self.frozen_anchor)},
+                            "rects": self.frozen_rects,
+                            "anchor": self.frozen_anchor},
         }
         return payload
 
@@ -1261,13 +1303,16 @@ class ControlKernel:
 
     def _intent_actions_locked(self) -> list[tuple[str, str]]:
         """这台电脑上有的全部动作（不管这个游戏绑没绑）：录的东西和游戏无关。"""
+        # Names need no demo frames. get() rebuilds the complete display
+        # catalog on each lookup; one metadata pass keeps this linear.
+        names = {}
+        for entry in (*pose_library.BUILTIN, *pose_library.registered().values()):
+            names.setdefault(entry["id"], entry["name"])
         out = []
         for ident in ("march", "calf_back", *self._motion_rules):
-            entry = pose_library.get(ident)
-            out.append((f"motion.{ident}", entry["name"] if entry else ident))
+            out.append((f"motion.{ident}", names.get(ident, ident)))
         for ident in self._pose_rules:
-            entry = pose_library.get(ident)
-            out.append((f"pose.{ident}", entry["name"] if entry else ident))
+            out.append((f"pose.{ident}", names.get(ident, ident)))
         store = self.custom_pose_store
         for entry in getattr(store, "poses", ()) if store is not None else ():
             if isinstance(entry, dict) and entry.get("id"):
@@ -1449,7 +1494,7 @@ class ControlKernel:
         state["custom"] = not is_default(self.zone_fit)
         state["measured_at_unix"] = self.zone_fit.get("measured_at_unix")
         state["grip_measured_at_unix"] = self.zone_fit.get("grip_measured_at_unix")
-        state["zones"] = copy.deepcopy(self.zone_fit["zones"])
+        state["zones"] = _snapshot_copy(self.zone_fit["zones"])
         return state
 
     # ---------- 区域触发方式、定住跟随框 ----------
@@ -2323,7 +2368,9 @@ class ControlKernel:
         actions = self._bound_action_triggers_locked() if actions is None else actions
         # 动作文件里写的，一次读完：这个函数每帧都跑。
         declared: dict[str, set[str]] = {}
-        for entry in pose_library.entries():
+        # Only group/id/passes_zones are needed on the control path. Avoid
+        # constructing the display catalog and all of its animation frames.
+        for entry in (*pose_library.BUILTIN, *pose_library.registered().values()):
             for zone in entry["passes_zones"]:
                 declared.setdefault(zone, set()).add(pose_library.trigger_of(entry))
         for zone in RUNTIME_BODY_ZONES:
@@ -2963,7 +3010,7 @@ class ControlKernel:
         for trigger in triggers:
             binding = self._effective_binding_locked(trigger)
             if binding:
-                out[trigger] = copy.deepcopy(binding)
+                out[trigger] = _snapshot_copy(binding)
         return out
 
     def _effective_binding_locked(self, trigger: str) -> dict | None:
@@ -3471,13 +3518,13 @@ class ControlKernel:
             state["phase"] = phase
             if phase == "pending" and raw.get("progress"):
                 state["progress"] = round(float(raw["progress"]), 2)
-            zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), **state}
+            zones[name] = {"rect": _snapshot_copy(self.zone_rects.get(name)), **state}
         # Keep the old four identifiers in status for clients that have not yet
         # learned the merged names. They are aliases only; no second trigger is
         # evaluated or dispatched for them.
         for alias, canonical in ZONE_ALIASES.items():
             if canonical in zones:
-                zones[alias] = copy.deepcopy(zones[canonical])
+                zones[alias] = _snapshot_copy(zones[canonical])
         return zones
 
     def runtime_zones(self) -> dict:
@@ -3528,7 +3575,7 @@ class ControlKernel:
         self.head["output_x"], self.head["output_y"] = self.hand_mouse_controller.compose_output(
             self.head["output_x"], self.head["output_y"], self.head["hand_mouse"])
         sensors = {
-            source: {key: copy.deepcopy(value) for key, value in state.items() if key != "received_at"}
+            source: {key: _snapshot_copy(value) for key, value in state.items() if key != "received_at"}
             | {"age_ms": round(max(0.0, (now - state["received_at"]) * 1000.0))}
             for source, state in self.sensor_sources.items()
         }
@@ -3537,7 +3584,7 @@ class ControlKernel:
             "pose_age_ms": pose_age,
             "width": self.width,
             "height": self.height,
-            "pose": copy.deepcopy(self.latest_pose),
+            "pose": _snapshot_copy(self.latest_pose),
             # Keep metric landmarks out of the regular status payload (it is
             # polled frequently), but expose whether the current frame carried
             # them so calibration diagnostics can distinguish a missing world
@@ -3550,8 +3597,8 @@ class ControlKernel:
             # 自定义姿势的实时相似度。放进这份状态里，界面就复用已有的轮询，
             # 不用为它再开一路——多一路轮询就多一份和主状态不同步的机会。
             "custom_pose_scores": dict(self.custom_pose_scores),
-            "pose_confidence": copy.deepcopy(self.pose_confidence),
-            "control_bindings": copy.deepcopy(self.control_bindings),
+            "pose_confidence": _snapshot_copy(self.pose_confidence),
+            "control_bindings": _snapshot_copy(self.control_bindings),
             # 界面要显示"按的是哪个键"时用这一份，见 _effective_bindings_locked。
             "effective_bindings": self._effective_bindings_locked(),
             "recent_triggers": list(self.recent_triggers),
@@ -3562,7 +3609,7 @@ class ControlKernel:
             "intent_recording": self._intent_status_locked(now),
             "trigger_recording": self.trigger_recorder.status(),
             "intent_items": self.intent_items_locked(),
-            "zone_learning": copy.deepcopy(self.zone_learning),
+            "zone_learning": _snapshot_copy(self.zone_learning),
             # 哪些框会被哪些动作扫过、让不让路。界面在绑键的地方照这个提醒。
             "zone_overlaps": self.zone_conflicts_locked(),
             # 没录过的动作误按框攒够了次数：界面提示去「录我的动作」。
@@ -3573,7 +3620,7 @@ class ControlKernel:
             # 能按它把整组框搬过来。
             "zones_frozen": bool(self.zones_frozen),
             "zones_anchor_known": self.frozen_anchor is not None,
-            "vertical_look": copy.deepcopy(self.vertical_look),
+            "vertical_look": _snapshot_copy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),
             "body_motion_guard_enabled": bool(self.body_motion_guard_enabled),
             "body_motion_guard_active": bool(self.body_motion_guard_active),
@@ -3586,7 +3633,7 @@ class ControlKernel:
             "vertical_pitch_velocity": round(float(self.vertical_pitch_velocity), 4),
             "vertical_pitch_acceleration": round(float(self.vertical_pitch_acceleration), 4),
             "vertical_pitch_intent_state": self.vertical_pitch_intent_state,
-            "head": copy.deepcopy(self.head),
+            "head": _snapshot_copy(self.head),
             "handheld_sources": sensors,
             "last_error": self.last_error,
         }

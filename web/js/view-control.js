@@ -1,6 +1,6 @@
 // 设置 → 视角：左右、上下方案，头控和握拳的手感。
 import {VIEW_CONTROL_CONTENT} from '../view-control-guide.js';
-import {$,api,configurationBusy,configurationOperation,flashStatus,post} from './core.js';
+import {$,api,configurationBusy,configurationOperation,flashStatus,post,setProperty,setText} from './core.js';
 import {invalidateKernelRequests,kernelEpoch,noteOutputMix} from './devices.js';
 import {mergeOwnsSticks,renderKernelState} from './play.js';
 import {tutorial} from './shell.js';
@@ -36,16 +36,16 @@ export function renderViewControl(force=false){
   const verticalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:null;
   const horizontal=horizontalHand||(head.enabled?(['roll_tilt','head_responsive'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off');
   const vertical=verticalHand||(head.verticalLookEnabled?'head':'off');
-  $('#viewHorizontalSource').value=horizontal;$('#viewVerticalSource').value=vertical;
+  setProperty($('#viewHorizontalSource'),'value',horizontal);setProperty($('#viewVerticalSource'),'value',vertical);
   const horizontalInfo=viewChoice(VIEW_CONTROL_CONTENT.horizontal,horizontal),verticalInfo=viewChoice(VIEW_CONTROL_CONTENT.vertical,vertical);
-  $('#viewHorizontalDesc').textContent=horizontalInfo.description;
-  $('#viewVerticalDesc').textContent=verticalInfo.description;
+  setText($('#viewHorizontalDesc'),horizontalInfo.description);
+  setText($('#viewVerticalDesc'),verticalInfo.description);
   // 手感那几行只列眼下用得着的：用头就给头的，用握拳就给握拳的。
   const headOn=!horizontalHand&&horizontal!=='off',handOn=!!(horizontalHand||verticalHand);
-  document.querySelectorAll('#headSettings .head-only').forEach(el=>{el.hidden=!headOn});
-  document.querySelectorAll('#headSettings .hand-only').forEach(el=>{el.hidden=!handOn});
+  document.querySelectorAll('#headSettings .head-only').forEach(el=>setProperty(el,'hidden',!headOn));
+  document.querySelectorAll('#headSettings .hand-only').forEach(el=>setProperty(el,'hidden',!handOn));
   // 抬头低头的手感只在选了它的时候列出来。
-  $('#headPitchSettings').hidden=vertical!=='head';
+  setProperty($('#headPitchSettings'),'hidden',vertical!=='head');
   const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='';
 }
 
@@ -63,16 +63,16 @@ function renderHandMouse(state){
   const blocked=mergeOwnsSticks();
   // 握拳的松紧阈值不在这里手调了：「身体识别 → 量身 → 只量握拳」量出来的就是这两个值。
   for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone]]){
-    if(value!==undefined&&document.activeElement!==$('#'+id))$('#'+id).value=value;
+    if(value!==undefined&&document.activeElement!==$('#'+id))setProperty($('#'+id),'value',String(value));
   }
-  $('#handMouseSensitivityValue').textContent=Number(c.sensitivity||0).toFixed(0);
-  $('#handMouseDeadzoneValue').textContent=Number(c.deadzone||0).toFixed(2);
+  setText($('#handMouseSensitivityValue'),Number(c.sensitivity||0).toFixed(0));
+  setText($('#handMouseDeadzoneValue'),Number(c.deadzone||0).toFixed(2));
   // 握没握拳、手张没张开，玩的时候画面上看得到，这里不再挂一行「左手待机」。
   // 只在握拳真用不了的时候说一句。
   const fistOn=!!c.enabled&&(['left','right'].includes(c.horizontal_hand)||['left','right'].includes(c.vertical_hand));
   const status=$('#handMouseStatus');
-  status.textContent=blocked?'实体手柄合流占着摇杆，握拳控制用不了':'';
-  status.hidden=!(blocked&&fistOn);
+  setText(status,blocked?'实体手柄合流占着摇杆，握拳控制用不了':'');
+  setProperty(status,'hidden',!(blocked&&fistOn));
   renderViewControl();
 }
 
@@ -144,7 +144,7 @@ export async function saveViewControlAxis(axis){
   }finally{setViewControlBusy(false);S.headDirty=false;renderViewControl(true)}
 }
 
-export function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.invertY=$('#invertY').checked;$('#deadzoneValue').textContent=Math.round(head.deadzone*100)+'%';$('#speedXValue').textContent=head.sensitivityX+'%';$('#speedYValue').textContent=head.sensitivityY+'%';output.strength=Number($('#strength').value);$('#strengthValue').textContent=output.strength+'%'}
+export function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.invertY=$('#invertY').checked;setText($('#deadzoneValue'),Math.round(head.deadzone*100)+'%');setText($('#speedXValue'),head.sensitivityX+'%');setText($('#speedYValue'),head.sensitivityY+'%');output.strength=Number($('#strength').value);setText($('#strengthValue'),output.strength+'%')}
 
 export async function pushHeadConfig(){
   syncControlLabels();

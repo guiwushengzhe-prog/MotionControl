@@ -628,9 +628,11 @@ async function removePoseAction(item) {
 
 /* --- 官方动作库 -----------------------------------------------------------
  * 云端官方发布的动作。点「下载」，电脑那边从云端取回动作文件、验过签名装上，本机
- * 动作库和映射表里就多了它。列表只在点开时读一次，不跟着状态轮询走。
+ * 动作库和映射表里就多了它。列表只在点开时读取，缓存过期时在可见面板里跟进刷新。
  */
 let poseCloudItems = [];
+let poseCloudCache={},poseCloudRequest=0,poseCloudPoll=null,poseCloudFingerprint='';
+let poseCloudLocalLibrary=poseLibrary;
 
 function poseCloudSay(text, kind = '') {
   const el = document.getElementById('poseCloudStatus');
@@ -646,24 +648,36 @@ async function openPoseCloud() {
   const button = document.getElementById('poseCloudBtn');
   if (panel) panel.hidden = false;
   button?.setAttribute('aria-expanded', 'true');
-  if (button) button.disabled = true;
-  poseCloudSay('正在读官方动作库…');
+  await refreshPoseCloud();
+}
+
+async function refreshPoseCloud(background=false) {
+  const panel=document.getElementById('poseCloudPanel');
+  const request=++poseCloudRequest;
+  const localLibrary=poseLibrary;
+  clearTimeout(poseCloudPoll);poseCloudPoll=null;
+  if(!background)poseCloudSay('正在读官方动作库…');
   try {
     const data = await api('/api/pose/cloud', { timeoutMs: 20000 });
+    if(request!==poseCloudRequest||panel?.hidden)return;
     poseCloudItems = data.actions || [];
+    poseCloudCache=data.cache||{};
+    poseCloudLocalLibrary=localLibrary;
     ratingNames = data.rating_names || ratingNames;
     bodyPartNames = data.body_part_names || bodyPartNames;
     for (const item of poseCloudItems) poseLibraryNames.cloud[item.id] = item.name;
     renderPoseCloud();
     paintPoseMissingNotice();
+    if(poseCloudCache.refreshing&&isVisible(panel))poseCloudPoll=setTimeout(()=>{
+      if(request===poseCloudRequest&&isVisible(panel))void refreshPoseCloud(true);
+    },650);
   } catch (error) {
-    poseCloudSay(error.message, 'error');
-  } finally {
-    if (button) button.disabled = false;
+    if(request===poseCloudRequest&&!panel?.hidden)poseCloudSay(error.message, 'error');
   }
 }
 
 function closePoseCloud() {
+  ++poseCloudRequest;clearTimeout(poseCloudPoll);poseCloudPoll=null;
   const panel = document.getElementById('poseCloudPanel');
   if (panel) panel.hidden = true;
   document.getElementById('poseCloudBtn')?.setAttribute('aria-expanded', 'false');
@@ -671,16 +685,33 @@ function closePoseCloud() {
 
 function renderPoseCloud() {
   if (!poseCloudEl) return;
+  if(poseCloudLocalLibrary!==poseLibrary){
+    // Local install/remove responses own installation state. A cloud list
+    // started before that change must not restore its previous revision.
+    ++poseCloudRequest;clearTimeout(poseCloudPoll);poseCloudPoll=null;
+    for(const item of poseCloudItems){
+      item.installed_revision=poseLibrary.find(local=>local.id===item.id)?.revision||0;
+      item.update_available=Boolean(item.installed_revision)&&Number(item.revision)>Number(item.installed_revision);
+    }
+    poseCloudLocalLibrary=poseLibrary;
+  }
   const fresh = poseCloudItems.filter(item => !item.installed_revision).length;
-  poseCloudSay(poseCloudItems.length
+  const updated=Number(poseCloudCache.updated_at);
+  const stamp=Number.isFinite(updated)&&updated>0?` · 更新于 ${new Date(updated*1000).toLocaleString()}`:'';
+  const cacheStatus=poseCloudCache.offline?' · 云端暂不可用，显示上次获取的结果':poseCloudCache.refreshing?' · 正在后台检查更新':'';
+  const summary=poseCloudItems.length
     ? (fresh ? `${fresh} 个还没下载` : '官方的动作都下载了')
-    : '暂时还没有发布的动作');
+    : '暂时还没有发布的动作';
+  poseCloudSay(summary+cacheStatus+stamp,poseCloudCache.offline?'error':'');
   // 卡片上那句话跟着变：还有几个能下载。
   const hint = document.getElementById('poseCloudHint');
   if (hint && poseCloudItems.length) hint.textContent = fresh ? `还有 ${fresh} 个动作可以下载` : '官方的动作都下载了';
   // 已经下载、也没有新版的不再列一遍：上面的动作库里已经有它们了。
   const wanted = poseCloudItems.filter(item => !item.installed_revision || item.update_available);
   poseCloudEl.hidden = !wanted.length;
+  const fingerprint=JSON.stringify(wanted);
+  if(fingerprint===poseCloudFingerprint)return;
+  poseCloudFingerprint=fingerprint;
   poseCloudEl.replaceChildren();
   for (const item of wanted) {
     const card = document.createElement('div');
@@ -707,7 +738,10 @@ function renderPoseCloud() {
       action.textContent = '已下载';
       action.disabled = true;
     }
-    action.addEventListener('click', () => installPoseAction(item, action));
+    action.addEventListener('click', () => {
+      ++poseCloudRequest;clearTimeout(poseCloudPoll);poseCloudPoll=null;
+      void installPoseAction(item, action);
+    });
     const source = document.createElement('div');
     source.className = 'pose-library-source';
     source.append(`官方 · 第 ${item.revision} 版`, action);

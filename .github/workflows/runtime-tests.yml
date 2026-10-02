@@ -70,4 +70,4 @@ jobs:
       - name: Run real browser regression tests
         env:
           MOTIONCONTROL_USER_DIR: ${{ runner.temp }}/motioncontrol-browser-test-user-data
-        run: python -m pytest tests/test_web_optimization.py -q
+        run: python -m pytest tests/test_web_*.py -q

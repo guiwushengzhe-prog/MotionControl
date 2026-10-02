@@ -221,7 +221,8 @@ def test_view_control_uses_one_complete_request_and_truthful_failure(desktop, re
     api.requests.clear()
     page.select_option("#viewHorizontalSource", "roll_tilt")
     page.wait_for_function("!viewHorizontalSource.disabled && !viewControlStatus.textContent.includes('正在保存')")
-    mutations = [(path, body) for path, body in api.requests if body is not None]
+    # Phrase validation uses POST for a read; it is not a configuration mutation.
+    mutations = [(path, body) for path, body in api.requests if body is not None and path != "/api/voice/check"]
     assert mutations == [("/api/view-control", {"horizontal": "roll_tilt", "vertical": "off"})]
     if rejected:
         assert page.locator("#viewHorizontalSource").input_value() == "right"

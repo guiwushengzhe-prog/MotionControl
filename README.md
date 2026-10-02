@@ -1,14 +1,22 @@
-# MotionControl 2.0
+# MotionControl 2.3.0
 
 ![MotionControl：站起来，用身体玩游戏](docs/images/motioncontrol-demo.gif)
 
 > 第一次用？打开软件后点右上角「？」→「新手教学」，它在界面上带着你做一遍。
 
+当前电脑源码入口是 `START.bat` / `server.py`、`motioncontrol/` 与 `web/`；配套手机源码在 [MotionControl-Android](https://github.com/guiwushengzhe-prog/MotionControl-Android) 的 `mobile/`。该仓库保留的 `motionbridge/` 和 `desktop/` 是历史实现。
+
+优化保留当前界面与 2.3.0 版本。已完成改动、本轮新增的 Worker / 状态读取 / 云缓存 / 增量渲染，以及后置的实机、兼容与长期稳定性验收，见[优化进度与维护入口](docs/optimization-progress.md)。已有自动化与装配约定见[协调优化记录](docs/coordination-optimization.md)。本轮尚未正式发布新完整便携包或正式签名 APK。
+
+使用既有正式便携包时双击包内 `启动.bat`；源码开发安装 `requirements-runtime.txt` 并准备配置指定的模型后运行 `python server.py`，Windows 也可用 `START.bat`。本机管理界面为 `http://127.0.0.1:8766`，手机设备接入为 `ws://<电脑地址>:8765/ws/input`。更新、双仓装配和回退边界见上述维护文档。
+
+## 界面组织（2.0 起沿用）
+
 电脑端整理为“开始游戏、游戏配置、设备与设置”三个入口。开始／暂停控制与紧急停止固定在顶部；首次定位只需头部和双肩入镜，区域拖动、大小、重新定位、保存和取消集中在一个编辑器中。
 
 游戏映射按游戏分别自动保存，切换前处理待保存修改；失败保留草稿并提供重试。旧配置首次读取时备份为 `config/game_profile_selection.json.v1.bak` 后迁移。手机协议、模型、识别算法以及实体手柄合成方式保持兼容。
 
-本轮验证使用配置检查和离线浏览器模拟，没有运行模型、真实摄像头或游戏。代码量、删除合并清单与验证记录见 [2.0 交付记录](docs/V2_DELIVERY.md)。
+2.0 界面整理的配置检查、离线浏览器模拟、代码量与删除合并清单见 [2.0 交付记录](docs/V2_DELIVERY.md)；该历史记录不是本轮 2.3.0 优化验收结果。
 
 ## 既有核心能力
 

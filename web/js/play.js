@@ -1,6 +1,6 @@
 // 开始页：画面、区域框、准备卡片、触发大字、挪动区域、悬浮窗。
 import {renderIntent,renderMisfireHint,renderZoneFit,renderZoneFreeze} from './body.js';
-import {$,agoText,api,clamp,fitCanvas,isVisible,notice,post} from './core.js';
+import {$,agoText,api,clamp,fitCanvas,isVisible,notice,post,setAttribute,setClass,setProperty,setStyle,setText,syncChildren} from './core.js';
 import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMerge,syncCameraDeviceRow} from './devices.js';
 import {renderTriggerRecord} from './diagnostics.js';
 import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
@@ -24,6 +24,7 @@ export let zoneEditMode=false;
 let liveZoneDrag=null;
 let latestRuntime=null;
 let latestConfigRevision=-1;
+let poseCaptureSignature='',zoneFreezeSignature='';
 
 const canvas = $('#canvas');
 
@@ -32,6 +33,17 @@ const ctx = canvas.getContext('2d');
 const viewer = $('#viewer');
 
 const cameraPreview = $('#cameraPreview');
+let mainPoseSignature='';
+let headConfigSignature='';
+
+// 主画布只画骨骼；区域与选中/拖动状态由独立 DOM 更新，不能跟着骨骼一起跳过。
+function paintMainPose(){
+  fitCanvas(canvas,(Number(kernelState?.width)||640)/(Number(kernelState?.height)||480));
+  const points=Object.entries(currentPoseMap||{}).filter(([,point])=>!(point.score<.3)).map(([name,point])=>[name,point.x,point.y]);
+  const signature=JSON.stringify([canvas.width,canvas.height,points]);
+  if(signature===mainPoseSignature)return;
+  mainPoseSignature=signature;draw(currentPoseMap);
+}
 
 export const overlay={win:null,canvas:null,ctx:null};
 
@@ -65,21 +77,21 @@ export function renderKernelZones(zones={}){
   if(!isVisible(viewer))return;
   for(const[id,def]of Object.entries(BODY_ZONES)){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
-    if(def.gate&&!kernelState?.vertical_look?.enabled){el.style.display='none';continue}
+    if(def.gate&&!kernelState?.vertical_look?.enabled){setStyle(el,'display','none');continue}
     const active=!zoneEditMode&&!!state?.pressed;
-    el.classList.toggle('active',active);
+    setClass(el,'active',active);
     // 智能判定：判断中（黄）、判定是扫过（闪红）。系统功能要稳住，底下的条是稳住走到哪了。
     const phase=zoneEditMode?'idle':String(state?.phase||'idle');
-    el.classList.toggle('pending',phase==='pending');el.classList.toggle('swept',phase==='swept');
-    el.style.setProperty('--progress',Math.round(Number(state?.progress||0)*100)+'%');
-    el.querySelector('strong').textContent=def.gate?'上下视角':zoneKeyLabel(id,def);
-    el.querySelector('small').textContent=def.gate?(active?'已开启':'左手放这里'):def.body;
-    el.tabIndex=zoneEditMode?0:-1;
-    el.setAttribute('aria-label',def.body+'区域，方向键移动，Shift 加方向键改大小');
+    setClass(el,'pending',phase==='pending');setClass(el,'swept',phase==='swept');
+    setStyle(el,'--progress',Math.round(Number(state?.progress||0)*100)+'%');
+    setText(el.querySelector('strong'),def.gate?'上下视角':zoneKeyLabel(id,def));
+    setText(el.querySelector('small'),def.gate?(active?'已开启':'左手放这里'):def.body);
+    setProperty(el,'tabIndex',zoneEditMode?0:-1);
+    setAttribute(el,'aria-label',def.body+'区域，方向键移动，Shift 加方向键改大小');
     const rect=zoneEditMode?rectEdit.rects[id]:state?.rect;
-    el.classList.toggle('selected',zoneEditMode&&rectEdit.selected===id);
-    if(!rect){el.style.display='none';continue}
-    el.style.display='grid';el.style.left=(rect.x1*100)+'%';el.style.top=(rect.y1*100)+'%';el.style.width=((rect.x2-rect.x1)*100)+'%';el.style.height=((rect.y2-rect.y1)*100)+'%';
+    setClass(el,'selected',zoneEditMode&&rectEdit.selected===id);
+    if(!rect){setStyle(el,'display','none');continue}
+    setStyle(el,'display','grid');setStyle(el,'left',(rect.x1*100)+'%');setStyle(el,'top',(rect.y1*100)+'%');setStyle(el,'width',((rect.x2-rect.x1)*100)+'%');setStyle(el,'height',((rect.y2-rect.y1)*100)+'%');
   }
 }
 
@@ -92,29 +104,28 @@ function renderCalibrationOverlay(hs={}){
   const bar=$('#calibrationProgressBar'),detail=$('#calibrationDetail'),cancel=$('#calibrationCancel');
   const phase=String(hs.center_phase||'prepare');
   const phaseName={prepare:'准备',collect:'记录自然中心'}[phase]||'设置中心';
-  cancel.style.display='block';stage.textContent=phaseName;
-  prompt.textContent=notice||'看向游戏屏幕中心，保持自然站姿/坐姿';
+  setStyle(cancel,'display','block');setText(stage,phaseName);
+  setText(prompt,notice||'看向游戏屏幕中心，保持自然站姿/坐姿');
   const remaining=Math.max(0,Number(hs.center_remaining_s||0));
   const valid=Number(hs.center_valid_s||0),required=Math.max(.1,Number(hs.center_required_s||2.2));
   const samples=Number(hs.center_sample_count||0),targetSamples=Math.max(1,Number(hs.center_target_samples||32));
   const invalid=Number(hs.center_invalid_count||0),rejected=Number(hs.center_rejected_count||0);
-  if(phase==='prepare')detail.textContent='说完后稍等一下，让说话造成的头部/嘴部动作结束';
-  else detail.textContent=`采集 ${Math.min(valid,required).toFixed(1)} / ${required.toFixed(1)} 秒 · 有效样本 ${samples} / ${targetSamples} · 无效 ${invalid} · 忽略明显跳点 ${rejected}`;
-  countdown.textContent=remaining.toFixed(1);
+  setText(detail,phase==='prepare'?'说完后稍等一下，让说话造成的头部/嘴部动作结束':`采集 ${Math.min(valid,required).toFixed(1)} / ${required.toFixed(1)} 秒 · 有效样本 ${samples} / ${targetSamples} · 无效 ${invalid} · 忽略明显跳点 ${rejected}`);
+  setText(countdown,remaining.toFixed(1));
   const timeProgress=Math.min(1,valid/required),sampleProgress=Math.min(1,samples/targetSamples);
   const progress=phase==='collect'?(.12+.88*Math.min(timeProgress,sampleProgress)):.08;
-  bar.style.width=`${Math.max(0,Math.min(100,progress*100))}%`;
+  setStyle(bar,'width',`${Math.max(0,Math.min(100,progress*100))}%`);
 }
 
 export function renderMainStatus(){
   serviceReady=kernelConnected&&outputConnected;
   const main=$('#mainActionBtn');
-  main.disabled=!serviceReady||actionBusy||zoneEditMode;
-  main.textContent=output.enabled?'暂停控制':(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady?'连接设备':'开始控制');
-  main.classList.toggle('running',!!output.enabled);main.classList.toggle('primary',!output.enabled);
+  setProperty(main,'disabled',!serviceReady||actionBusy||zoneEditMode);
+  setText(main,output.enabled?'暂停控制':(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady?'连接设备':'开始控制'));
+  setClass(main,'running',!!output.enabled);setClass(main,'primary',!output.enabled);
   // 服务连着的时候什么都不说；断了才冒出来。
-  $('#serviceStatus').textContent=serviceReady?'本地服务已连接':'服务断开，急停仍可重试';
-  $('#serviceStatus').classList.toggle('online',serviceReady);$('#serviceStatus').classList.toggle('offline',!serviceReady);
+  setText($('#serviceStatus'),serviceReady?'本地服务已连接':'服务断开，急停仍可重试');
+  setClass($('#serviceStatus'),'online',serviceReady);setClass($('#serviceStatus'),'offline',!serviceReady);
   if(isVisible(viewer)){renderViewerMessage();renderReadiness();renderConflicts()}
 }
 
@@ -124,7 +135,7 @@ function renderViewerMessage(){
   const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
   const [title,detail]=!live?[sourceMode==='phone'?'等手机连上':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':'在「设置 → 设备」里点「连接」']
     :!currentPoseMap?['站到镜头前','头和双肩入镜就能开始']:['',''];
-  hint.hidden=!title;
+  setProperty(hint,'hidden',!title);
   const key=title+'|'+detail;if(hint.dataset.key===key)return;hint.dataset.key=key;
   hint.replaceChildren();if(!title)return;
   const b=document.createElement('b');b.textContent=title;const s=document.createElement('span');s.textContent=detail;hint.append(b,s);
@@ -135,7 +146,7 @@ let runStartedAt=0;
 
 function setStep(name,state,sub){
   const li=document.querySelector(`.checklist [data-step="${name}"]`);if(!li)return;
-  li.classList.toggle('done',state==='done');li.classList.toggle('warn',state==='warn');
+  setClass(li,'done',state==='done');setClass(li,'warn',state==='warn');
   const el=li.querySelector('.step-sub');if(el&&sub!==undefined&&el.textContent!==sub)el.textContent=sub;
 }
 
@@ -148,25 +159,25 @@ function renderReadiness(){
   const needCal=!handHorizontal&&head.enabled;
   const calibrated=!needCal||!!(hs.horizontal_calibrated??hs.calibrated);
   setStep('camera',cameraOk?'done':'warn',phoneMode?(cameraOk?'手机摄像头':'等手机连上'):(cameraOk?'电脑摄像头':'还没连接'));
-  const go=$('#cameraStepGo');if(go)go.hidden=cameraOk;
+  const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk);
   setStep('pose',posed?'done':(cameraOk?'warn':''),posed?'已识别':'站到镜头前，头和双肩入镜');
   setStep('game',gameProfile.selected?'done':'',gameProfile.selected?.name||'正在读取…');
   // 握拳管左右时不用校准头；这一步照样列着，写明用不着。
   const calStep=document.querySelector('.checklist [data-step="cal"]');
-  if(calStep){calStep.classList.toggle('done',calibrated&&!hs.calibrating);calStep.classList.toggle('warn',!calibrated&&posed)}
-  if(!needCal&&$('#calStatus'))$('#calStatus').textContent=handHorizontal?'握拳控制视角，不用校准':'左右视角关着，不用校准';
+  if(calStep){setClass(calStep,'done',calibrated&&!hs.calibrating);setClass(calStep,'warn',!calibrated&&posed)}
+  if(!needCal)setText($('#calStatus'),handHorizontal?'握拳控制视角，不用校准':'左右视角关着，不用校准');
   const left=[cameraOk,posed,calibrated].filter(ok=>!ok).length;
-  $('#readyTitle').textContent=left?`还差 ${left} 步`:'可以开始了';
+  setText($('#readyTitle'),left?`还差 ${left} 步`:'可以开始了');
   const running=!!output.enabled;
-  $('#readyCard').hidden=running&&!setupConflicts().length;
-  $('#runCard').hidden=!running;
+  setProperty($('#readyCard'),'hidden',running&&!setupConflicts().length);
+  setProperty($('#runCard'),'hidden',!running);
   if(running){
     if(!runStartedAt)runStartedAt=Date.now();
     const sec=Math.floor((Date.now()-runStartedAt)/1000),pad=n=>String(n).padStart(2,'0');
     const text=sec>=3600?`${Math.floor(sec/3600)}:${pad(Math.floor(sec/60)%60)}:${pad(sec%60)}`:`${pad(Math.floor(sec/60))}:${pad(sec%60)}`;
     if($('#runElapsed').textContent!==text)$('#runElapsed').textContent=text;
     const sub=$('#runSub'),lost=!posed;
-    sub.textContent=lost?'看不到人了，站回镜头前':`${gameProfile.selected?.name||''} · F9 随时停`;sub.classList.toggle('warn',lost);
+    setText(sub,lost?'看不到人了，站回镜头前':`${gameProfile.selected?.name||''} · F9 随时停`);setClass(sub,'warn',lost);
   }else runStartedAt=0;
 }
 
@@ -189,7 +200,7 @@ function renderConflicts(){
   const box=$('#setupConflicts');
   if(!box)return;
   const items=setupConflicts();
-  box.hidden=!items.length;
+  setProperty(box,'hidden',!items.length);
   const signature=items.map(([text,label])=>text+'|'+label).join('\n');
   if(signature===conflictSignature)return;
   conflictSignature=signature;
@@ -211,7 +222,7 @@ function renderViewHud(hs,guardBlocked){
   const headOn=!usesHand&&hs.enabled!==false;
   const calibrated=usesHand||(hs.horizontal_calibrated??hs.calibrated);
   const text=!currentPoseMap||!headOn?'':!calibrated?'视角未校准':guardBlocked?'做动作中，视角稳住':'';
-  hud.hidden=!text;if(text&&hud.textContent!==text)hud.textContent=text;
+  setProperty(hud,'hidden',!text);if(text)setText(hud,text);
 }
 
 export function renderKernelState(runtime,force=false){
@@ -226,17 +237,21 @@ export function renderKernelState(runtime,force=false){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   currentPoseMap=k.pose||null;
   // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
-  paintPoseCountdown(runtime?.pose_capture);
+  const capture=runtime?.pose_capture,captureSignature=JSON.stringify([capture?.counting,capture?.purpose,capture?.remaining_s,capture?.pose_id,capture?.message]);
+  if(capture?.counting||captureSignature!==poseCaptureSignature){poseCaptureSignature=captureSignature;paintPoseCountdown(capture)}
   renderTriggerLive();
   renderRange();
   const marchSelect=$('#marchAlgorithm');
   if(isVisible($('#triggerRecordStatus')))renderTriggerRecord(k.trigger_recording);
-  if(marchSelect&&!marchSelect.disabled&&document.activeElement!==marchSelect)marchSelect.value=k.march_algorithm==='responsive'?'responsive':'legacy';
+  if(marchSelect&&!marchSelect.disabled&&document.activeElement!==marchSelect)setProperty(marchSelect,'value',k.march_algorithm==='responsive'?'responsive':'legacy');
   const frameWidth=Number(k.width)||640,frameHeight=Number(k.height)||480;
-  viewer.style.aspectRatio=`${frameWidth}/${frameHeight}`;viewer.style.setProperty('--frame-ratio',String(frameWidth/frameHeight));
-  if(isVisible(viewer)){fitCanvas(canvas,frameWidth/frameHeight);draw(currentPoseMap);renderKernelZones(k.zones||{});renderMisfireHint(k)}
+  setStyle(viewer,'aspect-ratio',`${frameWidth} / ${frameHeight}`);setStyle(viewer,'--frame-ratio',String(frameWidth/frameHeight));
+  if(isVisible(viewer)){paintMainPose();renderKernelZones(k.zones||{});if(k.zone_misfire_hint||!$('#misfireHint').hidden)renderMisfireHint(k)}
   if(isVisible($('#zoneFitStatus')))renderZoneFit(k);
-  if(isVisible(viewer)||isVisible($('#zoneTriggerMode'))||isVisible($('#headSettings')))renderZoneFreeze(k);
+  if(isVisible(viewer)||isVisible($('#zoneTriggerMode'))||isVisible($('#headSettings'))){
+    const signature=JSON.stringify([k.zones_frozen,zoneEditMode,k.zone_trigger_mode,k.vertical_look?.deadzone,$('#zoneTriggerMode').value,$('#marchAlgorithm').value,$('#verticalDeadzone').value,document.activeElement===$('#zoneTriggerMode'),document.activeElement===$('#verticalDeadzone'),$('#zoneTriggerMode').disabled,$('#marchAlgorithm').disabled]);
+    if(signature!==zoneFreezeSignature){zoneFreezeSignature=signature;renderZoneFreeze(k)}
+  }
   if(isVisible($('#intentStatus')))renderIntent(k);
   if(currentView==='games'&&!document.hidden)paintZoneConflictNotes();
   // 区域按没按，画面里的框自己会亮；动作按没按，画面下面那排动作自己会亮（renderRange）。
@@ -251,18 +266,22 @@ export function renderKernelState(runtime,force=false){
   const guardReasonLabel={early:'提前抑制',postburst:'动作后抑制',persistent:'持续防晃'}[guardReason]||'输出抑制';
   const guardStatus=$('#bodyMotionGuardStatus');
   if(guardStatus){
-    guardStatus.textContent=guardEnabled===false?`防晃 ${guardVersion} · 已关闭`:guardBlocked?`防晃 ${guardVersion} · ${guardReasonLabel} · 左右视角已稳定`:guardActive?`防晃 ${guardVersion} · 监测中 · 当前未拦截左右视角`:`防晃 ${guardVersion} · 已启用 · 待机`;
-    guardStatus.classList.toggle('active',guardBlocked&&guardEnabled!==false);
+    setText(guardStatus,guardEnabled===false?`防晃 ${guardVersion} · 已关闭`:guardBlocked?`防晃 ${guardVersion} · ${guardReasonLabel} · 左右视角已稳定`:guardActive?`防晃 ${guardVersion} · 监测中 · 当前未拦截左右视角`:`防晃 ${guardVersion} · 已启用 · 待机`);
+    setClass(guardStatus,'active',guardBlocked&&guardEnabled!==false);
   }
   renderViewHud(hs,guardBlocked);
   if(hs.calibrated!==undefined){
-    $('#calBtn').textContent=hs.calibrating?'取消校准':(hs.horizontal_calibrated??hs.calibrated)?'重新校准':'站好并校准';
-    $('#calStatus').textContent=hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'看着屏幕中心站好，约 8 秒');
+    setText($('#calBtn'),hs.calibrating?'取消校准':(hs.horizontal_calibrated??hs.calibrated)?'重新校准':'站好并校准');
+    const handHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand);
+    if(hs.calibrating||(!handHorizontal&&hs.enabled))setText($('#calStatus'),hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'看着屏幕中心站好，约 8 秒'));
     const missingPoints=(hs.frozen22_missing_points||[]).join('、');
-    $('#calStatus').title=[hs.estimate_error,missingPoints&&'缺少关键点：'+missingPoints].filter(Boolean).join(' · ');
+    setProperty($('#calStatus'),'title',[hs.estimate_error,missingPoints&&'缺少关键点：'+missingPoints].filter(Boolean).join(' · '));
     renderCalibrationOverlay(hs);
   }
   if(hs.algorithm&&(force||(!S.headDirty&&!document.activeElement?.closest('#headSettings,[data-pane="lab"]')))){
+    const signature=JSON.stringify([hs.algorithm,hs.horizontal_algorithm,hs.deadzone,hs.sensitivity_x,hs.sensitivity_y,hs.enabled,hs.invert_y,k.vertical_look?.enabled,k.vertical_look?.exclusive_axes,hs.vertical_exclusive_axes,k.vertical_look?.body_motion_guard]);
+    if(force||signature!==headConfigSignature){
+    headConfigSignature=signature;
     $('#headAlgorithm').value=hs.algorithm;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
     head.horizontalAlgorithm=['gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
@@ -275,24 +294,26 @@ export function renderKernelState(runtime,force=false){
     $('#speedX').value=Number(hs.sensitivity_x||58);$('#speedY').value=Number(hs.sensitivity_y||46);
     // 头控开没开由「左右」那个下拉决定（选头部方案 = 开，选握拳或关闭 = 关），这里只记下来。
     head.enabled=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();renderViewControl();
+    }
   }
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;if(runtime?.camera)cameraInfo=runtime.camera;
   sessionStarted=sourceMode==='phone'?true:cameraRunning;
-  if(S.desiredSource===null)$('#poseSource').value=sourceMode;
-  syncCameraDeviceRow();
+  if(S.desiredSource===null)setProperty($('#poseSource'),'value',sourceMode);
+  const computer=$('#poseSource').value==='computer';
+  if(['cameraDeviceRow','cameraScanRow','cameraRotationRow'].some(id=>$('#'+id)?.hidden!==!computer))syncCameraDeviceRow();
 
   if(cameraPreview){
     const showPreview=sourceMode==='computer'&&cameraRunning;
-    cameraPreview.hidden=!(showPreview&&cameraPreview.complete&&cameraPreview.naturalWidth);
+    setProperty(cameraPreview,'hidden',!(showPreview&&cameraPreview.complete&&cameraPreview.naturalWidth));
     if(!showPreview&&cameraPreview.hasAttribute('src')){
       URL.revokeObjectURL(cameraPreview.src);cameraPreview.removeAttribute('src');
     }
   }
   // 真在识别才给「停止」。
-  $('#sourceStopBtn').hidden=!(sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning);
+  setProperty($('#sourceStopBtn'),'hidden',!(sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning));
   // 旧版上下视角（绿框）开着才有这一块。
-  const gateActive=!!k.vertical_gate_active;const gateStatus=$('#lookGateStatus');if(gateStatus){gateStatus.hidden=!k.vertical_look?.enabled||!head.verticalLookEnabled||!currentPoseMap;const paused=!!hs.horizontal_paused_by_vertical_gate;const text=gateActive?`上下视角开${paused?' · 左右暂停':''}`:'左手放进绿框开上下视角';if(gateStatus.textContent!==text)gateStatus.textContent=text;gateStatus.className='hud hud-gate'+(gateActive?' active':'')}renderOverlay(currentPoseMap);renderMainStatus();
+  const gateActive=!!k.vertical_gate_active;const gateStatus=$('#lookGateStatus');if(gateStatus){setProperty(gateStatus,'hidden',!k.vertical_look?.enabled||!head.verticalLookEnabled||!currentPoseMap);const paused=!!hs.horizontal_paused_by_vertical_gate;const text=gateActive?`上下视角开${paused?' · 左右暂停':''}`:'左手放进绿框开上下视角';setText(gateStatus,text);setProperty(gateStatus,'className','hud hud-gate'+(gateActive?' active':''))}renderOverlay(currentPoseMap);renderMainStatus();
 
 }
 
@@ -309,9 +330,9 @@ export async function refreshKernel(){
 export function renderVisibleState(){if(latestRuntime)renderKernelState(latestRuntime)}
 
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>{
-  if(isVisible(viewer)){fitCanvas(canvas,(Number(kernelState?.width)||640)/(Number(kernelState?.height)||480));draw(currentPoseMap)}
+  if(isVisible(viewer))paintMainPose();
 }).observe(viewer);
-window.addEventListener('resize',()=>{if(isVisible(viewer)){fitCanvas(canvas,(Number(kernelState?.width)||640)/(Number(kernelState?.height)||480));draw(currentPoseMap)}});
+window.addEventListener('resize',()=>{if(isVisible(viewer))paintMainPose()});
 
 export async function refreshPreview(){
   if(!cameraPreview||perfUi.previewBusy||sourceMode!=='computer'||!cameraRunning||currentView!=='play'||document.visibilityState!=='visible')return;
@@ -503,6 +524,28 @@ function activeTriggerKeys({all = false} = {}) {
 
 /** 触发之后高亮多久。太短了人还没把视线从镜头挪回屏幕就已经灭了。 */
 const TRIGGER_FLASH_S = 1.2;
+const eventLogRows=new WeakMap();
+
+// 事件不变时只更新已显示的年龄；新的事件插到前面，保留原按钮和焦点。
+function renderEventLog(log,events,names,now,{className,empty='',unmapped='未映射',title}){
+  const previous=eventLogRows.get(log)||new Map(),next=new Map(),counts=new Map();
+  const rows=events.slice(-6).reverse().map(event=>{
+    const trigger=String(event.trigger||''),base=JSON.stringify([event.at,trigger]);
+    const occurrence=counts.get(base)||0;counts.set(base,occurrence+1);
+    const key=base+':'+occurrence;
+    let row=previous.get(key);
+    if(!row){
+      row=document.createElement('button');row.type='button';row.className=className;row.dataset.trigger=trigger;row.title=title;
+      row.addEventListener('click',()=>revealBindingRow(row.dataset.trigger));
+    }
+    setText(row,`${agoText(Math.max(0,now-Number(event.at||0)))} · ${event.label||names.get(trigger)||trigger} → ${actionKeyText(event.action)||unmapped}`);
+    next.set(key,row);return row;
+  });
+  if(!rows.length&&empty){
+    const row=previous.get('empty')||document.createElement('span');row.className='fineprint';setText(row,empty);next.set('empty',row);rows.push(row);
+  }
+  syncChildren(log,rows);eventLogRows.set(log,next);
+}
 
 function renderTriggerLive() {
   if(currentView!=='games'||document.hidden)return;
@@ -522,32 +565,15 @@ function renderTriggerLive() {
     const nowEl = box.querySelector('.trigger-live-now');
     if (nowEl) {
       // 现在按着的写大字：这时候人站在几米外，小字看不见。
-      nowEl.textContent = active.length
+      setText(nowEl,active.length
         ? active.map(key => `${names.get(key)} → ${actionKeyText(bindings[key]?.action) || '未映射'}`).join('　')
-        : '还没有触发';
-      nowEl.classList.toggle('idle', !active.length);
+        : '还没有触发');
+      setClass(nowEl,'idle',!active.length);
     }
 
     const log = box.querySelector('.trigger-live-log');
     if (!log) continue;
-    log.replaceChildren();
-    for (const event of events.slice(-6).reverse()) {
-      const key = String(event.trigger || '');
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'trigger-live-item';
-      row.textContent = `${agoText(Math.max(0, now - Number(event.at || 0)))} · `
-        + `${event.label || names.get(key) || key} → ${actionKeyText(event.action) || '未映射'}`;
-      row.title = '点一下跳到它的映射那一行';
-      row.addEventListener('click', () => revealBindingRow(key));
-      log.appendChild(row);
-    }
-    if (!events.length) {
-      const empty = document.createElement('span');
-      empty.className = 'fineprint';
-      empty.textContent = '做个动作或者说句口令，这里会记下来。';
-      log.appendChild(empty);
-    }
+    renderEventLog(log,events,names,now,{className:'trigger-live-item',empty:'做个动作或者说句口令，这里会记下来。',title:'点一下跳到它的映射那一行'});
   }
 
   // 每一行自己亮。一直按着的那些常亮，点一下就过的那些闪一下——后者没有这个
@@ -558,8 +584,8 @@ function renderTriggerLive() {
   for (const row of document.querySelectorAll('.binding-row')) {
     if(!isVisible(row))continue;
     const key = row.dataset.trigger;
-    row.classList.toggle('firing', held.has(key));
-    row.classList.toggle('just-fired', !held.has(key) && fresh.has(key));
+    setClass(row,'firing',held.has(key));
+    setClass(row,'just-fired',!held.has(key)&&fresh.has(key));
   }
 }
 
@@ -580,8 +606,6 @@ const RANGE_FLASH_S = 0.8;
 const TRIGGER_CHIP_NAMES = {march: '踏步', calf_back: '小腿后抬', hands_up: '双手过头'};
 
 let rangeTargetKeys = '';
-
-let rangeLogKey = '';
 
 // 画面下面那排：本机认得的身体动作全列上。区域不列——画面里的框自己会亮。
 // 画面下面那排：绑了键的身体动作。没绑的不列——它被认出来时，画面上的大字照样会
@@ -646,12 +670,12 @@ function renderRange() {
     text = `${latest.label || names.get(key) || key} → ${keyText(latest.action)}`;
   }
   if (hit) {
-    hit.hidden = !text;
+    setProperty(hit,'hidden',!text);
     if (text && text !== hit.dataset.text) {
       document.getElementById('rangeHitWhat').textContent = text;
       hit.classList.remove('on'); void hit.offsetWidth; hit.classList.add('on');
     }
-    hit.dataset.text = text;
+    setAttribute(hit,'data-text',text);
     const when = document.getElementById('rangeHitWhen');
     const note = text && !output.enabled ? '游戏控制没开，游戏里不会按' : '';
     if (when.textContent !== note) when.textContent = note;
@@ -666,31 +690,15 @@ function renderRange() {
     const keyEl = target.querySelector('.range-target-key');
     const want = label || '没绑';
     if (keyEl.textContent !== want) keyEl.textContent = want;
-    target.classList.toggle('unmapped', !label);
-    target.classList.toggle('on', held.has(key));
-    target.classList.toggle('flash', !held.has(key) && fresh.has(key));
+    setClass(target,'unmapped',!label);
+    setClass(target,'on',held.has(key));
+    setClass(target,'flash',!held.has(key)&&fresh.has(key));
   }
 
   // 最近触发：有了才出现。
   const card = document.getElementById('recentCard');
   const log = document.getElementById('rangeLog');
   if (!card || !log) return;
-  card.hidden = !events.length;
-  if (!events.length) return;
-  const recent = events.slice(-6).reverse();
-  const logKey = recent.map(event => `${event.at}:${event.trigger}`).join('|') + '@' + Math.floor(now);
-  if (logKey === rangeLogKey) return;
-  rangeLogKey = logKey;
-  log.replaceChildren();
-  for (const event of recent) {
-    const key = String(event.trigger || '');
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = 'range-log-item';
-    row.textContent = `${agoText(Math.max(0, now - Number(event.at || 0)))} · `
-      + `${event.label || names.get(key) || key} → ${keyText(event.action)}`;
-    row.title = '点一下去改它的键';
-    row.addEventListener('click', () => revealBindingRow(key));
-    log.appendChild(row);
-  }
+  setProperty(card,'hidden',!events.length);
+  renderEventLog(log,events,names,now,{className:'range-log-item',unmapped:'没绑键',title:'点一下去改它的键'});
 }

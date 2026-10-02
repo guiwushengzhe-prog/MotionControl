@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 _APP_DIR = Path(__file__).resolve().parent
 
 from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
+from motioncontrol.cloud_metadata_cache import PublicMetadataCache
 from motioncontrol.command_executor import CommandExecutor
 from motioncontrol.config_transaction import atomic_bytes, file_transaction, recover
 from motioncontrol.view_control import configure_view_control
@@ -697,6 +698,7 @@ if POSE_ACTIONS.last_error:
 # 最近一次读到的官方动作库列表。只用来给还没下载的动作报名字（"这份配置用到了开合跳"），
 # 不参与识别。
 CLOUD_POSE_LIBRARY: dict = {}
+CLOUD_POSE_LIBRARY_ENDPOINT = ""
 
 
 def _apply_pose_actions() -> None:
@@ -826,6 +828,7 @@ CLOUD_ENDPOINT_FILE = user_path("cloud_endpoint")
 # 子域名定下来之前这里先写了 config.，定的却是 motioncontrol.，于是桌面端一直
 # 报 getaddrinfo failed——域名根本没解析。tests/test_cloud_client.py 现在会核对。
 DEFAULT_CLOUD_ENDPOINT = "https://motioncontrol.guiwu-aware.icu"
+CLOUD_METADATA = PublicMetadataCache(user_data_root() / "cloud_metadata_cache.json")
 
 
 def cloud_endpoint() -> str:
@@ -835,6 +838,49 @@ def cloud_endpoint() -> str:
     except OSError:
         configured = ""
     return configured or DEFAULT_CLOUD_ENDPOINT
+
+
+def _cached_cloud_read(kind: str, parameters: dict | None = None, *, force: bool = False):
+    client = CloudClient(cloud_endpoint())
+    arguments = parameters or {}
+    loader = lambda: getattr(client, kind)(**arguments)
+    data, metadata = CLOUD_METADATA.read(client.base, kind, arguments, loader, force=force)
+    return client.base, data, metadata
+
+
+def _cloud_pose_payload(*, force: bool = False) -> dict:
+    global CLOUD_POSE_LIBRARY, CLOUD_POSE_LIBRARY_ENDPOINT
+    endpoint, data, metadata = _cached_cloud_read("pose_library", force=force)
+    if endpoint == cloud_endpoint().rstrip("/"):
+        # These are names and demos only. Signed installed rules remain owned
+        # by POSE_ACTIONS and the configuration transaction.
+        CLOUD_POSE_LIBRARY, CLOUD_POSE_LIBRARY_ENDPOINT = data, endpoint
+    actions = []
+    for item in data.get("actions", []):
+        installed = POSE_ACTIONS.revision(str(item["id"]))
+        try:
+            latest = int(item.get("revision", 0))
+        except (TypeError, ValueError):
+            latest = 0
+        actions.append({**item, "installed_revision": installed,
+                        "update_available": bool(installed) and latest > installed})
+    return {"ok": True, "actions": actions, "endpoint": endpoint, "cache": metadata,
+            "rating_names": data.get("rating_names") or pose_library.RATING_NAMES,
+            "body_part_names": data.get("body_part_names") or pose_library.BODY_PART_NAMES}
+
+
+def _cloud_status_payload(*, endpoint_only: bool = False) -> dict:
+    payload = {"version": VERSION, "endpoint": cloud_endpoint(), "reachable": False}
+    if endpoint_only:
+        return payload
+    try:
+        _endpoint, health, metadata = _cached_cloud_read("health")
+        payload.update(health=health, cache=metadata, reachable=not metadata["offline"])
+        if metadata["error"]:
+            payload["error"] = metadata["error"]
+    except CloudError as exc:
+        payload["error"] = str(exc)
+    return payload
 
 
 def set_cloud_endpoint(url: str) -> str:
@@ -1255,7 +1301,7 @@ class _BaseHandler(SimpleHTTPRequestHandler):
         pass
 
     def _send_json(self, data: dict, status: int = 200):
-        raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
@@ -1511,7 +1557,8 @@ class AdminHandler(_BaseHandler):
                 "library": pose_library.library_payload(),
                 "rating_names": pose_library.RATING_NAMES,
                 "body_part_names": pose_library.BODY_PART_NAMES,
-                "cloud_names": {item["id"]: item["name"] for item in CLOUD_POSE_LIBRARY.get("actions", [])},
+                "cloud_names": {item["id"]: item["name"] for item in CLOUD_POSE_LIBRARY.get("actions", [])}
+                               if CLOUD_POSE_LIBRARY_ENDPOINT == cloud_endpoint().rstrip("/") else {},
                 "error": POSE_ACTIONS.last_error,
             })
             return
@@ -1521,26 +1568,9 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "pose library is loopback-only"}, 403)
                 return
             try:
-                data = CloudClient(cloud_endpoint()).pose_library()
+                self._send_json(_cloud_pose_payload(force=parse_qs(parsed.query).get("refresh") == ["1"]))
             except CloudError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 502)
-                return
-            CLOUD_POSE_LIBRARY.clear()
-            CLOUD_POSE_LIBRARY.update(data)
-            actions = []
-            for item in data.get("actions", []):
-                if not isinstance(item, dict) or not item.get("id"):
-                    continue
-                installed = POSE_ACTIONS.revision(str(item["id"]))
-                try:
-                    latest = int(item.get("revision", 0))
-                except (TypeError, ValueError):
-                    latest = 0
-                actions.append({**item, "installed_revision": installed,
-                                "update_available": bool(installed) and latest > installed})
-            self._send_json({"ok": True, "actions": actions,
-                             "rating_names": data.get("rating_names") or pose_library.RATING_NAMES,
-                             "body_part_names": data.get("body_part_names") or pose_library.BODY_PART_NAMES})
             return
         if route == "/api/pose/custom":
             self._send_json({
@@ -1575,16 +1605,7 @@ class AdminHandler(_BaseHandler):
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "cloud is loopback-only"}, 403)
                 return
-            endpoint = cloud_endpoint()
-            payload = {"version": VERSION, "endpoint": endpoint, "reachable": False}
-            try:
-                payload["health"] = CloudClient(endpoint).health()
-                payload["reachable"] = True
-            except CloudError as exc:
-                # Not reachable is a normal state, not a failure of this
-                # request: the cloud is optional and the UI says so.
-                payload["error"] = str(exc)
-            self._send_json(payload)
+            self._send_json(_cloud_status_payload(endpoint_only=parse_qs(parsed.query).get("endpoint_only") == ["1"]))
             return
         super().do_GET()
 
@@ -1805,10 +1826,10 @@ class AdminHandler(_BaseHandler):
                     self._send_json({"ok": True,
                                      "endpoint": set_cloud_endpoint(str(body.get("url", "")))})
                 elif route == "/api/cloud/browse":
-                    client = CloudClient(cloud_endpoint())
-                    self._send_json({"ok": True, "profiles": client.browse(
-                        doc_type=str(body.get("doc_type", "")),
-                        game_id=str(body.get("game_id", "")))})
+                    endpoint, profiles, metadata = _cached_cloud_read("browse", {
+                        "doc_type": str(body.get("doc_type", "")), "game_id": str(body.get("game_id", ""))},
+                        force=body.get("refresh") is True)
+                    self._send_json({"ok": True, "profiles": profiles, "endpoint": endpoint, "cache": metadata})
                 elif route == "/api/cloud/preview":
                     remote = CloudClient(cloud_endpoint()).fetch(
                         str(body.get("profile_id", "")), str(body.get("version_id", "")))
@@ -2425,6 +2446,7 @@ def main():
         pass
     finally:
         UPDATE_CANCEL.set()
+        CLOUD_METADATA.close(wait=False)
         SYSTEM_COMMANDS.close()
         perf_stop.set()
         perf_thread.join(timeout=1.0)

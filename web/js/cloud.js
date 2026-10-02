@@ -1,5 +1,5 @@
 // 本游戏 → 云端配置。
-import {api,configurationOperation,post} from './core.js';
+import {api,configurationOperation,isVisible,post} from './core.js';
 import {refreshProfile} from './mapping.js';
 import {gameProfile} from './state.js';
 import {refreshVoice,renderVoiceRows,voice,voiceRowsFromStatus} from './voice.js';
@@ -27,42 +27,67 @@ function cloudSay(text, kind = '') {
 /** 云端地址，从服务端读一次，用来拼「在网站上打开」的链接。 */
 let cloudEndpoint = '';
 let installedRefresh=null;
+let cloudRequest=0,cloudPoll=null,cloudInstalling=false;
+let renderedKey='',renderedProfiles='';
 
-export async function cloudRefresh() {
-  if (!cloudListEl) return;
-  cloudSay('正在连接云端…');
-  cloudListEl.innerHTML = '';
+function cacheDescription(cache={}) {
+  const at=Number(cache.updated_at);
+  const updated=Number.isFinite(at)&&at>0?` · 更新于 ${new Date(at*1000).toLocaleString()}`:'';
+  if(cache.offline)return ` · 云端暂不可用，显示上次获取的结果${updated}`;
+  if(cache.refreshing)return ` · 正在后台检查更新${updated}`;
+  return updated;
+}
+
+export async function cloudRefresh(force=false,background=false) {
+  if (!cloudListEl||cloudInstalling) return;
+  const request=++cloudRequest;
+  clearTimeout(cloudPoll);cloudPoll=null;
+  if(!background)cloudSay('正在读取云端配置…');
+  if(!background&&cloudRefreshBtn)cloudRefreshBtn.disabled=true;
   try {
     if(installedRefresh){await configurationOperation(installedRefresh);installedRefresh=null}
-    const status = await api('/api/cloud/status', { timeoutMs: 12000 });
-    cloudEndpoint = status.endpoint || '';
-    if (!status.reachable) {
-      cloudSay(`${status.error || '连不上云端'}。过一会儿点「刷新」再试。`, 'error');
-      return;
-    }
-
+    // Reading the configured address is local. A health request must not hide
+    // the last successful public list when the cloud is offline.
+    const status = await api('/api/cloud/status?endpoint_only=1');
+    if(request!==cloudRequest)return;
+    cloudEndpoint = status.endpoint || cloudEndpoint;
     // 只查当前这个游戏。桌面端要回答的问题是"我现在玩的这个游戏有什么现成配置"，
     // 不是"云端一共有什么"——后者配置一多就是一堵墙，那是网站该干的事。
     // 服务端把没有游戏的配置（动作映射、语音映射）也算作与当前游戏相关：它们对
     // 每个游戏都适用，筛掉等于藏起最该出现的那几份。
     const gameId = gameProfile.selected?.selected_id || gameProfile.selected?.id || '';
     const gameName = gameProfile.selected?.name || gameId;
-    const { profiles } = await post('/api/cloud/browse', { game_id: gameId }, 15000);
-    if (!profiles.length) {
-      cloudSay(`《${gameName}》还没有人公开分享配置。`);
-      return;
+    let key=JSON.stringify([cloudEndpoint,gameId]);
+    if(renderedKey!==key){cloudListEl.replaceChildren();renderedKey=key;renderedProfiles=''}
+    const { profiles=[],cache={},endpoint } = await post('/api/cloud/browse', { game_id: gameId,refresh:force===true }, 15000);
+    if(request!==cloudRequest||gameId!==(gameProfile.selected?.selected_id||gameProfile.selected?.id||''))return;
+    cloudEndpoint=endpoint||cloudEndpoint;
+    key=JSON.stringify([cloudEndpoint,gameId]);
+    const fingerprint=JSON.stringify(profiles);
+    if(key!==renderedKey||fingerprint!==renderedProfiles){
+      cloudListEl.replaceChildren(...profiles.map(cloudRow));
+      renderedKey=key;renderedProfiles=fingerprint;
     }
-    cloudSay(`《${gameName}》· ${profiles.length} 份`);
-    for (const item of profiles) cloudListEl.appendChild(cloudRow(item));
+    const suffix=cacheDescription(cache);
+    if (!profiles.length) {
+      cloudSay(`《${gameName}》还没有人公开分享配置。${suffix}`,cache.offline?'error':'');
+    }else{
+      cloudSay(`《${gameName}》· ${profiles.length} 份${suffix}`,cache.offline?'error':'');
+    }
+    if(cache.refreshing&&isVisible(cloudListEl))cloudPoll=setTimeout(()=>{
+      if(request===cloudRequest&&isVisible(cloudListEl))void cloudRefresh(false,true);
+    },650);
   } catch (error) {
-    cloudSay(error.message, 'error');
+    if(request===cloudRequest)cloudSay(`${error.message}。过一会儿点「刷新」再试。`, 'error');
+  }finally{
+    if(request===cloudRequest&&cloudRefreshBtn)cloudRefreshBtn.disabled=false;
   }
 }
 
 /** 只要地址。以前只有「查看分享」会读它，于是没先点那个就点「打开网站」，只会说没连上。 */
 export async function loadCloudEndpoint() {
   if (cloudEndpoint) return cloudEndpoint;
-  const status = await api('/api/cloud/status', { timeoutMs: 12000 });
+  const status = await api('/api/cloud/status?endpoint_only=1');
   cloudEndpoint = status.endpoint || '';
   return cloudEndpoint;
 }
@@ -136,6 +161,8 @@ async function cloudInstall(item, button) {
       `你现在的配置会先备份到用户目录的 cloud_backup 下，随时可以拿回来。`)) return;
 
   button.disabled = true;
+  cloudInstalling=true;++cloudRequest;clearTimeout(cloudPoll);cloudPoll=null;
+  if(cloudRefreshBtn)cloudRefreshBtn.disabled=true;
   const original = button.textContent;
   button.textContent = '安装中…';
   cloudSay('正在下载并校验…');
@@ -170,11 +197,13 @@ async function cloudInstall(item, button) {
   } catch (error) {
     cloudSay(`安装失败：${error.message}`, 'error');
   } finally {
+    cloudInstalling=false;
+    if(cloudRefreshBtn)cloudRefreshBtn.disabled=false;
     button.disabled = false;
     button.textContent = original;
   }
 }
 
-cloudRefreshBtn?.addEventListener('click', cloudRefresh);
+cloudRefreshBtn?.addEventListener('click', ()=>cloudRefresh(true));
 
 document.getElementById('cloudSiteBtn')?.addEventListener('click', () => openOnSite('/'));

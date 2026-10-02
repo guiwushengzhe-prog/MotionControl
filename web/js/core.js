@@ -4,6 +4,27 @@ export const $ = s => document.querySelector(s);
 
 export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
+// 状态轮询只写变化的字段，保留现有节点、焦点和正在编辑的值。
+export function setText(el,value){if(el&&el.textContent!==String(value))el.textContent=String(value)}
+export function setProperty(el,name,value){if(el&&el[name]!==value)el[name]=value}
+export function setAttribute(el,name,value){if(el&&el.getAttribute(name)!==String(value))el.setAttribute(name,String(value))}
+export function setClass(el,name,enabled){if(el&&el.classList.contains(name)!==!!enabled)el.classList.toggle(name,!!enabled)}
+const appliedStyles=new WeakMap();
+export function setStyle(el,name,value){
+  if(!el)return;
+  const requested=String(value),current=el.style.getPropertyValue(name),values=appliedStyles.get(el)||new Map(),previous=values.get(name);
+  // CSS 会规范化小数等字符串；比较上次实际写入的值，避免同一坐标反复触发布局。
+  if(previous?.requested===requested&&previous.applied===current)return;
+  if(current!==requested)el.style.setProperty(name,requested);
+  values.set(name,{requested,applied:el.style.getPropertyValue(name)});appliedStyles.set(el,values);
+}
+export function syncChildren(parent,children){
+  const focused=parent.contains(document.activeElement)?document.activeElement:null;
+  children.forEach((child,index)=>{if(parent.children[index]!==child)parent.insertBefore(child,parent.children[index]||null)});
+  while(parent.children.length>children.length)parent.lastElementChild.remove();
+  if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
+}
+
 // 配置切换、安装和库更新共用一条队列。先存草稿，再重建编辑区；急停不走此队列。
 let configurationTail=Promise.resolve();
 export let configurationBusy=false;
@@ -34,14 +55,14 @@ export function positionPopup(anchor,popup){
   const left=viewport?.offsetLeft||0,top=viewport?.offsetTop||0;
   const width=viewport?.width||innerWidth,height=viewport?.height||innerHeight;
   const rect=anchor.getBoundingClientRect(),margin=8,gap=5;
-  if(popup.classList.contains('voice-release-picker-menu'))popup.style.width=rect.width+'px';
-  popup.style.maxWidth=Math.max(0,width-2*margin)+'px';
+  if(popup.classList.contains('voice-release-picker-menu'))setStyle(popup,'width',rect.width+'px');
+  setStyle(popup,'max-width',Math.max(0,width-2*margin)+'px');
   const actualWidth=popup.getBoundingClientRect().width;
-  popup.style.left=clamp(rect.left,left+margin,Math.max(left+margin,left+width-actualWidth-margin))+'px';
+  setStyle(popup,'left',clamp(rect.left,left+margin,Math.max(left+margin,left+width-actualWidth-margin))+'px');
   const below=Math.max(0,top+height-rect.bottom-gap-margin),above=Math.max(0,rect.top-top-gap-margin);
-  popup.style.maxHeight=Math.max(0,Math.max(above,below))+'px';
-  popup.style.bottom='auto';
-  popup.style.top=(below>=above?rect.bottom+gap:Math.max(top+margin,rect.top-gap-popup.getBoundingClientRect().height))+'px';
+  setStyle(popup,'max-height',Math.max(0,Math.max(above,below))+'px');
+  setStyle(popup,'bottom','auto');
+  setStyle(popup,'top',(below>=above?rect.bottom+gap:Math.max(top+margin,rect.top-gap-popup.getBoundingClientRect().height))+'px');
 }
 
 export function fitCanvas(canvas,aspectRatio=4/3,maxPixels=1600000){
