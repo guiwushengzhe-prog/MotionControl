@@ -1990,6 +1990,10 @@ class OutputManager:
                             self.last_error = str(exc)
 
     def status(self) -> dict:
+        with self._lock:
+            return self._status_locked()
+
+    def _status_locked(self) -> dict:
         dll = self.vigem_dll
         return {
             "enabled": self.enabled,

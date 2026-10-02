@@ -5,6 +5,7 @@ export const S = {
   audioMode: 'waiting',
   cameraIndex: 0,
   outputEpoch: 0,
+  inputEpoch: 0,
   headDirty: false,
   desiredSource: null,
   customPoseScores: {},

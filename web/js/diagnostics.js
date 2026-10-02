@@ -1,16 +1,17 @@
 // 设置 → 实验与诊断：骨骼录制、触发录制。
-import {$,api,notice,post} from './core.js';
+import {$,api,notice,positionPopup,post} from './core.js';
 
 // --- skeleton recording ---------------------------------------------------
 // Polls only while something is actually happening, so an idle settings page
 // is not making a request every second for nothing.
 let poseRecordTimer=null,lastPoseRecordState='';
+let poseRecordBusy=false;
 
 function renderPoseRecord(state){
   if(!state)return;
   const label={
-    idle:'未录制',waiting:`倒计时 ${state.remaining_s.toFixed(1)} 秒`,
-    recording:`录制中 ${state.remaining_s.toFixed(1)} 秒 · 已 ${state.frames} 帧`,
+    idle:'未录制',waiting:`倒计时 ${Number(state.remaining_s||0).toFixed(1)} 秒`,
+    recording:`录制中 ${Number(state.remaining_s||0).toFixed(1)} 秒 · 已 ${state.frames} 帧`,
     saving:'正在保存…',cancelled:'已取消',
     done:`已保存 ${state.frames} 帧`,
     error:state.error||'录制失败',
@@ -27,7 +28,12 @@ function renderPoseRecord(state){
   }
 }
 
-export async function refreshPoseRecord(){try{const data=await api('/api/pose/record');renderPoseRecord(data.recording)}catch{}}
+export async function refreshPoseRecord(){
+  if(poseRecordBusy)return;
+  poseRecordBusy=true;
+  try{const data=await api('/api/pose/record');renderPoseRecord(data.recording)}catch{}
+  finally{poseRecordBusy=false}
+}
 
 // 「录下的数据」：几段、多大，加一个打开文件夹。还没录过就整行不出现。
 // 不摆路径——在 C 盘的用户目录里，路径又长又吓人，要找点按钮就到。
@@ -96,13 +102,15 @@ $('#triggerRecordChoices').addEventListener('click',event=>{
 function placeTriggerRecordMenu(){
   const picker=$('#triggerRecordPicker');if(!picker.open)return;
   const rect=$('#triggerRecordSummary').getBoundingClientRect(),menu=$('#triggerRecordChoices');
-  const below=window.innerHeight-rect.bottom-12,above=rect.top-12,up=below<180&&above>below;
-  menu.classList.toggle('above',up);menu.style.maxHeight=Math.max(100,Math.min(300,up?above:below))+'px';
+  menu.style.width=rect.width+'px';positionPopup($('#triggerRecordSummary'),menu);
 }
 
 $('#triggerRecordPicker').addEventListener('toggle',()=>{if($('#triggerRecordPicker').open){placeTriggerRecordMenu();void refreshTriggerRecord().catch(error=>notice(error.message))}});
 
 window.addEventListener('resize',placeTriggerRecordMenu);
+document.addEventListener('scroll',placeTriggerRecordMenu,true);
+window.visualViewport?.addEventListener('resize',placeTriggerRecordMenu);
+window.visualViewport?.addEventListener('scroll',placeTriggerRecordMenu);
 
 document.addEventListener('click',event=>{if(!event.target.closest('#triggerRecordPicker'))$('#triggerRecordPicker').open=false});
 

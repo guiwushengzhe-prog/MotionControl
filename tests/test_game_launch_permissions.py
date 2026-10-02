@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from motioncontrol.game_launch import elevated_command
 from motioncontrol.game_profiles import GameProfileStore
 from motioncontrol_shared.canonical import canonicalize
+from test_configuration_coordination import application
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,8 +99,8 @@ def test_declined_elevation_keeps_old_preference_and_server(isolated_user_data, 
         thread.join(timeout=3)
 
 
-def test_cloud_documents_carry_the_games_launch_mode(isolated_user_data, monkeypatch):
-    import server
+def test_cloud_documents_carry_the_games_launch_mode(application, isolated_user_data, monkeypatch):
+    server = application
     from threading import RLock
 
     profile_id = "generic-xbox"
@@ -116,16 +117,12 @@ def test_cloud_documents_carry_the_games_launch_mode(isolated_user_data, monkeyp
 
     store = GameProfileStore(ROOT, selection_path=isolated_user_data / "game_profile_selection.json")
     monkeypatch.setattr(server, "PROFILES", store)
-    monkeypatch.setattr(server, "VOICE", SimpleNamespace(
-        _lock=RLock(), source_id="test", _release_locked=lambda _: None,
-        configure_profile_bindings=lambda _: None))
-    monkeypatch.setattr(server, "KERNEL", SimpleNamespace(configure_bindings=lambda _: None))
     server._install_profile_selection(selection, profile_id)
     assert store.requires_admin(profile_id)
 
 
-def test_shared_custom_game_keeps_identity_and_admin_on_another_pc(isolated_user_data, monkeypatch):
-    import server
+def test_shared_custom_game_keeps_identity_and_admin_on_another_pc(application, isolated_user_data, monkeypatch):
+    server = application
     from threading import RLock
 
     first = GameProfileStore(ROOT, selection_path=isolated_user_data / "first.json")
@@ -141,10 +138,7 @@ def test_shared_custom_game_keeps_identity_and_admin_on_another_pc(isolated_user
     monkeypatch.setenv("MOTIONCONTROL_USER_DIR", str(second_dir))
     second = GameProfileStore(ROOT)
     monkeypatch.setattr(server, "PROFILES", second)
-    monkeypatch.setattr(server, "VOICE", SimpleNamespace(
-        _lock=RLock(), source_id="test", _release_locked=lambda _: None,
-        configure_profile_bindings=lambda _: None))
-    monkeypatch.setattr(server, "KERNEL", SimpleNamespace(configure_bindings=lambda _: None))
+    monkeypatch.setattr(server, "MOTION_CONFIG_FILE", second_dir / "motion_mappings.json")
     server._install_profile_selection(uploaded, game["id"])
     assert second.effective_profile()["name"] == "和平精英"
     assert second.requires_admin(game["id"])
@@ -159,10 +153,8 @@ def test_shared_custom_game_keeps_identity_and_admin_on_another_pc(isolated_user
     third = GameProfileStore(ROOT)
     monkeypatch.setattr(server, "PROFILES", third)
     monkeypatch.setattr(server, "MOTION_CONFIG", [])
+    monkeypatch.setattr(server, "MOTION_CONFIG_FILE", third_dir / "motion_mappings.json")
     monkeypatch.setattr(server, "save_motion_config", lambda value: value)
-    monkeypatch.setattr(server, "KERNEL", SimpleNamespace(
-        configure_bindings=lambda _: None, configure_motions=lambda _: None))
-    monkeypatch.setattr(server, "OUTPUT", SimpleNamespace(set_holds=lambda *args, **kwargs: None))
     server._install_game_bundle(bundle)
     assert third.effective_profile()["name"] == "和平精英"
     assert third.requires_admin(game["id"])

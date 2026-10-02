@@ -119,7 +119,7 @@ def test_installing_a_bundle_goes_through_the_normal_entry_points():
     block = SERVER[start:start + 1400]
     assert "PROFILES.set_overrides" in block
     assert "save_motion_config" in block
-    assert "KERNEL.configure_bindings" in block, "装完没有把新绑定推进内核"
+    assert "_profile_configuration_transaction" in block, "安装必须同步提交身体和语音消费者"
 
 
 def test_the_desktop_knows_how_to_install_a_bundle():

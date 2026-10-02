@@ -203,21 +203,6 @@ def test_the_page_no_longer_says_custom_phrases_are_desktop_only():
         page = (ROOT / "web" / name).read_text(encoding="utf-8")
         assert "只有电脑麦克风能识别" not in page, name
 
-def test_the_trigger_inputs_load_before_anything_can_render_rows():
-    """自定义姿势和宏库要比 refreshKernel 还早拿到。
-
-    refreshKernel 里有一句 void loadProfiles()，它**不被 await**，会自己跑去建
-    映射行。那一刻这两份要是还没到，建出来的表就是缺的：录过的姿势根本没有对应
-    的行（没地方绑键），每个「键盘宏」下拉都写着“还没有宏”。东西明明在，页面上却
-    说没有——这种毛病不报错，只是看着像数据丢了。
-
-    旧毛病，只是之前靠时机碰对的次数多。中间多一次 await 就会碰错，
-    2026-09-22 真碰上了。
-    """
-    app = read_web_js(ROOT)
-    init = app.index("async function init(){")
-    poses = app.index("refreshCustomPoses({rebuild:false})", init)
-    macros = app.index("refreshMacros({rebuild:false})", init)
-    kernel = app.index("await refreshKernel()", init)
-    assert poses < kernel, "自定义姿势排到 refreshKernel 后面去了"
-    assert macros < kernel, "宏库排到 refreshKernel 后面去了"
+# Initialization ordering is covered with delayed library responses in
+# test_web_optimization.py. Status can start early while mapping rows wait for
+# custom poses and macros; source-text order cannot establish that behavior.

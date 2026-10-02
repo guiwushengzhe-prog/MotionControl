@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -8,7 +9,10 @@ import sys
 import threading
 import time
 import copy
+from contextlib import contextmanager
+import tempfile
 from array import array
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -18,6 +22,19 @@ WAKE_COMMAND_WINDOW_SECONDS = 3.5
 # 每个游戏自己的 12 句口令。其余内置口令都是系统功能，不跟游戏走。
 PROFILE_SLOT_PREFIX = "game.profile_slot_"
 MAX_AUDIO_FRAME_BYTES = 256 * 1024
+MAX_AUDIO_AGE_SECONDS = 0.5
+AUDIO_QUEUE_CAPACITY = 8
+
+
+@dataclass(frozen=True)
+class _AudioFrame:
+    source_id: str
+    device_id: str
+    pcm16: bytes
+    queued_at: float
+    generation: int
+    sequence: int
+    callback: Callable | None = None
 
 
 
@@ -192,6 +209,7 @@ class VoiceService:
         execute_action: Callable[[dict], dict],
         emergency_stop: Callable[[], dict] | None = None,
         clear_source: Callable[[str], dict] | None = None,
+        on_system_command: Callable[[dict], dict] | None = None,
     ) -> None:
         self.root = root
         # User data: kept out of the program folder so an upgrade does not
@@ -202,6 +220,7 @@ class VoiceService:
         self.execute_action = execute_action
         self.emergency_stop = emergency_stop or (lambda: {"executed": True})
         self.clear_source = clear_source or (lambda _source: {})
+        self.on_system_command = on_system_command
         self.sample_rate = 16_000
         self.mappings: list[dict] = []
         self.wake_word = DEFAULT_WAKE_WORD
@@ -212,6 +231,7 @@ class VoiceService:
         self._catalog: list[dict] = []
         self._profile_bindings: dict = {}
         self._phrase_index: dict[str, dict] = {}
+        self._configuration_conflicts: tuple[str, ...] = ()
         self.recognizer: VoskCommandRecognizer | None = None
         self.recognizer_mode = "vosk_constrained_grammar"
         self.supported_count = 0
@@ -241,10 +261,24 @@ class VoiceService:
         self.audio_device: int | None = None
         self.audio_device_name: str | None = None
         self._mic_stream = None
-        self._mic_queue: queue.Queue[bytes] | None = None
+        self._mic_queue: queue.Queue[_AudioFrame] | None = None
         self._mic_stop = threading.Event()
         self._mic_thread: threading.Thread | None = None
         self._lock = threading.RLock()
+        self._audio_submit_lock = threading.Lock()
+        self._phone_queue: queue.Queue[_AudioFrame] = queue.Queue(maxsize=AUDIO_QUEUE_CAPACITY)
+        self._phone_stop = threading.Event()
+        self._phone_thread: threading.Thread | None = None
+        self._audio_generation = 0
+        self._invalidated_phone_sources: dict[str, int] = {}
+        self._mic_sequence = 0
+        self._phone_sequence = 0
+        self._mic_gap = threading.Event()
+        self._callback_error: str | None = None
+        self.audio_dropped_frames = 0
+        self.audio_stream_resets = 0
+        self._voice_journal = self.config_path.parent / ".voice-config-transaction.json"
+        self._recover_configuration()
         self._load()
         self._load_command_registry()
         self._drop_shadowed_mappings()
@@ -312,21 +346,89 @@ class VoiceService:
 
     def _write_config(self) -> None:
         """只写口令映射。唤醒词和急停口令在 _write_personal 那一份里。"""
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(
-            json.dumps({"mappings": self.mappings}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        self._atomic_bytes(self.config_path, json.dumps(
+            {"mappings": self.mappings}, ensure_ascii=False, indent=2).encode("utf-8"))
 
     def _write_personal(self) -> None:
-        self.personal_path.parent.mkdir(parents=True, exist_ok=True)
-        self.personal_path.write_text(
-            json.dumps({
+        self._atomic_bytes(self.personal_path, json.dumps({
                 "wake_word": self.wake_word,
                 "emergency_stop_phrases": self.emergency_stop_phrases,
-            }, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+            }, ensure_ascii=False, indent=2).encode("utf-8"))
+
+    @staticmethod
+    def _stage_bytes(path: Path, content: bytes) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.",
+                                             suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            return temporary
+        except Exception:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            raise
+
+    @classmethod
+    def _atomic_bytes(cls, path: Path, content: bytes) -> None:
+        temporary = cls._stage_bytes(path, content)
+        try:
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _restore_configuration(self, previous: dict) -> None:
+        for name, path in (("mappings", self.config_path), ("personal", self.personal_path)):
+            content = previous[name]
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                restored = base64.b64decode(content, validate=True)
+                if not path.is_file() or path.read_bytes() != restored:
+                    self._atomic_bytes(path, restored)
+
+    def _recover_configuration(self) -> None:
+        # An interrupted two-file commit must be resolved before either file is
+        # loaded. Journal keys map to fixed paths; the journal cannot select paths.
+        if self._voice_journal.is_file():
+            previous = json.loads(self._voice_journal.read_text(encoding="utf-8"))
+            self._restore_configuration(previous)
+            self._voice_journal.unlink()
+
+    def _save_configuration(self) -> None:
+        paths = {"mappings": self.config_path, "personal": self.personal_path}
+        contents = {
+            "mappings": json.dumps({"mappings": self.mappings}, ensure_ascii=False, indent=2).encode("utf-8"),
+            "personal": json.dumps({"wake_word": self.wake_word,
+                                     "emergency_stop_phrases": self.emergency_stop_phrases},
+                                    ensure_ascii=False, indent=2).encode("utf-8"),
+        }
+        previous = {name: base64.b64encode(path.read_bytes()).decode("ascii") if path.exists() else None
+                    for name, path in paths.items()}
+        staged: dict[str, Path] = {}
+        journal_written = False
+        try:
+            for name, path in paths.items():
+                staged[name] = self._stage_bytes(path, contents[name])
+            self._atomic_bytes(self._voice_journal, json.dumps(previous).encode("utf-8"))
+            journal_written = True
+            for name, path in paths.items():
+                os.replace(staged[name], path)
+            self._voice_journal.unlink()
+            journal_written = False
+        except Exception:
+            if journal_written:
+                # Keep the journal when recovery itself fails, so a subsequent
+                # launch can retry instead of treating a mixed pair as committed.
+                self._restore_configuration(previous)
+                self._voice_journal.unlink()
+            raise
+        finally:
+            for temporary in staged.values():
+                temporary.unlink(missing_ok=True)
 
     def configure(self, items, *, wake_word=None, emergency_stop_phrases=None) -> dict:
         with self._lock:
@@ -334,18 +436,22 @@ class VoiceService:
             wake = self._validate_wake_word(wake_word) if wake_word is not None else self.wake_word
             stops = (self._validate_emergency_phrases(emergency_stop_phrases)
                      if emergency_stop_phrases is not None else self.emergency_stop_phrases)
-            previous = (self.mappings, self.wake_word, self.emergency_stop_phrases)
-            self.mappings, self.wake_word, self.emergency_stop_phrases = mappings, wake, stops
-            # 内置口令里写着唤醒词，改了唤醒词就要重建一遍，否则它们还卡在旧的那个上。
-            self._build_registry()
-            problems = self._phrase_conflicts(self._commands_for(self._profile_bindings))
+            # Build and persist a candidate without publishing it to lock-free
+            # audio producers/status readers. A failed save leaves the live
+            # settings, recognizer and held outputs exactly as they were.
+            candidate = copy.copy(self)
+            candidate.mappings, candidate.wake_word, candidate.emergency_stop_phrases = mappings, wake, stops
+            candidate._build_registry()
+            problems = candidate._configuration_conflicts
             if problems:
-                self.mappings, self.wake_word, self.emergency_stop_phrases = previous
-                self._build_registry()
                 raise ValueError(f"{problems[0]}，换一个说法")
+            candidate._save_configuration()
+            self.mappings, self.wake_word, self.emergency_stop_phrases = mappings, wake, stops
+            self.command_registry, self._phrase_index = candidate.command_registry, candidate._phrase_index
+            self._configuration_conflicts = candidate._configuration_conflicts
             self._release_locked(self.source_id)
-            self._write_config()
-            self._write_personal()
+            with self._audio_submit_lock:
+                self._audio_generation += 1
             self._rebuild_recognizer()
             return self.status()
 
@@ -427,8 +533,13 @@ class VoiceService:
         return commands
 
     def _build_registry(self) -> None:
+        commands = self._commands_for(self._profile_bindings)
         self.command_registry = {compact_text(item["phrase"]): item
-                                 for item in self._commands_for(self._profile_bindings)}
+                                 for item in commands}
+        # Conflicts only change with configuration. Compute from the complete
+        # list before equal primary phrases are collapsed by the registry;
+        # status/audio reads can then copy a small immutable result.
+        self._configuration_conflicts = tuple(self._phrase_conflicts(commands))
         self._rebuild_phrase_index()
 
     def _phrase_conflicts(self, commands: list[dict]) -> list[str]:
@@ -499,6 +610,7 @@ class VoiceService:
             kept.append(entry)
         if kept != self.mappings:
             self.mappings = kept
+            self._build_registry()
             try:
                 self._write_config()
             except OSError as exc:
@@ -525,6 +637,8 @@ class VoiceService:
         with self._lock:
             self._profile_bindings = copy.deepcopy(bindings) if isinstance(bindings, dict) else {}
             self._build_registry()
+            with self._audio_submit_lock:
+                self._audio_generation += 1
             self._rebuild_recognizer()
 
     def grammar_phrases(self) -> list[str]:
@@ -627,14 +741,22 @@ class VoiceService:
         except Exception as exc:
             self.last_error = str(exc)
 
-    def _activate_locked(self, source_id: str, device_id: str, source_kind: str) -> None:
-        if self.source_id and self.source_id != source_id:
-            self._release_locked(self.source_id)
-        changed = self.source_id != source_id
-        self.source_id = source_id
-        self.device_id = device_id
-        self.source_kind = source_kind
-        self.connected = True
+    def _activate_locked(self, source_id: str, device_id: str, source_kind: str, *,
+                         expected_generation: int | None = None) -> bool:
+        with self._audio_submit_lock:
+            if expected_generation is not None and expected_generation != self._audio_generation:
+                return False
+            if source_kind == "phone" and source_id in self._invalidated_phone_sources:
+                self._invalidated_phone_sources.pop(source_id)
+                self._audio_generation += 1
+            previous_source = self.source_id
+            changed = previous_source != source_id or not self.connected
+            self.source_id = source_id
+            self.device_id = device_id
+            self.source_kind = source_kind
+            self.connected = True
+        if previous_source and changed:
+            self._release_locked(previous_source)
         self.audio_ready = self.recognizer is not None
         if changed:
             self.audio_bytes = 0
@@ -646,20 +768,24 @@ class VoiceService:
             self.last_action = None
             self.last_executed = None
             self._reset_stream_recognizer()
+        return True
 
     def connect_phone_text(self, source_id: str, device_id: str) -> dict:
         with self._lock:
             self._activate_locked(str(source_id), str(device_id), "phone")
             return self.status()
 
-    def accept_phone_text(self, source_id: str, device_id: str, text: str, confidence: float | None = None) -> tuple[dict, dict | None]:
+    def accept_phone_text(self, source_id: str, device_id: str, text: str, confidence: float | None = None,
+                          *, expected_generation: int | None = None) -> tuple[dict, dict | None]:
         text = str(text or "").strip()
         if not text or len(text) > 96:
             raise ValueError("voice_text 必须是 1 到 96 个字符")
         with self._lock:
             if self.source_kind == "computer":
                 return self.status(), {"matched": False, "reason": "computer_voice_source_active"}
-            self._activate_locked(str(source_id), str(device_id), "phone")
+            if not self._activate_locked(str(source_id), str(device_id), "phone",
+                                         expected_generation=expected_generation):
+                return self.status(), {"matched": False, "reason": "voice_source_generation_changed"}
             self.last_final = text
             self.last_partial = ""
             self.last_audio_at = time.monotonic()
@@ -671,16 +797,104 @@ class VoiceService:
         source_id: str,
         device_id: str,
         pcm16: bytes,
+        *,
+        sequence: int | None = None,
+        captured_at_ms: float | None = None,
+        result_callback: Callable[[dict | None, dict | None], None] | None = None,
+        expected_generation: int | None = None,
     ) -> tuple[dict, dict | None, dict | None]:
-        """Feed phone PCM to the same Windows recognizer used by the PC mic."""
-        with self._lock:
-            if self.source_kind == "computer":
-                return self.status(), None, {"matched": False, "reason": "computer_voice_source_active"}
-            self._activate_locked(str(source_id), str(device_id), "phone")
-            event, result = self._ingest_pcm_locked(str(source_id), pcm16)
-            return self.status(), event, result
+        """Queue phone PCM without putting recognition on its WebSocket reader.
 
-    def accept_phone_command(self, source_id: str, device_id: str, command_id: str, phrase: str = "") -> tuple[dict, dict | None]:
+        The three-item return remains compatible with older bridge callers;
+        asynchronous results use the optional callback outside the voice lock.
+        """
+        if not pcm16 or len(pcm16) % 2 or len(pcm16) > MAX_AUDIO_FRAME_BYTES:
+            raise ValueError("音频必须是有界的 16kHz 单声道 PCM16")
+        if self.source_kind == "computer":
+            return self.status(), None, {"matched": False, "reason": "computer_voice_source_active"}
+        capture_age = max(0.0, time.time() - captured_at_ms / 1000.0) if captured_at_ms is not None else 0.0
+        with self._audio_submit_lock:
+            if expected_generation is not None and expected_generation != self._audio_generation:
+                return self.status(), None, {"matched": False, "reason": "voice_source_generation_changed"}
+            if self._phone_stop.is_set():
+                return self.status(), None, {"matched": False, "reason": "voice_service_closed"}
+            self._phone_sequence += 1
+            if capture_age > MAX_AUDIO_AGE_SECONDS:
+                self.audio_dropped_frames += 1
+                return self.status(), None, {"matched": False, "reason": "audio_frame_stale"}
+            if str(source_id) in self._invalidated_phone_sources:
+                self._invalidated_phone_sources.pop(str(source_id))
+                self._audio_generation += 1
+            frame = _AudioFrame(str(source_id), str(device_id), bytes(pcm16), time.monotonic() - capture_age,
+                                self._audio_generation, sequence if sequence is not None else self._phone_sequence,
+                                result_callback)
+            try:
+                self._phone_queue.put_nowait(frame)
+            except queue.Full:
+                self.audio_dropped_frames += 1
+                return self.status(), None, None
+            if self._phone_thread is None or not self._phone_thread.is_alive():
+                self._phone_thread = threading.Thread(target=self._phone_loop,
+                                                      name="voice-phone-audio", daemon=True)
+                self._phone_thread.start()
+        return self.status(), None, None
+
+    def _phone_loop(self) -> None:
+        previous: tuple[str, int, int] | None = None
+        gap = False
+        while not self._phone_stop.is_set():
+            try:
+                frame = self._phone_queue.get(timeout=0.20)
+            except queue.Empty:
+                continue
+            try:
+                ident = (frame.source_id, frame.generation, frame.sequence)
+                if previous is not None and ident[:2] == previous[:2] and ident[2] <= previous[2]:
+                    self.audio_dropped_frames += 1
+                    continue
+                discontinuous = (previous is not None and
+                                 (ident[:2] != previous[:2] or ident[2] != previous[2] + 1))
+                outcome = self._consume_audio(frame, "phone", reset=gap or discontinuous)
+                if outcome is None:
+                    gap = True
+                    continue
+                previous, gap = ident, False
+                event, result = outcome
+                if frame.callback is not None and (event or result):
+                    frame.callback(event, result)
+            except Exception as exc:
+                gap = True
+                with self._lock:
+                    self.last_error = str(exc)
+            finally:
+                self._phone_queue.task_done()
+
+    def _consume_audio(self, frame: _AudioFrame, kind: str, *, reset: bool = False):
+        if frame.generation != self._audio_generation or time.monotonic() - frame.queued_at > MAX_AUDIO_AGE_SECONDS:
+            self.audio_dropped_frames += 1
+            return None
+        with self._lock:
+            if frame.generation != self._audio_generation or time.monotonic() - frame.queued_at > MAX_AUDIO_AGE_SECONDS:
+                self.audio_dropped_frames += 1
+                return None
+            if kind == "phone":
+                if self.source_kind == "computer" or self._phone_stop.is_set():
+                    return None
+                if not self._activate_locked(frame.source_id, frame.device_id, kind,
+                                             expected_generation=frame.generation):
+                    self.audio_dropped_frames += 1
+                    return None
+            elif self.source_id != frame.source_id or not self.connected:
+                return None
+            if reset:
+                self._reset_stream_recognizer()
+                self.wake_until = 0.0
+                self.audio_stream_resets += 1
+            return self._ingest_pcm_locked(frame.source_id, frame.pcm16, queued_at=frame.queued_at,
+                                           generation=frame.generation)
+
+    def accept_phone_command(self, source_id: str, device_id: str, command_id: str, phrase: str = "",
+                             *, expected_generation: int | None = None) -> tuple[dict, dict | None]:
         """Execute a phone KWS command by stable command_id.
 
         v0.9.6 phones normally transmit only command_id.  ``phrase`` remains
@@ -694,7 +908,9 @@ class VoiceService:
         with self._lock:
             if self.source_kind == "computer":
                 return self.status(), {"matched": False, "reason": "computer_voice_source_active"}
-            self._activate_locked(str(source_id), str(device_id), "phone")
+            if not self._activate_locked(str(source_id), str(device_id), "phone",
+                                         expected_generation=expected_generation):
+                return self.status(), {"matched": False, "reason": "voice_source_generation_changed"}
             self.last_final = phrase
             self.last_partial = ""
             self.last_audio_at = time.monotonic()
@@ -719,7 +935,8 @@ class VoiceService:
             result = self._execute_command_action(command, source_id=str(source_id))
             return self.status(), result
 
-    def _ingest_pcm_locked(self, source_id: str, pcm16: bytes) -> tuple[dict | None, dict | None]:
+    def _ingest_pcm_locked(self, source_id: str, pcm16: bytes, *, queued_at: float | None = None,
+                           generation: int | None = None) -> tuple[dict | None, dict | None]:
         if not pcm16 or len(pcm16) % 2:
             raise ValueError("音频必须是 16kHz 单声道 PCM16 双数字节")
         if len(pcm16) > MAX_AUDIO_FRAME_BYTES:
@@ -731,6 +948,13 @@ class VoiceService:
         self.last_rms = self._pcm_rms(pcm16)
         self.peak_rms = max(self.peak_rms, self.last_rms)
         event = self.recognizer.accept(pcm16)
+        if ((generation is not None and generation != self._audio_generation) or
+                (queued_at is not None and time.monotonic() - queued_at > MAX_AUDIO_AGE_SECONDS)):
+            self.audio_dropped_frames += 1
+            self.audio_stream_resets += 1
+            self._reset_stream_recognizer()
+            self.wake_until = 0.0
+            return None, None
         result = None
         if event:
             if event["kind"] == "partial":
@@ -759,6 +983,17 @@ class VoiceService:
         kind = str(command.get("kind", ""))
         target = str(command.get("default_target", ""))
         phrase = str(command.get("phrase", ""))
+        # Game slots keep their shipped keyboard catalog kind. Resolve an
+        # enabled system override before handing the action to the injected
+        # dispatcher, so it captures cancellation at recognition time too.
+        # Legacy callers without a dispatcher still resolve at execute_action.
+        voice_bindings = self._profile_bindings.get("voice", {})
+        binding = voice_bindings.get(cid) if isinstance(voice_bindings, dict) else None
+        bound_action = binding.get("action") if isinstance(binding, dict) else None
+        if (self.on_system_command is not None and kind != "system" and
+                isinstance(bound_action, dict) and bound_action.get("type") == "system" and
+                not binding.get("disabled")):
+            kind, target = "system", str(bound_action.get("target", ""))
         if not cid or not target:
             return {"matched": False, "reason": "invalid_command"}
         if cid == "system.emergency_stop":
@@ -780,6 +1015,7 @@ class VoiceService:
         if kind == "system":
             action["voice_source_id"] = source_id
             action["voice_source_kind"] = self.source_kind
+            action["voice_source_generation"] = self._audio_generation
         self.last_command = phrase or cid
         self.commands_heard += 1
         self.last_action = f"{kind}:{target}"
@@ -796,7 +1032,7 @@ class VoiceService:
                     self.last_error = str(exc)
 
         if action["type"] == "system":
-            threading.Thread(target=run, name="voice-command", daemon=True).start()
+            self._submit_system_action(action, run)
         else:
             # Output uses timer-backed pulses, so submitting under the voice lock
             # preserves command order and prevents a late hold after disconnect.
@@ -879,6 +1115,7 @@ class VoiceService:
         if match["type"] == "system":
             action["voice_source_id"] = source_id
             action["voice_source_kind"] = self.source_kind
+            action["voice_source_generation"] = self._audio_generation
         self.last_command = match["phrase"]
         self.commands_heard += 1
         self.last_action = f'{match["type"]}:{match["target"]}'
@@ -895,7 +1132,7 @@ class VoiceService:
                     self.last_error = str(exc)
 
         if action["type"] == "system":
-            threading.Thread(target=run, name="voice-command", daemon=True).start()
+            self._submit_system_action(action, run)
         else:
             # Output uses timer-backed pulses, so submitting under the voice lock
             # preserves command order and prevents a late hold after disconnect.
@@ -905,18 +1142,49 @@ class VoiceService:
                 run()
         return {"matched": True, "command": match["phrase"], "pending": True}
 
-    def _mic_callback(self, indata, frames, time_info, status) -> None:
-        data = bytes(indata)
-        if status:
-            with self._lock:
-                self.last_error = f"电脑麦克风状态：{status}"
-        if not data or self._mic_queue is None:
+    def _submit_system_action(self, action: dict, fallback: Callable[[], None]) -> None:
+        if self.on_system_command is None:
+            threading.Thread(target=fallback, name="voice-command", daemon=True).start()
             return
         try:
-            self._mic_queue.put_nowait(data)
+            result = self.on_system_command(copy.deepcopy(action)) or {}
+            queued = bool(result.get("queued") or result.get("pending"))
+            self.last_executed = None if queued else bool(result.get("executed", False))
+            self.last_error = None if queued or self.last_executed else str(result.get("reason", "输出未开启"))
+        except Exception as exc:
+            self.last_executed = False
+            self.last_error = str(exc)
+
+    def _mic_callback(self, indata, frames, time_info, status, *, frame_queue=None,
+                      generation=None, gap_event=None) -> None:
+        # PortAudio must never acquire the recognition/configuration lock. It
+        # hands off immutable bytes and leaves reporting to the consumer.
+        data = bytes(indata)
+        target = self._mic_queue if frame_queue is None else frame_queue
+        gap = self._mic_gap if gap_event is None else gap_event
+        if status:
+            self._callback_error = f"电脑麦克风状态：{status}"
+            gap.set()
+        if not data or target is None:
+            return
+        self._mic_sequence += 1
+        sampled_at = time.monotonic()
+        try:
+            # PortAudio timestamps use their own clock; subtracting their two
+            # values gives the hardware-buffer age in our monotonic clock.
+            age = float(time_info.currentTime) - float(time_info.inputBufferAdcTime)
+            if math.isfinite(age) and age >= 0.0:
+                sampled_at -= age
+        except (AttributeError, TypeError, ValueError):
+            pass
+        frame = _AudioFrame("computer_microphone", "computer", data, sampled_at,
+                            self._audio_generation if generation is None else generation, self._mic_sequence)
+        try:
+            target.put_nowait(frame)
         except queue.Full:
-            with self._lock:
-                self.last_error = "电脑麦克风处理队列已满"
+            self.audio_dropped_frames += 1
+            self._callback_error = "电脑麦克风队列已满，已丢弃音频并重置识别"
+            gap.set()
 
     def start_local_microphone(self, device: int | None = None) -> dict:
         self.stop_local_microphone()
@@ -924,14 +1192,16 @@ class VoiceService:
             if self.recognizer is None:
                 self._rebuild_recognizer()
             if self.recognizer is None:
-                self.connected = False
+                with self._audio_submit_lock:
+                    self.connected = False
                 return self.status()
         try:
             import sounddevice as sd
         except ImportError:
             with self._lock:
                 self.last_error = "电脑语音需要 sounddevice；当前 Python 环境未安装"
-                self.connected = False
+                with self._audio_submit_lock:
+                    self.connected = False
                 return self.status()
         try:
             info = sd.query_devices(device, "input")
@@ -942,24 +1212,31 @@ class VoiceService:
                 self.audio_device = device
                 self.audio_device_name = None
                 self.last_error = f"电脑麦克风设备不可用：{exc}"
-                self.connected = False
+                with self._audio_submit_lock:
+                    self.connected = False
             return self.status()
         source_id = "computer_microphone"
-        self._mic_queue = queue.Queue(maxsize=24)
-        self._mic_stop.clear()
+        frame_queue: queue.Queue[_AudioFrame] = queue.Queue(maxsize=AUDIO_QUEUE_CAPACITY)
+        self._mic_queue = frame_queue
+        stop_event = threading.Event()
+        gap_event = threading.Event()
+        self._mic_stop = stop_event
+        self._mic_gap = gap_event
         with self._lock:
             self._activate_locked(source_id, "computer", "computer")
             self.audio_device = device
             self.audio_device_name = device_name or ("系统默认设备" if device is None else str(device))
             self.audio_ready = True
             self.last_error = None
-        self._mic_thread = threading.Thread(target=self._mic_loop, args=(source_id,), name="voice-microphone", daemon=True)
+        self._mic_thread = threading.Thread(target=self._mic_loop, args=(source_id, frame_queue, stop_event, gap_event),
+                                            name="voice-microphone", daemon=True)
         self._mic_thread.start()
         try:
             self._mic_stream = sd.RawInputStream(
                 samplerate=self.sample_rate, channels=1, dtype="int16", blocksize=1600,
                 device=device,
-                callback=self._mic_callback,
+                callback=lambda data, frames, info, status: None if stop_event.is_set() else self._mic_callback(
+                    data, frames, info, status, frame_queue=frame_queue, gap_event=gap_event),
             )
             self._mic_stream.start()
         except Exception as exc:
@@ -969,29 +1246,49 @@ class VoiceService:
             self.stop_local_microphone()
         return self.status()
 
-    def _mic_loop(self, source_id: str) -> None:
-        while not self._mic_stop.is_set():
+    def _mic_loop(self, source_id: str, frame_queue=None, stop_event=None, gap_event=None) -> None:
+        frame_queue = self._mic_queue if frame_queue is None else frame_queue
+        stop_event = self._mic_stop if stop_event is None else stop_event
+        gap_event = self._mic_gap if gap_event is None else gap_event
+        previous_sequence: int | None = None
+        gap = False
+        while not stop_event.is_set():
             try:
-                data = self._mic_queue.get(timeout=0.20) if self._mic_queue is not None else None
+                frame = frame_queue.get(timeout=0.20) if frame_queue is not None else None
             except queue.Empty:
                 with self._lock:
                     if self.source_id == source_id and self.last_audio_at and time.monotonic() - self.last_audio_at > VOICE_TIMEOUT_SECONDS:
                         self._release_locked(source_id)
                 continue
-            if not data:
+            if frame is None:
                 continue
             try:
+                if stop_event.is_set():
+                    continue
+                gap = gap or gap_event.is_set()
+                gap_event.clear()
+                if previous_sequence is not None and frame.sequence != previous_sequence + 1:
+                    gap = True
                 with self._lock:
-                    if self.source_id != source_id or not self.connected:
-                        continue
-                    self._ingest_pcm_locked(source_id, data)
+                    if self._callback_error:
+                        self.last_error, self._callback_error = self._callback_error, None
+                outcome = self._consume_audio(frame, "computer", reset=gap)
+                gap = outcome is None
+                if outcome is not None:
+                    previous_sequence = frame.sequence
             except Exception as exc:
+                gap = True
                 with self._lock:
                     self._release_locked(source_id)
                     self.last_error = str(exc)
+            finally:
+                frame_queue.task_done()
 
     def stop_local_microphone(self) -> dict:
+        with self._audio_submit_lock:
+            self._audio_generation += 1
         self._mic_stop.set()
+        self._mic_queue = None
         stream = self._mic_stream
         self._mic_stream = None
         if stream is not None:
@@ -1010,30 +1307,70 @@ class VoiceService:
         with self._lock:
             if self.source_kind == "computer":
                 self._release_locked(self.source_id)
-                self.connected = False
                 self.audio_ready = False
+                with self._audio_submit_lock:
+                    self.connected = False
+                    self.source_id = None
+                    self.device_id = None
+                    self.source_kind = None
+        return self.status()
+
+    def phone_source_generation(self, source_id: str) -> int:
+        """Capture admission before releasing the bridge's source-owner lock."""
+        with self._audio_submit_lock:
+            return self._audio_generation
+
+    @contextmanager
+    def command_source_guard(self, source_id: str | None, expected_generation: int | None = None):
+        """Hold only the short source lock through a deferred command's commit.
+
+        Callers acquire their final mutation lock first. This never acquires the
+        recognizer lock or calls output, and invalidation waits until commit ends.
+        """
+        with self._audio_submit_lock:
+            active = bool(source_id and self.connected and self.source_id == str(source_id) and
+                          str(source_id) not in self._invalidated_phone_sources and
+                          (expected_generation is None or expected_generation == self._audio_generation))
+            yield active
+
+    def invalidate_phone_source(self, source_id: str) -> int:
+        """Invalidate in-flight recognition immediately; cleanup can take its lock later."""
+        source_id = str(source_id)
+        with self._audio_submit_lock:
+            if self.source_id not in {None, source_id}:
+                return self._audio_generation
+            self._audio_generation += 1
+            generation = self._audio_generation
+            self._invalidated_phone_sources[source_id] = generation
+            if self.source_id == source_id:
+                self.connected = False
+            return generation
+
+    def disconnect(self, source_id: str | None = None, *, expected_generation: int | None = None) -> dict:
+        with self._lock:
+            with self._audio_submit_lock:
+                if expected_generation is not None and self._audio_generation != expected_generation:
+                    return self.status()
+                if source_id is not None and self.source_id not in {None, str(source_id)}:
+                    return self.status()
+                # Fast invalidation already advanced the token. Do not reject
+                # the next owner's correctly admitted frame during cleanup.
+                if expected_generation is None:
+                    self._audio_generation += 1
+                previous_source = self.source_id
+                self.connected = False
                 self.source_id = None
                 self.device_id = None
                 self.source_kind = None
-        return self.status()
-
-    def disconnect(self, source_id: str | None = None) -> dict:
-        with self._lock:
-            if source_id is not None and self.source_id not in {None, str(source_id)}:
-                return self.status()
-            self._release_locked(self.source_id)
-            self.connected = False
+            self._release_locked(previous_source)
             self.audio_ready = False
-            self.source_id = None
-            self.device_id = None
-            self.source_kind = None
             self.last_partial = ""
             return self.status()
 
-    def source_is_active(self, source_id: str | None) -> bool:
+    def source_is_active(self, source_id: str | None, *, expected_generation: int | None = None) -> bool:
         """Check the exact voice source before a deferred system action runs."""
-        with self._lock:
-            return bool(source_id and self.connected and self.source_id == str(source_id))
+        with self.command_source_guard(source_id, expected_generation) as active:
+            return active
 
     def status(self) -> dict:
         now = time.monotonic()
@@ -1052,7 +1389,7 @@ class VoiceService:
             "mappings": list(self.mappings),
             # 换了游戏、装了别人的配置，都可能带进来一句和通用口令同名的。存的时候
             # 拦得住，这两条路拦不住，只能照实告诉界面。
-            "phrase_conflicts": self._phrase_conflicts(self._commands_for(self._profile_bindings)),
+            "phrase_conflicts": list(self._configuration_conflicts),
             "wake_word": self.wake_word,
             # 界面上要显示的是"要怎么说"，不是盘上存的那个写法。
             "emergency_stop_phrases": self.spoken_emergency_phrases(),
@@ -1075,6 +1412,10 @@ class VoiceService:
             "last_error": self.last_error,
             "audio_alive": alive,
             "stream_alive": alive,
+            "audio_queue_depth": self._phone_queue.qsize() if self.source_kind == "phone" else
+                                 self._mic_queue.qsize() if self._mic_queue is not None else 0,
+            "audio_dropped_frames": self.audio_dropped_frames,
+            "audio_stream_resets": self.audio_stream_resets,
         }
         if self.source_kind in {"computer", "phone"}:
             result.update({
@@ -1086,6 +1427,12 @@ class VoiceService:
         return result
 
     def close(self) -> None:
+        self._phone_stop.set()
+        with self._audio_submit_lock:
+            self._audio_generation += 1
+        thread = self._phone_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
         self.stop_local_microphone()
         recognizer = self.recognizer
         self.recognizer = None

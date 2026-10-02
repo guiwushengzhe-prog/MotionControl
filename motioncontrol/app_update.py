@@ -30,6 +30,8 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -55,6 +57,7 @@ _CHUNK = 1 << 16
 # 程序本体只有 2 MB 出头。比这大得多的东西不该从这条通道来，与其下完再发现不对，
 # 不如一开始就不下。
 MAX_TOTAL_BYTES = 64 << 20
+MAX_MANIFEST_BYTES = 1 << 20
 
 # 属于这一份安装、不属于代码的文件。它们指向发布包自己的相对位置（../models、
 # ../native/ViGEmClient.dll），换包时必须从旧的那份搬过来——跟着更新包走的话，
@@ -120,9 +123,131 @@ def _issued_at(directory: Path) -> float:
 
 
 def _fetch(url: str, timeout: float) -> bytes:
+    """Only the small manifest is held in memory; program files stream to disk."""
+    deadline = time.monotonic() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": "MotionControl-PC"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+        chunks = []
+        total = 0
+        while True:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("更新清单读取超时")
+            chunk = getattr(response, "read1", response.read)(_CHUNK)
+            if not chunk:
+                return b"".join(chunks)
+            total += len(chunk)
+            if total > MAX_MANIFEST_BYTES:
+                raise ValueError("更新清单过大")
+            chunks.append(chunk)
+
+
+class _Cancelled(Exception):
+    pass
+
+
+class _DownloadBudget:
+    def __init__(self, timeout: float, total_timeout_s: float,
+                 cancel_event: threading.Event | None):
+        self.timeout = max(0.01, float(timeout))
+        self.deadline = time.monotonic() + max(0.0, float(total_timeout_s))
+        self.cancel_event = cancel_event
+
+    def remaining(self) -> float:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise _Cancelled("更新下载已取消")
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("更新下载超过本次时间预算，下次继续")
+        return remaining
+
+    def io_timeout(self) -> float:
+        # An event cannot interrupt urllib's blocking read. Keep any single
+        # socket wait short when cancellation is requested by the caller.
+        return min(self.timeout, self.remaining(), 2.0 if self.cancel_event is not None else self.timeout)
+
+    def pause(self, seconds: float) -> None:
+        seconds = min(seconds, self.remaining())
+        if self.cancel_event is not None:
+            self.cancel_event.wait(seconds)
+        else:
+            time.sleep(seconds)
+        self.remaining()
+
+
+def _retry(operation, budget: _DownloadBudget, retries: int):
+    for attempt in range(max(0, min(int(retries), 3)) + 1):
+        budget.remaining()
+        try:
+            return operation()
+        except urllib.error.HTTPError as exc:
+            if exc.code not in {408, 429, 500, 502, 503, 504}:
+                raise
+            error = exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            error = exc
+        if attempt >= max(0, min(int(retries), 3)):
+            raise error
+        budget.pause(0.25 * (2 ** attempt))
+
+
+def _digest_file(path: Path, budget: _DownloadBudget) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while True:
+            budget.remaining()
+            chunk = stream.read(_CHUNK)
+            if not chunk:
+                return digest.hexdigest()
+            digest.update(chunk)
+
+
+def _download_file(url: str, target: Path, size: int, expected: str,
+                   budget: _DownloadBudget) -> None:
+    """Publish one complete, verified file; a partial transfer never replaces it."""
+    temporary = None
+    request = urllib.request.Request(url, headers={"User-Agent": "MotionControl-PC"})
+    try:
+        with urllib.request.urlopen(request, timeout=budget.io_timeout()) as response:
+            with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".download-", delete=False) as output:
+                temporary = Path(output.name)
+                digest = hashlib.sha256()
+                received = 0
+                while True:
+                    budget.remaining()
+                    # read1 returns available data instead of waiting to fill
+                    # a large buffer, so the overall deadline is checked even
+                    # when a slow peer keeps sending a few bytes at a time.
+                    reader = getattr(response, "read1", response.read)
+                    chunk = reader(min(_CHUNK, size - received + 1))
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                    if received > size:
+                        raise ValueError(f"更新文件超过清单大小：{target.name}")
+                    output.write(chunk)
+                    digest.update(chunk)
+        if received != size or digest.hexdigest() != expected:
+            raise ValueError(f"下来的内容对不上：{target.name}")
+        budget.remaining()
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _remove_empty_directories(root: Path) -> None:
+    if not root.is_dir():
+        return
+    for directory in sorted((p for p in root.rglob("*") if p.is_dir()),
+                            key=lambda p: len(p.parts), reverse=True):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+    try:
+        root.rmdir()
+    except OSError:
+        pass
 
 
 def _listing_digest(files: list[dict]) -> str:
@@ -135,16 +260,24 @@ def _listing_digest(files: list[dict]) -> str:
 
 
 def check_and_stage(app_dir: Path, base_url: str = DEFAULT_BASE,
-                    timeout: float = 20.0) -> dict:
+                    timeout: float = 20.0, *, total_timeout_s: float = 120.0,
+                    cancel_event: threading.Event | None = None,
+                    retries: int = 2) -> dict:
     """看服务器上有没有新的，有就下到暂存目录。不安装。
 
     任何一步失败都只是"这次没更新"，不抛给调用方：更新失败绝不该拦住玩游戏。
     """
     app_dir = Path(app_dir).resolve()
     staging = app_dir.parent / STAGING_NAME
+    budget = _DownloadBudget(timeout, total_timeout_s, cancel_event)
     result: dict = {"state": "none", "digest": ""}
     try:
-        manifest = json.loads(_fetch(base_url.rstrip("/") + MANIFEST_PATH, timeout))
+        manifest = json.loads(_retry(
+            lambda: _fetch(base_url.rstrip("/") + MANIFEST_PATH, budget.io_timeout()), budget, retries))
+        if not isinstance(manifest, dict):
+            raise ValueError("更新清单格式无效")
+    except _Cancelled as exc:
+        return {"state": "cancelled", "error": str(exc)}
     except Exception as exc:
         return {"state": "failed", "error": str(exc)[:200]}
     if not manifest.get("available"):
@@ -155,7 +288,10 @@ def check_and_stage(app_dir: Path, base_url: str = DEFAULT_BASE,
     if digest and digest == _read_marker(app_dir, COMPLETE_MARKER):
         return {**result, "state": "current"}
 
-    total = int(manifest.get("total_bytes") or 0)
+    try:
+        total = int(manifest.get("total_bytes") or 0)
+    except (TypeError, ValueError):
+        return {**result, "state": "failed", "error": "更新清单大小无效"}
     if total > MAX_TOTAL_BYTES:
         return {**result, "state": "refused", "error": "更新包大得不合理"}
 
@@ -168,30 +304,59 @@ def check_and_stage(app_dir: Path, base_url: str = DEFAULT_BASE,
         return {**result, "state": "ready"}
 
     try:
-        shutil.rmtree(staging, ignore_errors=True)
-        staging.mkdir(parents=True, exist_ok=True)
-        for item in manifest.get("files", []):
+        files = manifest.get("files", [])
+        if not isinstance(files, list) or not files or _listing_digest(files) != digest:
+            raise ValueError("更新清单和签名内容对不上")
+        targets = []
+        wanted = set()
+        sizes = 0
+        # Validate the entire listing before altering an earlier staging area.
+        for item in files:
             relative = str(item["path"])
-            # 清单是别人给的数据。路径只接受相对、不含 ..，落地前再确认一次它
-            # 真的在暂存目录里面。
-            if relative.startswith("/") or ".." in relative.split("/"):
+            size = int(item["size"])
+            if size < 0:
+                raise ValueError("更新文件大小无效")
+            sizes += size
+            if sizes > MAX_TOTAL_BYTES:
+                raise ValueError("更新包大得不合理")
+            if relative.startswith("/") or ".." in relative.replace("\\", "/").split("/"):
                 raise ValueError(f"路径不合法：{relative}")
             target = (staging / relative).resolve()
-            if staging not in target.parents:
-                raise ValueError(f"路径逃出了暂存目录：{relative}")
+            if staging not in target.parents or target in wanted:
+                raise ValueError(f"更新路径无效：{relative}")
+            wanted.add(target)
+            targets.append((relative, target, size, str(item["sha256"])))
+        if sizes != total:
+            raise ValueError("更新清单总大小不一致")
+        staging.mkdir(parents=True, exist_ok=True)
+        (staging / COMPLETE_MARKER).unlink(missing_ok=True)
+        for relative, target, size, expected in targets:
+            budget.remaining()
             target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_file() and target.stat().st_size == size and _digest_file(target, budget) == expected:
+                continue
+            live = (app_dir / relative).resolve()
+            if app_dir in live.parents and live.is_file() and live.stat().st_size == size and _digest_file(live, budget) == expected:
+                shutil.copy2(live, target)
+                # The running installation can still change a generated file
+                # between hashing and copying it. Only reuse verified bytes.
+                if target.stat().st_size == size and _digest_file(target, budget) == expected:
+                    continue
             url = (base_url.rstrip("/") + FILE_PATH + "?path="
                    + urllib.parse.quote(relative))
-            blob = _fetch(url, timeout)
-            if hashlib.sha256(blob).hexdigest() != str(item["sha256"]):
-                raise ValueError(f"下来的内容对不上：{relative}")
-            target.write_bytes(blob)
+            _retry(lambda: _download_file(url, target, size, expected, budget), budget, retries)
+        # Remove retired files only after all desired ones have arrived.
+        for existing in staging.rglob("*"):
+            if existing.is_file() and existing.resolve() not in wanted:
+                existing.unlink()
+        budget.remaining()
         (staging / ISSUED_MARKER).write_text(str(issued_at), encoding="utf-8")
         # 记号最后写：它的存在就是"这一份下全了并且验过"。
         (staging / COMPLETE_MARKER).write_text(digest, encoding="utf-8")
     except Exception as exc:
-        shutil.rmtree(staging, ignore_errors=True)
-        return {**result, "state": "failed", "error": str(exc)[:200]}
+        _remove_empty_directories(staging)
+        return {**result, "state": "cancelled" if isinstance(exc, _Cancelled) else "failed",
+                "error": str(exc)[:200]}
     return {**result, "state": "ready"}
 
 

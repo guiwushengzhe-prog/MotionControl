@@ -1,5 +1,5 @@
 // 设置 → 键盘宏。
-import {api,post} from './core.js';
+import {api,configurationOperation,post} from './core.js';
 import {TARGET_LABELS,macroLibrary} from './labels.js';
 import {makeKeyCaptureInput,renderProfileBindingRows,saveProfileBindings} from './mapping.js';
 
@@ -45,25 +45,28 @@ export async function refreshMacros({ rebuild = true } = {}) {
     if (data.error) macroSay(data.error, 'error');
   } catch (error) {
     macroSay(error.message, 'error');
-    return;
+    return false;
   }
   renderMacros();
   if (rebuild) await rebuildBindingRowsAfterMacroChange();
+  return true;
 }
 
 /** 宏改了，上面每一行映射里的下拉、以及「跑一遍还是循环」那一格都要跟着变。
  *  重画之前先把还没存的编辑落盘，否则会把用户手上的草稿抹掉。 */
 async function rebuildBindingRowsAfterMacroChange() {
-  try { await saveProfileBindings(); } catch { /* 存不上那边自己会报，这里不抢话 */ }
+  await saveProfileBindings();
   renderProfileBindingRows();
 }
 
 async function macroWrite(route, body) {
+  return configurationOperation(async()=>{
   const data = await post('/api/macros/' + route, body);
   macroLibrary.items = data.macros || [];
   renderMacros();
   await rebuildBindingRowsAfterMacroChange();
   return data;
+  });
 }
 
 async function addMacro() {

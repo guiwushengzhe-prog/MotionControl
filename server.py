@@ -12,6 +12,7 @@ import queue
 import threading
 import time
 import webbrowser
+from contextlib import contextmanager, nullcontext
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -25,6 +26,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 _APP_DIR = Path(__file__).resolve().parent
 
 from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
+from motioncontrol.cloud_metadata_cache import PublicMetadataCache
+from motioncontrol.command_executor import CommandExecutor
+from motioncontrol.config_transaction import atomic_bytes, file_transaction, recover
+from motioncontrol.view_control import configure_view_control
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
 from motioncontrol.key_macros import MacroError, MacroStore
 from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
@@ -51,6 +56,7 @@ from motioncontrol.version import VERSION  # noqa: E402
 
 # 这次启动之后查更新的结果，界面上要显示。
 UPDATE_STATE: dict = {"state": "unknown"}
+UPDATE_CANCEL = threading.Event()
 
 
 def application_root() -> Path:
@@ -76,6 +82,8 @@ MODEL_COMPAT_RELATIVE = Path("mediapipe") / "pose_landmarker_full_compatible_075
 # and VoiceService all read their files at import time -- migrating afterwards
 # would silently hand the user defaults on their first upgraded launch.
 _MIGRATED = migrate_legacy_user_data(ROOT)
+for _journal_name in (".profile-install.journal", ".view-control.journal"):
+    recover(user_data_root() / _journal_name)
 if _MIGRATED:
     print("已从旧版程序目录迁移用户数据：" + "、".join(_MIGRATED))
 print("用户数据目录：", user_data_root())
@@ -121,6 +129,16 @@ def _remember_output_speed() -> None:
 
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
 PROFILE_UPDATE_LOCK = threading.RLock()
+INPUT_SOURCE_LOCK = threading.RLock()
+AUDIO_SOURCE_LOCK = threading.RLock()
+CONFIG_REVISION = 0
+
+
+def runtime_status() -> dict:
+    # Capture the revision with the state it describes; a poll started before
+    # a successful configuration change cannot overwrite its response.
+    with PROFILE_UPDATE_LOCK:
+        return {**RUNTIME.status(), "config_revision": CONFIG_REVISION}
 PROFILES = GameProfileStore(ROOT)
 KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
 
@@ -134,15 +152,23 @@ def _game_launch_status(profile: dict | None = None) -> dict:
 
 def _apply_effective_profile() -> dict:
     profile = PROFILES.effective_profile()
-    KERNEL.configure_bindings(profile.get("bindings", {}))
-    VOICE.configure_profile_bindings(profile.get("bindings", {}))
+    with VOICE._lock, KERNEL._lock:
+        VOICE._release_locked(VOICE.source_id)
+        KERNEL.configure_bindings(profile.get("bindings", {}))
+        VOICE.configure_profile_bindings(profile.get("bindings", {}))
     return profile
 
 
 def emergency_stop_all() -> dict:
-    KERNEL.cancel_calibration("紧急停止")
+    executor = globals().get("SYSTEM_COMMANDS")
+    if executor is not None:
+        executor.invalidate()
     result = OUTPUT.emergency_stop()
     _broadcast_game_output_state()
+    KERNEL.cancel_calibration("紧急停止")
+    timer = globals().get("POSE_TIMER")
+    if timer is not None:
+        timer.cancel()
     return result
 
 
@@ -192,7 +218,18 @@ def voice_emergency_stop() -> dict:
     return result
 
 
-def execute_system_target(target: str) -> dict | None:
+def _command_allowed(action: dict) -> bool:
+    generation = action.get("_command_generation")
+    if generation is not None and not SYSTEM_COMMANDS.is_current(generation):
+        return False
+    source = action.get("voice_source_id")
+    if source:
+        with VOICE.command_source_guard(source, action.get("voice_source_generation")) as active:
+            return active
+    return True
+
+
+def execute_system_target(target: str, *, command_generation=None, command_action=None) -> dict | None:
     """语音和映射表都能用的那几个系统功能。不是这几个的返回 None，由调用方接着判断。
 
     映射表里（区域、动作、姿势）绑的系统功能也走这里：内核在触发那一下调它（见
@@ -200,33 +237,53 @@ def execute_system_target(target: str) -> dict | None:
     里来的是语音说的那几句。
     """
     target = str(target or "").strip().upper()
+    action = command_action or {"_command_generation": command_generation}
+    if not _command_allowed(action):
+        return {"executed": False, "reason": "操作已被停止或切换取消"}
     if target in {"OUTPUT.START", "OUTPUT.STOP", "OUTPUT.TOGGLE"}:
-        enabled = target == "OUTPUT.START" or (target == "OUTPUT.TOGGLE" and not OUTPUT.enabled)
-        result = OUTPUT.set_config(enabled=enabled)
+        source = action.get("voice_source_id")
+        guard = (VOICE.command_source_guard(source, action.get("voice_source_generation"))
+                 if source else nullcontext(True))
+        with OUTPUT._lock, guard as active:
+            # Recheck under the same lock used by emergency_stop: a command
+            # that waited for output must not reactivate a stopped generation.
+            if not active or (command_generation is not None and not SYSTEM_COMMANDS.is_current(command_generation)):
+                return {"executed": False, "reason": "操作已被停止或切换取消"}
+            enabled = target == "OUTPUT.START" or (target == "OUTPUT.TOGGLE" and not OUTPUT.enabled)
+            result = OUTPUT.set_config(enabled=enabled)
         _broadcast_game_output_state()
         return {"executed": True, **result}
     if target == "HEAD.CENTER":
-        KERNEL.set_current_center()
+        with KERNEL._lock:
+            if not _command_allowed(action):
+                return {"executed": False, "reason": "操作已被停止或切换取消"}
+            KERNEL.set_current_center()
         return {"executed": True}
     if target in {"ZONES.FREEZE", "ZONES.FOLLOW", "ZONES.FREEZE_TOGGLE"}:
-        frozen = target == "ZONES.FREEZE" or (
-            target == "ZONES.FREEZE_TOGGLE" and not KERNEL.status().get("zones_frozen"))
-        result = KERNEL.freeze_zones(frozen)
+        with KERNEL._lock:
+            if not _command_allowed(action):
+                return {"executed": False, "reason": "操作已被停止或切换取消"}
+            frozen = target == "ZONES.FREEZE" or (
+                target == "ZONES.FREEZE_TOGGLE" and not KERNEL.status().get("zones_frozen"))
+            result = KERNEL.freeze_zones(frozen)
         result.pop("status", None)
         return result
     if target == "ZONES.MOVE_HERE":
-        result = KERNEL.move_zones_here()
+        with KERNEL._lock:
+            if not _command_allowed(action):
+                return {"executed": False, "reason": "操作已被停止或切换取消"}
+            result = KERNEL.move_zones_here()
         result.pop("status", None)
         return result
     return None
 
 
 def _run_bound_system_action(target: str, trigger: str) -> None:
-    """内核那边区域、动作、姿势触发了系统功能。在内核开的线程里跑。"""
-    execute_system_target(target)
+    """Capture the command generation at the trigger, without blocking control."""
+    SYSTEM_COMMANDS.submit({"type": "system", "target": target, "trigger": trigger})
 
 
-KERNEL.configure_system_action_handler(_run_bound_system_action)
+KERNEL.configure_system_action_handler(_run_bound_system_action, asynchronous=False)
 
 
 def execute_voice_action(action: dict) -> dict:
@@ -238,6 +295,9 @@ def execute_voice_action(action: dict) -> dict:
     """
     # 语音不走内核那条分发路，所以在这里补一笔"刚才触发了什么"。界面上的触发实况
     # 靠它才看得见语音——口令说完就完，轮询状态是抓不到的。
+    generation = action.get("_command_generation")
+    if generation is not None and not SYSTEM_COMMANDS.is_current(generation):
+        return {"executed": False, "reason": "操作已被停止或切换取消"}
     _note_voice_trigger(action)
     if str(action.get("type", "")).lower() != "system":
         command_id = str(action.get("command_id", "")).strip()
@@ -251,7 +311,7 @@ def execute_voice_action(action: dict) -> dict:
                         return KERNEL.release_voice_hold(binding["action"].get("target", ""))
                     if binding["action"].get("type") == "system":
                         # 本游戏口令在映射表里选了「系统功能」。
-                        return execute_system_target(binding["action"].get("target", "")) or {
+                        return execute_system_target(binding["action"].get("target", ""), command_generation=generation, command_action=action) or {
                             "executed": False, "reason": "不支持的系统功能"}
                     mapped = dict(binding["action"])
                     mapped["source"] = action.get("source", "voice")
@@ -260,7 +320,7 @@ def execute_voice_action(action: dict) -> dict:
                 return {"executed": False, "reason": "当前游戏未设置这条备用语音"}
         return OUTPUT.execute_voice_action(action)
     target = str(action.get("target", "")).strip().upper()
-    shared = execute_system_target(target)
+    shared = execute_system_target(target, command_generation=generation, command_action=action)
     if shared is not None:
         return shared
     # Head calibrate (both naming conventions)
@@ -275,26 +335,55 @@ def execute_voice_action(action: dict) -> dict:
                 return {"executed": False, "reason": "手机身体源尚未提供姿态，未执行头控校准"}
         else:
             return {"executed": False, "reason": "当前没有可用身体源，未执行头控校准"}
-        RUNTIME.start_calibration()
+        with RUNTIME._lock, KERNEL._lock:
+            if not _command_allowed(action):
+                return {"executed": False, "reason": "操作已被停止或切换取消"}
+            RUNTIME.start_calibration()
         return {"executed": True, "system_action": target}
     # 录自定义姿势。这个按钮天生该能用嘴按：人站在镜头前几米外摆姿势，够不着鼠标。
     if target in {"POSE.RECORD", "POSE.ADD_FRAME"}:
-        delay = KERNEL.general_setting("pose_capture_delay_s", DEFAULT_POSE_DELAY_S)
-        if target == "POSE.RECORD":
-            return {"executed": True, "pose_capture": POSE_TIMER.arm(purpose="capture", delay_s=delay)}
-        pose_id = _newest_pose_id()
-        if not pose_id:
-            return {"executed": False, "reason": "还没有录过动作，先说一次「录姿势」"}
-        return {"executed": True,
-                "pose_capture": POSE_TIMER.arm(purpose="frame", delay_s=delay, pose_id=pose_id)}
+        with KERNEL._lock:
+            if not _command_allowed(action):
+                return {"executed": False, "reason": "操作已被停止或切换取消"}
+            delay = KERNEL.general_setting("pose_capture_delay_s", DEFAULT_POSE_DELAY_S)
+            if target == "POSE.RECORD":
+                return {"executed": True, "pose_capture": POSE_TIMER.arm(purpose="capture", delay_s=delay)}
+            pose_id = _newest_pose_id()
+            if not pose_id:
+                return {"executed": False, "reason": "还没有录过动作，先说一次「录姿势」"}
+            return {"executed": True,
+                    "pose_capture": POSE_TIMER.arm(purpose="frame", delay_s=delay, pose_id=pose_id)}
     if target == "POSE.CANCEL":
         return {"executed": True, "pose_capture": POSE_TIMER.cancel()}
     return {"executed": False, "reason": f"不支持的系统语音命令：{target}"}
 
 
+def _execute_queued_command(action: dict) -> dict:
+    with PROFILE_UPDATE_LOCK:
+        return _execute_queued_command_locked(action)
+
+
+def _execute_queued_command_locked(action: dict) -> dict:
+    source = action.get("voice_source_id")
+    generation = action.get("voice_source_generation")
+    if source and not VOICE.source_is_active(source, expected_generation=generation):
+        return {"executed": False, "reason": "语音源已断开"}
+    result = execute_voice_action(action)
+    if source:
+        with VOICE._lock:
+            if VOICE.source_is_active(source, expected_generation=generation):
+                VOICE.last_executed = bool(result.get("executed", False))
+                VOICE.last_error = None if VOICE.last_executed else str(result.get("reason", "输出未开启"))
+    return result
+
+
+SYSTEM_COMMANDS = CommandExecutor(_execute_queued_command)
+
+
 VOICE = VoiceService(
     ROOT,
     execute_voice_action,
+    on_system_command=SYSTEM_COMMANDS.submit,
     emergency_stop=voice_emergency_stop,
     clear_source=OUTPUT.clear_source,
 )
@@ -371,6 +460,11 @@ def _list_audio_devices() -> dict:
 
 
 def _set_audio_device(device, *, start: bool = True) -> dict:
+    with AUDIO_SOURCE_LOCK:
+        return _set_audio_device_locked(device, start=start)
+
+
+def _set_audio_device_locked(device, *, start: bool = True) -> dict:
     global AUDIO_DEVICE
     selected = _normalize_audio_device(device)
     if selected is not None:
@@ -392,6 +486,11 @@ def _set_audio_device(device, *, start: bool = True) -> dict:
 
 def _set_audio_source(source: str, *, start: bool = True) -> dict:
     """独立切换语音来源，不触碰身体（摄像头/姿态）来源。"""
+    with AUDIO_SOURCE_LOCK:
+        return _set_audio_source_locked(source, start=start)
+
+
+def _set_audio_source_locked(source: str, *, start: bool = True) -> dict:
     global AUDIO_SOURCE
     source = str(source or "").strip().lower()
     if source not in {"computer", "phone"}:
@@ -458,7 +557,26 @@ def _instance_id() -> str:
     return made
 
 
-INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE)
+def _set_output_enabled(enabled: bool) -> dict:
+    SYSTEM_COMMANDS.invalidate()
+    return OUTPUT.set_config(enabled=enabled)
+
+
+INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE, on_output_control=_set_output_enabled)
+
+
+def _set_body_input(source: str, enabled: bool) -> dict:
+    with INPUT_SOURCE_LOCK:
+        SYSTEM_COMMANDS.invalidate()
+        INPUT_BRIDGE.set_body_enabled(False)
+        INPUT_BRIDGE.set_body_mode("computer")
+        try:
+            return RUNTIME.set_source(source, start_computer=True) if enabled else RUNTIME.stop_body()
+        finally:
+            # Keep the established automatic phone fallback on camera failure,
+            # while an explicit stop remains closed to all incoming pose frames.
+            INPUT_BRIDGE.set_body_mode(source if enabled else "computer")
+            INPUT_BRIDGE.set_body_enabled(enabled)
 
 def recordings_summary(folder: Path) -> dict:
     """录下的骨骼数据有几段、一共多大，给「排查问题」最下面那一行用。
@@ -512,10 +630,16 @@ def find_phone_web(root: Path) -> Path | None:
 
 
 def _phone_control_payload() -> dict:
+    with PROFILE_UPDATE_LOCK:
+        return _phone_control_payload_locked()
+
+
+def _phone_control_payload_locked() -> dict:
     profile = PROFILES.effective_profile()
     return {
         "type": "control_config_v1",
         "version": VERSION,
+        "config_revision": CONFIG_REVISION,
         "game": {"id": profile.get("id"), "name": profile.get("name"), "appid": profile.get("appid")},
         "bindings": profile.get("bindings", {}),
         # 真正会生效的那份。区域有一层内置兜底：配置里没有 zone.headJump 时它照样按 A。
@@ -574,6 +698,7 @@ if POSE_ACTIONS.last_error:
 # 最近一次读到的官方动作库列表。只用来给还没下载的动作报名字（"这份配置用到了开合跳"），
 # 不参与识别。
 CLOUD_POSE_LIBRARY: dict = {}
+CLOUD_POSE_LIBRARY_ENDPOINT = ""
 
 
 def _apply_pose_actions() -> None:
@@ -635,7 +760,16 @@ def _queue_trigger_state(payload: dict) -> None:
     try:
         _TRIGGER_QUEUE.put_nowait(payload)
     except queue.Full:
-        pass
+        # A final release snapshot must replace an old held snapshot when a
+        # slow phone fills the display queue.
+        try:
+            _TRIGGER_QUEUE.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            _TRIGGER_QUEUE.put_nowait(payload)
+        except queue.Full:
+            pass
 
 
 def _name_trigger_state(payload: dict) -> dict:
@@ -694,6 +828,7 @@ CLOUD_ENDPOINT_FILE = user_path("cloud_endpoint")
 # 子域名定下来之前这里先写了 config.，定的却是 motioncontrol.，于是桌面端一直
 # 报 getaddrinfo failed——域名根本没解析。tests/test_cloud_client.py 现在会核对。
 DEFAULT_CLOUD_ENDPOINT = "https://motioncontrol.guiwu-aware.icu"
+CLOUD_METADATA = PublicMetadataCache(user_data_root() / "cloud_metadata_cache.json")
 
 
 def cloud_endpoint() -> str:
@@ -703,6 +838,49 @@ def cloud_endpoint() -> str:
     except OSError:
         configured = ""
     return configured or DEFAULT_CLOUD_ENDPOINT
+
+
+def _cached_cloud_read(kind: str, parameters: dict | None = None, *, force: bool = False):
+    client = CloudClient(cloud_endpoint())
+    arguments = parameters or {}
+    loader = lambda: getattr(client, kind)(**arguments)
+    data, metadata = CLOUD_METADATA.read(client.base, kind, arguments, loader, force=force)
+    return client.base, data, metadata
+
+
+def _cloud_pose_payload(*, force: bool = False) -> dict:
+    global CLOUD_POSE_LIBRARY, CLOUD_POSE_LIBRARY_ENDPOINT
+    endpoint, data, metadata = _cached_cloud_read("pose_library", force=force)
+    if endpoint == cloud_endpoint().rstrip("/"):
+        # These are names and demos only. Signed installed rules remain owned
+        # by POSE_ACTIONS and the configuration transaction.
+        CLOUD_POSE_LIBRARY, CLOUD_POSE_LIBRARY_ENDPOINT = data, endpoint
+    actions = []
+    for item in data.get("actions", []):
+        installed = POSE_ACTIONS.revision(str(item["id"]))
+        try:
+            latest = int(item.get("revision", 0))
+        except (TypeError, ValueError):
+            latest = 0
+        actions.append({**item, "installed_revision": installed,
+                        "update_available": bool(installed) and latest > installed})
+    return {"ok": True, "actions": actions, "endpoint": endpoint, "cache": metadata,
+            "rating_names": data.get("rating_names") or pose_library.RATING_NAMES,
+            "body_part_names": data.get("body_part_names") or pose_library.BODY_PART_NAMES}
+
+
+def _cloud_status_payload(*, endpoint_only: bool = False) -> dict:
+    payload = {"version": VERSION, "endpoint": cloud_endpoint(), "reachable": False}
+    if endpoint_only:
+        return payload
+    try:
+        _endpoint, health, metadata = _cached_cloud_read("health")
+        payload.update(health=health, cache=metadata, reachable=not metadata["offline"])
+        if metadata["error"]:
+            payload["error"] = metadata["error"]
+    except CloudError as exc:
+        payload["error"] = str(exc)
+    return payload
 
 
 def set_cloud_endpoint(url: str) -> str:
@@ -715,6 +893,12 @@ def set_cloud_endpoint(url: str) -> str:
 
 
 def _install_profile_selection(document: dict, game_id: str | None) -> dict:
+    SYSTEM_COMMANDS.invalidate()
+    with _profile_configuration_transaction():
+        return _stage_profile_selection(document, game_id)
+
+
+def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
     """Apply a downloaded game-mapping document through the normal code path.
 
     Nothing here writes a config file. It calls the same ``select`` and
@@ -747,7 +931,7 @@ def _install_profile_selection(document: dict, game_id: str | None) -> dict:
         # game is selected before its overrides are written. Both steps
         # validate; neither touches the file directly.
         PROFILES.select(profile_id)
-        PROFILES.set_overrides(overrides, profile_id=profile_id)
+        PROFILES.set_overrides(overrides, profile_id=profile_id, check=VOICE.check_profile_phrases)
         applied.append(profile_id)
 
     for profile_id, mode in launch_modes.items():
@@ -760,11 +944,38 @@ def _install_profile_selection(document: dict, game_id: str | None) -> dict:
     if final_selection:
         PROFILES.select(final_selection)
     profile = PROFILES.effective_profile()
-    with VOICE._lock:
-        VOICE._release_locked(VOICE.source_id)
-        KERNEL.configure_bindings(profile.get("bindings", {}))
-        VOICE.configure_profile_bindings(profile.get("bindings", {}))
     return {"applied_games": applied, "profile": profile}
+
+
+@contextmanager
+def _profile_configuration_transaction():
+    """Commit files and both binding consumers together, or restore all three."""
+    global MOTION_CONFIG, CONFIG_REVISION
+    with PROFILE_UPDATE_LOCK, PROFILES._lock, VOICE._lock, KERNEL._lock:
+        previous_selection = copy.deepcopy(PROFILES._selection)
+        previous_custom = copy.deepcopy(PROFILES._custom)
+        previous_motions = copy.deepcopy(MOTION_CONFIG)
+        previous_bindings = copy.deepcopy(PROFILES.effective_profile().get("bindings", {}))
+        previous_voice = copy.deepcopy(VOICE._profile_bindings)
+        try:
+            with file_transaction(
+                [PROFILES.selection_path, PROFILES.custom_games_path, MOTION_CONFIG_FILE],
+                user_data_root() / ".profile-install.journal",
+            ):
+                yield
+                KERNEL.configure_motions(MOTION_CONFIG)
+                _apply_effective_profile()
+            CONFIG_REVISION += 1
+        except BaseException:
+            SYSTEM_COMMANDS.invalidate()
+            PROFILES._selection = previous_selection
+            PROFILES._custom = previous_custom
+            MOTION_CONFIG = previous_motions
+            KERNEL.configure_motions(previous_motions)
+            KERNEL.configure_bindings(previous_bindings)
+            VOICE.configure_profile_bindings(previous_voice)
+            SYSTEM_COMMANDS.invalidate()
+            raise
 
 
 def _install_game_bundle(document: dict) -> dict:
@@ -777,19 +988,19 @@ def _install_game_bundle(document: dict) -> dict:
     game_id = str(document.get("game_id", "")).strip()
     if not game_id:
         raise ValueError("这份方案没说是哪个游戏")
-    if "custom_game" in document:
-        PROFILES.import_custom_game(document["custom_game"])
-    PROFILES.select(game_id)
-    PROFILES.set_overrides(document.get("overrides", {}), profile_id=game_id)
-    if "launch_mode" in document:
-        PROFILES.set_admin(game_id, document["launch_mode"] == "admin")
-    MOTION_CONFIG = save_motion_config(document.get("motions", []))
-    KERNEL.configure_motions(MOTION_CONFIG)
+    motions = _normalize_motion_config(document.get("motions", []))
+    SYSTEM_COMMANDS.invalidate()
+    with _profile_configuration_transaction():
+        if "custom_game" in document:
+            PROFILES.import_custom_game(document["custom_game"])
+        PROFILES.select(game_id)
+        PROFILES.set_overrides(document.get("overrides", {}), profile_id=game_id,
+                               check=VOICE.check_profile_phrases)
+        if "launch_mode" in document:
+            PROFILES.set_admin(game_id, document["launch_mode"] == "admin")
+        MOTION_CONFIG = save_motion_config(motions)
+        profile = PROFILES.effective_profile()
     OUTPUT.set_holds([], source_group="motions")
-    profile = PROFILES.effective_profile()
-    with VOICE._lock:
-        VOICE._release_locked(VOICE.source_id)
-        KERNEL.configure_bindings(profile.get("bindings", {}))
     return {"applied_games": [game_id], "profile": profile, "motions": MOTION_CONFIG}
 
 
@@ -800,6 +1011,7 @@ def _install_cloud_config(remote, game_id: str | None) -> dict:
         # Applying a config rebinds every control at once. Releasing whatever is
         # currently held first means a key that was down under the old mapping
         # cannot stay down forever under the new one.
+        SYSTEM_COMMANDS.invalidate()
         OUTPUT.emergency_stop()
         _broadcast_game_output_state()
 
@@ -807,8 +1019,8 @@ def _install_cloud_config(remote, game_id: str | None) -> dict:
             result = _install_profile_selection(remote.document, game_id)
         elif remote.doc_type == "motion_mappings":
             global MOTION_CONFIG
-            MOTION_CONFIG = save_motion_config(remote.document.get("motions", []))
-            KERNEL.configure_motions(MOTION_CONFIG)
+            with _profile_configuration_transaction():
+                MOTION_CONFIG = save_motion_config(remote.document.get("motions", []))
             OUTPUT.set_holds([], source_group="motions")
             result = {"motions": MOTION_CONFIG}
         elif remote.doc_type == "game_bundle":
@@ -836,6 +1048,7 @@ def _install_cloud_config(remote, game_id: str | None) -> dict:
             "sha256": remote.sha256,
         },
         "backup": str(backup) if backup else None,
+        "config_revision": CONFIG_REVISION,
         **result,
     }
 
@@ -930,11 +1143,8 @@ def load_motion_config():
 
 def save_motion_config(items):
     motions = _normalize_motion_config(items)
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    # 原子写入：异常退出或掉电时不会留下半个动作配置文件。
-    temp = MOTION_CONFIG_FILE.with_suffix(MOTION_CONFIG_FILE.suffix + ".tmp")
-    temp.write_text(json.dumps({"motions": motions}, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temp, MOTION_CONFIG_FILE)
+    atomic_bytes(MOTION_CONFIG_FILE,
+                 json.dumps({"motions": motions}, ensure_ascii=False, indent=2).encode("utf-8"))
     return motions
 
 MOTION_CONFIG = load_motion_config()
@@ -1091,7 +1301,7 @@ class _BaseHandler(SimpleHTTPRequestHandler):
         pass
 
     def _send_json(self, data: dict, status: int = 200):
-        raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
@@ -1279,7 +1489,7 @@ class AdminHandler(_BaseHandler):
             # on every input-status tick.
             brief = parse_qs(parsed.query).get("brief", ["0"])[0].strip().lower()
             if brief not in {"1", "true", "yes"}:
-                data["runtime"] = RUNTIME.status()
+                data["runtime"] = runtime_status()
             data["version"] = VERSION
             data.update(_audio_payload())
             self._send_json(data)
@@ -1291,7 +1501,7 @@ class AdminHandler(_BaseHandler):
             # 录姿势的倒计时挂在这里，因为这是 250ms 轮询的那一份——人站在几米外
             # 盯着屏幕等数字，一秒刷一次都嫌慢。
             self._send_json({"version": VERSION, "pose_capture": POSE_TIMER.status(),
-                             **RUNTIME.status()})
+                             **runtime_status()})
             return
         if route == "/api/action-chain/config":
             self._send_json({"version": VERSION, **KERNEL.status()["action_chain"]})
@@ -1347,7 +1557,8 @@ class AdminHandler(_BaseHandler):
                 "library": pose_library.library_payload(),
                 "rating_names": pose_library.RATING_NAMES,
                 "body_part_names": pose_library.BODY_PART_NAMES,
-                "cloud_names": {item["id"]: item["name"] for item in CLOUD_POSE_LIBRARY.get("actions", [])},
+                "cloud_names": {item["id"]: item["name"] for item in CLOUD_POSE_LIBRARY.get("actions", [])}
+                               if CLOUD_POSE_LIBRARY_ENDPOINT == cloud_endpoint().rstrip("/") else {},
                 "error": POSE_ACTIONS.last_error,
             })
             return
@@ -1357,26 +1568,9 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "pose library is loopback-only"}, 403)
                 return
             try:
-                data = CloudClient(cloud_endpoint()).pose_library()
+                self._send_json(_cloud_pose_payload(force=parse_qs(parsed.query).get("refresh") == ["1"]))
             except CloudError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 502)
-                return
-            CLOUD_POSE_LIBRARY.clear()
-            CLOUD_POSE_LIBRARY.update(data)
-            actions = []
-            for item in data.get("actions", []):
-                if not isinstance(item, dict) or not item.get("id"):
-                    continue
-                installed = POSE_ACTIONS.revision(str(item["id"]))
-                try:
-                    latest = int(item.get("revision", 0))
-                except (TypeError, ValueError):
-                    latest = 0
-                actions.append({**item, "installed_revision": installed,
-                                "update_available": bool(installed) and latest > installed})
-            self._send_json({"ok": True, "actions": actions,
-                             "rating_names": data.get("rating_names") or pose_library.RATING_NAMES,
-                             "body_part_names": data.get("body_part_names") or pose_library.BODY_PART_NAMES})
             return
         if route == "/api/pose/custom":
             self._send_json({
@@ -1411,20 +1605,12 @@ class AdminHandler(_BaseHandler):
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "cloud is loopback-only"}, 403)
                 return
-            endpoint = cloud_endpoint()
-            payload = {"version": VERSION, "endpoint": endpoint, "reachable": False}
-            try:
-                payload["health"] = CloudClient(endpoint).health()
-                payload["reachable"] = True
-            except CloudError as exc:
-                # Not reachable is a normal state, not a failure of this
-                # request: the cloud is optional and the UI says so.
-                payload["error"] = str(exc)
-            self._send_json(payload)
+            self._send_json(_cloud_status_payload(endpoint_only=parse_qs(parsed.query).get("endpoint_only") == ["1"]))
             return
         super().do_GET()
 
     def do_POST(self):
+        global CONFIG_REVISION
         route = urlparse(self.path).path
         if route == "/api/voice/audio":
             self._send_json({
@@ -1640,10 +1826,10 @@ class AdminHandler(_BaseHandler):
                     self._send_json({"ok": True,
                                      "endpoint": set_cloud_endpoint(str(body.get("url", "")))})
                 elif route == "/api/cloud/browse":
-                    client = CloudClient(cloud_endpoint())
-                    self._send_json({"ok": True, "profiles": client.browse(
-                        doc_type=str(body.get("doc_type", "")),
-                        game_id=str(body.get("game_id", "")))})
+                    endpoint, profiles, metadata = _cached_cloud_read("browse", {
+                        "doc_type": str(body.get("doc_type", "")), "game_id": str(body.get("game_id", ""))},
+                        force=body.get("refresh") is True)
+                    self._send_json({"ok": True, "profiles": profiles, "endpoint": endpoint, "cache": metadata})
                 elif route == "/api/cloud/preview":
                     remote = CloudClient(cloud_endpoint()).fetch(
                         str(body.get("profile_id", "")), str(body.get("version_id", "")))
@@ -1679,10 +1865,11 @@ class AdminHandler(_BaseHandler):
                 return
             try:
                 global MOTION_CONFIG
-                MOTION_CONFIG = save_motion_config(body.get("motions", []))
-                RUNTIME.configure_motions(MOTION_CONFIG)
+                SYSTEM_COMMANDS.invalidate()
+                with _profile_configuration_transaction():
+                    MOTION_CONFIG = save_motion_config(body.get("motions", []))
                 OUTPUT.set_holds([], source_group="motions")
-                self._send_json({"ok": True, "motions": MOTION_CONFIG})
+                self._send_json({"ok": True, "motions": MOTION_CONFIG, "config_revision": CONFIG_REVISION})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
@@ -1695,33 +1882,28 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "custom games are loopback-only"}, 403)
                 return
             try:
-                with PROFILE_UPDATE_LOCK:
+                SYSTEM_COMMANDS.invalidate()
+                with _profile_configuration_transaction():
                     if route.endswith("/add"):
                         game = PROFILES.add_custom_game(
                             str(body.get("name", "")),
                             base=str(body.get("base") or "generic-xbox"),
                             appid=body.get("appid"))
-                        self._send_json({"ok": True, "game": game,
-                                         "catalog": PROFILES.list_games()})
-                        return
-                    if route.endswith("/rename"):
+                        response = {"ok": True, "game": game}
+                    elif route.endswith("/rename"):
                         game = PROFILES.rename_custom_game(
                             str(body.get("id", "")), str(body.get("name", "")))
-                        self._send_json({"ok": True, "game": game,
-                                         "catalog": PROFILES.list_games()})
-                        return
-                    # 删除可能把当前选中的游戏删掉，那会换一份绑定，所以要和
-                    # select 一样把新的推给内核和手机，否则玩家手上还是旧映射。
-                    profile = PROFILES.remove_custom_game(str(body.get("id", "")))
-                    with VOICE._lock:
-                        VOICE._release_locked(VOICE.source_id)
-                        KERNEL.configure_bindings(profile.get("bindings", {}))
-                        VOICE.configure_profile_bindings(profile.get("bindings", {}))
-                    broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
-                    if broadcaster is not None:
-                        broadcaster(_phone_control_payload())
-                self._send_json({"ok": True, "profile": profile,
-                                 "catalog": PROFILES.list_games()})
+                        response = {"ok": True, "game": game}
+                    else:
+                        # Removing the selected game applies its fallback to
+                        # both consumers only after all files commit.
+                        profile = PROFILES.remove_custom_game(str(body.get("id", "")))
+                        response = {"ok": True, "profile": profile}
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
+                self._send_json({**response, "catalog": PROFILES.list_games(),
+                                 "config_revision": CONFIG_REVISION})
             except KeyError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 404)
             except Exception as exc:
@@ -1732,20 +1914,17 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "game profile changes are loopback-only"}, 403)
                 return
             try:
-                with PROFILE_UPDATE_LOCK:
+                SYSTEM_COMMANDS.invalidate()
+                with _profile_configuration_transaction():
                     if route.endswith("/select"):
                         profile = PROFILES.select(str(body.get("id", "")))
                     else:
                         profile = PROFILES.set_overrides(body.get("overrides", {}), profile_id=body.get("profile_id"),
                                                          check=VOICE.check_profile_phrases)
-                    with VOICE._lock:
-                        VOICE._release_locked(VOICE.source_id)
-                        KERNEL.configure_bindings(profile.get("bindings", {}))
-                        VOICE.configure_profile_bindings(profile.get("bindings", {}))
-                    broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
-                    if broadcaster is not None:
-                        broadcaster(_phone_control_payload())
-                response = {"ok": True, "profile": profile}
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
+                response = {"ok": True, "profile": profile, "config_revision": CONFIG_REVISION}
                 if route.endswith("/select"):
                     response["launch"] = _game_launch_status(profile)
                 self._send_json(response)
@@ -1762,7 +1941,7 @@ class AdminHandler(_BaseHandler):
                 # 音频下拉可以单独保存/切换，不能因为保存音频而重启摄像头。
                 if "source" not in body and "audio_source" in body:
                     voice_data = _set_audio_source(body.get("audio_source"))
-                    self._send_json({"ok": True, **RUNTIME.status(), **_audio_payload(),
+                    self._send_json({"ok": True, **runtime_status(), **_audio_payload(),
                                      "voice": voice_data})
                     return
                 source = str(body.get("source", "")).strip().lower()
@@ -1777,19 +1956,13 @@ class AdminHandler(_BaseHandler):
                     voice_data = _set_audio_source(AUDIO_SOURCE)
                 elif not enabled:
                     voice_data = _set_audio_source(AUDIO_SOURCE, start=False)
-                INPUT_BRIDGE.set_body_mode("computer")
-                INPUT_BRIDGE.clear_mobile_sources()
-                if enabled:
-                    data = RUNTIME.set_source(source, start_computer=True)
-                else:
-                    data = RUNTIME.stop_body()
-                INPUT_BRIDGE.set_body_mode(source if enabled else "computer")
+                data = _set_body_input(source, enabled)
                 audio_data = _audio_payload()
                 if voice_data is not None:
                     audio_data["voice"] = voice_data
                 self._send_json({"ok": True, **data, **audio_data})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status(), "voice": VOICE.status()}, 400)
+                self._send_json({"ok": False, "error": str(exc), **runtime_status(), "voice": VOICE.status()}, 400)
             return
         if route == "/api/input/audio-device":
             if not self._is_loopback():
@@ -1837,9 +2010,9 @@ class AdminHandler(_BaseHandler):
                 return
             try:
                 RUNTIME.start_calibration()
-                self._send_json({"ok": True, **RUNTIME.status()})
+                self._send_json({"ok": True, **runtime_status()})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+                self._send_json({"ok": False, "error": str(exc), **runtime_status()}, 400)
             return
         if route == "/api/head/calibration/cancel":
             if not self._is_loopback():
@@ -1853,9 +2026,9 @@ class AdminHandler(_BaseHandler):
                 return
             try:
                 KERNEL.set_current_center()
-                self._send_json({"ok": True, **RUNTIME.status()})
+                self._send_json({"ok": True, **runtime_status()})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+                self._send_json({"ok": False, "error": str(exc), **runtime_status()}, 400)
             return
         # 量身定区域：开始、跳过这一项、不量了、恢复默认大小。和校准一样只给本机。
         if route in ("/api/zones/fit/start", "/api/zones/fit/skip", "/api/zones/fit/cancel", "/api/zones/fit/reset"):
@@ -1872,9 +2045,9 @@ class AdminHandler(_BaseHandler):
                     KERNEL.cancel_zone_fit()
                 else:
                     KERNEL.reset_zone_fit()
-                self._send_json({"ok": True, **RUNTIME.status()})
+                self._send_json({"ok": True, **runtime_status()})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+                self._send_json({"ok": False, "error": str(exc), **runtime_status()}, 400)
             return
         # 录我的动作：开始（可以只录几项）、这一项跳过、不录了、删掉某几项。只给本机。
         if route in ("/api/intent/start", "/api/intent/skip", "/api/intent/cancel", "/api/intent/forget"):
@@ -1893,9 +2066,9 @@ class AdminHandler(_BaseHandler):
                     KERNEL.cancel_intent_recording()
                 else:
                     KERNEL.forget_intent_items(keys or [])
-                self._send_json({"ok": True, **RUNTIME.status()})
+                self._send_json({"ok": True, **runtime_status()})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+                self._send_json({"ok": False, "error": str(exc), **runtime_status()}, 400)
             return
         # 区域触发方式（智能 / 进去就按）；定住跟随框、恢复跟随、定住后拖过的框。
         # 只给本机，和量身一样。
@@ -1922,9 +2095,9 @@ class AdminHandler(_BaseHandler):
                     KERNEL.configure_vertical_look(body)
                 else:
                     KERNEL.update_frozen_zones(body.get("rects"))
-                self._send_json({"ok": True, **RUNTIME.status()})
+                self._send_json({"ok": True, **runtime_status()})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+                self._send_json({"ok": False, "error": str(exc), **runtime_status()}, 400)
             return
         if route == "/api/pose/record":
             if not self._is_loopback():
@@ -1966,6 +2139,24 @@ class AdminHandler(_BaseHandler):
             except (ValueError, TypeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
+        if route == "/api/view-control":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "view control is loopback-only"}, 403)
+                return
+            try:
+                with PROFILE_UPDATE_LOCK:
+                    result = configure_view_control(KERNEL, body.get("horizontal"), body.get("vertical"))
+                    CONFIG_REVISION += 1
+                    broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                    if broadcaster is not None:
+                        broadcaster(_phone_control_payload())
+                    payload = {"ok": True, **runtime_status(), "hand_mouse": result["hand_mouse"],
+                               "config_revision": CONFIG_REVISION}
+                self._send_json(payload)
+            except (ValueError, TypeError, OSError) as exc:
+                self._send_json({"ok": False, "error": str(exc), **runtime_status(),
+                                 "hand_mouse": KERNEL.hand_mouse_controller.status()}, 400)
+            return
         if route == "/api/hand-mouse/config":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "hand mouse config is loopback-only"}, 403)
@@ -1998,9 +2189,9 @@ class AdminHandler(_BaseHandler):
                     vertical_exclusive=body.get("vertical_exclusive", body.get("exclusive_axes")),
                     body_motion_guard=body.get("body_motion_guard"),
                 )
-                self._send_json({"ok": True, **RUNTIME.status()})
+                self._send_json({"ok": True, **runtime_status()})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), **RUNTIME.status()}, 400)
+                self._send_json({"ok": False, "error": str(exc), **runtime_status()}, 400)
             return
         if route == "/api/action-chain/config":
             if not self._is_loopback():
@@ -2033,6 +2224,8 @@ class AdminHandler(_BaseHandler):
         try:
             if route == "/api/output/config":
                 try:
+                    if "enabled" in body:
+                        SYSTEM_COMMANDS.invalidate()
                     data = OUTPUT.set_config(
                         mode=body.get("mode"),
                         enabled=body.get("enabled") if "enabled" in body else None,
@@ -2070,6 +2263,7 @@ class AdminHandler(_BaseHandler):
             data["hotkeys"] = HOTKEYS.status()
             self._send_json({"ok": True, **data})
         except Exception as exc:
+            SYSTEM_COMMANDS.invalidate()
             OUTPUT.emergency_stop()
             _broadcast_game_output_state()
             self._send_json({"ok": False, "error": str(exc), **OUTPUT.status()}, 400)
@@ -2146,7 +2340,7 @@ def _boot_ok_and_check() -> None:
 
     def look() -> None:
         try:
-            result = app_update.check_and_stage(_APP_DIR)
+            result = app_update.check_and_stage(_APP_DIR, cancel_event=UPDATE_CANCEL)
         except Exception:  # noqa: BLE001
             return
         global UPDATE_STATE
@@ -2251,6 +2445,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        UPDATE_CANCEL.set()
+        CLOUD_METADATA.close(wait=False)
+        SYSTEM_COMMANDS.close()
         perf_stop.set()
         perf_thread.join(timeout=1.0)
         OUTPUT.emergency_stop()

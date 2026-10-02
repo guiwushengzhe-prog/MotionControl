@@ -23,12 +23,19 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
+import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 ENTRY_POINTS = ("server.py",)
+BUILD_PROVENANCE_NAME = "build-provenance.json"
+RELEASE_PROVENANCE_NAME = "release-provenance.json"
 
 # Directories copied wholesale.  config/ is deliberately absent: since 2.0.x the
 # user's own files live in %LOCALAPPDATA%, and shipping a stale copy of them
@@ -151,6 +158,7 @@ def plan(target: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
     for name in RELEASE_LOCAL_CONFIG:
         if name not in REMOVE_FROM_CONFIG:
             wanted.add(app / "config" / name)
+    wanted.add(app / RELEASE_PROVENANCE_NAME)
 
     # release/ 里的东西原样搬到包的顶层。早先这里只认一个写死的文件名，
     # 结果改个名字旧的就永远留在包里——发布包必须能从零重建，不能靠谁
@@ -198,6 +206,124 @@ def stale_bytecode(target: Path) -> list[Path]:
     """
     return sorted(path for path in (target / "app").rglob("__pycache__")
                   if path.is_dir())
+
+
+def _file_record(root: Path, path: Path) -> dict:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 16), b""):
+            digest.update(chunk)
+    return {"path": path.relative_to(root).as_posix(), "size": path.stat().st_size,
+            "sha256": digest.hexdigest()}
+
+
+def _git(root: Path, *arguments: str) -> str:
+    return subprocess.check_output(["git", "-C", str(root), *arguments],
+                                   text=True, encoding="utf-8").strip()
+
+
+def _verify_records(root: Path, records: list[dict]) -> None:
+    resolved_root = root.resolve()
+    seen = set()
+    for record in records:
+        path = (resolved_root / record["path"]).resolve()
+        if resolved_root not in path.parents or path in seen or not path.is_file():
+            raise ValueError(f"构建来源文件缺失或路径无效：{record['path']}")
+        seen.add(path)
+        if _file_record(resolved_root, path) != record:
+            raise ValueError(f"构建来源已变化，请重新构建：{record['path']}")
+
+
+def resolve_phone_web(argument: str | None) -> Path:
+    """A sibling checkout is never guessed: callers select their own build."""
+    configured = argument or os.environ.get("MOTIONCONTROL_PHONE_WEB_DIR", "").strip()
+    if not configured:
+        raise ValueError("请显式指定 --phone-web <Android仓库/mobile/dist>，或设置 MOTIONCONTROL_PHONE_WEB_DIR")
+    source = Path(configured).resolve()
+    if not (source / "index.html").is_file():
+        raise ValueError(f"手机网页构建目录无效：{source}")
+    return source
+
+
+def read_phone_web_provenance(source: Path) -> dict:
+    """Reject stale dist bytes and dist built from another source checkout."""
+    path = source / BUILD_PROVENANCE_NAME
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if manifest["schema"] != "motioncontrol.build_provenance.v1":
+            raise ValueError("手机构建来源清单版本无效")
+        if not isinstance(manifest["source"]["dirty"], bool):
+            raise ValueError("手机构建来源状态无效")
+        records = manifest["files"]
+        recorded = {record["path"] for record in records}
+        actual = {p.relative_to(source).as_posix() for p in source.rglob("*")
+                  if p.is_file() and p.relative_to(source).as_posix()
+                  not in {BUILD_PROVENANCE_NAME, ".signature"}}
+        if actual != recorded:
+            raise ValueError("手机构建产物与清单不一致，请重新构建")
+        _verify_records(source, records)
+        mobile_root = source.parent
+        expected_sources = {p.relative_to(mobile_root).as_posix()
+                            for directory in ("src", "public", "scripts", "config", "fallback")
+                            for p in (mobile_root / directory).rglob("*") if p.is_file()}
+        expected_sources.update(name for name in ("index.html", "package.json", "package-lock.json",
+                                "tsconfig.json", "vite.config.ts", "capacitor.config.ts")
+                                if (mobile_root / name).is_file())
+        if expected_sources != {record["path"] for record in manifest["source"]["files"]}:
+            raise ValueError("手机源码文件列表已变化，请重新构建")
+        _verify_records(mobile_root, manifest["source"]["files"])
+        if _git(mobile_root, "rev-parse", "HEAD") != manifest["source"]["commit"]:
+            raise ValueError("手机构建对应其他源码提交，请重新构建")
+        return manifest
+    except (OSError, KeyError, TypeError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
+        raise ValueError("无法校验手机构建来源，请在 Android 仓库运行 npm run build") from exc
+
+
+def _artifact_records(app: Path) -> list[dict]:
+    from motioncontrol.app_update import KEEP_FROM_OLD
+
+    excluded = set(KEEP_FROM_OLD) | {RELEASE_PROVENANCE_NAME, ".signature"}
+    return [_file_record(app, path) for path in sorted(app.rglob("*"))
+            if path.is_file() and "__pycache__" not in path.parts
+            and path.name != ".signature"
+            and path.relative_to(app).as_posix() not in excluded]
+
+
+def record_release_provenance(target: Path, copies: list[tuple[Path, Path]],
+                              mobile_manifest: dict) -> dict:
+    for source, destination in copies:
+        original = _file_record(ROOT, source)
+        staged = _file_record(target, destination)
+        if (original["size"], original["sha256"]) != (staged["size"], staged["sha256"]):
+            raise ValueError(f"打包过程中源码发生变化，请重新 stage：{original['path']}")
+    pc_sources = sorted({source for source, _destination in copies})
+    manifest = {
+        "schema": "motioncontrol.release_provenance.v1",
+        "pc": {"commit": _git(ROOT, "rev-parse", "HEAD"),
+               "dirty": bool(_git(ROOT, "status", "--porcelain", "--untracked-files=normal")),
+               "files": [_file_record(ROOT, source) for source in pc_sources]},
+        "android": mobile_manifest["source"],
+        "files": _artifact_records(target / "app"),
+    }
+    destination = target / "app" / RELEASE_PROVENANCE_NAME
+    destination.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return manifest
+
+
+def verify_release_provenance(app: Path, *, check_sources: bool = False) -> dict:
+    try:
+        manifest = json.loads((app / RELEASE_PROVENANCE_NAME).read_text(encoding="utf-8"))
+        if manifest["schema"] != "motioncontrol.release_provenance.v1":
+            raise ValueError("发布来源清单版本无效")
+        if manifest["files"] != _artifact_records(app):
+            raise ValueError("发布包内容与来源清单不一致，请重新 stage")
+        if check_sources:
+            _verify_records(ROOT, manifest["pc"]["files"])
+            if _git(ROOT, "rev-parse", "HEAD") != manifest["pc"]["commit"]:
+                raise ValueError("发布包对应其他电脑源码提交，请重新 stage")
+        return manifest
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("发布来源清单缺失或无效，请重新 stage") from exc
 
 
 # 手机网页包里不进发布的部分：模型和 WASM 有 25 MB，它们留在 APK 里，手机永远
@@ -314,13 +440,18 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", required=True, help="portable bundle root")
     parser.add_argument("--check", action="store_true", help="report only")
-    parser.add_argument("--phone-web", default="../switch/mobile/dist",
-                        help="手机端 npm run build 的产物目录")
+    parser.add_argument("--phone-web", default=None,
+                        help="明确选择手机端 npm run build 的产物目录，或设 MOTIONCONTROL_PHONE_WEB_DIR")
     args = parser.parse_args()
 
     target = Path(args.target)
     if not (target / "python").is_dir():
         raise SystemExit(f"{target} does not look like a portable bundle (no python/)")
+    try:
+        phone_web = resolve_phone_web(args.phone_web)
+        mobile_manifest = read_phone_web_provenance(phone_web)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     copies, stale = plan(target)
 
@@ -345,6 +476,15 @@ def main() -> int:
         print("  remove", path.relative_to(target))
 
     if args.check:
+        try:
+            verify_release_provenance(target / "app", check_sources=True)
+            staged_mobile = target / "app" / "phone_web" / BUILD_PROVENANCE_NAME
+            if not staged_mobile.is_file() or staged_mobile.read_bytes() != (phone_web / BUILD_PROVENANCE_NAME).read_bytes():
+                print("手机发布产物与指定构建不一致，请重新 stage")
+                return 1
+        except ValueError as exc:
+            print(str(exc))
+            return 1
         return 1 if (changed or stale or bytecode) else 0
 
     for source, destination in changed:
@@ -355,13 +495,14 @@ def main() -> int:
     for path in bytecode:
         shutil.rmtree(path, ignore_errors=True)
 
-    phone_web = Path(args.phone_web)
-    if phone_web.is_dir():
-        files, size = stage_phone_web(phone_web, target)
-        print(f"phone_web: {files} 个文件 {size / 1024:.0f} KB（手机连上时自己来取）")
-        print("  " + check_phone_web_signature(target / "app" / "phone_web"))
-    else:
-        print(f"WARNING: 找不到手机网页包 {phone_web}，发布包里不会带更新用的那一份")
+    files, size = stage_phone_web(phone_web, target)
+    print(f"phone_web: {files} 个文件 {size / 1024:.0f} KB（手机连上时自己来取）")
+    print("  " + check_phone_web_signature(target / "app" / "phone_web"))
+    try:
+        provenance = record_release_provenance(target, copies, mobile_manifest)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"source: PC {provenance['pc']['commit']} / Android {provenance['android']['commit']}")
 
     print("  " + check_vigem_installer(target))
 
@@ -372,4 +513,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Redirected Windows output otherwise uses the machine's ANSI code page,
+    # which cannot encode the Chinese release messages on an English system.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())

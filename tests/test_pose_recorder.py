@@ -8,6 +8,7 @@ cannot run forever if nobody stops it.
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -23,7 +24,9 @@ def frame(x=0.5, y=0.5, score=0.9):
 
 @pytest.fixture
 def recorder(tmp_path):
-    return PoseRecorder(tmp_path / "recordings")
+    item = PoseRecorder(tmp_path / "recordings")
+    yield item
+    item.close()
 
 
 def test_starts_idle(recorder):
@@ -54,6 +57,7 @@ def test_file_is_written_when_the_duration_elapses(recorder):
     for i in range(5):
         recorder.capture(frame(x=0.1 * i), now=i * 0.2)
     recorder.capture(frame(), now=1.5)     # past the end: finishes and saves
+    assert recorder.wait(timeout=2.0)
 
     status = recorder.status()
     assert status["state"] == "done"
@@ -67,6 +71,7 @@ def test_saved_file_is_a_header_line_then_one_line_per_frame(recorder):
     for i in range(4):
         recorder.capture(frame(), now=i * 0.2, width=640, height=480, source="phone")
     recorder.capture(frame(), now=2.0)
+    assert recorder.wait(timeout=2.0)
 
     lines = list(recorder.last_path.read_text(encoding="utf-8").splitlines())
     header = json.loads(lines[0])
@@ -86,6 +91,7 @@ def test_visibility_is_normalised_to_score(recorder):
     recorder.start(delay_s=0.0, duration_s=0.5, now=0.0)
     recorder.capture(frame(score=0.77), now=0.1)
     recorder.capture(frame(), now=1.0)
+    assert recorder.wait(timeout=2.0)
     saved = json.loads(recorder.last_path.read_text(encoding="utf-8").splitlines()[1])
     assert saved["pose"]["right_wrist"]["score"] == pytest.approx(0.77)
 
@@ -95,6 +101,7 @@ def test_extra_fields_are_recorded_alongside_the_pose(recorder):
     recorder.start(delay_s=0.0, duration_s=0.5, now=0.0)
     recorder.capture(frame(), now=0.1, extra={"hand_spread": 0.24, "fist": True})
     recorder.capture(frame(), now=1.0)
+    assert recorder.wait(timeout=2.0)
     saved = json.loads(recorder.last_path.read_text(encoding="utf-8").splitlines()[1])
     assert saved["extra"]["hand_spread"] == 0.24
     assert saved["extra"]["fist"] is True
@@ -107,6 +114,7 @@ def test_frames_are_copied_not_referenced(recorder):
     recorder.capture(live, now=0.1)
     live["left_wrist"]["x"] = 0.9        # the kernel mutates in place
     recorder.capture(frame(), now=2.0)
+    assert recorder.wait(timeout=2.0)
 
     saved = json.loads(recorder.last_path.read_text(encoding="utf-8").splitlines()[1])
     assert saved["pose"]["left_wrist"]["x"] == pytest.approx(0.2)
@@ -140,6 +148,7 @@ def test_frame_cap_stops_a_recorder_nobody_stopped(recorder, monkeypatch):
     recorder.start(delay_s=0.0, duration_s=MAX_DURATION_S, now=0.0)
     for i in range(20):
         recorder.capture(frame(), now=i * 0.01)
+    assert recorder.wait(timeout=2.0)
     assert recorder.status()["state"] == "done"
     assert recorder.last_frames == 5
 
@@ -148,3 +157,78 @@ def test_capture_is_inert_when_idle(recorder):
     recorder.capture(frame(), now=1.0)
     assert recorder.status()["state"] == "idle"
     assert not list(recorder.directory.glob("*.jsonl"))
+
+
+def test_slow_save_leaves_capture_and_status_responsive(recorder, monkeypatch):
+    entered, resume = threading.Event(), threading.Event()
+    save = recorder._save_snapshot
+
+    def slow_save(header, frames):
+        entered.set()
+        assert resume.wait(2.0)
+        save(header, frames)
+
+    monkeypatch.setattr(recorder, "_save_snapshot", slow_save)
+    recorder.start(delay_s=0, duration_s=0.5, now=0)
+    recorder.capture(frame(), now=0.1)
+    try:
+        recorder.capture(frame(), now=1.0)
+        assert entered.wait(1.0)
+        assert recorder.status()["state"] == "saving"
+        assert recorder.status()["frames"] == 1
+        assert not recorder.wait(timeout=0.01)
+        assert not recorder.close(timeout=0.01)
+        with pytest.raises(ValueError, match="已关闭"):
+            recorder.start(now=2.0)
+    finally:
+        resume.set()
+        assert recorder.wait(timeout=2.0)
+    assert recorder.status()["state"] == "done"
+
+
+def test_extra_is_snapshot_and_new_recording_cannot_replace_inflight_save(recorder, monkeypatch):
+    entered, resume = threading.Event(), threading.Event()
+    save = recorder._save_snapshot
+
+    def slow_save(header, frames):
+        entered.set()
+        assert resume.wait(2.0)
+        save(header, frames)
+
+    monkeypatch.setattr(recorder, "_save_snapshot", slow_save)
+    live_extra = {"hand": {"points": [0.2, 0.4]}}
+    recorder.start(delay_s=0, duration_s=0.5, now=0)
+    recorder.capture(frame(), now=0.1, extra=live_extra)
+    recorder.capture(frame(), now=1.0)
+    try:
+        assert entered.wait(1.0)
+        live_extra["hand"]["points"][0] = 99
+        with pytest.raises(ValueError, match="已经在录制中"):
+            recorder.start(now=2.0)
+    finally:
+        resume.set()
+        assert recorder.wait(timeout=2.0)
+    saved = json.loads(recorder.last_path.read_text(encoding="utf-8").splitlines()[1])
+    assert saved["extra"]["hand"]["points"] == [0.2, 0.4]
+
+
+def test_failed_save_reports_error_and_does_not_publish_partial_recording(recorder, monkeypatch):
+    def disk_full(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("motioncontrol.pose_recorder.os.replace", disk_full)
+    recorder.start(delay_s=0, duration_s=0.5, now=0)
+    recorder.capture(frame(), now=0.1)
+    recorder.capture(frame(), now=1.0)
+    assert recorder.wait(timeout=2.0)
+    assert recorder.status()["state"] == "error"
+    assert "disk full" in recorder.status()["error"]
+    assert not list(recorder.directory.glob("*.jsonl"))
+
+
+def test_close_saves_recorded_frames_without_needing_another_camera_frame(recorder):
+    recorder.start(delay_s=0, duration_s=15, now=0)
+    recorder.capture(frame(), now=0.1)
+    assert recorder.close(timeout=2.0)
+    assert recorder.status()["state"] == "done"
+    assert recorder.last_frames == 1

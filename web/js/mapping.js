@@ -1,5 +1,5 @@
 // 本游戏：选游戏、按键映射的每一行、保存。
-import {$,api,notice,post} from './core.js';
+import {$,api,configurationOperation,notice,positionPopup,post,registerDraftFlusher,setAttribute,setClass,setProperty,setText,syncChildren} from './core.js';
 import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
 import {paintPoseMissingNotice} from './library.js';
 import {kernelState,renderKernelZones} from './play.js';
@@ -16,6 +16,8 @@ let profileFlight=null;
 let profileRevision=0;
 export let profileSwitching=false;
 let profileConflict=false;
+let profileSearchRevision=0;
+registerDraftFlusher(saveProfileBindings);
 
 // 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
 export function revealBindingRow(triggerKey){
@@ -208,7 +210,11 @@ function renderProfileCatalog(games){
 
 export async function searchProfiles(){
   const q=$('#profileSearch').value.trim();
-  const data=await api('/api/game-profiles/catalog'+(q?'?q='+encodeURIComponent(q):''));
+  const revision=++profileSearchRevision;
+  let data;
+  try{data=await api('/api/game-profiles/catalog'+(q?'?q='+encodeURIComponent(q):''))}
+  catch(error){if(revision!==profileSearchRevision||q!==$('#profileSearch').value.trim())return;throw error}
+  if(revision!==profileSearchRevision||q!==$('#profileSearch').value.trim())return;
   lastProfileQuery=q;
   renderProfileCatalog(data.games||[]);
   const count=Number(data.count||0);
@@ -289,15 +295,15 @@ export async function applySelectedProfile(){
   });
 }
 
-async function profileOperation(operation){
-  const controls=()=>[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn')];
-  profileSwitching=true;$('#mappingFields').disabled=true;
-  for(const el of controls())el.disabled=true;
-  try{await operation()}
-  finally{
-    profileSwitching=false;$('#mappingFields').disabled=false;
-    for(const el of controls())el.disabled=false;
-  }
+async function profileOperation(operation,{recoverConflict=false}={}){
+  return configurationOperation(async()=>{
+    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn')];
+    const disabled=controls.map(el=>el.disabled);
+    profileSwitching=true;
+    controls.forEach(el=>{el.disabled=true});
+    try{await operation()}
+    finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]})}
+  },{skipDrafts:recoverConflict?[saveProfileBindings]:[]});
 }
 
 function makeTypeSelect(binding){
@@ -323,6 +329,7 @@ function setVoiceReleasePickerOpen(picker,open){
   picker.classList.toggle('open',open);
   const button=picker.querySelector('.voice-release-picker-button');
   if(button)button.setAttribute('aria-expanded',open?'true':'false');
+  if(open&&button)positionPopup(button,picker.querySelector('.voice-release-picker-menu'));
 }
 
 function ensureVoiceReleasePickerEvents(){
@@ -356,7 +363,13 @@ function ensureVoiceReleasePickerEvents(){
     }
   });
   document.addEventListener('keydown',event=>{
-    if(event.key==='Escape')document.querySelectorAll('.voice-release-picker.open').forEach(item=>setVoiceReleasePickerOpen(item,false));
+    if(event.key==='Escape')document.querySelectorAll('.voice-release-picker.open').forEach(item=>{setVoiceReleasePickerOpen(item,false);item.querySelector('.voice-release-picker-button')?.focus()});
+    if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+      const picker=event.target.closest?.('.voice-release-picker.open');if(!picker)return;
+      const options=[...picker.querySelectorAll('.voice-release-option:not(:disabled)')];if(!options.length)return;
+      event.preventDefault();const index=options.indexOf(document.activeElement);
+      options[(index+(event.key==='ArrowDown'?1:options.length-1)+options.length)%options.length].focus();
+    }
   });
   voiceReleasePickerEventsReady=true;
 }
@@ -369,20 +382,22 @@ function updateVoiceReleasePicker(select){
   const selected=voiceReleaseTargetIds(select);
   const labels=voiceCommandNames(selected);
   if(button){
-    button.textContent=labels.length?labels.join('、'):(select.options.length&&select.options[0].value===''?select.options[0].textContent:'请选择要停住的口令');
-    button.disabled=select.disabled;
-    button.setAttribute('aria-label',labels.length?`已选：${labels.join('、')}`:'选择要停住的口令');
+    setText(button,labels.length?labels.join('、'):(select.options.length&&select.options[0].value===''?select.options[0].textContent:'请选择要停住的口令'));
+    setProperty(button,'disabled',select.disabled);
+    setAttribute(button,'aria-label',labels.length?`已选：${labels.join('、')}`:'选择要停住的口令');
   }
   if(!menu)return;
-  menu.replaceChildren();
+  const previous=new Map([...menu.children].map(item=>[item.dataset.value,item])),items=[];
   for(const option of select.options){
-    const item=document.createElement('button');
-    item.type='button';item.className='voice-release-option';item.dataset.value=option.value;
-    item.textContent=option.textContent;item.disabled=!option.value||option.disabled;
-    item.setAttribute('role','option');item.setAttribute('aria-selected',option.selected?'true':'false');
-    item.classList.toggle('selected',option.selected);menu.appendChild(item);
+    let item=previous.get(option.value);
+    if(!item){item=document.createElement('button');item.type='button';item.className='voice-release-option';item.dataset.value=option.value;item.setAttribute('role','option')}
+    setText(item,option.textContent);setProperty(item,'disabled',!option.value||option.disabled);
+    setAttribute(item,'aria-selected',option.selected?'true':'false');
+    setClass(item,'selected',option.selected);items.push(item);
   }
-  if(!menu.children.length){const empty=document.createElement('div');empty.className='voice-release-empty';empty.textContent='没有可停住的口令';menu.appendChild(empty)}
+  if(!items.length){const empty=previous.get(undefined)||document.createElement('div');empty.className='voice-release-empty';setText(empty,'没有可停住的口令');items.push(empty)}
+  syncChildren(menu,items);
+  if(picker.classList.contains('open'))positionPopup(button,menu);
 }
 
 function voiceHoldChoices(excludeKey=''){
@@ -397,33 +412,36 @@ function voiceHoldChoices(excludeKey=''){
   return out;
 }
 
-function fillVoiceReleaseSelect(select,excludeKey,value){
-  const previous=voiceReleaseTargetIds(select);
-  const want=voiceCommandIds(value==null?previous:value);
-  const choices=voiceHoldChoices(excludeKey);
-  select.multiple=true;
-  select.hidden=true;
-  select.replaceChildren();
-  for(const id of choices){const o=document.createElement('option');o.value=id;o.textContent=voiceCommandName(id);o.selected=want.includes(id);select.appendChild(o)}
+function fillVoiceReleaseSelect(select,excludeKey,value,held){
+  const selectedBefore=voiceReleaseTargetIds(select);
+  const want=voiceCommandIds(value==null?selectedBefore:value);
+  const choices=held?held.filter(id=>id!==voiceCommandId(excludeKey)):voiceHoldChoices(excludeKey);
+  setProperty(select,'multiple',true);setProperty(select,'hidden',true);
+  const previous=new Map([...select.options].map(option=>[option.value,option])),options=[];
+  const add=(id,label,selected)=>{
+    const option=previous.get(id)||new Option('',id);setText(option,label);setProperty(option,'selected',selected);options.push(option);
+  };
+  for(const id of choices)add(id,voiceCommandName(id),want.includes(id));
   // 指着的那条已经不是持续按住了，照实写出来，不偷偷换成别的一条。
-  for(const id of want.filter(item=>!choices.includes(item))){const o=document.createElement('option');o.value=id;o.textContent=`${voiceCommandName(id)}（已不是按住不放）`;o.selected=true;select.appendChild(o)}
-  if(!select.options.length){const o=document.createElement('option');o.value='';o.textContent='先把一条口令设成「按住不放」';o.selected=true;select.appendChild(o)}
-  select.disabled=!choices.length&&!want.length;
+  for(const id of want.filter(item=>!choices.includes(item)))add(id,`${voiceCommandName(id)}（已不是按住不放）`,true);
+  if(!options.length)add('','先把一条口令设成「按住不放」',true);
+  syncChildren(select,options);setProperty(select,'disabled',!choices.length&&!want.length);
   updateVoiceReleasePicker(select);
 }
 
 // 口令改了说法、改成或不再是持续按住，所有「停住语音按住」的下拉框和选项都跟着变。
 export function syncVoiceReleaseChoices(){
+  const held=voiceHoldChoices();
   for(const row of document.querySelectorAll('#profileBindingRows .binding-row')){
     const typeSel=row.querySelector('.binding-type');if(!typeSel)continue;
     const option=[...typeSel.options].find(o=>o.value==='voice_release');
     if(option){
       // 没有设成「按住不放」的口令时，这一项用不上，就不列出来（这一行正选着它的除外）。
-      const none=!voiceHoldChoices(row.dataset.trigger).length;
-      option.hidden=none&&typeSel.value!=='voice_release';option.disabled=option.hidden;
+      const none=!held.some(id=>id!==voiceCommandId(row.dataset.trigger));
+      setProperty(option,'hidden',none&&typeSel.value!=='voice_release');setProperty(option,'disabled',option.hidden);
     }
     const select=row.querySelector('select.voice-release-target');
-    if(select)fillVoiceReleaseSelect(select,row.dataset.trigger,voiceReleaseTargetIds(select));
+    if(select)fillVoiceReleaseSelect(select,row.dataset.trigger,voiceReleaseTargetIds(select),held);
   }
 }
 
@@ -701,10 +719,7 @@ function buildZonePointPicker(trigger,binding){
     }
   };
   picker.positionMenu=()=>{
-    const rect=summary.getBoundingClientRect(),width=Math.min(350,innerWidth*.8),below=innerHeight-rect.bottom-12,above=rect.top-12;
-    menu.style.left=Math.max(8,Math.min(rect.left,innerWidth-width-8))+'px';
-    menu.style.maxHeight=Math.max(120,Math.min(620,innerHeight*.75,Math.max(above,below)))+'px';
-    menu.style.top=below>=above?rect.bottom+5+'px':'auto';menu.style.bottom=below>=above?'auto':innerHeight-rect.top+5+'px';
+    positionPopup(summary,menu);
   };
   picker.addEventListener('toggle',()=>{if(picker.open)picker.positionMenu();else cancelGesture()});
   picker.addEventListener('keydown',event=>{if(event.key==='Escape')cancelGesture()});
@@ -722,11 +737,16 @@ document.addEventListener('keydown',event=>{
   if(event.key==='Escape')document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>{picker.open=false;picker.querySelector('summary').focus()});
 });
 
-const positionZonePointMenus=()=>document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>picker.positionMenu());
+const positionZonePointMenus=()=>{
+  document.querySelectorAll('.zone-point-picker[open]').forEach(picker=>picker.positionMenu());
+  document.querySelectorAll('.voice-release-picker.open').forEach(picker=>positionPopup(picker.querySelector('.voice-release-picker-button'),picker.querySelector('.voice-release-picker-menu')));
+};
 
 window.addEventListener('resize',positionZonePointMenus);
 
 document.addEventListener('scroll',positionZonePointMenus,true);
+window.visualViewport?.addEventListener('resize',positionZonePointMenus);
+window.visualViewport?.addEventListener('scroll',positionZonePointMenus);
 
 function readZonePointChoices(row){
   const choices=row.querySelector('.zone-trigger-choices');
@@ -941,7 +961,7 @@ export function paintZoneConflictNotes(){
     const note=row.querySelector('.zone-conflict-note');if(!note)continue;
     const info=overlaps[row.dataset.trigger.slice(5)];
     const text=info?zoneConflictText(info):'';
-    note.hidden=!text;if(note.textContent!==text)note.textContent=text;
+    setProperty(note,'hidden',!text);setText(note,text);
   }
 }
 
@@ -1129,7 +1149,7 @@ export async function retryProfileBindings(){
     await post('/api/game-profiles/select',{id});
     profileConflict=false;
     await saveProfileBindings();
-  });
+  },{recoverConflict:true});
 }
 
 export function scheduleProfileAutoSave(event){

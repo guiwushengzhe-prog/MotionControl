@@ -4284,10 +4284,8 @@ class HeadController:
         self.calibration_from_last_session = True
         self._saved_calibration = saved
 
-    def _save_profile(self) -> None:
-        if not self.profile_path:
-            return
-        path = Path(self.profile_path)
+    def profile_document(self) -> dict:
+        """Prepare the complete profile without touching disk."""
         # 正在校准时内存里是半截的，照旧写上一份；没有可用的校准（从没校准过，或刚
         # 换了估计方法）就写空，下次打开要重新校准。
         if not self.calibrating:
@@ -4296,7 +4294,7 @@ class HeadController:
             except (TypeError, ValueError):
                 # 存不下校准不该让改设置失败；最坏是下次打开要重新校准。
                 self._saved_calibration = None
-        payload = {
+        return {
             "signal_version": HEAD_SIGNAL_VERSION,
             "saved_at_unix": time.time(),
             "params": dict(self.config),
@@ -4310,6 +4308,11 @@ class HeadController:
                 "noise_yaw_proxy": self.noise_yaw_proxy,
             },
         }
+    def _save_profile(self) -> None:
+        if not self.profile_path:
+            return
+        path = Path(self.profile_path)
+        payload = self.profile_document()
         temp = path.with_suffix(path.suffix + ".tmp")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)

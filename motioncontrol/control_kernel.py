@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from collections import Counter, deque
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,48 @@ from motioncontrol.zone_fit import (
     foot_floor_y, foot_out, is_default, normalize_zone_fit,
 )
 from motioncontrol_shared import pose_library, pose_rules
+
+
+_SNAPSHOT_ATOMIC_TYPES = frozenset((type(None), bool, int, float, complex, str, bytes))
+_SNAPSHOT_MISSING = object()
+
+
+def _snapshot_copy(value, memo=None):
+    """Detach JSON-shaped status data, retaining deepcopy's graph semantics.
+
+    Atomic leaves skip copy dispatch. Exact dict/list containers
+    use a shared memo for aliases and cycles; extensions and subclasses retain
+    their existing deepcopy behavior.
+    """
+    kind = type(value)
+    if kind in _SNAPSHOT_ATOMIC_TYPES:
+        # An extension's __deepcopy__ or an explicitly supplied memo can
+        # replace even an atomic object; honor that just as deepcopy does.
+        return memo.get(id(value), value) if memo else value
+    if kind is not dict and kind is not list:
+        return copy.deepcopy(value, memo)
+    if memo is None:
+        memo = {}
+    identity = id(value)
+    existing = memo.get(identity, _SNAPSHOT_MISSING)
+    if existing is not _SNAPSHOT_MISSING:
+        return existing
+    if kind is dict:
+        result = {}
+        memo[identity] = result
+        for key, item in value.items():
+            result[_snapshot_copy(key, memo)] = _snapshot_copy(item, memo)
+    else:
+        result = []
+        memo[identity] = result
+        result.extend(_snapshot_copy(item, memo) for item in value)
+    # Extension hooks can create temporary objects while sharing this memo.
+    # Retain source containers as deepcopy does, so their ids cannot be reused.
+    try:
+        memo[id(memo)].append(value)
+    except KeyError:
+        memo[id(memo)] = [value]
+    return result
 
 
 def _user_intent_dir():
@@ -482,6 +525,7 @@ class ControlKernel:
         # explicit rematch use a robust multi-frame body snapshot instead of
         # trusting one noisy MediaPipe frame.
         self.pose_history: deque[tuple[float, dict[str, dict]]] = deque(maxlen=48)
+        self._zone_smoothing_at: float | None = None
         self.last_error: str | None = None
 
         self.zone_rects: dict[str, dict] = {}
@@ -663,6 +707,7 @@ class ControlKernel:
         # 映射表里绑的「系统功能」里不归内核管的那些（开始/停止输出、视角回正）交给
         # 它，server 装上。在单独的线程里调，不占控制线程、不在锁里。
         self._system_action_handler = None
+        self._system_action_async = True
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -816,35 +861,18 @@ class ControlKernel:
         return getattr(self, "_general_raw", {}).get(key, default)
 
     def remember_general_setting(self, key: str, value) -> None:
-        if not hasattr(self, "_general_raw"):
-            self._general_raw = {}
-        self._general_raw[key] = value
-        self._save_general_settings()
+        with self._lock:
+            if not hasattr(self, "_general_raw"):
+                self._general_raw = {}
+            self._general_raw[key] = value
+            self._save_general_settings()
 
     def _save_general_settings(self) -> None:
         """写盘。失败不抛：存不下设置也不该打断正在进行的游戏。"""
         if not self._persist:
             return
         path = self._general_settings_path()
-        payload = {
-            **getattr(self, "_general_raw", {}),
-            "saved_at_unix": time.time(),
-            "hand_mouse": dict(self.hand_mouse_controller.config),
-            "vertical_look": {
-                "enabled": bool(self.vertical_look.get("enabled", True)),
-                "source": "head",
-                "exclusive_axes": bool(self.vertical_look.get("exclusive_axes", False)),
-                "body_motion_guard": bool(self.body_motion_guard_enabled),
-                "deadzone": float(self.vertical_look.get("deadzone", 0.10)),
-            },
-            "action_chain": self.action_chain.config,
-            "zone_trigger_mode": self.zone_trigger_mode,
-            "march_algorithm": self.march_algorithm,
-            "trigger_recording": copy.deepcopy(self.trigger_recorder.config),
-            "zone_freeze": {"frozen": bool(self.zones_frozen),
-                            "rects": copy.deepcopy(self.frozen_rects),
-                            "anchor": copy.deepcopy(self.frozen_anchor)},
-        }
+        payload = self.general_settings_payload()
         temp = path.with_suffix(path.suffix + ".tmp")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -855,6 +883,33 @@ class ControlKernel:
                 temp.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def general_settings_payload(self) -> dict:
+        """A detached document for atomic settings transactions, without I/O."""
+        with self._lock:
+            return _snapshot_copy(self._general_settings_payload_locked())
+
+    def _general_settings_payload_locked(self) -> dict:
+        payload = {
+            **getattr(self, "_general_raw", {}),
+            "saved_at_unix": time.time(),
+            "hand_mouse": self.hand_mouse_controller.config,
+            "vertical_look": {
+                "enabled": bool(self.vertical_look.get("enabled", True)),
+                "source": "head",
+                "exclusive_axes": bool(self.vertical_look.get("exclusive_axes", False)),
+                "body_motion_guard": bool(self.body_motion_guard_enabled),
+                "deadzone": float(self.vertical_look.get("deadzone", 0.10)),
+            },
+            "action_chain": self.action_chain.config,
+            "zone_trigger_mode": self.zone_trigger_mode,
+            "march_algorithm": self.march_algorithm,
+            "trigger_recording": self.trigger_recorder.config,
+            "zone_freeze": {"frozen": bool(self.zones_frozen),
+                            "rects": self.frozen_rects,
+                            "anchor": self.frozen_anchor},
+        }
+        return payload
 
     def cancel_calibration(self, reason: str = "用户取消") -> dict:
         with self._lock:
@@ -1098,7 +1153,7 @@ class ControlKernel:
             self._save_general_settings()
             return self.status_locked(time.monotonic())
 
-    def handle_pose_message(self, source_id: str, message: dict) -> dict:
+    def handle_pose_message(self, source_id: str, message: dict, *, return_status: bool = True) -> dict | None:
         pose_map = self.pose_map_from_message(message)
         world_pose = self.world_pose_map_from_message(message)
         width = int(message.get("width") or 640)
@@ -1108,6 +1163,7 @@ class ControlKernel:
             source_id, pose_map, width=width, height=height,
             world_pose=world_pose, hands=self.hand_map_from_message(message),
             captured_at_ms=captured if isinstance(captured, (int, float)) and not isinstance(captured, bool) else None,
+            return_status=return_status,
         )
 
     def handle_pose_map(
@@ -1120,7 +1176,9 @@ class ControlKernel:
         world_pose: dict[str, dict] | list[dict] | None = None,
         hands: dict[str, list[dict]] | None = None,
         captured_at_ms: float | None = None,
-    ) -> dict:
+        sample_at: float | None = None,
+        return_status: bool = True,
+    ) -> dict | None:
         now = time.monotonic()
         with self._lock:
             source_id = str(source_id)
@@ -1134,7 +1192,10 @@ class ControlKernel:
                 self.head_controller.reset_tracking()
                 self.pose_history.clear()
                 self.capture_clock.reset()
-            if captured_at_ms is not None and math.isfinite(float(captured_at_ms)):
+            if sample_at is not None and math.isfinite(float(sample_at)):
+                # Native capture already shares this process's monotonic clock.
+                self.pose_sample_at = min(now, float(sample_at))
+            elif captured_at_ms is not None and math.isfinite(float(captured_at_ms)):
                 self.pose_sample_at = self.capture_clock.map(float(captured_at_ms) / 1000.0, now)
             else:
                 self.pose_sample_at = None
@@ -1162,7 +1223,7 @@ class ControlKernel:
                 self._process_pose_locked(pose_map, now)
             else:
                 self._process_pose_locked(pose_map, now, world_pose)
-            return self.status_locked(now)
+            return self.status_locked(now) if return_status else None
 
     def stable_pose_snapshot(self, *, window_s: float = 0.90, min_samples: int = 6) -> dict[str, dict] | None:
         """Return a robust recent pose for scene placement/rematch.
@@ -1194,7 +1255,8 @@ class ControlKernel:
     def handle_sensor(self, source_id: str, buttons, *, left_trigger: float = 0.0,
                       right_trigger: float = 0.0, stick_x: float = 0.0, stick_y: float = 0.0,
                       quaternion: dict | None = None, rotation_rate: dict | None = None,
-                      acceleration: dict | None = None, recenter: bool = False) -> dict:
+                      acceleration: dict | None = None, recenter: bool = False,
+                      return_status: bool = True) -> dict | None:
         now = time.monotonic()
         source_id = str(source_id)
         with self._lock:
@@ -1209,7 +1271,7 @@ class ControlKernel:
                 self.output.set_sensor_state, source_id, buttons,
                 left_trigger=left_trigger, right_trigger=right_trigger, stick_x=stick_x, stick_y=stick_y,
             )
-            return self.status_locked(now)
+            return self.status_locked(now) if return_status else None
 
     def clear_source(self, source_id: str) -> dict:
         source_id = str(source_id)
@@ -1241,13 +1303,16 @@ class ControlKernel:
 
     def _intent_actions_locked(self) -> list[tuple[str, str]]:
         """这台电脑上有的全部动作（不管这个游戏绑没绑）：录的东西和游戏无关。"""
+        # Names need no demo frames. get() rebuilds the complete display
+        # catalog on each lookup; one metadata pass keeps this linear.
+        names = {}
+        for entry in (*pose_library.BUILTIN, *pose_library.registered().values()):
+            names.setdefault(entry["id"], entry["name"])
         out = []
         for ident in ("march", "calf_back", *self._motion_rules):
-            entry = pose_library.get(ident)
-            out.append((f"motion.{ident}", entry["name"] if entry else ident))
+            out.append((f"motion.{ident}", names.get(ident, ident)))
         for ident in self._pose_rules:
-            entry = pose_library.get(ident)
-            out.append((f"pose.{ident}", entry["name"] if entry else ident))
+            out.append((f"pose.{ident}", names.get(ident, ident)))
         store = self.custom_pose_store
         for entry in getattr(store, "poses", ()) if store is not None else ():
             if isinstance(entry, dict) and entry.get("id"):
@@ -1429,7 +1494,7 @@ class ControlKernel:
         state["custom"] = not is_default(self.zone_fit)
         state["measured_at_unix"] = self.zone_fit.get("measured_at_unix")
         state["grip_measured_at_unix"] = self.zone_fit.get("grip_measured_at_unix")
-        state["zones"] = copy.deepcopy(self.zone_fit["zones"])
+        state["zones"] = _snapshot_copy(self.zone_fit["zones"])
         return state
 
     # ---------- 区域触发方式、定住跟随框 ----------
@@ -1461,6 +1526,7 @@ class ControlKernel:
             self._responsive_march.reset()
             self.motion_active.discard("march")
             self.motion_raw["march"] = False
+            self.motion_debounce["march"].clear()
             self.motion_debounce["march"].update(active=False, on=0, off=0)
             self._save_general_settings()
             now = time.monotonic()
@@ -1987,6 +2053,13 @@ class ControlKernel:
         return anchor
 
     def _compute_body_zones(self, pose_map: dict[str, dict], now: float) -> dict[str, dict]:
+        # Preserve the original 0.5 response at 30 FPS. Timestamped native and
+        # mobile streams use elapsed sampling time, independent of arrival jitter.
+        sampled = self._pose_sample_time_locked(now) if self.pose_sample_at is not None else None
+        smooth_dt = 1.0 / 30.0
+        if sampled is not None and self._zone_smoothing_at is not None:
+            smooth_dt = max(0.0, sampled - self._zone_smoothing_at)
+        self._zone_smoothing_at = sampled
         # 参考系（胯、肩、头中心、左右朝向、尺子）和量身用的是同一份，见 zone_fit.py。
         frame = body_frame(pose_map, self.width, self.height)
         if frame is None:
@@ -2024,7 +2097,7 @@ class ControlKernel:
                     "y2": _clamp(hand_bottom, 0.0, 1.0),
                 }
                 old = self.zone_rects.get(name)
-                rects[name] = self._smooth_rect(old, next_rect)
+                rects[name] = self._smooth_rect(old, next_rect, dt=smooth_dt)
 
             # A small rise of the head/nose into the space above it is a
             # separate jump trigger.  The nose is the only point used, so an
@@ -2042,7 +2115,7 @@ class ControlKernel:
                 anchor["y"] - (fit["headJump"]["rise"] + HEAD_JUMP_HALF_H) * torso_px / ih,
                 0.52 * torso_px, 2 * HEAD_JUMP_HALF_H * torso_px, iw, ih,
             )
-            rects["headJump"] = self._smooth_rect(self.zone_rects.get("headJump"), jump_rect)
+            rects["headJump"] = self._smooth_rect(self.zone_rects.get("headJump"), jump_rect, dt=smooth_dt)
 
             # Provisional look-gate region for first-run UX. It intentionally
             # exists only while no fixed Scene Layout has been captured. Once
@@ -2054,7 +2127,7 @@ class ControlKernel:
                 head_center["y"] + 0.34 * torso_px / ih,
                 gate_w, gate_h, iw, ih,
             )
-            rects["lookGate"] = self._smooth_rect(self.zone_rects.get("lookGate"), gate_rect)
+            rects["lookGate"] = self._smooth_rect(self.zone_rects.get("lookGate"), gate_rect, dt=smooth_dt)
         # 地面线按脚的下缘（脚踝、脚跟、脚尖里最低的点），和量身量离地高度用的是同一个。
         floor_y = foot_floor_y(pose_map)
         if floor_y is not None:
@@ -2068,7 +2141,7 @@ class ControlKernel:
                     2 * foot["half_w"] * torso_px, 2 * foot["half_h"] * torso_px, iw, ih,
                 )
                 old = self.zone_rects.get(name)
-                rects[name] = self._smooth_rect(old, next_rect)
+                rects[name] = self._smooth_rect(old, next_rect, dt=smooth_dt)
         # Keep old zone ids visible to older clients/tests, but make each one
         # refer to the exact same merged hand geometry rather than creating a
         # second trigger area.
@@ -2078,10 +2151,11 @@ class ControlKernel:
         return rects
 
     @staticmethod
-    def _smooth_rect(old: dict | None, new: dict) -> dict:
+    def _smooth_rect(old: dict | None, new: dict, *, dt: float = 1.0 / 30.0) -> dict:
         if not old:
             return new
-        return {key: old[key] + 0.50 * (new[key] - old[key]) for key in ("x1", "x2", "y1", "y2")}
+        alpha = -math.expm1(-math.log(2.0) * 30.0 * max(0.0, min(0.5, dt)))
+        return {key: old[key] + alpha * (new[key] - old[key]) for key in ("x1", "x2", "y1", "y2")}
 
     @staticmethod
     def _point_in_rect(point: dict | None, rect: dict | None) -> bool:
@@ -2294,7 +2368,9 @@ class ControlKernel:
         actions = self._bound_action_triggers_locked() if actions is None else actions
         # 动作文件里写的，一次读完：这个函数每帧都跑。
         declared: dict[str, set[str]] = {}
-        for entry in pose_library.entries():
+        # Only group/id/passes_zones are needed on the control path. Avoid
+        # constructing the display catalog and all of its animation frames.
+        for entry in (*pose_library.BUILTIN, *pose_library.registered().values()):
             for zone in entry["passes_zones"]:
                 declared.setdefault(zone, set()).add(pose_library.trigger_of(entry))
         for zone in RUNTIME_BODY_ZONES:
@@ -2526,6 +2602,8 @@ class ControlKernel:
 
     def _set_motion_debounced(self, ident: str, raw: bool, on_frames: int, off_frames: int) -> bool:
         state = self.motion_debounce[ident]
+        if self.pose_sample_at is not None:
+            return self._set_timed_debounced(state, raw, self.pose_sample_at, on_frames, off_frames)
         if raw:
             state["on"] += 1
             state["off"] = 0
@@ -2535,6 +2613,35 @@ class ControlKernel:
             state["off"] += 1
             state["on"] = 0
             if state["active"] and state["off"] >= off_frames:
+                state["active"] = False
+        return bool(state["active"])
+
+    @staticmethod
+    def _set_timed_debounced(state: dict, raw: bool, sampled: float,
+                             on_frames: int, off_frames: int) -> bool:
+        """Equivalent to the legacy first-to-last sample span at 30 FPS.
+
+        Untimestamped API/test adapters keep their original frame semantics.
+        A stream gap never counts as evidence that a pose stayed true.
+        """
+        previous = state.get("sampled_at")
+        if previous is not None and (sampled < previous or sampled - previous > CLOCK_MAX_LAG_S):
+            state.pop("on_since", None)
+            state.pop("off_since", None)
+        state["sampled_at"] = sampled
+        if raw:
+            state["on"] = state.get("on", 0) + 1
+            state["off"] = 0
+            state.pop("off_since", None)
+            since = state.setdefault("on_since", sampled)
+            if not state["active"] and sampled - since + 1e-9 >= max(0, on_frames - 1) / 30.0:
+                state["active"] = True
+        else:
+            state["off"] = state.get("off", 0) + 1
+            state["on"] = 0
+            state.pop("on_since", None)
+            since = state.setdefault("off_since", sampled)
+            if state["active"] and sampled - since + 1e-9 >= max(0, off_frames - 1) / 30.0:
                 state["active"] = False
         return bool(state["active"])
 
@@ -2792,6 +2899,8 @@ class ControlKernel:
         if state is None:
             # 自定义姿势是运行时才出现的，第一次见到就建一条。
             state = self.pose_debounce[ident] = {"active": False, "on": 0, "off": 0}
+        if self.pose_sample_at is not None:
+            return self._set_timed_debounced(state, raw, self.pose_sample_at, on_frames, off_frames)
         if raw:
             state["on"] += 1
             state["off"] = 0
@@ -2901,7 +3010,7 @@ class ControlKernel:
         for trigger in triggers:
             binding = self._effective_binding_locked(trigger)
             if binding:
-                out[trigger] = copy.deepcopy(binding)
+                out[trigger] = _snapshot_copy(binding)
         return out
 
     def _effective_binding_locked(self, trigger: str) -> dict | None:
@@ -2938,10 +3047,11 @@ class ControlKernel:
         with self._lock:
             self._trigger_listener = listener
 
-    def configure_system_action_handler(self, handler) -> None:
+    def configure_system_action_handler(self, handler, *, asynchronous: bool = True) -> None:
         """装上执行系统功能的回调：handler(target, trigger)。见 _system_action_handler。"""
         with self._lock:
             self._system_action_handler = handler
+            self._system_action_async = bool(asynchronous)
 
     def _run_system_action_locked(self, target, trigger: str) -> None:
         """绑在区域、动作、姿势上的「系统功能」，触发那一下执行一次。
@@ -2970,7 +3080,12 @@ class ControlKernel:
             except Exception as exc:  # noqa: BLE001 - 系统功能失败不该拖垮控制
                 self.last_error = str(exc)
 
-        threading.Thread(target=run, name="system-action", daemon=True).start()
+        if self._system_action_async:
+            threading.Thread(target=run, name="system-action", daemon=True).start()
+        else:
+            # The server's bounded executor captures the current generation
+            # when this nonblocking callback submits, before an emergency stop.
+            run()
 
     def _trigger_brief_locked(self, trigger: str) -> dict:
         binding = self._effective_binding_locked(trigger)
@@ -3310,6 +3425,7 @@ class ControlKernel:
             last = state.get("last_pressed_at")
             state.update(fresh_zone_state(), last_pressed_at=last)
         self.zone_kin.reset()
+        self._zone_smoothing_at = None
         # 定住的框不靠人算，人走开了也还在原地，画面上照样画出来、照样能拖。
         self.zone_rects = self._frozen_zone_rects_locked() if self.zones_frozen else {}
         self.head_jump_anchor = None
@@ -3321,6 +3437,7 @@ class ControlKernel:
         self._reset_vertical_head_locked()
         self.motion_active.clear()
         for state in self.motion_debounce.values():
+            state.clear()
             state.update({"active": False, "on": 0, "off": 0})
         self.body_motion_action_risk.clear()
         for state in self.body_motion_action_risk_debounce.values():
@@ -3328,6 +3445,7 @@ class ControlKernel:
         self.pose_active.clear()
         self.pose_confidence = {}
         for state in self.pose_debounce.values():
+            state.clear()
             state.update({"active": False, "on": 0, "off": 0})
         self.trigger_previous.clear()
         self.foot_base = None
@@ -3400,13 +3518,13 @@ class ControlKernel:
             state["phase"] = phase
             if phase == "pending" and raw.get("progress"):
                 state["progress"] = round(float(raw["progress"]), 2)
-            zones[name] = {"rect": copy.deepcopy(self.zone_rects.get(name)), **state}
+            zones[name] = {"rect": _snapshot_copy(self.zone_rects.get(name)), **state}
         # Keep the old four identifiers in status for clients that have not yet
         # learned the merged names. They are aliases only; no second trigger is
         # evaluated or dispatched for them.
         for alias, canonical in ZONE_ALIASES.items():
             if canonical in zones:
-                zones[alias] = copy.deepcopy(zones[canonical])
+                zones[alias] = _snapshot_copy(zones[canonical])
         return zones
 
     def runtime_zones(self) -> dict:
@@ -3457,7 +3575,7 @@ class ControlKernel:
         self.head["output_x"], self.head["output_y"] = self.hand_mouse_controller.compose_output(
             self.head["output_x"], self.head["output_y"], self.head["hand_mouse"])
         sensors = {
-            source: {key: copy.deepcopy(value) for key, value in state.items() if key != "received_at"}
+            source: {key: _snapshot_copy(value) for key, value in state.items() if key != "received_at"}
             | {"age_ms": round(max(0.0, (now - state["received_at"]) * 1000.0))}
             for source, state in self.sensor_sources.items()
         }
@@ -3466,7 +3584,7 @@ class ControlKernel:
             "pose_age_ms": pose_age,
             "width": self.width,
             "height": self.height,
-            "pose": copy.deepcopy(self.latest_pose),
+            "pose": _snapshot_copy(self.latest_pose),
             # Keep metric landmarks out of the regular status payload (it is
             # polled frequently), but expose whether the current frame carried
             # them so calibration diagnostics can distinguish a missing world
@@ -3479,8 +3597,8 @@ class ControlKernel:
             # 自定义姿势的实时相似度。放进这份状态里，界面就复用已有的轮询，
             # 不用为它再开一路——多一路轮询就多一份和主状态不同步的机会。
             "custom_pose_scores": dict(self.custom_pose_scores),
-            "pose_confidence": copy.deepcopy(self.pose_confidence),
-            "control_bindings": copy.deepcopy(self.control_bindings),
+            "pose_confidence": _snapshot_copy(self.pose_confidence),
+            "control_bindings": _snapshot_copy(self.control_bindings),
             # 界面要显示"按的是哪个键"时用这一份，见 _effective_bindings_locked。
             "effective_bindings": self._effective_bindings_locked(),
             "recent_triggers": list(self.recent_triggers),
@@ -3491,7 +3609,7 @@ class ControlKernel:
             "intent_recording": self._intent_status_locked(now),
             "trigger_recording": self.trigger_recorder.status(),
             "intent_items": self.intent_items_locked(),
-            "zone_learning": copy.deepcopy(self.zone_learning),
+            "zone_learning": _snapshot_copy(self.zone_learning),
             # 哪些框会被哪些动作扫过、让不让路。界面在绑键的地方照这个提醒。
             "zone_overlaps": self.zone_conflicts_locked(),
             # 没录过的动作误按框攒够了次数：界面提示去「录我的动作」。
@@ -3502,7 +3620,7 @@ class ControlKernel:
             # 能按它把整组框搬过来。
             "zones_frozen": bool(self.zones_frozen),
             "zones_anchor_known": self.frozen_anchor is not None,
-            "vertical_look": copy.deepcopy(self.vertical_look),
+            "vertical_look": _snapshot_copy(self.vertical_look),
             "vertical_gate_active": bool(self.vertical_gate_active),
             "body_motion_guard_enabled": bool(self.body_motion_guard_enabled),
             "body_motion_guard_active": bool(self.body_motion_guard_active),
@@ -3515,7 +3633,7 @@ class ControlKernel:
             "vertical_pitch_velocity": round(float(self.vertical_pitch_velocity), 4),
             "vertical_pitch_acceleration": round(float(self.vertical_pitch_acceleration), 4),
             "vertical_pitch_intent_state": self.vertical_pitch_intent_state,
-            "head": copy.deepcopy(self.head),
+            "head": _snapshot_copy(self.head),
             "handheld_sources": sensors,
             "last_error": self.last_error,
         }
@@ -3553,10 +3671,24 @@ class ControlKernel:
                 self._safe_output(self.output.clear_source, source)
             self.sensor_sources.clear()
         self.trigger_recorder.close()
+        self.pose_recorder.close(timeout=2.0)
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout=1.0)
 
 
 class CameraUnavailable(RuntimeError):
     """Native camera/MediaPipe dependency or device is unavailable."""
+
+
+@dataclass
+class _CameraSession:
+    generation: int
+    capture: Any
+    detector: Any
+    mp: Any
+    stop: threading.Event = field(default_factory=threading.Event)
+    threads: list[threading.Thread] = field(default_factory=list)
+    workers_left: int = 3
 
 
 class NativeCameraService:
@@ -3626,6 +3758,9 @@ class NativeCameraService:
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._stop = threading.Event()
+        self._session: _CameraSession | None = None
+        self._generation = 0
+        self.lifecycle = "stopped"
         self._thread: threading.Thread | None = None
         self._capture_thread: threading.Thread | None = None
         self._inference_thread: threading.Thread | None = None
@@ -3754,7 +3889,7 @@ class NativeCameraService:
     def configure_backend(self, preference: str | None) -> dict:
         preference = self._normalize_backend(preference)
         with self._lock:
-            if self.running and preference != self.backend_preference:
+            if self._session is not None and preference != self.backend_preference:
                 raise CameraUnavailable("摄像头运行中不能切换采集后端，请先停止摄像头")
             self.backend_preference = preference
             self._remember("camera_backend", preference)
@@ -3773,7 +3908,7 @@ class NativeCameraService:
         if not 0 <= index <= self.MAX_CAMERA_INDEX:
             raise CameraUnavailable(f"摄像头序号只能是 0 到 {self.MAX_CAMERA_INDEX}")
         with self._lock:
-            if self.running and index != self.camera_index:
+            if self._session is not None and index != self.camera_index:
                 raise CameraUnavailable("摄像头运行中不能换摄像头，请先停止识别")
             if index != self.camera_index:
                 self.camera_index = index
@@ -3881,7 +4016,7 @@ class NativeCameraService:
         """
         limit = self.MAX_CAMERA_INDEX if limit is None else max(0, min(self.MAX_CAMERA_INDEX, int(limit)))
         with self._lock:
-            running, current = self.running, self.camera_index
+            running, current = self._session is not None, self.camera_index
         try:
             import cv2
         except Exception as exc:
@@ -4120,7 +4255,7 @@ class NativeCameraService:
     def benchmark_backends(self, duration_s: float = PROBE_SECONDS) -> list[dict]:
         """Run a short real read-FPS comparison without starting inference."""
         with self._lock:
-            if self.running:
+            if self._session is not None:
                 raise CameraUnavailable("摄像头运行中不能进行采集后端测速")
             try:
                 import cv2
@@ -4205,10 +4340,14 @@ class NativeCameraService:
         with self._lock:
             if self.running:
                 return self.status()
+            if self._session is not None:
+                raise CameraUnavailable("摄像头上一轮尚未退出，请等待设备停止后再启动")
+            self.lifecycle = "starting"
             try:
                 import cv2
             except Exception as exc:
                 self.last_error = "本地 Python 未安装 opencv-python；电脑摄像头内核无法启动"
+                self.lifecycle = "failed"
                 raise CameraUnavailable(self.last_error) from exc
             detector = None
             try:
@@ -4221,9 +4360,11 @@ class NativeCameraService:
                     except Exception:
                         pass
                 self.last_error = str(exc)
+                self.lifecycle = "failed"
                 raise
             except Exception as exc:
                 self.last_error = str(exc)
+                self.lifecycle = "failed"
                 try:
                     detector.close()
                 except Exception:
@@ -4234,30 +4375,92 @@ class NativeCameraService:
             # The first frame was consumed only for backend validation.  It is
             # intentionally not pushed into the inference path so all timing
             # starts at the same boundary for every backend.
-            self._stop.clear()
+            self._generation += 1
+            session = _CameraSession(self._generation, capture, detector, mp)
+            self._session = session
+            self._stop = session.stop
             self.running = True
+            self.lifecycle = "running"
             self.last_error = None
-            self._capture_thread = threading.Thread(target=self._capture_loop, name="motion-camera-capture", daemon=True)
-            self._inference_thread = threading.Thread(target=self._inference_loop, name="motion-camera-inference", daemon=True)
-            self._preview_thread = threading.Thread(target=self._preview_loop, name="motion-camera-preview", daemon=True)
+            self._capture_thread = threading.Thread(target=self._capture_loop, args=(session,), name="motion-camera-capture", daemon=True)
+            self._inference_thread = threading.Thread(target=self._inference_loop, args=(session,), name="motion-camera-inference", daemon=True)
+            self._preview_thread = threading.Thread(target=self._preview_loop, args=(session,), name="motion-camera-preview", daemon=True)
             self._thread = self._inference_thread
-            self._capture_thread.start()
-            self._inference_thread.start()
-            self._preview_thread.start()
+            session.threads = [self._capture_thread, self._inference_thread, self._preview_thread]
+            started = 0
+            try:
+                for thread in session.threads:
+                    thread.start()
+                    started += 1
+            except Exception as exc:
+                self._fail_session(session, str(exc))
+                for _ in session.threads[started:]:
+                    self._worker_finished(session)
+                raise CameraUnavailable(f"摄像头工作线程启动失败：{exc}") from exc
             return self.status()
 
-    def _capture_loop(self) -> None:
+    def _fail_session(self, session: _CameraSession, error: str) -> None:
+        failed = False
+        with self._condition:
+            if self._session is session and not session.stop.is_set():
+                self.last_error = error
+                self.running = False
+                self.lifecycle = "failed"
+                session.stop.set()
+                failed = True
+            self._condition.notify_all()
+        if failed:
+            # A blocked detector need not finish before held control is released.
+            # This session prevents another start until its workers clean up.
+            try:
+                self.kernel.clear_source("computer_camera")
+            except Exception:
+                pass
+
+    def _worker_finished(self, session: _CameraSession) -> None:
+        with self._condition:
+            session.workers_left -= 1
+            if session.workers_left or self._session is not session:
+                return
+            # Keep this session installed until all resource/source cleanup is
+            # complete. A new start cannot race release() or clear_source().
+            self.running = False
+            self._latest_frame = None
+            self._preview_jpeg = None
+        try:
+            session.capture.release()
+        except Exception:
+            pass
+        try:
+            session.detector.close()
+        except Exception:
+            pass
+        try:
+            self.kernel.clear_source("computer_camera")
+        except Exception as exc:
+            with self._condition:
+                if self._session is session and not self.last_error:
+                    self.last_error = str(exc)
+                    self.lifecycle = "failed"
+        finally:
+            with self._condition:
+                if self._session is session:
+                    self._save_backend_cache(self.actual_capture_fps)
+                    self._capture = self._detector = None
+                    self._capture_thread = self._inference_thread = self._preview_thread = self._thread = None
+                    self._session = None
+                    if self.lifecycle != "failed":
+                        self.lifecycle = "stopped"
+                    self._condition.notify_all()
+
+    def _capture_loop(self, session: _CameraSession) -> None:
         try:
             import cv2
             rotate_codes = {"cw": cv2.ROTATE_90_CLOCKWISE, "ccw": cv2.ROTATE_90_COUNTERCLOCKWISE, "180": cv2.ROTATE_180}
-            while not self._stop.wait(0.001):
-                ok, frame = self._capture.read()
+            while not session.stop.wait(0.001):
+                ok, frame = session.capture.read()
                 if not ok:
-                    with self._condition:
-                        if not self._stop.is_set():
-                            self.last_error = "电脑摄像头读取失败"
-                            self._stop.set()
-                        self._condition.notify_all()
+                    self._fail_session(session, "电脑摄像头读取失败")
                     break
                 code = rotate_codes.get(self.applied_rotation)
                 if code is not None:
@@ -4265,6 +4468,8 @@ class NativeCameraService:
                 height, width = frame.shape[:2]
                 captured_at = time.monotonic()
                 with self._condition:
+                    if session.stop.is_set() or self._session is not session:
+                        break
                     # There is deliberately only one pending frame.  Replacing
                     # it is an observable drop, not an unbounded queue.
                     if self._latest_frame is not None and self._latest_sequence > self._last_inference_sequence:
@@ -4277,20 +4482,18 @@ class NativeCameraService:
                     self.actual_capture_fps = self._rate(self._capture_times)
                     self._condition.notify_all()
         except Exception as exc:
-            with self._condition:
-                if not self._stop.is_set():
-                    self.last_error = str(exc)
-                    self._stop.set()
-                self._condition.notify_all()
+            self._fail_session(session, str(exc))
+        finally:
+            self._worker_finished(session)
 
-    def _inference_loop(self) -> None:
+    def _inference_loop(self, session: _CameraSession) -> None:
         try:
             import cv2
             while True:
                 with self._condition:
-                    while not self._stop.is_set() and self._latest_sequence <= self._last_inference_sequence:
+                    while not session.stop.is_set() and self._latest_sequence <= self._last_inference_sequence:
                         self._condition.wait(0.10)
-                    if self._stop.is_set():
+                    if session.stop.is_set() or self._session is not session:
                         break
                     sequence = self._latest_sequence
                     frame = self._latest_frame
@@ -4303,10 +4506,10 @@ class NativeCameraService:
                     continue
                 started = time.perf_counter()
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
+                image = session.mp.Image(image_format=session.mp.ImageFormat.SRGB, data=rgb)
                 timestamp_ms = max(int(captured_at * 1000), self._last_timestamp_ms + 1)
                 self._last_timestamp_ms = timestamp_ms
-                result = self._detector.detect_for_video(image, timestamp_ms)
+                result = session.detector.detect_for_video(image, timestamp_ms)
                 landmarks = result.pose_landmarks[0] if result.pose_landmarks else None
                 world_landmarks = (
                     result.pose_world_landmarks[0]
@@ -4331,16 +4534,20 @@ class NativeCameraService:
                         }
                         for index, point in enumerate(world_landmarks)
                     }
-                if self.assist:
-                    self.kernel.stereo.observe_pc(pose_map, width, height, captured_at)
-                else:
-                    self.kernel.handle_pose_map(
-                        "computer_camera", pose_map, width=width, height=height,
-                        world_pose=world_pose,
-                    )
-                finished = time.monotonic()
-                inference_ms = (time.perf_counter() - started) * 1000.0
                 with self._condition:
+                    if session.stop.is_set() or self._session is not session:
+                        break
+                    # Submission and stop admission share this lock: a result
+                    # finishing after stop cannot reclaim the control source.
+                    if self.assist:
+                        self.kernel.stereo.observe_pc(pose_map, width, height, captured_at)
+                    else:
+                        self.kernel.handle_pose_map(
+                            "computer_camera", pose_map, width=width, height=height,
+                            world_pose=world_pose, sample_at=captured_at, return_status=False,
+                        )
+                    finished = time.monotonic()
+                    inference_ms = (time.perf_counter() - started) * 1000.0
                     if (pose_map and self.rotation == "auto" and not self._rotation_locked
                             and captured_at >= self._rotation_changed_at):
                         self._vote_rotation_locked(pose_map, width, height)
@@ -4354,13 +4561,11 @@ class NativeCameraService:
                     self._latencies_ms.append(self.last_latency_ms)
                     self.frames += 1
         except Exception as exc:
-            with self._condition:
-                if not self._stop.is_set():
-                    self.last_error = str(exc)
-                    self._stop.set()
-                self._condition.notify_all()
+            self._fail_session(session, str(exc))
+        finally:
+            self._worker_finished(session)
 
-    def _preview_loop(self) -> None:
+    def _preview_loop(self, session: _CameraSession) -> None:
         """Encode the newest raw frame separately from detector inference."""
         try:
             import cv2
@@ -4368,7 +4573,7 @@ class NativeCameraService:
             next_encode_at = 0.0
             while True:
                 with self._condition:
-                    while not self._stop.is_set():
+                    while not session.stop.is_set():
                         now = time.monotonic()
                         demand_active = now < self._preview_requested_until
                         frame_ready = self._latest_sequence > last_sequence
@@ -4383,7 +4588,7 @@ class NativeCameraService:
                         frame = self._latest_frame
                         last_sequence = sequence
                         break
-                    if self._stop.is_set():
+                    if session.stop.is_set() or self._session is not session:
                         break
                 if frame is None:
                     continue
@@ -4399,6 +4604,8 @@ class NativeCameraService:
                 preview = encoded.tobytes()
                 preview_at = time.monotonic()
                 with self._condition:
+                    if session.stop.is_set() or self._session is not session:
+                        break
                     self._preview_jpeg = preview
                     self._preview_sequence = sequence
                     self._preview_at = preview_at
@@ -4406,41 +4613,37 @@ class NativeCameraService:
                     self._preview_durations_ms.append((encode_finished - encode_started) * 1000.0)
                     self._preview_sizes.append(len(preview))
         except Exception as exc:
-            with self._condition:
-                if not self._stop.is_set():
-                    self.last_error = str(exc)
-                    self._stop.set()
-                self._condition.notify_all()
+            self._fail_session(session, str(exc))
+        finally:
+            self._worker_finished(session)
 
     def stop(self) -> dict:
         with self._lock:
-            self._stop.set()
-            self._condition.notify_all()
-            threads = [self._capture_thread, self._inference_thread, self._preview_thread]
-        for thread in threads:
-            if thread and thread is not threading.current_thread():
-                thread.join(timeout=1.0)
-        with self._lock:
-            self._save_backend_cache(self.actual_capture_fps)
-            capture, detector = self._capture, self._detector
-            self._capture = self._detector = None
-            self._capture_thread = self._inference_thread = self._preview_thread = self._thread = None
-            self._latest_frame = None
-            self._preview_jpeg = None
+            session = self._session
+            if session is None:
+                self.running = False
+                if self.lifecycle != "failed":
+                    self.lifecycle = "stopped"
+                return self.status()
+            session.stop.set()
             self.running = False
-        if capture is not None:
-            try: capture.release()
-            except Exception: pass
-        if detector is not None:
-            try: detector.close()
-            except Exception: pass
-        self.kernel.clear_source("computer_camera")
+            if self.lifecycle != "failed":
+                self.lifecycle = "stopping"
+            self._condition.notify_all()
+            # Clear before releasing admission/start protection. An old stop
+            # must never clear a newly started session after its join finishes.
+            self.kernel.clear_source("computer_camera")
+        deadline = time.monotonic() + 1.0
+        for thread in session.threads:
+            if thread.ident is not None and thread is not threading.current_thread():
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
         return self.status()
 
     def status(self) -> dict:
         with self._lock:
             return {
-                "running": self.running, "camera_index": self.camera_index,
+                "running": self.running, "lifecycle": self.lifecycle,
+                "camera_index": self.camera_index,
                 "frames": self.frames, "last_frame_age_ms": round(max(0.0, (time.monotonic() - self.last_frame_at) * 1000.0)) if self.last_frame_at else None,
                 "captured_frames": self._latest_sequence,
                 "last_error": self.last_error, "model_path": str(self.model_path) if self.model_path else None,
@@ -4494,6 +4697,7 @@ class NativeCameraService:
                 "preview_jpeg_avg_bytes": round(sum(self._preview_sizes) / len(self._preview_sizes)) if self._preview_sizes else None,
                 "preview_last_age_ms": round(max(0.0, (now - self._preview_at) * 1000.0)) if self._preview_at else None,
                 "running": bool(self.running),
+                "lifecycle": self.lifecycle,
                 "last_error": self.last_error,
             }
 

@@ -99,9 +99,12 @@ def test_a_tap_never_latches(output):
     assert output.status()["voice_latches"] == []
 
 
-def test_a_keyboard_hold_is_reported_too(output):
+def test_a_keyboard_hold_is_reported_too(output, monkeypatch):
     """语音按住的不只有手柄键。键盘那份同样隐形，同样要报。"""
+    pressed = []
+    monkeypatch.setattr(output.keyboard, "set_key", lambda key, down: pressed.append((key, down)))
     output.execute_voice_action({"type": "keyboard", "target": "W", "behavior": "hold"})
+    assert pressed == [("W", True)]
     latches = output.status()["voice_latches"]
     assert len(latches) == 1 and latches[0]["type"] == "keyboard"
 

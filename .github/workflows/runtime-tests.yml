@@ -1,0 +1,73 @@
+name: runtime-tests
+
+on:
+  push:
+    paths:
+      - 'motioncontrol/**'
+      - 'motioncontrol_shared/**'
+      - 'server.py'
+      - 'web/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'cloud/**'
+      - 'config/**'
+      - 'game_profiles/**'
+      - 'release/**'
+      - 'requirements-runtime.txt'
+      - '.github/workflows/runtime-tests.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pc-logic:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: cloud/requirements.txt
+      - name: Install logic test dependencies
+        run: python -m pip install pytest pytest-asyncio numpy opencv-python-headless cryptography -r cloud/requirements.txt
+      - name: Run desktop logic and packaging regression tests
+        env:
+          MOTIONCONTROL_USER_DIR: ${{ runner.temp }}/motioncontrol-test-user-data
+        run: python -m pytest tests/ -q
+
+  cloud:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: cloud/requirements.txt
+      - name: Install cloud test dependencies
+        run: python -m pip install pytest pytest-asyncio -r cloud/requirements.txt
+      - name: Run migrations, API behavior and list query budget tests
+        run: python -m pytest cloud/tests/ -q
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install browser test dependencies
+        run: python -m pip install pytest playwright
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Run real browser regression tests
+        env:
+          MOTIONCONTROL_USER_DIR: ${{ runner.temp }}/motioncontrol-browser-test-user-data
+        run: python -m pytest tests/test_web_*.py -q

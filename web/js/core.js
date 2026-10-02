@@ -4,6 +4,79 @@ export const $ = s => document.querySelector(s);
 
 export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
+// 状态轮询只写变化的字段，保留现有节点、焦点和正在编辑的值。
+export function setText(el,value){if(el&&el.textContent!==String(value))el.textContent=String(value)}
+export function setProperty(el,name,value){if(el&&el[name]!==value)el[name]=value}
+export function setAttribute(el,name,value){if(el&&el.getAttribute(name)!==String(value))el.setAttribute(name,String(value))}
+export function setClass(el,name,enabled){if(el&&el.classList.contains(name)!==!!enabled)el.classList.toggle(name,!!enabled)}
+const appliedStyles=new WeakMap();
+export function setStyle(el,name,value){
+  if(!el)return;
+  const requested=String(value),current=el.style.getPropertyValue(name),values=appliedStyles.get(el)||new Map(),previous=values.get(name);
+  // CSS 会规范化小数等字符串；比较上次实际写入的值，避免同一坐标反复触发布局。
+  if(previous?.requested===requested&&previous.applied===current)return;
+  if(current!==requested)el.style.setProperty(name,requested);
+  values.set(name,{requested,applied:el.style.getPropertyValue(name)});appliedStyles.set(el,values);
+}
+export function syncChildren(parent,children){
+  const focused=parent.contains(document.activeElement)?document.activeElement:null;
+  children.forEach((child,index)=>{if(parent.children[index]!==child)parent.insertBefore(child,parent.children[index]||null)});
+  while(parent.children.length>children.length)parent.lastElementChild.remove();
+  if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
+}
+
+// 配置切换、安装和库更新共用一条队列。先存草稿，再重建编辑区；急停不走此队列。
+let configurationTail=Promise.resolve();
+export let configurationBusy=false;
+const draftFlushers=new Set();
+export function registerDraftFlusher(flush){draftFlushers.add(flush)}
+
+export function configurationOperation(operation,{skipDrafts=[]}={}){
+  const execute=async()=>{
+    const controls=[...document.querySelectorAll('#mappingFields,#personalVoicePanel input,#personalVoicePanel select,#personalVoicePanel button,#headSettings input,#headSettings select')];
+    const disabled=controls.map(el=>el.disabled);
+    controls.forEach(el=>{el.disabled=true});
+    configurationBusy=true;
+    try{
+      for(const flush of draftFlushers)if(!skipDrafts.includes(flush))await flush();
+      return await operation();
+    }finally{configurationBusy=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]})}
+  };
+  const result=configurationTail.then(execute);
+  configurationTail=result.catch(()=>{});
+  return result;
+}
+
+export const isVisible=el=>!!el&&!document.hidden&&!el.closest('[hidden]');
+
+// 真实可见视口也包含软键盘和页面缩放。宽度从弹层本身测，避免 rem 与 px 不一致。
+export function positionPopup(anchor,popup){
+  const viewport=window.visualViewport;
+  const left=viewport?.offsetLeft||0,top=viewport?.offsetTop||0;
+  const width=viewport?.width||innerWidth,height=viewport?.height||innerHeight;
+  const rect=anchor.getBoundingClientRect(),margin=8,gap=5;
+  if(popup.classList.contains('voice-release-picker-menu'))setStyle(popup,'width',rect.width+'px');
+  setStyle(popup,'max-width',Math.max(0,width-2*margin)+'px');
+  const actualWidth=popup.getBoundingClientRect().width;
+  setStyle(popup,'left',clamp(rect.left,left+margin,Math.max(left+margin,left+width-actualWidth-margin))+'px');
+  const below=Math.max(0,top+height-rect.bottom-gap-margin),above=Math.max(0,rect.top-top-gap-margin);
+  setStyle(popup,'max-height',Math.max(0,Math.max(above,below))+'px');
+  setStyle(popup,'bottom','auto');
+  setStyle(popup,'top',(below>=above?rect.bottom+gap:Math.max(top+margin,rect.top-gap-popup.getBoundingClientRect().height))+'px');
+}
+
+export function fitCanvas(canvas,aspectRatio=4/3,maxPixels=1600000){
+  const box=canvas.getBoundingClientRect();
+  if(!box.width||!box.height)return false;
+  const ratio=Number.isFinite(aspectRatio)&&aspectRatio>0?aspectRatio:4/3;
+  const owner=canvas.ownerDocument?.defaultView||window;
+  const dpr=Math.min(2,Math.max(1,owner.devicePixelRatio||1));
+  const scale=Math.min(dpr,Math.sqrt(maxPixels/(box.width*box.width/ratio)));
+  const width=Math.max(1,Math.floor(box.width*scale)),height=Math.max(1,Math.floor(width/ratio));
+  if(canvas.width===width&&canvas.height===height)return false;
+  canvas.width=width;canvas.height=height;return true;
+}
+
 // 提示浮在页面底部，几秒后自己消失——出了事才出现，事过了就走，不在页面上一直挂着。
 // 长的多留一会儿，点一下也能关。
 let noticeTimer=0;
@@ -62,6 +135,7 @@ export function autosaver(save,statusId,retryId,onDirty=()=>{}){
     onDirty(false);flashStatus(status,'已保存');
   }
   retry.addEventListener('click',()=>flush().catch(()=>{}));
+  registerDraftFlusher(flush);
   return {
     dirty(){revision++;onDirty(true);status.textContent='正在保存…';clearTimeout(timer);timer=setTimeout(()=>flush().catch(()=>{}),500)},
     flush,pending:()=>saved!==revision,

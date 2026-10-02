@@ -30,7 +30,7 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
     app = read_web_js(ROOT)
     # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩（动作测试也并在这里），
     # 本游戏 = 换游戏会变的，设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
-    for required in ['2.0', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', '急停 <kbd>F9</kbd>', '通用口令', '三维头姿', '挪动区域', 'profileBindingRows']:
+    for required in ['id="appVersion"', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', '急停 <kbd>F9</kbd>', '通用口令', '三维头姿', '挪动区域', 'profileBindingRows']:
         assert required in page
     assert 'data-view="range"' not in page, '动作测试已经并进开始页'
     assert '开始控制' in app and '暂停控制' in app

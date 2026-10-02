@@ -363,10 +363,6 @@ def test_an_unmapped_target_still_shows_up_in_the_range():
     assert "unmapped" in (ROOT / "web" / "app.css").read_text(encoding="utf-8")
 
 
-def test_a_recent_trigger_jumps_to_its_row():
-    """看到「左手区 → Y」不对，点一下就到改它的那一行，那一行还会闪一下。
-    最近触发只在开始页列一份——映射表上方原来那一份和它重复，删了。"""
-    page = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
-    assert 'id="triggerLive"' not in page
-    assert "revealBindingRow(key)" in APP_JS, "点一条要能跳到它的映射行"
-    assert "just-fired" in APP_JS, "刚触发的那一行要闪一下"
+# test_a_recent_trigger_jumps_to_its_row moved to test_web_incremental_render.py:
+# the browser clicks an actual event and checks the visible, highlighted mapping
+# row and keyboard focus; helper variable names are not part of that behavior.
