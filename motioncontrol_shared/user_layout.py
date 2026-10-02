@@ -44,6 +44,8 @@ USER_DATA_FILES = {
     # 这台电脑在手机自动发现里的标识，随机生成一次后一直用。双网卡的电脑会从两个
     # 接口各回一份应答，手机靠它认出那是同一台——不然界面上会冒出两台电脑让人选。
     "discovery_instance": "discovery_instance.txt",
+    # 防火墙授权尝试只属于这台电脑及运行程序，不随游戏配置分享。
+    "firewall_setup": "firewall_setup.json",
     # 用户自己建的键盘宏。不分游戏——建一次，哪个游戏、哪个动作都能直接选，这是
     # 它存在的全部理由；跟着游戏走的话就退化成"多写几个键"了。
     "key_macros": "key_macros.json",

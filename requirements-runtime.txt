@@ -31,3 +31,4 @@ mediapipe>=0.10
 # Local microphone capture and offline speech recognition.
 sounddevice>=0.4.6
 vosk>=0.3.45
+qrcode==8.2

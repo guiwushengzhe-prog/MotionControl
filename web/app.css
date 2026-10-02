@@ -838,3 +838,9 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
   .zone-handle::after { content: ""; position: absolute; inset: -.875rem; }
   .pose-drop { opacity: 1; width: 2.5rem; height: 2.5rem; }
 }
+/* 连接二维码只在首次需要或用户主动展开时显示。 */
+.phone-code[hidden],.phone-permission[hidden]{display:none}
+.phone-code{padding:16px;text-align:center}
+.phone-code-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.phone-code img{display:block;margin:auto;background:#fff;width:288px;max-width:100%;height:auto}
+.phone-permission{padding:8px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}

@@ -5,6 +5,7 @@ import {cameraRunning,renderKernelState,renderMainStatus,sourceMode,zoneEditMode
 import {runAction} from './shell.js';
 import {S,gameProfile,output} from './state.js';
 import {handMouseConfig} from './view-control.js';
+import {syncPhoneCode} from './phone-connect.js';
 
 let audioDevice='';
 // 急停真的被按了几次。教学的最后一步要认的是急停，不是随便哪种关掉输出。
@@ -36,9 +37,10 @@ export function renderInputStatus(status){
   const mobile=$('#mobileStatus');
   mobile.textContent=connected?(status.mobile_pose_connected?'已连接':'手持端已连接'):'没连上';
   mobile.className='tag '+(connected?'ok':'warn');
-  // 手机那一组：选了手机、或者手机自己连上来了才出现。
+  // 保留一个轻量入口，未选择手机时也能连接新设备。
   const phoneGroup=$('#phoneGroup');
-  if(phoneGroup)phoneGroup.hidden=!(($('#poseSource')?.value||sourceMode)==='phone'||S.audioSource==='phone'||connected);
+  if(phoneGroup)phoneGroup.hidden=false;
+  syncPhoneCode(status,($('#poseSource')?.value||sourceMode)==='phone'||S.audioSource==='phone');
   // 手机慢下来只有两种可能：模型退回了 CPU，或者这台机器就这么快。退回 CPU 才值得说。
   const phone=(status.mobile_pose_sources||[]).find(item=>item.active)||(status.mobile_pose_sources||[])[0];
   const perf=$('#phonePerf');

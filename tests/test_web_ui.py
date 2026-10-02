@@ -223,8 +223,9 @@ def test_settings_sections_and_contextual_groups(ui):
         page.click(f'#settingsNav [data-pane="{pane}"]')
         visible = page.eval_on_selector_all(".settings-pane", "els => els.filter(el => !el.hidden).map(el => el.dataset.pane)")
         assert visible == [pane]
-    # 手机那一组：没选手机、手机也没连，就不出现。
-    assert page.locator("#phoneGroup").is_hidden()
+    # 小入口始终可用，二维码按需展开。
+    assert page.locator("#phoneGroup").is_visible()
+    assert page.locator("#phoneConnectPanel").is_hidden()
     page.select_option("#poseSource", "phone")
     assert page.locator("#phoneGroup").is_visible()
     page.select_option("#poseSource", "computer")

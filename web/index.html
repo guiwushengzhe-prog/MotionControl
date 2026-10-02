@@ -194,7 +194,13 @@
 <div class="group" hidden="" id="phoneGroup">
 <h2 class="group-title">手机</h2>
 <div class="list">
-<div class="row"><div class="row-main"><span class="name">连接</span><span class="sub warn" id="phonePerf"></span></div><span class="tag" id="mobileStatus">手机未连接</span></div>
+<div class="row"><div class="row-main"><span class="name">连接</span><span class="sub warn" id="phonePerf"></span></div><span class="tag" id="mobileStatus">手机未连接</span><button class="btn" id="phoneConnectBtn" type="button">扫码连接</button></div>
+<div class="phone-code" id="phoneConnectPanel" hidden>
+<div class="phone-code-heading"><span>手机上点「扫码连接电脑」</span><button class="btn" id="closePhoneConnectBtn" type="button">关闭</button></div>
+<img id="phoneConnectImage" alt="连接这台电脑的二维码" width="288" height="288">
+<p class="statusline" id="phoneConnectHint">扫码后记住这台电脑，下次自动连接。</p>
+</div>
+<div class="phone-permission" id="phoneFirewallRow" hidden><span class="statusline warn" id="phoneFirewallStatus"></span><button class="btn" id="phoneFirewallRetry" type="button" hidden>配置连接权限</button></div>
 <details class="row-details" id="phoneGuide"><summary>连不上？</summary>
 <ol class="steps-text"><li>手机上打开 MotionControl，选「固定摄像头」，点「连接并开始」</li><li>手机和电脑连同一个 Wi-Fi；用数据线时要在手机上打开「USB 网络共享」</li></ol>
 <p class="statusline" id="usbTetherStatus"></p>

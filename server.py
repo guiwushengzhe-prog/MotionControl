@@ -48,6 +48,9 @@ from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_B
 from motioncontrol_shared.model_share import ModelShare
 from motioncontrol.voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
 from motioncontrol.discovery import DiscoveryResponder
+from motioncontrol.connection_code import connection_code
+from motioncontrol.windows_firewall import WindowsFirewall
+from functools import lru_cache
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
 
 # 版本号只有一处，在 motioncontrol/version.py。这里不再写数字：写了就会有第二个
@@ -68,6 +71,7 @@ def application_root() -> Path:
 
 ROOT = application_root()
 WEB_DIR = ROOT / "web"
+FIREWALL = WindowsFirewall(user_path("firewall_setup"))
 CONFIG_DIR = ROOT / "config"
 DEFAULT_MODEL_ROOT = Path(r"I:\MotionControl-Pose-Models\models")
 MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
@@ -533,6 +537,7 @@ def _audio_payload() -> dict:
     }
 
 
+@lru_cache(maxsize=1)
 def _instance_id() -> str:
     """这台电脑的标识，随机生成一次后存下来。
 
@@ -620,6 +625,7 @@ def find_phone_web(root: Path) -> Path | None:
     # 本机新手机工作树优先于旧 switch：两者同时存在时，不能把旧网页热更回手机。
     # 发布包里 phone_web 排在前面，不受开发目录影响。
     candidates.extend([
+        root.parent / "MC-Android-main" / "mobile" / "dist",
         root.parent / "MC-switch" / "mobile" / "dist",
         root.parent / "switch" / "mobile" / "dist",
     ])
@@ -1317,6 +1323,8 @@ class _BaseHandler(SimpleHTTPRequestHandler):
             return None
 
     def end_headers(self):
+        if urlparse(self.path).path == "/api/models":
+            self.send_header("Access-Control-Allow-Origin", "*")
         # Assets under WEB_DIR are served by the base handler, which sends only
         # Last-Modified.  Browsers then apply heuristic caching and can keep
         # serving a stale app.js/app.css after an edit, so a change appears not
@@ -1359,6 +1367,8 @@ class _BaseHandler(SimpleHTTPRequestHandler):
             available = bool(MODEL_PATH and MODEL_PATH.is_file())
             self._send_json({
                 "version": VERSION,
+                "instance": _instance_id(),
+                "name": socket.gethostname(),
                 "model_root": str(MODEL_ROOT) if MODEL_ROOT else None,
                 "models": [{
                     "id": "mp-full",
@@ -1416,6 +1426,15 @@ class AdminHandler(_BaseHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
+        if route == "/api/phone-connect":
+            if not self._is_loopback():
+                self._send_json({"error": "连接码只能在这台电脑上查看"}, 403)
+                return
+            port = INPUT_BRIDGE.status()["server_port"]
+            self._send_json({**connection_code(_instance_id(), socket.gethostname(),
+                                             INPUT_BRIDGE.server_candidates(), port),
+                             "firewall": FIREWALL.status()})
+            return
         if route == "/api/shutdown":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "shutdown is loopback-only"}, 403)
@@ -1483,6 +1502,7 @@ class AdminHandler(_BaseHandler):
             return
         if route == "/api/input/status":
             data = INPUT_BRIDGE.status()
+            data["firewall"] = FIREWALL.status()
             # Keep the historical full response by default.  The browser only
             # needs bridge/source fields while polling, so ?brief=1 avoids a
             # second full Runtime/Kernel snapshot (including the 33-point pose)
@@ -1622,6 +1642,18 @@ class AdminHandler(_BaseHandler):
         body = self._body()
         if body is None:
             self._send_json({"ok": False, "error": "invalid json"}, 400)
+            return
+        if route == "/api/phone-connect/firewall":
+            if not self._is_loopback():
+                self._send_json({"error": "连接权限只能在这台电脑上配置"}, 403)
+                return
+            origin = self.headers.get("Origin")
+            if origin and origin not in {f"http://127.0.0.1:{self.server.server_port}",
+                                         f"http://localhost:{self.server.server_port}"}:
+                self._send_json({"error": "请从本机控制页面操作"}, 403)
+                return
+            FIREWALL.ensure_async(retry=True)
+            self._send_json({"ok": True, "firewall": FIREWALL.status()})
             return
         if route == "/api/game-profiles/launch-mode":
             if not self._is_loopback():
@@ -2380,6 +2412,7 @@ def main():
     MODEL_PATH = resolve_full_model(MODEL_ROOT)
     RUNTIME.configure_model(MODEL_PATH)
     INPUT_BRIDGE.configure_endpoint(args.host, args.port)
+    FIREWALL.enabled = args.host not in {"127.0.0.1", "localhost", "::1"}
     # 启动时恢复两种独立输入：身体来源只决定姿态，音频来源只决定语音。
     INPUT_BRIDGE.set_body_mode(RUNTIME.body_mode)
     # 默认电脑麦克风随服务启动；选择手机麦克风时仍会释放本地麦克风。
@@ -2435,6 +2468,7 @@ def main():
     device_thread = threading.Thread(
         target=device_server.serve_forever, name="motion-device-plane", daemon=True)
     device_thread.start()
+    FIREWALL.ensure_async(args.port)
 
     # 两个监听都起来了，这一份就算站住了：清掉启动记号，不然下次启动会以为上次
     # 崩了然后把包退回去。也顺手去查一次有没有新版本，下到暂存目录等下次启动。
