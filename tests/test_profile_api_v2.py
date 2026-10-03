@@ -13,6 +13,30 @@ def request_for(app, route, replies):
     return request
 
 
+def test_custom_pose_rule_update_reaches_store_and_kernel(application):
+    from motioncontrol.custom_poses import CustomPoseStore
+    from test_pose_template import T_POSE, pose
+
+    app, replies = application, []
+    app.CUSTOM_POSES.capture(T_POSE, "两个姿势")
+    raised = pose(left_arm=170, right_arm=170)
+    app.CUSTOM_POSES.append_frame("custom1", raised)
+    request = request_for(app, "/api/pose/custom/update", replies)
+    request._body = lambda: {"id": "custom1", "match_mode": "any", "dwell_frames": 1}
+    request.do_POST()
+    assert replies[-1][0] == 200
+    assert replies[-1][1]["pose"]["match_mode"] == "any"
+    assert len(replies[-1][1]["poses"]) == 1
+    assert CustomPoseStore(app.CUSTOM_POSES.path).status()[0]["match_mode"] == "any"
+    app.KERNEL.handle_pose_map("test", raised, width=640, height=480)
+    assert "custom1" in app.KERNEL.pose_active
+
+    request._body = lambda: {"id": "custom1", "match_mode": "all"}
+    request.do_POST()
+    assert replies[-1][0] == 400
+    assert app.CUSTOM_POSES.status()[0]["match_mode"] == "any"
+
+
 def test_target_game_conflict_and_legacy_request_compatibility(application):
     app, replies = application, []
     before = app.KERNEL.control_bindings.copy()

@@ -206,8 +206,10 @@ async function updateCustomPose(id, changes) {
     renderCustomPoses();
     renderProfileBindingRows();
     });
+    return true;
   } catch (error) {
     customPoseSay(error.message, 'error');
+    return false;
   }
 }
 
@@ -249,6 +251,7 @@ function renderCustomPoses() {
   customPoseListEl.replaceChildren();
 
   for (const item of customPoses) {
+    const anyPose = item.match_mode === 'any';
     const card = document.createElement('div');
     card.className = 'pose-library-item custom-pose';
     card.dataset.id = item.id;
@@ -274,7 +277,9 @@ function renderCustomPoses() {
 
     const how = document.createElement('div');
     how.className = 'pose-library-how';
-    how.textContent = item.frames > 1 ? `${item.frames} 个姿势，按顺序做完按一下` : '摆着这个姿势就一直按';
+    how.textContent = item.frames > 1
+      ? (anyPose ? `${item.frames} 个姿势，任意一个即可` : `${item.frames} 个姿势，按顺序做完按一下`)
+      : '摆着这个姿势就一直按';
 
     // 实时相似度。没有它，调「像到」只能靠猜。平时藏着，点「显示相似度」才出来。
     const meter = document.createElement('div');
@@ -314,20 +319,20 @@ function renderCustomPoses() {
     rename.setAttribute('aria-label', '名字');
     rename.addEventListener('change', () => updateCustomPose(item.id, { name: rename.value }));
 
-    // 关键帧一排。多于一帧就是连贯动作，要按顺序依次做出来。
+    // 同一动作里的所有姿势共用一个映射，按选择的规则判断。
     const strip = document.createElement('div');
     strip.className = 'pose-strip';
     (item.previews || []).forEach((preview, index) => {
       if (index) {
         const arrow = document.createElement('span');
         arrow.className = 'pose-arrow';
-        arrow.textContent = '→';
+        arrow.textContent = anyPose ? '或' : '→';
         strip.appendChild(arrow);
       }
       const cell = document.createElement('div');
       cell.className = 'pose-cell';
       // 当前等着的那一帧高亮：动作断在哪一步，用户一眼能看见。
-      if (item.frames > 1 && index === item.step) cell.classList.add('awaiting');
+      if (!anyPose && item.frames > 1 && index === item.step) cell.classList.add('awaiting');
       cell.appendChild(poseThumbnail(preview));
       if (item.frames > 1) {
         const drop = document.createElement('button');
@@ -344,9 +349,34 @@ function renderCustomPoses() {
     addFrame.className = 'btn pose-add';
     addFrame.type = 'button';
     addFrame.textContent = '再加一个姿势';
-    addFrame.title = '摆好下一个姿势再点。几个姿势要按顺序做完才触发';
+    addFrame.title = anyPose
+      ? '摆好另一个姿势再点。这里所有姿势任意一个即可触发'
+      : '摆好下一个姿势再点。几个姿势要按顺序做完才触发';
     addFrame.addEventListener('click', () => appendCustomPoseFrame(item));
-    strip.appendChild(addFrame);
+
+    const mode = document.createElement('div');
+    mode.className = 'seg small custom-pose-mode';
+    mode.setAttribute('role', 'group');
+    mode.setAttribute('aria-label', '触发规则');
+    for (const [value, text] of [['sequence', '按顺序完成'], ['any', '任意一个即可']]) {
+      const choice = document.createElement('button');
+      choice.type = 'button';
+      choice.dataset.mode = value;
+      choice.textContent = text;
+      choice.setAttribute('aria-pressed', String(value === (anyPose ? 'any' : 'sequence')));
+      choice.addEventListener('click', async () => {
+        if (value === item.match_mode || (!item.match_mode && value === 'sequence')) return;
+        for (const button of mode.children) button.disabled = true;
+        if (!await updateCustomPose(item.id, { match_mode: value })) {
+          for (const button of mode.children) button.disabled = false;
+        }
+      });
+      mode.appendChild(choice);
+    }
+    const addControls = document.createElement('div');
+    addControls.className = 'inline-form';
+    addControls.append(addFrame, mode);
+    strip.appendChild(addControls);
 
     const threshold = document.createElement('input');
     threshold.type = 'range';
@@ -367,8 +397,8 @@ function renderCustomPoses() {
     tools.append(
       customPoseSlider('像到', threshold, v => v + '% 才算'),
       // 帧数对用户没有意义，换算成秒。30fps 是相机的常见帧率。
-      customPoseSlider(item.frames > 1 ? '最后一个保持' : '保持', dwell, v => (v / 30).toFixed(2) + ' 秒'));
-    if (item.frames > 1) {
+      customPoseSlider(!anyPose && item.frames > 1 ? '最后一个保持' : '保持', dwell, v => (v / 30).toFixed(2) + ' 秒'));
+    if (!anyPose && item.frames > 1) {
       const window_ = document.createElement('input');
       window_.type = 'range';
       window_.min = '3'; window_.max = '100'; window_.step = '1';  // 0.3 ~ 10 秒

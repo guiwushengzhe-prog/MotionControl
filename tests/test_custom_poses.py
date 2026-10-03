@@ -371,3 +371,96 @@ def test_a_multi_frame_action_fires_in_the_kernel(kernel, wave):
     assert "custom1" not in kernel.pose_active, "才做了第一帧就触发了"
     feed(kernel, ARMS_UP, 10)
     assert "custom1" in kernel.pose_active
+
+
+# --- 同一动作里任意姿势均可触发 ------------------------------------------------
+
+@pytest.mark.parametrize("body", [T_POSE, ARMS_UP, ARMS_DOWN])
+def test_any_mode_uses_every_recorded_pose_without_a_sequence(wave, body):
+    wave.append_frame("custom1", ARMS_DOWN)
+    wave.update("custom1", match_mode="any", dwell_frames=3)
+    hits = run(wave, [(body, 20)])
+    assert hits[:2] == [False, False]
+    assert all(hits[2:]), "任何一个已录姿势保持住就持续成立"
+    assert len(wave.poses) == 1, "一条动作共用映射，不拆成几条记录"
+
+
+def test_any_mode_cannot_accumulate_dwell_across_different_poses(wave):
+    wave.update("custom1", match_mode="any", dwell_frames=3)
+    script = [(body, 2) for _ in range(10) for body in (T_POSE, ARMS_UP)]
+    assert not any(run(wave, script))
+    assert run(wave, [(ARMS_UP, 3)])[-1]
+
+
+def test_any_mode_releases_on_mismatch_or_lost_visibility(wave):
+    wave.update("custom1", match_mode="any", dwell_frames=3)
+    assert run(wave, [(ARMS_UP, 3)])[-1]
+    assert not any(run(wave, [(ARMS_DOWN, 3)]))
+    assert run(wave, [(T_POSE, 3)])[-1]
+    result = wave.evaluate({}, now=2)["custom1"]
+    assert not result["visible"] and not result["hit"]
+    assert run(wave, [(T_POSE, 2)], start=3) == [False, False]
+
+
+def test_any_mode_and_all_poses_survive_restart(wave):
+    before = json.loads(wave.path.read_text(encoding="utf-8"))["poses"][0]
+    wave.update("custom1", match_mode="any")
+    restored = CustomPoseStore(wave.path)
+    assert restored.status()[0]["match_mode"] == "any"
+    assert restored.poses[0]["frames"] == before["frames"]
+    assert restored.poses[0]["previews"] == before["previews"]
+    assert run(restored, [(ARMS_UP, 10)])[-1]
+
+
+def test_changing_mode_discards_old_sequence_progress_and_dwell(wave):
+    wave.evaluate(T_POSE, now=0)
+    assert wave.status()[0]["step"] == 1
+    wave.update("custom1", match_mode="any", dwell_frames=3)
+    assert wave.status()[0]["step"] == 0
+    assert run(wave, [(ARMS_UP, 2)]) == [False, False]
+    wave.update("custom1", match_mode="sequence")
+    assert not any(run(wave, [(ARMS_UP, 10)]))
+    assert any(run(wave, [(T_POSE, 1), (ARMS_UP, 10)], start=1))
+
+
+def test_adding_or_removing_poses_keeps_any_rule_and_resets_dwell(wave):
+    wave.update("custom1", match_mode="any", dwell_frames=3)
+    run(wave, [(T_POSE, 2)])
+    wave.append_frame("custom1", ARMS_DOWN)
+    assert run(wave, [(ARMS_DOWN, 3)]) == [False, False, True]
+    wave.remove_frame("custom1", 2)
+    assert not any(run(wave, [(ARMS_DOWN, 10)]))
+    assert wave.status()[0]["match_mode"] == "any"
+    assert run(wave, [(T_POSE, 3)]) == [False, False, True]
+
+
+def test_legacy_multi_pose_defaults_to_original_sequence(wave):
+    del wave.poses[0]["match_mode"]
+    wave._save()
+    restored = CustomPoseStore(wave.path)
+    assert restored.status()[0]["match_mode"] == "sequence"
+    assert not any(run(restored, [(ARMS_UP, 10)]))
+    assert any(run(restored, [(T_POSE, 1), (ARMS_UP, 10)], start=1))
+
+
+@pytest.mark.parametrize("mode", ["all", None, []])
+def test_invalid_mode_does_not_change_the_saved_rule(wave, mode):
+    before = wave.path.read_bytes()
+    with pytest.raises(CustomPoseError, match="触发规则"):
+        wave.update("custom1", match_mode=mode)
+    assert wave.status()[0]["match_mode"] == "sequence"
+    assert wave.path.read_bytes() == before
+
+
+def test_all_alternatives_use_one_existing_kernel_binding(kernel, wave):
+    wave.update("custom1", match_mode="any")
+    kernel.configure_custom_poses(wave)
+    kernel.configure_bindings({"poses": {
+        "custom1": {"action": {"type": "keyboard", "target": "C", "behavior": "hold"}},
+    }})
+    for body in (ARMS_UP, T_POSE):
+        feed(kernel, body, 10)
+        assert "custom1" in kernel.pose_active
+        assert kernel._effective_binding_locked("pose.custom1")["action"]["target"] == "C"
+        feed(kernel, ARMS_DOWN, 10)
+        assert "custom1" not in kernel.pose_active

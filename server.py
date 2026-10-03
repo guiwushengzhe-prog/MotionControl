@@ -1802,7 +1802,7 @@ class AdminHandler(_BaseHandler):
                     elif route == "/api/pose/custom/update":
                         changes = {k: body[k] for k in
                                    ("name", "threshold", "dwell_frames",
-                                    "step_window_s", "enabled") if k in body}
+                                    "step_window_s", "enabled", "match_mode") if k in body}
                         entry = CUSTOM_POSES.update(str(body.get("id", "")), **changes)
                         KERNEL.configure_custom_poses(CUSTOM_POSES)
                         self._send_json({"ok": True, "pose": _custom_pose_out(entry),

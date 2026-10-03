@@ -4,6 +4,7 @@
 
 * 一帧 = 静态姿势。摆成那样并保持住，就一直触发（像按住一个键）。
 * 多帧 = 连贯动作。按顺序依次做出每一帧，最后一帧完成时触发一下（像按一下键）。
+* 任意姿势 = 多个替代姿势。任意一个保持够久就触发，保持住就持续成立。
 
 比对算法在 ``motioncontrol_shared.pose_template`` 里（纯 stdlib，云端也能导入）。
 这里是桌面这一侧：文件放哪、怎么原子写、每个动作的阈值和节奏，以及把结果交给控
@@ -136,8 +137,9 @@ class CustomPoseStore:
         entry = {
             "id": self._next_id(),
             "name": clean or f"动作 {len(self.poses) + 1}",
-            # 一帧或多帧。单帧就是静态姿势，多帧就要按顺序依次做出来。
+            # 默认保留原有顺序规则；也可改为任意一个姿势即可。
             "frames": [template],
+            "match_mode": "sequence",
             # 录下来那一瞬间的骨架，只用于显示。模板里只有方向向量，画不出人形，
             # 而用户要靠看图认出这是哪个动作——名字记不住那么多。
             "previews": [preview],
@@ -152,7 +154,7 @@ class CustomPoseStore:
         return entry
 
     def append_frame(self, pose_id: str, pose_map: dict) -> dict:
-        """给一个已有动作再加一帧，把它变成（或延长）连贯动作。"""
+        """给已有动作再加一个姿势，沿用这条动作的触发规则。"""
         entry = self.get(pose_id)
         if len(entry["frames"]) >= MAX_FRAMES:
             raise CustomPoseError(f"一个动作最多 {MAX_FRAMES} 个姿势")
@@ -177,6 +179,10 @@ class CustomPoseStore:
 
     def update(self, pose_id: str, **changes) -> dict:
         entry = self.get(pose_id)
+        if "match_mode" in changes:
+            if changes["match_mode"] not in ("sequence", "any"):
+                raise CustomPoseError("触发规则要选择按顺序完成或任意一个即可")
+            entry["match_mode"] = changes["match_mode"]
         if "name" in changes:
             clean = str(changes["name"]).strip()[:MAX_NAME_CHARS]
             if not clean:
@@ -242,6 +248,18 @@ class CustomPoseStore:
         frames = entry["frames"]
         state = self._state(entry["id"])
         threshold = float(entry.get("threshold", DEFAULT_THRESHOLD))
+        if entry.get("match_mode") == "any":
+            # 每个姿势单独累计保持时间，不能靠快速切换不同姿势凑够帧数。
+            held = state.setdefault("any_held", [0] * len(frames))
+            compared = [compare(frame, pose_map) for frame in frames]
+            for index, result in enumerate(compared):
+                held[index] = held[index] + 1 if result is not None and result["score"] >= threshold else 0
+            visible = [result for result in compared if result is not None]
+            best = max(visible, key=lambda result: result["score"]) if visible else None
+            return {"score": best["score"] if best else 0.0,
+                    "hit": any(count >= int(entry.get("dwell_frames", DEFAULT_DWELL_FRAMES)) for count in held),
+                    "visible": bool(visible), "step": 0, "steps": len(frames),
+                    "segments": best["segments"] if best else {}}
         multi = len(frames) > 1
 
         # 连贯动作完成后的保持窗口。人这时已经在往下一个姿势去了，所以不再比对，
@@ -303,6 +321,7 @@ class CustomPoseStore:
             "name": entry["name"],
             "previews": entry.get("previews", []),
             "frames": len(entry["frames"]),
+            "match_mode": entry.get("match_mode", "sequence"),
             "threshold": entry.get("threshold", DEFAULT_THRESHOLD),
             "dwell_frames": entry.get("dwell_frames", DEFAULT_DWELL_FRAMES),
             "step_window_s": entry.get("step_window_s", DEFAULT_STEP_WINDOW_S),
@@ -332,6 +351,8 @@ def _migrate(entry) -> dict | None:
     previews = entry.get("previews")
     if not isinstance(previews, list) or len(previews) != len(frames):
         entry["previews"] = [None] * len(frames)
+    if entry.get("match_mode") not in ("sequence", "any"):
+        entry["match_mode"] = "sequence"
     return entry
 
 
