@@ -42,7 +42,7 @@ from motioncontrol.game_launch import is_administrator, launch_as_administrator,
 from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
 from motioncontrol_shared.profile_schema import action_catalog
-from motioncontrol_shared.mapping_schema import DEFAULT_EMERGENCY_STOP
+from motioncontrol_shared.mapping_schema import DEFAULT_EMERGENCY_STOP, shared_voice_command_id
 from motioncontrol_shared.pose_points import POSE_CONNECTIONS, POSE_POINT_LABELS
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
@@ -316,15 +316,18 @@ def execute_voice_action(action: dict) -> dict:
                         return KERNEL.release_voice_hold(binding["action"].get("target", ""))
                     if binding["action"].get("type") == "system":
                         # 本游戏口令在映射表里选了「系统功能」。
-                        return execute_system_target(binding["action"].get("target", ""), command_generation=generation, command_action=action) or {
-                            "executed": False, "reason": "不支持的系统功能"}
+                        return execute_voice_action({**action, **binding["action"]})
                     mapped = dict(binding["action"])
                     mapped["source"] = action.get("source", "voice")
                     return OUTPUT.execute_voice_action(mapped)
             if command_id.startswith("game.profile_slot_"):
                 return {"executed": False, "reason": "当前游戏未设置这条备用语音"}
+        if action.get("type") == "voice_release":
+            return KERNEL.release_voice_hold(action.get("target", ""))
         return OUTPUT.execute_voice_action(action)
     target = str(action.get("target", "")).strip().upper()
+    if target == "EMERGENCY_STOP":
+        return voice_emergency_stop()
     shared = execute_system_target(target, command_generation=generation, command_action=action)
     if shared is not None:
         return shared
@@ -393,6 +396,24 @@ VOICE = VoiceService(
     clear_source=OUTPUT.clear_source,
 )
 VOICE.configure_profile_bindings(PROFILES.effective_profile().get("bindings", {}))
+
+
+def _shared_voice_action(mapping: dict) -> dict:
+    action = {key: value for key, value in mapping.items() if key not in {"phrase", "synonyms"}}
+    if action["type"] == "macro" and action.get("behavior") != "release":
+        action["behavior"] = "hold" if MACROS.repeats(action["target"]) else "tap"
+    return action
+
+
+def _shared_voice_hold_lookup(ident: str) -> dict | None:
+    for mapping in VOICE.mappings:
+        if shared_voice_command_id(mapping["phrase"]) == ident:
+            action = _shared_voice_action(mapping)
+            return action if action.get("behavior") == "hold" else None
+    return None
+
+
+KERNEL.shared_voice_hold_lookup = _shared_voice_hold_lookup
 # main() 里装上。放在这里只是为了让收尾那段能无条件 close 它。
 DISCOVERY: DiscoveryResponder | None = None
 
@@ -1115,10 +1136,10 @@ def voice_command_catalog() -> dict:
     shared = [*VOICE.mappings,
               *({"phrase": phrase, "type": "system", "target": "EMERGENCY_STOP", "behavior": "tap"}
                 for phrase in VOICE.emergency_stop_phrases if phrase != DEFAULT_EMERGENCY_STOP)]
-    for index, mapping in enumerate(shared):
-        commands.append({"id": f"shared.{index}", "phrase": VOICE.wake_word + mapping["phrase"],
+    for mapping in shared:
+        commands.append({"id": shared_voice_command_id(mapping["phrase"]), "phrase": VOICE.wake_word + mapping["phrase"],
                          "label": "", "scope": "shared", "system_fixed": False,
-                         "effective_action": {key: mapping[key] for key in ("type", "target", "behavior")}})
+                         "effective_action": _shared_voice_action(mapping)})
     return {"version": VERSION, "count": len(commands), "commands": commands}
 
 def _normalize_motion_config(items):

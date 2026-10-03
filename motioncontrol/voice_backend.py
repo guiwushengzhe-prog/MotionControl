@@ -224,7 +224,7 @@ class VoiceService:
         self.sample_rate = 16_000
         self.mappings: list[dict] = []
         self.wake_word = ""
-        self.wake_system_commands = False
+        self.wake_system_commands = True
         self.emergency_stop_phrases: list[str] = [DEFAULT_EMERGENCY_STOP]
         self.model_path = find_vosk_model(root)
         self.action_map_file = root / "config" / "generated_voice" / "voice_action_map.json"
@@ -331,7 +331,10 @@ class VoiceService:
                 return
         try:
             self.wake_word = self._validate_wake_word(data.get("wake_word", ""))
-            self.wake_system_commands = bool(data.get("wake_system_commands", False))
+            # 系统口令和通用口令统一使用用户填写的前缀，留空就直接说。
+            # 旧开关只保留为配置兼容字段，不再固定要求“体感”。
+            system_rule_changed = data.get("wake_system_commands") is not True
+            self.wake_system_commands = True
             self.emergency_stop_phrases = self._validate_emergency_phrases(
                 data.get("emergency_stop_phrases", []))
             # 旧的自定义急停以“体感”存前缀；新版保存用户填写的部分，前缀单独应用。
@@ -340,12 +343,10 @@ class VoiceService:
                 self.emergency_stop_phrases = [
                     item if item == DEFAULT_EMERGENCY_STOP else self._without_wake_word(item)
                     for item in self.emergency_stop_phrases]
-                if "wake_system_commands" not in data and self.wake_word not in {"", DEFAULT_WAKE_WORD}:
-                    self.wake_system_commands = True
         except Exception as exc:
             self.last_error = f"个人语音设置读取失败：{exc}"
             return
-        if migrating or legacy_rules:
+        if migrating or legacy_rules or system_rule_changed:
             self._write_personal()
 
     # The rules live in motioncontrol_shared.mapping_schema so the cloud applies
@@ -455,8 +456,8 @@ class VoiceService:
             # settings, recognizer and held outputs exactly as they were.
             candidate = copy.copy(self)
             candidate.mappings, candidate.wake_word, candidate.emergency_stop_phrases = mappings, wake, stops
-            candidate.wake_system_commands = (bool(wake_system_commands) if wake_system_commands is not None
-                                             else self.wake_system_commands)
+            # 接受旧客户端传来的开关字段，但所有系统口令均使用同一唤醒词。
+            candidate.wake_system_commands = True
             candidate._build_registry()
             problems = candidate._configuration_conflicts
             if problems:
@@ -649,7 +650,7 @@ class VoiceService:
 
     @property
     def system_wake_word(self) -> str:
-        return self.wake_word if self.wake_system_commands else DEFAULT_WAKE_WORD
+        return self.wake_word
 
     def spoken_emergency_phrases(self) -> list[str]:
         return [self._with_wake_word(item) if item == DEFAULT_EMERGENCY_STOP else self.wake_word + item
@@ -1069,7 +1070,7 @@ class VoiceService:
         got = compact_text(recognized)
         wake = compact_text(self.system_wake_word)
         if got in {compact_text(item) for item in self.spoken_emergency_phrases()}:
-            self.last_command = DEFAULT_EMERGENCY_STOP
+            self.last_command = self._with_wake_word(DEFAULT_EMERGENCY_STOP)
             self.commands_heard += 1
             self.last_action = "emergency_stop"
             try:
@@ -1134,7 +1135,7 @@ class VoiceService:
                     break
         if match is None:
             return {"matched": False, "reason": "command_not_in_mapping"}
-        action = {"type": match["type"], "target": match["target"], "behavior": match.get("behavior", "tap"),
+        action = {**{key: value for key, value in match.items() if key not in {"phrase", "synonyms"}},
                   "phrase": f"{self.wake_word}{match['phrase']}"}
         action["source"] = f"voice:{source_id}" if source_id else "voice"
         if match["type"] == "system":

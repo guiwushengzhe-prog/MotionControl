@@ -2956,6 +2956,8 @@ class ControlKernel:
         for ident in identifiers:
             binding = self.control_bindings.get(f"voice.{ident}")
             action = binding.get("action") if isinstance(binding, dict) and not binding.get("disabled") else None
+            if ident.startswith("shared.") and callable(getattr(self, "shared_voice_hold_lookup", None)):
+                action = self.shared_voice_hold_lookup(ident)
             if not isinstance(action, dict) or action.get("type") in {"system", "voice_release"}:
                 missing.append(ident)
                 continue

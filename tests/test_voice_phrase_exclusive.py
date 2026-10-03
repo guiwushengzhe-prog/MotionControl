@@ -41,14 +41,14 @@ def test_a_shared_phrase_cannot_take_a_built_in_one(tmp_path):
     voice = make_service(tmp_path)
     voice.configure([shared("地图")])
     with pytest.raises(ValueError, match="内置口令"):
-        voice.configure([shared("地图"), shared("体感挪动区域", "F12")])
+        voice.configure([shared("地图"), shared("挪动区域", "F12")])
     assert [item["phrase"] for item in voice.mappings] == ["地图"], "被拒的那次不该留下任何改动"
 
 
 def test_a_shared_phrase_cannot_take_an_emergency_one(tmp_path):
     voice = make_service(tmp_path)
     with pytest.raises(ValueError, match="急停口令"):
-        voice.configure([shared("体感紧急停止")])
+        voice.configure([shared("紧急停止")])
 
 
 def test_a_game_phrase_cannot_take_a_shared_one(tmp_path):
@@ -95,7 +95,7 @@ def test_a_shared_phrase_that_used_to_be_shadowed_now_works(tmp_path):
     """「体感地图」以前被内置口令截走，通用口令里改成什么键都没用。"""
     calls = []
     voice = make_service(tmp_path, calls)
-    voice.configure([shared("地图", "TAB")])
+    voice.configure([shared("地图", "TAB")], wake_word="体感")
     result = voice._match_and_execute("体感地图", enforce_wake=True)
     assert result["matched"] is True
     assert calls[-1]["target"] == "TAB"
@@ -105,7 +105,7 @@ def test_old_shared_phrases_that_never_worked_are_dropped(tmp_path):
     path = user_path("voice_mappings")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"mappings": [
-        {"phrase": "体感挪动区域", "type": "system", "target": "ZONES.MOVE_HERE", "behavior": "tap"},
+        {"phrase": "挪动区域", "type": "system", "target": "ZONES.MOVE_HERE", "behavior": "tap"},
         shared("地图"),
     ]}, ensure_ascii=False), encoding="utf-8")
     voice = make_service(tmp_path)

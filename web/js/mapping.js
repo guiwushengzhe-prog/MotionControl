@@ -1,11 +1,11 @@
 // 本游戏：选游戏、按键映射的每一行、保存。
 import {$,api,configurationOperation,notice,positionPopup,post,registerDraftFlusher,setAttribute,setClass,setProperty,setText,syncChildren} from './core.js';
-import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
+import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,VOICE_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
 import {paintPoseMissingNotice} from './library.js';
 import {kernelState,renderKernelZones} from './play.js';
 import {currentView,showSettingsPane,showView,togglePanel} from './shell.js';
 import {gameProfile,profileDirty} from './state.js';
-import {isGameVoiceKey,normalizeGameVoicePhrase,refreshVoiceCommands,voiceCommandId,voiceCommandIds,voiceCommandName,voiceCommandNames,watchVoicePhrase} from './voice.js';
+import {isGameVoiceKey,normalizeGameVoicePhrase,refreshVoiceCommands,voiceCatalog,voiceCommandId,voiceCommandIds,voiceCommandName,voiceCommandNames,watchVoicePhrase} from './voice.js';
 
 // 换过几次游戏、最后一次搜的是什么。教「换成我要玩的游戏」时，要认的是真的换成了。
 export let profileApplies=0;
@@ -306,18 +306,19 @@ async function profileOperation(operation,{recoverConflict=false}={}){
   },{skipDrafts:recoverConflict?[saveProfileBindings]:[]});
 }
 
-function makeTypeSelect(binding){
+export function makeTypeSelect(binding,{allowNone=true}={}){
   const sel=document.createElement('select');sel.className='binding-type';
-  const none=document.createElement('option');none.value='';none.textContent='不绑';sel.appendChild(none);
+  if(allowNone){const none=document.createElement('option');none.value='';none.textContent='不绑';sel.appendChild(none)}
+  const available=type=>!Object.keys(gameProfile.actions||{}).length||gameProfile.actions?.[type];
   const option=type=>{const o=document.createElement('option');o.value=type;o.textContent=ACTION_TYPE_LABELS[type];return o};
   for(const [label,types] of ACTION_TYPE_GROUPS){
     const group=document.createElement('optgroup');group.label=label;
-    for(const type of types)if(gameProfile.actions?.[type])group.appendChild(option(type));
+    for(const type of types)if(available(type))group.appendChild(option(type));
     if(group.children.length)sel.appendChild(group);
   }
   // 服务端以后新加、这里还没分组的输出类型，放在最后，不至于选不到。
   const grouped=new Set(ACTION_TYPE_GROUPS.flatMap(([,types])=>types));
-  for(const type of Object.keys(ACTION_TYPE_LABELS))if(gameProfile.actions?.[type]&&!grouped.has(type))sel.appendChild(option(type));
+  for(const type of Object.keys(ACTION_TYPE_LABELS))if(available(type)&&!grouped.has(type))sel.appendChild(option(type));
   sel.value=binding?.disabled?'':(binding?.action?.type||'');return sel;
 }
 
@@ -402,6 +403,9 @@ function updateVoiceReleasePicker(select){
 
 function voiceHoldChoices(excludeKey=''){
   const out=[];
+  for(const item of voiceCatalog){
+    if(item.scope==='shared'&&item.effective_action?.behavior==='hold'&&voiceCommandId(excludeKey)!==item.id)out.push(item.id);
+  }
   for(const row of document.querySelectorAll('.binding-row[data-trigger^="voice."]')){
     if(row.dataset.trigger===excludeKey)continue;
     const type=row.querySelector('.binding-type')?.value||'';
@@ -409,7 +413,7 @@ function voiceHoldChoices(excludeKey=''){
     const behavior=row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value;
     if(behavior==='hold')out.push(voiceCommandId(row.dataset.trigger));
   }
-  return out;
+  return [...new Set(out)];
 }
 
 function fillVoiceReleaseSelect(select,excludeKey,value,held){
@@ -432,14 +436,8 @@ function fillVoiceReleaseSelect(select,excludeKey,value,held){
 // 口令改了说法、改成或不再是持续按住，所有「停住语音按住」的下拉框和选项都跟着变。
 export function syncVoiceReleaseChoices(){
   const held=voiceHoldChoices();
-  for(const row of document.querySelectorAll('#profileBindingRows .binding-row')){
+  for(const row of document.querySelectorAll('#profileBindingRows .binding-row, #voiceRows .voice-row')){
     const typeSel=row.querySelector('.binding-type');if(!typeSel)continue;
-    const option=[...typeSel.options].find(o=>o.value==='voice_release');
-    if(option){
-      // 没有设成「按住不放」的口令时，这一项用不上，就不列出来（这一行正选着它的除外）。
-      const none=!held.some(id=>id!==voiceCommandId(row.dataset.trigger));
-      setProperty(option,'hidden',none&&typeSel.value!=='voice_release');setProperty(option,'disabled',option.hidden);
-    }
     const select=row.querySelector('select.voice-release-target');
     if(select)fillVoiceReleaseSelect(select,row.dataset.trigger,voiceReleaseTargetIds(select),held);
   }
@@ -547,8 +545,10 @@ export function fillTargetControl(container,type,value='',comboLeadMs=80,comboLe
   }
   if(type==='system'){
     const select=document.createElement('select');select.className='binding-target';
-    const allowed=new Set(meta.targets||BINDING_SYSTEM_TARGETS.map(([id])=>id));
-    for(const[id,name]of BINDING_SYSTEM_TARGETS){if(!allowed.has(id))continue;const o=document.createElement('option');o.value=id;o.textContent=name;select.appendChild(o)}
+    const voice=String(container.dataset.trigger||'').startsWith('voice.');
+    const targets=voice?VOICE_SYSTEM_TARGETS:BINDING_SYSTEM_TARGETS;
+    const allowed=new Set(voice?targets.map(([id])=>id):(meta.targets||targets.map(([id])=>id)));
+    for(const[id,name]of targets){if(!allowed.has(id))continue;const o=document.createElement('option');o.value=id;o.textContent=name;select.appendChild(o)}
     const want=String(value||'').toUpperCase();
     if(want&&[...select.options].some(o=>o.value===want))select.value=want;
     container.appendChild(select);return;
@@ -572,7 +572,7 @@ export function fillTargetControl(container,type,value='',comboLeadMs=80,comboLe
   if(value&&[...select.options].some(o=>o.value===value))select.value=value;container.appendChild(select);
 }
 
-function fillBehaviorControl(container,trigger,type,value,macroId){
+export function fillBehaviorControl(container,trigger,type,value,macroId){
   container.replaceChildren();
   if(type==='macro'){
     // 「跑一遍还是按住时循环」是宏自己的设定，在宏库那边改。同一个东西两处能改，
@@ -594,11 +594,11 @@ function fillBehaviorControl(container,trigger,type,value,macroId){
   if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='';span.dataset.value='hold';container.appendChild(span);return}
   const sel=document.createElement('select');sel.className='binding-behavior';
   sel.title=trigger.group==='voice'?'点一下：说一次按一下。按住不放：说完一直按着，直到另一句口令把它松开':'按住：动作做着（或在框里）就一直按着。点一下：开始时按一下';
-  for(const[v,t]of (trigger.group==='voice'?[['tap','点一下'],['hold','按住不放']]:[['hold','按住'],['tap','点一下']])){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
+  for(const[v,t]of (trigger.group==='voice'?[['tap','点一下'],['hold','持续按住'],['release','松开']]:[['hold','按住'],['tap','点一下']])){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}
   // Poses default to a single edge trigger on the server, so show that rather
   // than "hold" while a pose has no binding yet.
   const edgeDefault=trigger.group==='voice'||trigger.group==='poses';
-  sel.value=trigger.group==='voice'?(['tap','hold'].includes(value)?value:'tap'):(value==='tap'||(!value&&edgeDefault)?'tap':'hold');container.appendChild(sel);
+  sel.value=trigger.group==='voice'?(['tap','hold','release'].includes(value)?value:'tap'):(value==='tap'||(!value&&edgeDefault)?'tap':'hold');container.appendChild(sel);
 }
 
 // 身体动作那一组只列这个游戏用着的：配置里绑了键的（默认就绑了原地踏步、小腿向后
@@ -1050,7 +1050,7 @@ export function renderProfileBindingRows(){
   paintPoseMissingNotice();
 }
 
-function readBindingAction(container,trigger,ordinal=''){
+export function readBindingAction(container,trigger,ordinal=''){
   const type=container.querySelector('.binding-type')?.value||'';
   if(!type)return null;
   let target;

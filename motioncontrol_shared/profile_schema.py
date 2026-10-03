@@ -48,9 +48,8 @@ ACTION_TYPES = {
     "system",
 }
 # 映射表里能选的系统功能。白名单：电脑端按名字执行，云端校验别人上传的配置也照这
-# 一份。语音那边另有一份（mapping_schema.VOICE_SYSTEM_TARGETS），两边都有的名字
-# 意思一样。录姿势、记录参考场景这类只列在语音里：身体正摆着要录的姿势，没法再用
-# 身体去按它。
+# 一份。两类语音都使用下面的 VOICE_SYSTEM_TARGETS；身体映射的界面仅列这组常用
+# 功能，录姿势等操作放在语音里。
 BINDING_SYSTEM_TARGETS = {
     "ZONES.FREEZE_TOGGLE",  # 定住 / 恢复跟随，来回切
     "ZONES.FREEZE",         # 定住区域
@@ -60,6 +59,10 @@ BINDING_SYSTEM_TARGETS = {
     "OUTPUT.TOGGLE",        # 开始 / 停止输出，来回切
     "OUTPUT.START",
     "OUTPUT.STOP",
+}
+VOICE_SYSTEM_TARGETS = BINDING_SYSTEM_TARGETS | {
+    "EMERGENCY_STOP", "HEAD_CALIBRATION_START", "HEAD.CALIBRATE",
+    "POSE.RECORD", "POSE.ADD_FRAME", "POSE.CANCEL",
 }
 # 宏编号的写法。macro_schema 里有同一条规则，那边管宏库自己，这边管绑定引用它，
 # 两个入口都得认得同一种编号。
@@ -167,7 +170,7 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         target = _normalize_voice_command_targets(raw_target)
     elif action_type == "system":
         target = str(raw_target).strip().upper()
-        if target not in BINDING_SYSTEM_TARGETS:
+        if target not in VOICE_SYSTEM_TARGETS:
             raise ValueError(f"不支持的系统功能：{target or '(空)'}")
     else:
         target = str(raw_target).strip().upper()

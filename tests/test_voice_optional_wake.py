@@ -8,6 +8,7 @@ import pytest
 
 from motioncontrol.user_paths import user_path
 from motioncontrol.voice_backend import VoiceService
+from motioncontrol_shared.mapping_schema import shared_voice_command_id
 from test_configuration_coordination import application
 from test_profile_api_v2 import request_for
 
@@ -32,12 +33,12 @@ def mapping(phrase="跳跃", behavior="tap"):
 
 @pytest.mark.parametrize("prefix", ["", "体感", "小助手请听我的游戏指令"])
 @pytest.mark.parametrize("system", [False, True])
-def test_optional_prefix_and_system_scope_are_independent(voice, prefix, system):
+def test_all_system_commands_use_the_same_optional_prefix_even_with_old_scope_flag(voice, prefix, system):
     service, calls = voice
     service.configure([mapping()], wake_word=prefix, wake_system_commands=system)
     service.configure_profile_bindings({"voice": {"game.profile_slot_01": {
         "phrase": "爬绳", "action": {"type": "keyboard", "target": "C", "behavior": "hold"}}}})
-    system_prefix = prefix if system else "体感"
+    system_prefix = prefix
     assert prefix + "跳跃" in service.grammar_phrases()
     assert system_prefix + "开始输出" in service.grammar_phrases()
     assert "爬绳" in service.grammar_phrases()
@@ -52,12 +53,29 @@ def test_optional_prefix_and_system_scope_are_independent(voice, prefix, system)
         assert not service._match_and_execute("跳跃", enforce_wake=True)["matched"]
 
 
-def test_defaults_are_empty_but_built_in_stop_keeps_its_original_phrase(voice):
+def test_empty_default_applies_to_built_in_stop_too(voice):
     service, _ = voice
     assert service.wake_word == ""
-    assert not service.wake_system_commands
-    assert "体感紧急停止" in service.grammar_phrases()
+    assert service.wake_system_commands
+    assert "紧急停止" in service.grammar_phrases()
+    assert "体感紧急停止" not in service.grammar_phrases()
     assert service._validate_wake_word("   ") == ""
+
+
+@pytest.mark.parametrize("prefix", ["", "小助手"])
+def test_old_false_system_flag_migrates_without_changing_the_user_prefix(voice, prefix):
+    service, _ = voice
+    path = user_path("personal_voice")
+    path.write_text(json.dumps({"wake_word": prefix, "wake_system_commands": False,
+                              "voice_rules_version": 2}), encoding="utf-8")
+    restored = VoiceService(service.root, lambda _: {"executed": True})
+    try:
+        assert restored.wake_word == prefix
+        assert restored.system_wake_word == prefix
+        assert restored.spoken_emergency_phrases() == [prefix+"紧急停止"]
+        assert json.loads(path.read_text(encoding="utf-8"))["wake_system_commands"]
+    finally:
+        restored.close()
 
 
 def test_phone_text_without_prefix_uses_the_shared_mapping(voice):
@@ -105,7 +123,7 @@ def test_custom_emergency_uses_shared_prefix_and_built_in_uses_system_scope(voic
     stops = []
     service.emergency_stop = lambda: stops.append(True) or {"executed": True}
     service.configure([], wake_word="小助手", emergency_stop_phrases=["快停下"])
-    assert service.spoken_emergency_phrases() == ["体感紧急停止", "小助手快停下"]
+    assert service.spoken_emergency_phrases() == ["小助手紧急停止", "小助手快停下"]
     assert service._match_and_execute("小助手快停下", enforce_wake=True)["emergency"]
     service.configure([], wake_word="", wake_system_commands=True)
     assert service.spoken_emergency_phrases() == ["紧急停止", "快停下"]
@@ -137,8 +155,9 @@ def test_saved_shared_and_game_actions_are_present_in_real_catalog(application):
     app._apply_effective_profile()
     catalog = app.voice_command_catalog()
     by_id = {item["id"]: item for item in catalog["commands"]}
-    assert by_id["shared.0"]["phrase"] == "跳跃"
-    assert by_id["shared.0"]["effective_action"]["behavior"] == "hold"
+    shared_id = shared_voice_command_id("跳跃")
+    assert by_id[shared_id]["phrase"] == "跳跃"
+    assert by_id[shared_id]["effective_action"]["behavior"] == "hold"
     assert by_id["game.profile_slot_01"]["phrase"] == "爬绳"
     assert by_id["game.profile_slot_01"]["effective_action"]["target"] == "C"
     assert by_id["game.profile_slot_02"]["effective_action"] is None

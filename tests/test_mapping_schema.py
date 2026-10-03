@@ -137,7 +137,7 @@ def test_voice_rejects_a_duplicate_phrase_under_punctuation_folding():
 
 
 @pytest.mark.parametrize("mapping, message", [
-    ({"phrase": "x", "type": "gamepad", "target": "Z"}, "暂不支持的 Xbox 键"),
+    ({"phrase": "x", "type": "gamepad", "target": "Z"}, "不支持的 Xbox 按键"),
     ({"phrase": "x", "type": "system", "target": "OUTPUT.NUKE"}, "暂不支持的系统命令"),
     ({"phrase": "x", "type": "wat", "target": "A"}, "未知输出类型"),
     ({"phrase": "x", "type": "keyboard", "target": "ENTER+NOPE"}, "不支持的键盘键"),

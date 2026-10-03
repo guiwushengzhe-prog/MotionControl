@@ -3,6 +3,7 @@ from urllib.parse import urlparse
 
 import pytest
 from playwright.sync_api import expect
+from motioncontrol_shared.profile_schema import action_catalog
 
 from test_web_optimization import ORIGIN, desktop
 from test_web_ui import browser as mock_browser
@@ -10,21 +11,22 @@ from test_web_ui import browser as mock_browser
 
 def prepare(desktop, prefix=""):
     api, page = desktop.api, desktop.page
-    api.voice.update(wake_word=prefix, wake_system_commands=False, system_wake_word="体感",
-                     emergency_stop_phrases=["体感紧急停止"], custom_emergency_stop_phrases=[],
-                     builtin_emergency_phrase="体感紧急停止",
+    api.voice.update(wake_word=prefix, wake_system_commands=True, system_wake_word=prefix,
+                    emergency_stop_phrases=[prefix+"紧急停止"], custom_emergency_stop_phrases=[],
+                    builtin_emergency_phrase=prefix+"紧急停止",
                      mappings=[{"phrase": "跳跃", "type": "keyboard", "target": "SPACE", "behavior": "tap"}])
 
     def save(route):
         body = route.request.post_data_json
         api.requests.append((urlparse(route.request.url).path, body))
         api.voice.update(body)
-        api.voice["system_wake_word"] = api.voice["wake_word"] if api.voice.get("wake_system_commands") else "体感"
+        api.voice["system_wake_word"] = api.voice["wake_word"]
         api.voice["builtin_emergency_phrase"] = api.voice["system_wake_word"] + "紧急停止"
         api.fulfill(route, api.voice)
 
     page.route(ORIGIN + "/api/voice/config", save)
-    page.evaluate("async()=>{const v=await import('/js/voice.js');await v.refreshVoice();v.renderVoiceRows(v.voiceRowsFromStatus(v.voice.status));}")
+    page.route(ORIGIN + "/api/output/actions", lambda route: api.fulfill(route, {"actions": action_catalog()}))
+    page.evaluate("async()=>{await (await import('/js/mapping.js')).refreshProfile();const v=await import('/js/voice.js');await v.refreshVoice();v.renderVoiceRows(v.voiceRowsFromStatus(v.voice.status));}")
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="voice"]')
 
@@ -42,7 +44,8 @@ def test_empty_short_and_long_prefixes_do_not_overlap_or_overflow(desktop, prefi
         expect(general_prefix).to_have_text(prefix)
     else:
         expect(general_prefix).to_be_hidden()
-    expect(page.locator('#personalVoicePanel .voice-prefix[data-scope="builtin"]')).to_have_text("体感")
+    expect(page.locator('#personalVoicePanel .voice-prefix[data-scope="builtin"]')).to_have_text(prefix)
+    expect(page.locator('#voiceEmergencyDescription')).to_have_text(f"说「{prefix}紧急停止」会停止所有输出，并松开按键")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     boxes = page.locator('#voiceRows .voice-phrase-wrap').evaluate("el=>{const p=el.querySelector('.voice-prefix').getBoundingClientRect(),i=el.querySelector('input').getBoundingClientRect(),b=el.getBoundingClientRect();return {p:{x:p.x,y:p.y,r:p.right,b:p.bottom},i:{x:i.x,y:i.y,r:i.right,b:i.bottom},b:{x:b.x,r:b.right}}}")
     assert boxes["i"]["x"] >= boxes["b"]["x"] - 1
@@ -52,7 +55,7 @@ def test_empty_short_and_long_prefixes_do_not_overlap_or_overflow(desktop, prefi
         assert p["r"] <= i["x"] + 1 or p["b"] <= i["y"] + 1
 
 
-def test_clearing_prefix_and_toggling_system_scope_updates_actual_examples(desktop):
+def test_clearing_and_changing_prefix_updates_all_system_examples(desktop):
     page, api = desktop.page, desktop.api
     prepare(desktop, "小助手")
     page.locator('#wakeWord').fill("")
@@ -60,14 +63,12 @@ def test_clearing_prefix_and_toggling_system_scope_updates_actual_examples(deskt
     page.wait_for_function("personalVoiceStatus.textContent.includes('直接说')")
     assert api.voice["wake_word"] == ""
     expect(page.locator('#voiceRows .voice-prefix')).to_be_hidden()
-    page.locator('#wakeSystemCommands').check()
-    page.wait_for_function("voiceSystemWakeDescription.textContent.includes('内置口令也直接说')")
     assert api.voice["wake_system_commands"]
+    assert page.locator('#wakeSystemCommands').count() == 0
     expect(page.locator('#personalVoicePanel .voice-prefix[data-scope="builtin"]')).to_be_hidden()
     page.locator('#wakeWord').fill("小助手请听我的游戏指令")
     page.locator('#wakeWord').blur()
-    page.wait_for_function("voiceSystemWakeDescription.textContent.includes('小助手请听我的游戏指令紧急停止')")
-    expect(page.locator('#wakeSystemCommands')).to_be_checked()
+    page.wait_for_function("voiceEmergencyDescription.textContent.includes('小助手请听我的游戏指令紧急停止')")
 
 
 def test_shared_behavior_is_selectable_and_system_actions_show_execute_once(desktop):
@@ -84,7 +85,7 @@ def test_shared_behavior_is_selectable_and_system_actions_show_execute_once(desk
     page.wait_for_function("!document.querySelector('#voiceRows .voice-behavior').disabled")
     assert api.voice["mappings"][0]["behavior"] == "release"
     page.locator('#voiceRows .voice-type').select_option("system")
-    expect(select).to_be_hidden()
+    assert select.count() == 0
     expect(page.locator('#voiceRows .voice-system-behavior')).to_have_text("执行一次")
     expect(page.locator('#voiceRows .voice-system-behavior')).to_be_visible()
 

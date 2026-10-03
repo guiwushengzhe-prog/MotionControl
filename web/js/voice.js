@@ -1,7 +1,7 @@
 // 语音：唤醒词、口令检查、通用口令、口令列表。
 import {$,api,configurationOperation,notice,post,setProperty,setText,syncChildren} from './core.js';
-import {ACTION_TYPE_LABELS,SYSTEM_TARGET_NAMES,VOICE_SYSTEM_TARGETS,bindingsForDisplay,targetLabel} from './labels.js';
-import {fillTargetControl,makeKeyCaptureInput} from './mapping.js';
+import {ACTION_TYPE_LABELS,SYSTEM_TARGET_NAMES,bindingsForDisplay,targetLabel} from './labels.js';
+import {fillBehaviorControl,fillTargetControl,makeKeyCaptureInput,makeTypeSelect,readBindingAction,syncVoiceReleaseChoices} from './mapping.js';
 import {gameProfile} from './state.js';
 
 export let voiceInputReady=false;
@@ -14,7 +14,7 @@ function currentVoiceWakeWord(status=voice.status){
   return String(status?.wake_word??'').trim();
 }
 
-function systemVoiceWakeWord(status=voice.status){return String(status?.system_wake_word??(status?.wake_system_commands?currentVoiceWakeWord(status):'体感')).trim()}
+function systemVoiceWakeWord(status=voice.status){return currentVoiceWakeWord(status)}
 
 export function isGameVoiceKey(key){return String(key||'').replace(/^voice\./,'').startsWith('game.profile_slot_')}
 
@@ -32,13 +32,14 @@ function renderVoiceGuide(status=voice.status){
   setText(wakeHint,wake);
   const wakeExample=$('#voiceWakeExample');
   setText(wakeExample,example);
-  setText($('#voiceWakeDescription'),wake?`通用口令先说「${wake}」，例如「${example}」`:'留空直接说通用口令，例如「地图」');
-  setText($('#voiceSystemWakeDescription'),status?.wake_system_commands?(systemWake?`内置口令例如「${systemWake}紧急停止」`:'未填写唤醒词：内置口令也直接说，例如「紧急停止」'):'未勾选：内置口令仍先说「体感」。本游戏口令始终直接说。');
+  setText($('#voiceWakeDescription'),wake?`通用口令和系统口令先说「${wake}」，例如「${example}」`:'留空直接说通用口令和系统口令，例如「地图」「紧急停止」');
+  setText($('#voiceSystemWakeDescription'),'本游戏口令始终直接说，不受唤醒词影响。');
+  setText($('#voiceEmergencyDescription'),`说「${systemWake}紧急停止」会停止所有输出，并松开按键`);
   document.querySelectorAll('.voice-prefix').forEach(item=>{const prefix=item.dataset.scope==='builtin'?systemWake:wake;setText(item,prefix);setProperty(item,'hidden',!prefix)});
   document.querySelectorAll('.voice-trigger-phrase').forEach(input=>{
     const game=isGameVoiceKey(input.closest('.binding-row')?.dataset.trigger);
     setProperty(input,'placeholder',game?'例如：爬绳':'完整口令');
-    setProperty(input,'title',game?'直接说这句，不用唤醒词':`说出的完整口令，前面加「${wake}」`);
+    setProperty(input,'title',game||!wake?'直接说这句，不用唤醒词':`说出的完整口令，前面加「${wake}」`);
   });
 }
 
@@ -109,22 +110,51 @@ export function voiceCommandPhrases(value){return voiceCommandIds(value).map(voi
 
 export function voiceCommandNames(value){return voiceCommandIds(value).map(voiceCommandName).filter(Boolean)}
 
-export function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=document.createElement('div');row.className='voice-row';const phrase=document.createElement('input');phrase.className='voice-phrase';phrase.placeholder='例：地图';phrase.title='填写要说的口令，唤醒词可留空';phrase.value=mapping.phrase||'';const phraseBox=document.createElement('div');phraseBox.className='voice-phrase-wrap';const prefix=document.createElement('span');prefix.className='voice-prefix';prefix.textContent=currentVoiceWakeWord();prefix.hidden=!currentVoiceWakeWord();phraseBox.append(prefix,phrase);const type=document.createElement('select');type.className='voice-type';for(const[value,label]of[['keyboard','键盘'],['gamepad','手柄'],['system','系统']]){const o=document.createElement('option');o.value=value;o.textContent=label;type.appendChild(o)}type.value=mapping.type||'keyboard';const target=document.createElement('span');target.className='voice-target-cell';const fillVoiceTarget=value=>{
-  if(type.value==='system'){target.replaceChildren();const sel=document.createElement('select');sel.className='binding-target';for(const[v,t]of VOICE_SYSTEM_TARGETS){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}if([...sel.options].some(o=>o.value===value))sel.value=value;target.appendChild(sel);return}
-  // Voice rows can be built before the action catalog arrives.  Gamepad falls
-  // back to its own built-in key list, but keyboard is only free text because
-  // the catalog says so, and without it the picker would come out empty.
-  if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){target.replaceChildren(makeKeyCaptureInput('binding-target',value||''));return}
-  fillTargetControl(target,type.value,value);
-};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');for(const[value,label]of [['tap','点一下'],['hold','持续按住'],['release','松开']]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';behavior.title='点按一次、持续按住，或用另一句口令松开';const systemBehavior=document.createElement('span');systemBehavior.className='voice-system-behavior';systemBehavior.textContent='执行一次';const syncBehavior=()=>{const system=type.value==='system';behavior.disabled=system;behavior.hidden=system;systemBehavior.hidden=!system;if(system)behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phraseBox,type,target,behavior,systemBehavior,remove);$('#voiceRows').appendChild(row);watchVoicePhrase(phrase)}
+export function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){
+  const row=document.createElement('div');row.className='voice-row';
+  row.dataset.trigger='voice.'+(voiceCatalog.find(item=>item.scope==='shared'&&item.phrase===currentVoiceWakeWord()+mapping.phrase)?.id||'shared.draft');
+  const trigger={key:row.dataset.trigger,group:'voice',name:mapping.phrase||'通用口令'};
+  const phrase=document.createElement('input');phrase.className='voice-phrase';phrase.placeholder='例：地图';phrase.title='填写要说的口令，唤醒词可留空';phrase.value=mapping.phrase||'';
+  const phraseBox=document.createElement('div');phraseBox.className='voice-phrase-wrap';
+  const prefix=document.createElement('span');prefix.className='voice-prefix';prefix.textContent=currentVoiceWakeWord();prefix.hidden=!currentVoiceWakeWord();phraseBox.append(prefix,phrase);
+  const type=makeTypeSelect({action:mapping},{allowNone:false});type.classList.add('voice-type');
+  const target=document.createElement('span');target.className='voice-target-cell binding-target-box';target.dataset.trigger=row.dataset.trigger;
+  const fillVoiceTarget=(value='',lead=80,explicit=false)=>{
+    if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){target.replaceChildren(makeKeyCaptureInput('binding-target',value||''));return}
+    fillTargetControl(target,type.value,value,lead,explicit);
+  };
+  fillVoiceTarget(mapping.target||'',mapping.combo_stick_lead_ms??80,mapping.combo_stick_lead_ms!=null);
+  const behavior=document.createElement('span');behavior.className='voice-behavior-box';
+  const syncBehavior=value=>{
+    fillBehaviorControl(behavior,trigger,type.value,value||'tap',target.querySelector('.binding-target')?.value||'');
+    const control=behavior.querySelector('.binding-behavior');
+    if(control){control.classList.add(control.tagName==='SELECT'?'voice-behavior':'voice-system-behavior');control.setAttribute('aria-label','语音动作方式')}
+  };
+  syncBehavior(mapping.behavior);
+  type.addEventListener('change',()=>{fillVoiceTarget();syncBehavior('tap');syncVoiceReleaseChoices()});
+  target.addEventListener('change',()=>{if(type.value==='macro')syncBehavior();syncVoiceReleaseChoices()});
+  const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});
+  row.append(phraseBox,type,target,behavior,remove);$('#voiceRows').appendChild(row);watchVoicePhrase(phrase);
+}
 
-function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=(row.querySelector('.binding-target')?.value||'').trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('每条口令都要填「说什么」和「输出什么」');const behavior=type==='system'?'tap':row.querySelector('.voice-behavior').value;const item={phrase,type,target,behavior},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
+function readVoiceMappings(){
+  const items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));
+  for(const row of document.querySelectorAll('#voiceRows .voice-row')){
+    const phrase=row.querySelector('.voice-phrase').value.trim();
+    if(!phrase&&!row.querySelector('.binding-target')?.value)continue;
+    if(!phrase)throw new Error('每条口令都要填「说什么」和「输出什么」');
+    const item={phrase,...readBindingAction(row,{group:'voice',name:phrase})},previous=old.get(phrase);
+    if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item);
+  }
+  return items;
+}
 
 export function renderVoiceRows(items){
   const rows=[...document.querySelectorAll('#voiceRows .voice-row')];
-  const current=rows.map(row=>[row.querySelector('.voice-phrase').value,row.querySelector('.voice-type').value,row.querySelector('.binding-target')?.value||'',row.querySelector('.voice-behavior').value]);
-  const desired=(items||[]).map(item=>[item.phrase||'',item.type||'keyboard',item.target||'',item.type==='system'?'tap':item.behavior||'tap']);
-  if(rows.length&&JSON.stringify(current)===JSON.stringify(desired.length?desired:[['','keyboard','','tap']]))return;
+  const targetValue=(type,value)=>Array.isArray(value)?(type==='voice_release'?value.join(','):value.join('+')):String(value||'');
+  const current=rows.map(row=>{const type=row.querySelector('.voice-type').value;return [row.querySelector('.voice-phrase').value,type,type==='voice_release'?[...row.querySelector('.voice-release-target').selectedOptions].map(item=>item.value).join(','):row.querySelector('.binding-target')?.value||'',row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'tap',row.querySelector('.combo-lead-ms')?.dataset.explicit==='1'?Number(row.querySelector('.combo-lead-ms').value):null]});
+  const desired=(items||[]).map(item=>[item.phrase||'',item.type||'keyboard',targetValue(item.type,item.target),['system','voice_release','mouse_wheel'].includes(item.type)?'tap':item.behavior||'tap',item.combo_stick_lead_ms??null]);
+  if(rows.length&&JSON.stringify(current)===JSON.stringify(desired.length?desired:[['','keyboard','','tap',null]]))return;
   $('#voiceRows').replaceChildren();for(const m of items||[])addVoiceRow(m);if(!$('#voiceRows').children.length)addVoiceRow();
 }
 
@@ -136,7 +166,7 @@ function renderVoiceStatus(s=voice.status){
   const partial=String(s.last_partial||s.partial||'').trim();
   const phrase=String(s.last_final||s.final||s.last_command||'').trim();
   // 卡片上只写怎么说；没准备好时写卡在哪。听到的那一句浮在页面底下，几秒后自己走。
-  const voiceText=ready?(currentVoiceWakeWord(s)?`通用口令先说「${currentVoiceWakeWord(s)}」；本游戏口令直接说`:'通用、本游戏口令直接说')
+  const voiceText=ready?(currentVoiceWakeWord(s)?`通用和系统口令先说「${currentVoiceWakeWord(s)}」；本游戏口令直接说`:'通用、系统、本游戏口令直接说')
     :!s.available||!has?'语音模型没装好':!connected?(s.source_kind==='phone'?'等手机连上':'麦克风没打开'):'麦克风没声音，或者还在准备';
   if($('#voiceStatus').textContent!==voiceText)$('#voiceStatus').textContent=voiceText;
   announceVoice(s,phrase);
@@ -148,8 +178,7 @@ function renderVoiceStatus(s=voice.status){
   const diag=$('#voiceDiagnostic');setText(diag,[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`实时识别：${partial||'—'}`,`最后完成：${phrase||'—'}`,`电脑执行：${s.last_executed===true?'已执行':s.last_executed===false?'未执行':'未确认'}`,`错误：${s.last_error||'—'}`].join('\n'));
 }
 
-/* 自定义急停沿用通用口令的可选前缀，但仍独立保存、不分享，且直接走急停路径。
- * 固定急停的前缀由“同时用于内置系统口令”决定。 */
+/* 内置和自定义急停都沿用可选唤醒词；自定义急停独立保存，不分享。 */
 const EMERGENCY_TARGET='EMERGENCY_STOP',BUILT_IN_STOP='紧急停止';
 
 const isEmergencyRow=item=>item.type==='system'&&item.target===EMERGENCY_TARGET;
@@ -179,22 +208,20 @@ function renderPersonalVoice(status){
   if(!wake||document.activeElement===wake)return;
   const next=status?.wake_word??'';
   if(wake.value!==next){wake.value=next;queueVoiceCheck(wake)}
-  setProperty($('#wakeSystemCommands'),'checked',!!status?.wake_system_commands);
 }
 
 async function saveWakeWord(){
   const say=(text,kind='')=>{const el=$('#personalVoiceStatus');if(el){el.textContent=text;el.className=kind==='error'?'statusline error':'statusline'}};
   const value=String($('#wakeWord').value||'').trim();
-  const system=$('#wakeSystemCommands').checked;
-  if(value===voice.status?.wake_word&&system===!!voice.status?.wake_system_commands)return;
+  if(value===voice.status?.wake_word)return;
   try{
     await configurationOperation(async()=>{
     // mappings 要原样带上：configure 是整份替换，不带等于把口令全删了。
     const revision=++voiceRevision;
-    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],wake_word:value,wake_system_commands:system});
+    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],wake_word:value});
     if(revision!==voiceRevision)return;
     ++voiceRevision;
-    voice.status=s;renderVoiceStatus(s);await refreshVoiceCommands();say(value?'唤醒词已保存':'已保存：通用口令直接说');
+    voice.status=s;renderVoiceStatus(s);await refreshVoiceCommands();say(value?'唤醒词已保存':'已保存：通用口令和系统口令直接说');
     // 可选前缀改变后，重新检查实际说出的整句。
     document.querySelectorAll('.voice-phrase').forEach(queueVoiceCheck);
     });
@@ -202,7 +229,6 @@ async function saveWakeWord(){
 }
 
 document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
-document.getElementById('wakeSystemCommands')?.addEventListener('change',saveWakeWord);
 
 if($('#wakeWord'))watchVoicePhrase($('#wakeWord'));
 
@@ -260,4 +286,4 @@ function renderVoiceCommandCatalog(commands){
   syncChildren(full,sections);
 }
 
-export async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[])}catch{renderVoiceCommandCatalog([])}}
+export async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[]);for(const row of document.querySelectorAll('#voiceRows .voice-row')){const phrase=row.querySelector('.voice-phrase').value.trim(),item=voiceCatalog.find(item=>item.scope==='shared'&&item.phrase===currentVoiceWakeWord()+phrase);if(item){row.dataset.trigger='voice.'+item.id;row.querySelector('.binding-target-box').dataset.trigger=row.dataset.trigger}}syncVoiceReleaseChoices()}catch{renderVoiceCommandCatalog([])}}

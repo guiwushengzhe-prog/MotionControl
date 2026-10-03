@@ -28,7 +28,9 @@ Two ordering decisions are made deliberately and are not interchangeable:
 
 from __future__ import annotations
 
-from .profile_schema import GAMEPAD_AXES, GAMEPAD_BUTTONS, KEYBOARD_KEYS
+import hashlib
+
+from .profile_schema import ACTION_TYPES, GAMEPAD_AXES, GAMEPAD_BUTTONS, KEYBOARD_KEYS, VOICE_SYSTEM_TARGETS, normalize_action
 from .text_norm import compact_text
 
 DEFAULT_WAKE_WORD = "体感"
@@ -46,25 +48,6 @@ KEYBOARD_ALIASES = {
 
 # Voice commands may drive the app itself rather than the game.  This is an
 # allowlist because a system target is executed by name on the desktop.
-VOICE_SYSTEM_TARGETS = {
-    "HEAD_CALIBRATION_START",
-    "HEAD.CALIBRATE",
-    "HEAD.CENTER",
-    "OUTPUT.START",
-    "OUTPUT.STOP",
-    # 录自定义动作。人站在镜头前几米外摆姿势，够不着鼠标——这三个按钮天生
-    # 就该能用嘴按。不列在这里的话，界面上选得到、保存时却被校验器退回来。
-    "POSE.RECORD",
-    "POSE.ADD_FRAME",
-    "POSE.CANCEL",
-    # 定住跟随框 / 恢复跟随、输出来回切。映射表里也能选（profile_schema 的
-    # BINDING_SYSTEM_TARGETS），名字相同意思相同。
-    "ZONES.FREEZE_TOGGLE",
-    "ZONES.FREEZE",
-    "ZONES.FOLLOW",
-    "ZONES.MOVE_HERE",
-    "OUTPUT.TOGGLE",
-}
 # 参考场景删掉以后，原来绑着「记录参考场景」「重新匹配场景」的口令改做「区域挪到我
 # 这里」——都是"让区域对上我现在的位置"。不认的话，存着旧写法的整份口令会被退回来。
 LEGACY_SYSTEM_TARGETS = {
@@ -150,30 +133,31 @@ def normalize_voice_mappings(items) -> list[dict]:
                 aliases.append(alias)
 
         action_type = str(raw.get("type", "keyboard")).lower()
-        target = str(raw.get("target", "")).strip().upper()
-        if action_type == "gamepad":
-            if target not in GAMEPAD_BUTTONS:
-                raise ValueError(f"暂不支持的 Xbox 键：{target}")
-        elif action_type == "keyboard":
-            target = normalize_key_combo(target)
-        elif action_type == "system":
-            target = LEGACY_SYSTEM_TARGETS.get(target, target)
-            if target not in VOICE_SYSTEM_TARGETS:
-                raise ValueError(f"暂不支持的系统命令：{target}")
-        else:
+        if action_type not in ACTION_TYPES:
             raise ValueError(f"未知输出类型：{action_type}")
-
         behavior = str(raw.get("behavior", "tap")).strip().lower()
         if behavior not in {"tap", "hold", "release"}:
             raise ValueError("语音动作方式必须为点按、持续按住或松开")
         if action_type == "system" and behavior != "tap":
             raise ValueError("系统命令只能点按")
-
-        entry = {"phrase": phrase, "type": action_type, "target": target, "behavior": behavior}
+        action = {**raw, "type": action_type, "behavior": behavior}
+        if action_type == "keyboard":
+            action["target"] = normalize_key_combo(raw.get("target", ""))
+        elif action_type == "system":
+            target = str(raw.get("target", "")).strip().upper()
+            action["target"] = LEGACY_SYSTEM_TARGETS.get(target, target)
+            if action["target"] not in VOICE_SYSTEM_TARGETS:
+                raise ValueError(f"暂不支持的系统命令：{target}")
+        entry = {"phrase": phrase, **normalize_action(action, default_behavior="tap")}
         if aliases:
             entry["synonyms"] = aliases
         result.append(entry)
     return result
+
+
+def shared_voice_command_id(phrase: str) -> str:
+    """以口令内容生成稳定引用；调整列表顺序或增删其他口令不会改变它。"""
+    return "shared." + hashlib.sha256(compact_text(phrase).encode("utf-8")).hexdigest()[:24]
 
 
 def normalize_motion_item(raw) -> dict:

@@ -431,6 +431,15 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .binding-output .binding-target-box > select, .binding-output .binding-target-box > input:not([type=checkbox]):not([type=range]) {
   width: 100%; border: 0; border-radius: 0; background-color: transparent; box-shadow: none; font-weight: 600; }
 .binding-output .combo-picker, .binding-output .combo-lead-box { padding: 0 .625rem .5rem; }
+/* 本游戏口令沿用通用口令的独立控件，功能选项不减少。 */
+.binding-row[data-trigger^="voice."] .binding-output { display: grid; grid-template-columns: 7.375rem minmax(0, 1fr); gap: .5rem; border: 0; background: transparent; box-shadow: none; }
+.binding-row[data-trigger^="voice."] .binding-output > select.binding-type,
+.binding-row[data-trigger^="voice."] .binding-target-box > select,
+.binding-row[data-trigger^="voice."] .binding-target-box > input:not([type=checkbox]):not([type=range]) { width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background-color: var(--fill); color: var(--text); font-size: .875rem; font-weight: 400; }
+.binding-row[data-trigger^="voice."] .binding-output select:focus,
+.binding-row[data-trigger^="voice."] .binding-output input:focus { border-color: var(--accent); box-shadow: 0 0 0 .1875rem var(--tint); }
+.binding-row[data-trigger^="voice."] .binding-output .combo-picker,
+.binding-row[data-trigger^="voice."] .binding-output .combo-lead-box { padding: 0; }
 .binding-behavior-box { min-width: 0; }
 .binding-behavior-box select { width: 100%; }
 span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
@@ -666,9 +675,7 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .voice-prefix { margin-right: .25rem; color: var(--text-3); }
 .voice-wake-row { flex-wrap: wrap; gap: .5rem 1rem; }
 .voice-wake-field { flex: 0 1 20rem; width: 20rem; max-width: 100%; min-width: 0; }
-.voice-scope-row { flex-direction: column; align-items: flex-start; gap: .375rem; }
-.voice-scope-option { display: flex; align-items: flex-start; gap: .5rem; font-size: .8125rem; }
-.voice-scope-option input { flex: none; margin-top: .125rem; }
+.voice-built-in-row .name, .voice-built-in-row .voice-prefix { color: var(--text); overflow-wrap: anywhere; }
 
 /* 通用口令：一行一条。 */
 .voice-row { position: relative; display: grid; grid-template-columns: minmax(0, 1.3fr) 7.375rem minmax(0, 1fr) 6rem auto; align-items: center; gap: .5rem; padding: .5rem .75rem .5rem 1rem; }
@@ -677,6 +684,7 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .voice-phrase-wrap .voice-prefix { max-width: 100%; overflow-wrap: anywhere; }
 .voice-phrase-wrap .voice-phrase { flex: 1 1 10rem; min-width: 0; }
 .voice-system-behavior { color: var(--text-2); font-size: .8125rem; }
+.voice-behavior-box { min-width: 0; }
 .voice-command-card > div { overflow-wrap: anywhere; }
 .voice-target-cell { display: grid; gap: .375rem; min-width: 0; align-content: start; }
 .btn.voice-remove { min-height: 1.875rem; padding: 0 .5rem; background: transparent; color: var(--danger); font-size: .8125rem; }

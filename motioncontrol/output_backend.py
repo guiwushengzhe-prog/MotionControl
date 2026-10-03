@@ -1783,6 +1783,8 @@ class OutputManager:
         """Latch by connection and canonical target; pulses never own a latch."""
         from motioncontrol_shared.profile_schema import normalize_action
         normalized = normalize_action(action, default_behavior="tap")
+        if normalized["type"] == "macro" and normalized["behavior"] != "release" and self._macro_store is not None:
+            normalized["behavior"] = "hold" if self._macro_store.repeats(normalized["target"]) else "tap"
         behavior = normalized["behavior"]
         owner = str(action.get("source") or "voice")
         source = f"{owner}|{self._voice_hold_key(normalized)}"

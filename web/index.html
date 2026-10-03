@@ -292,8 +292,7 @@
 <h1 class="pane-title">语音</h1>
 <div class="group">
 <div class="list">
-<div class="row voice-wake-row"><label class="row-main" for="wakeWord"><span class="name">唤醒词 <small class="row-value">可选</small></span><span class="sub" id="voiceWakeDescription">留空直接说通用口令，例如「地图」</span></label><input class="field voice-wake-field" id="wakeWord" maxlength="12" placeholder="不需要就留空" aria-describedby="voiceWakeDescription" title="最多 12 个字。只属于你，不分享，换游戏不会改变" type="text"/></div>
-<div class="row voice-scope-row"><label class="voice-scope-option"><input id="wakeSystemCommands" type="checkbox"/><span>内置系统口令也使用此唤醒词</span></label><span class="sub" id="voiceSystemWakeDescription">未勾选时，内置口令仍先说「体感」</span></div>
+<div class="row voice-wake-row"><label class="row-main" for="wakeWord"><span class="name">唤醒词 <small class="row-value">可选</small></span><span class="sub" id="voiceWakeDescription">留空直接说通用口令和系统口令，例如「地图」「紧急停止」</span><span class="sub" id="voiceSystemWakeDescription">本游戏口令始终直接说，不受唤醒词影响。</span></label><input class="field voice-wake-field" id="wakeWord" maxlength="12" placeholder="不需要就留空" aria-describedby="voiceWakeDescription voiceSystemWakeDescription" title="最多 12 个字。只属于你，不分享，换游戏不会改变" type="text"/></div>
 </div>
 <p class="group-foot" id="personalVoiceStatus" role="status"></p>
 </div>
@@ -302,7 +301,7 @@
 <p class="group-foot warn" hidden="" id="voiceConflicts"></p>
 <p class="group-foot warn" hidden="" id="voiceUnheard"></p>
 <div class="list">
-<div class="row locked"><div class="row-main"><span class="name"><span class="voice-prefix" data-scope="builtin">体感</span>紧急停止</span><span class="sub">说这句会停止输出、松开按键</span></div><span class="tag plain" title="程序自带，不能删除">内置</span></div>
+<div class="row voice-built-in-row"><div class="row-main"><span class="name"><span class="voice-prefix" data-scope="builtin" hidden></span>紧急停止</span><span class="sub" id="voiceEmergencyDescription">说「紧急停止」会停止所有输出，并松开按键</span></div><span class="tag plain" title="程序自带，可直接使用，不能修改或删除">内置</span></div>
 <div id="voiceRows"></div>
 </div>
 <div class="group-actions"><button class="btn link" id="addVoiceBtn">＋ 添加口令</button><span class="statusline" id="voiceSaveStatus" role="status"></span><button class="btn link" hidden="" id="retryVoiceBtn">重试保存</button></div>

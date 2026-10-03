@@ -46,7 +46,7 @@ def test_phone_mapping_hold_release_reconfigure_and_disconnect(tmp_path):
     mappings = [dict(phrase="保持右肩键", type="gamepad", target="RB", behavior="hold"),
                 dict(phrase="松开右肩键", type="gamepad", target="RB", behavior="release")]
     try:
-        service.configure(mappings)
+        service.configure(mappings, wake_word="体感")
         def say(phrase):
             return service.accept_phone_text("phone", "device", "体感" + phrase)
         say("保持右肩键")
@@ -158,4 +158,7 @@ def test_a_game_profile_system_action_also_does_not_require_wake_word(tmp_path):
     result = service._match_and_execute('截图', enforce_wake=True)
     assert result['matched'] is True
     assert calls[-1]['command_id'] == 'game.profile_slot_03'
+    assert service._match_and_execute('开始输出', enforce_wake=True)['matched']
+    service.configure([], wake_word='小助手')
     assert service._match_and_execute('开始输出', enforce_wake=True)['reason'] == 'wake_word_required'
+    assert service._match_and_execute('截图', enforce_wake=True)['matched']
