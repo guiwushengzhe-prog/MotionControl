@@ -26,6 +26,7 @@ MAX_MESSAGE_BYTES = 1024 * 1024
 LANDMARK_COORDINATE_ABS_LIMIT = 10.0
 POSE_SOURCE_PREFIX = "mobile_pose:"
 SENSOR_SOURCE_PREFIX = "mobile_sensor:"
+MOUSE_SOURCE_PREFIX = "mobile_mouse:"
 VOICE_SOURCE_PREFIX = "mobile_voice:"
 VOICE_AUDIO_MAX_BYTES = 256 * 1024
 POSE_MAX_AGE_MS = 500.0
@@ -90,7 +91,12 @@ class WebSocketProtocolError(ValueError):
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
 
 
 def _is_int(value) -> bool:
@@ -547,6 +553,26 @@ def _validate_sensor_frame(message: dict) -> tuple[set[str], float, float, float
     return buttons, left_trigger, right_trigger, stick_x, stick_y, player_slot
 
 
+def _validate_mouse_frame(message: dict) -> tuple[set[str], int, int]:
+    if message.get("type") != "mouse_frame" or message.get("role") != "mouse":
+        raise ValueError("鼠标数据的模式必须为 mouse")
+    if not isinstance(message.get("device_id"), str) or not message["device_id"].strip():
+        raise ValueError("鼠标设备编号不能为空")
+    if not _is_int(message.get("sequence")) or message["sequence"] < 0:
+        raise ValueError("鼠标数据序号必须为不小于 0 的整数")
+    if not _is_number(message.get("captured_at_ms")):
+        raise ValueError("鼠标采集时间必须为有限数值")
+    if "sent_at_ms" in message and not _is_number(message["sent_at_ms"]):
+        raise ValueError("鼠标发送时间必须为有限数值")
+    if not all(_is_int(message.get(axis)) and abs(message[axis]) <= 32767 for axis in ("dx", "dy")):
+        raise ValueError("鼠标横向和纵向位移必须为 -32767 到 32767 的整数")
+    buttons = message.get("buttons")
+    if not _is_int(buttons) or buttons not in {0, 1, 2, 3}:
+        raise ValueError("鼠标按键状态必须为 0 到 3 的整数")
+    names = {name for mask, name in ((1, "LEFT"), (2, "RIGHT")) if buttons & mask}
+    return names, message["dx"], message["dy"]
+
+
 def _local_addresses() -> list[str]:
     """Addresses the phone can reach this PC at, best link first.
 
@@ -573,6 +599,7 @@ class InputBridge:
         self._source_peers: dict[str, WebSocketPeer] = {}
         self._pose_sources: dict[str, dict] = {}
         self._sensor_sources: dict[str, dict] = {}
+        self._mouse_sources: dict[str, dict] = {}
         self._voice_sources: dict[str, dict] = {}
         self._active_voice_source: str | None = None
         self._latest_pose: dict | None = None
@@ -593,6 +620,8 @@ class InputBridge:
         self._pose_sessions: dict[WebSocketPeer, dict] = {}
         self._sensor_sessions: dict[tuple[WebSocketPeer, str], dict] = {}
         self._superseded_sensor_sessions: set[tuple[WebSocketPeer, str]] = set()
+        self._mouse_sessions: dict[tuple[WebSocketPeer, str], dict] = {}
+        self._superseded_mouse_sessions: set[tuple[WebSocketPeer, str]] = set()
         self._voice_audio_sequences: dict[tuple[WebSocketPeer, str], int] = {}
         self._superseded_voice_sessions: set[tuple[WebSocketPeer, str]] = set()
         self._voice_owner_generations: dict[str, int] = {}
@@ -602,6 +631,7 @@ class InputBridge:
         self._voice_clock_trusted_peers: set[WebSocketPeer] = set()
         self._pose_rejected = {"disabled": 0, "owner": 0, "sequence": 0, "stale": 0}
         self._sensor_rejected = {"owner": 0, "sequence": 0, "stale": 0}
+        self._mouse_rejected = {"owner": 0, "sequence": 0, "stale": 0}
         remembered_audio = "computer"
         if kernel is not None:
             try:
@@ -1002,6 +1032,17 @@ class InputBridge:
                 }
                 for source_id, state in self._voice_sources.items()
             ]
+            mouse_sources = [
+                {
+                    "source_id": source_id,
+                    "source_kind": "mobile_mouse",
+                    "device_id": state["device_id"],
+                    "age_ms": round(max(0.0, (now - state["received_at"]) * 1000)),
+                    "connected": source_id in self._source_peers,
+                    "buttons": state["buttons"],
+                }
+                for source_id, state in self._mouse_sources.items()
+            ]
             latest_pose = self._latest_pose
             active_pose_source = self._active_pose_source
             audio_mode = self._audio_mode
@@ -1010,6 +1051,7 @@ class InputBridge:
             body_mode = self._body_mode
             pose_rejected = dict(self._pose_rejected)
             sensor_rejected = dict(self._sensor_rejected)
+            mouse_rejected = dict(self._mouse_rejected)
             host = self._host
             port = self._port
         pose_age = round(max(0.0, (now - latest_pose["received_at"]) * 1000)) if latest_pose else None
@@ -1025,6 +1067,7 @@ class InputBridge:
             "body_enabled": body_enabled,
             "pose_rejected": pose_rejected,
             "sensor_rejected": sensor_rejected,
+            "mouse_rejected": mouse_rejected,
             "audio_mode": audio_mode,
             "audio_source": audio_source,
             "phone_ws_urls": self.phone_ws_urls(),
@@ -1032,8 +1075,8 @@ class InputBridge:
             "mobile_pose_age_ms": pose_age,
             "mobile_pose_source_id": active_pose_source,
             "mobile_pose_sources": pose_sources,
-            "handheld_connected": any(item["connected"] for item in sensor_sources),
-            "handheld_sources": sensor_sources,
+            "handheld_connected": any(item["connected"] for item in sensor_sources + mouse_sources),
+            "handheld_sources": sensor_sources + mouse_sources,
             "mobile_voice_connected": any(item["connected"] for item in voice_sources),
             "mobile_voice_sources": voice_sources,
             "mobile_voice_source_id": self._active_voice_source,
@@ -1084,10 +1127,10 @@ class InputBridge:
             players = [{"slot": 0, "signals": {"pose_visible": visible}}]
             kernel = self.kernel
             held = [dict(item) for item in self._last_trigger_held]
-            # The handheld socket only ever sends sensor frames; it has no
+            # The handheld socket sends sensor or mouse frames; it has no
             # camera picture to draw zones on.
             sensor_only = bool(peer.source_ids) and all(
-                source.startswith(SENSOR_SOURCE_PREFIX) for source in peer.source_ids)
+                source.startswith((SENSOR_SOURCE_PREFIX, MOUSE_SOURCE_PREFIX)) for source in peer.source_ids)
         runtime_zones = {}
         snapshot = getattr(kernel, "runtime_zones", None)
         if callable(snapshot):
@@ -1346,6 +1389,37 @@ class InputBridge:
             }
         self._accept_input(peer)
 
+    def _handle_mouse(self, peer: WebSocketPeer, message: dict) -> None:
+        buttons, dx, dy = _validate_mouse_frame(message)
+        device_id = message["device_id"].strip()
+        source_id = MOUSE_SOURCE_PREFIX + device_id
+        with self._lock:
+            if getattr(peer, "_closed", False):
+                return
+            session_key = (peer, source_id)
+            if session_key in self._superseded_mouse_sessions:
+                self._mouse_rejected["owner"] += 1
+                return
+            session = self._mouse_sessions.setdefault(session_key, {"sequence": -1, "clock_trusted": False})
+            if not self._accept_frame_sequence_locked(peer, session, message, self._mouse_rejected):
+                return
+            old_owner = self._source_peers.get(source_id)
+            if old_owner is not None and old_owner is not peer:
+                old_owner.source_ids.discard(source_id)
+            # 断流保护可能已经移除了按键来源，但旧连接仍不能抢回新连接。
+            for owner, session_source in self._mouse_sessions:
+                if owner is not peer and session_source == source_id:
+                    self._superseded_mouse_sessions.add((owner, source_id))
+            self._source_peers[source_id] = peer
+            peer.source_ids.add(source_id)
+            self._mouse_sources[source_id] = {
+                "device_id": device_id,
+                "received_at": time.monotonic(),
+                "buttons": message["buttons"],
+            }
+            self.output.set_mouse_state(source_id, buttons, dx=dx, dy=dy)
+        self._accept_input(peer)
+
     def _claim_voice_source_locked(self, peer, source_id: str) -> bool:
         if getattr(peer, "_closed", False):
             return False
@@ -1538,9 +1612,10 @@ class InputBridge:
                     session = self._pose_sessions.get(peer)
                     if session is not None:
                         session["clock_trusted"] = False
-                    for (owner, _source), sensor_session in self._sensor_sessions.items():
-                        if owner is peer:
-                            sensor_session["clock_trusted"] = False
+                    for sessions in (self._sensor_sessions, self._mouse_sessions):
+                        for (owner, _source), session in sessions.items():
+                            if owner is peer:
+                                session["clock_trusted"] = False
                 peer.send_json({"type": "clock_sync", "client_sent_ms": message["client_sent_ms"], "server_ms": round(time.time() * 1000)})
             elif message_type == "pose_frame_v2":
                 self._handle_pose(peer, message)
@@ -1548,6 +1623,8 @@ class InputBridge:
                 self._handle_pose_features(peer, message)
             elif message_type == "sensor_frame":
                 self._handle_sensor(peer, message)
+            elif message_type == "mouse_frame":
+                self._handle_mouse(peer, message)
             elif message_type == "voice_audio":
                 self._handle_voice_audio(peer, message)
             elif message_type == "voice_text":
@@ -1567,6 +1644,8 @@ class InputBridge:
         owner = self._source_peers.pop(source_id, None)
         self._pose_sources.pop(source_id, None)
         self._sensor_sources.pop(source_id, None)
+        mouse_source = source_id in self._mouse_sources
+        self._mouse_sources.pop(source_id, None)
         voice_source = source_id in self._voice_sources
         self._voice_sources.pop(source_id, None)
         if voice_source:
@@ -1580,6 +1659,8 @@ class InputBridge:
                 # Release latches before waiting for a busy recognizer. A late
                 # result is invalidated by the generation token above.
                 self.output.clear_source(f"voice:{source_id}")
+            elif mouse_source:
+                self.output.clear_source(source_id)
             elif self.kernel is not None:
                 self.kernel.clear_source(source_id)
             else:
@@ -1617,10 +1698,11 @@ class InputBridge:
             self._superseded_pose_peers.discard(peer)
             self._clock_synced_peers.discard(peer)
             self._voice_clock_trusted_peers.discard(peer)
-            for sessions in (self._sensor_sessions, self._voice_audio_sequences):
+            for sessions in (self._sensor_sessions, self._mouse_sessions, self._voice_audio_sequences):
                 for key in [key for key in sessions if key[0] is peer]:
                     sessions.pop(key, None)
             self._superseded_sensor_sessions = {key for key in self._superseded_sensor_sessions if key[0] is not peer}
+            self._superseded_mouse_sessions = {key for key in self._superseded_mouse_sessions if key[0] is not peer}
             self._superseded_voice_sessions = {key for key in self._superseded_voice_sessions if key[0] is not peer}
             for source_id in list(peer.source_ids):
                 if self._source_peers.get(source_id) is peer:
@@ -1647,7 +1729,8 @@ class InputBridge:
                         cleared_pose_sources.append(source_id)
                 stale = [
                     source_id
-                    for source_id, state in self._sensor_sources.items()
+                    for sources in (self._sensor_sources, self._mouse_sources)
+                    for source_id, state in sources.items()
                     if now - state["received_at"] > 0.30 and self._source_peers.get(source_id) is not None
                 ]
                 for source_id in stale:

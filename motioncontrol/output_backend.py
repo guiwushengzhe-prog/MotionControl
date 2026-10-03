@@ -1528,6 +1528,27 @@ class OutputManager:
                 raise
             return self.status()
 
+    def set_mouse_state(self, source: str, buttons, *, dx: int = 0, dy: int = 0) -> None:
+        """接收手机已算好的鼠标位移，按键复用现有来源合流和暂停开关。"""
+        source = str(source).strip()
+        names = {str(button).upper() for button in buttons}
+        if not source or not names <= {"LEFT", "RIGHT"}:
+            raise ValueError("鼠标来源或按键无效")
+        with self._lock:
+            self._mouse_button_sources[source] = names
+            try:
+                self._refresh_mouse_buttons_locked()
+                if self.enabled and not self._xinput_merge_active_locked() and (dx or dy):
+                    self.mouse.move(dx, dy)
+                    if self.mouse.last_error:
+                        raise RuntimeError(self.mouse.last_error)
+                self.last_error = None
+            except Exception as exc:
+                self.last_error = str(exc)
+                self.enabled = False
+                self._zero_locked()
+                raise
+
     def set_sensor_state(self, source: str, buttons, *, left_trigger: float = 0.0,
                          right_trigger: float = 0.0, stick_x: float = 0.0,
                          stick_y: float = 0.0) -> dict:
