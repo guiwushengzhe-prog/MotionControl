@@ -1,5 +1,5 @@
 {
-  "wake_word": "体感",
+  "wake_word": "",
   "emergency_stop_phrases": [
     "体感紧急停止"
   ],

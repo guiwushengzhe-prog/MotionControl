@@ -102,9 +102,9 @@ def normalize_key_combo(target: str) -> str:
 
 
 def normalize_wake_word(value) -> str:
-    word = str(value or DEFAULT_WAKE_WORD).strip()
-    if not word or len(word) > MAX_WAKE_WORD_CHARS:
-        raise ValueError(f"唤醒词必须是 1 到 {MAX_WAKE_WORD_CHARS} 个字符")
+    word = str(value or "").strip()
+    if len(word) > MAX_WAKE_WORD_CHARS:
+        raise ValueError(f"唤醒词最多 {MAX_WAKE_WORD_CHARS} 个字符，也可以留空")
     return word
 
 

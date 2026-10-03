@@ -42,6 +42,7 @@ from motioncontrol.game_launch import is_administrator, launch_as_administrator,
 from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
 from motioncontrol_shared.profile_schema import action_catalog
+from motioncontrol_shared.mapping_schema import DEFAULT_EMERGENCY_STOP
 from motioncontrol_shared.pose_points import POSE_CONNECTIONS, POSE_POINT_LABELS
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
@@ -1102,6 +1103,7 @@ def voice_command_catalog() -> dict:
             "synonyms": list(item.get("synonyms", []) or []),
             "kind": kind,
             "system_fixed": kind == "system",
+            "scope": "game" if str(item.get("id", "")).startswith("game.profile_slot_") else "builtin",
             "editable_phrase": str(item.get("id", "")).startswith("game.profile_slot_"),
             "default_action": {
                 "type": kind,
@@ -1110,6 +1112,13 @@ def voice_command_catalog() -> dict:
             },
             "effective_action": _effective_voice_catalog_action(item, voice_bindings),
         })
+    shared = [*VOICE.mappings,
+              *({"phrase": phrase, "type": "system", "target": "EMERGENCY_STOP", "behavior": "tap"}
+                for phrase in VOICE.emergency_stop_phrases if phrase != DEFAULT_EMERGENCY_STOP)]
+    for index, mapping in enumerate(shared):
+        commands.append({"id": f"shared.{index}", "phrase": VOICE.wake_word + mapping["phrase"],
+                         "label": "", "scope": "shared", "system_fixed": False,
+                         "effective_action": {key: mapping[key] for key in ("type", "target", "behavior")}})
     return {"version": VERSION, "count": len(commands), "commands": commands}
 
 def _normalize_motion_config(items):
@@ -1707,6 +1716,7 @@ class AdminHandler(_BaseHandler):
                     **VOICE.configure(
                         body.get("mappings", []),
                         wake_word=body.get("wake_word") if "wake_word" in body else None,
+                        wake_system_commands=body.get("wake_system_commands") if "wake_system_commands" in body else None,
                         emergency_stop_phrases=(
                             body.get("emergency_stop_phrases")
                             if "emergency_stop_phrases" in body else None

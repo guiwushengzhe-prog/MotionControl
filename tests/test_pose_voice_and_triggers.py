@@ -101,10 +101,11 @@ def test_the_built_in_phrases_follow_the_wake_word(tmp_path, monkeypatch):
     service = VoiceService(ROOT, lambda action: {"executed": True})
     if not service.command_registry:
         pytest.skip("这台机器上没有内置口令表")
-    service.configure(service.mappings, wake_word="小助手")
+    service.configure(service.mappings, wake_word="小助手", wake_system_commands=True)
     phrases = service.grammar_phrases()
     assert any(phrase.startswith("小助手") for phrase in phrases)
-    assert not any(phrase.startswith("体感") for phrase in phrases), "还有口令卡在旧唤醒词上"
+    assert all(phrase.startswith("小助手") for phrase in service.spoken_emergency_phrases())
+    assert service._phrase_index.get("小助手开始输出"), "内置系统口令没有跟随勾选的唤醒词"
 
 
 # --- 录姿势能用嘴按 ---------------------------------------------------------

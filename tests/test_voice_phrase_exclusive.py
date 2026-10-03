@@ -41,14 +41,14 @@ def test_a_shared_phrase_cannot_take_a_built_in_one(tmp_path):
     voice = make_service(tmp_path)
     voice.configure([shared("地图")])
     with pytest.raises(ValueError, match="内置口令"):
-        voice.configure([shared("地图"), shared("挪动区域", "F12")])
+        voice.configure([shared("地图"), shared("体感挪动区域", "F12")])
     assert [item["phrase"] for item in voice.mappings] == ["地图"], "被拒的那次不该留下任何改动"
 
 
 def test_a_shared_phrase_cannot_take_an_emergency_one(tmp_path):
     voice = make_service(tmp_path)
     with pytest.raises(ValueError, match="急停口令"):
-        voice.configure([shared("紧急停止")])
+        voice.configure([shared("体感紧急停止")])
 
 
 def test_a_game_phrase_cannot_take_a_shared_one(tmp_path):
@@ -105,7 +105,7 @@ def test_old_shared_phrases_that_never_worked_are_dropped(tmp_path):
     path = user_path("voice_mappings")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"mappings": [
-        {"phrase": "挪动区域", "type": "system", "target": "ZONES.MOVE_HERE", "behavior": "tap"},
+        {"phrase": "体感挪动区域", "type": "system", "target": "ZONES.MOVE_HERE", "behavior": "tap"},
         shared("地图"),
     ]}, ensure_ascii=False), encoding="utf-8")
     voice = make_service(tmp_path)
@@ -123,7 +123,7 @@ def test_an_extra_stop_phrase_stops_and_cannot_double_as_a_shared_one(tmp_path):
     assert voice._match_and_execute("体感停下", enforce_wake=True)["emergency"] is True
     assert stops, "多加的急停没走急停那条路"
     with pytest.raises(ValueError, match="急停口令"):
-        voice.configure([shared("停下")], emergency_stop_phrases=["体感停下"])
+        voice.configure([shared("体感停下")], emergency_stop_phrases=["体感停下"])
 
 
 def test_a_shared_phrase_still_pointing_at_the_removed_reference_scene_moves_the_zones(tmp_path):

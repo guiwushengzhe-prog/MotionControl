@@ -274,7 +274,7 @@ def test_voice_exact_final_dispatches_custom_mapping(tmp_path):
     service._match_and_execute('打开 地图')
     deadline=time.time()+1
     while not calls and time.time()<deadline: time.sleep(.01)
-    assert calls == [{'type':'keyboard','target':'M','behavior':'tap','phrase':'体感打开地图','source':'voice'}]
+    assert calls == [{'type':'keyboard','target':'M','behavior':'tap','phrase':'打开地图','source':'voice'}]
 
 
 def test_voice_counts_each_command_heard_but_not_the_bare_wake_word(tmp_path):
@@ -355,6 +355,7 @@ def test_voice_parser_requires_wake_word_for_phone_and_clears_source(tmp_path):
         clear_source=lambda source: cleared.append(source) or {},
     )
     service.mappings = [{'phrase': '攻击', 'type': 'keyboard', 'target': 'J'}]
+    service.wake_word = '体感'
     status, result = service.accept_phone_text('mobile_voice:phone-a', 'phone-a', '攻击')
     assert result['reason'] == 'wake_word_required'
     assert not calls

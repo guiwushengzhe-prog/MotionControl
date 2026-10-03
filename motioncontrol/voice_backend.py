@@ -223,7 +223,8 @@ class VoiceService:
         self.on_system_command = on_system_command
         self.sample_rate = 16_000
         self.mappings: list[dict] = []
-        self.wake_word = DEFAULT_WAKE_WORD
+        self.wake_word = ""
+        self.wake_system_commands = False
         self.emergency_stop_phrases: list[str] = [DEFAULT_EMERGENCY_STOP]
         self.model_path = find_vosk_model(root)
         self.action_map_file = root / "config" / "generated_voice" / "voice_action_map.json"
@@ -329,13 +330,22 @@ class VoiceService:
                 self.last_error = f"个人语音设置读取失败：{exc}"
                 return
         try:
-            self.wake_word = self._validate_wake_word(data.get("wake_word", DEFAULT_WAKE_WORD))
+            self.wake_word = self._validate_wake_word(data.get("wake_word", ""))
+            self.wake_system_commands = bool(data.get("wake_system_commands", False))
             self.emergency_stop_phrases = self._validate_emergency_phrases(
                 data.get("emergency_stop_phrases", []))
+            # 旧的自定义急停以“体感”存前缀；新版保存用户填写的部分，前缀单独应用。
+            legacy_rules = data.get("voice_rules_version") != 2
+            if legacy_rules:
+                self.emergency_stop_phrases = [
+                    item if item == DEFAULT_EMERGENCY_STOP else self._without_wake_word(item)
+                    for item in self.emergency_stop_phrases]
+                if "wake_system_commands" not in data and self.wake_word not in {"", DEFAULT_WAKE_WORD}:
+                    self.wake_system_commands = True
         except Exception as exc:
             self.last_error = f"个人语音设置读取失败：{exc}"
             return
-        if migrating:
+        if migrating or legacy_rules:
             self._write_personal()
 
     # The rules live in motioncontrol_shared.mapping_schema so the cloud applies
@@ -352,6 +362,8 @@ class VoiceService:
     def _write_personal(self) -> None:
         self._atomic_bytes(self.personal_path, json.dumps({
                 "wake_word": self.wake_word,
+                "wake_system_commands": self.wake_system_commands,
+                "voice_rules_version": 2,
                 "emergency_stop_phrases": self.emergency_stop_phrases,
             }, ensure_ascii=False, indent=2).encode("utf-8"))
 
@@ -403,6 +415,8 @@ class VoiceService:
         contents = {
             "mappings": json.dumps({"mappings": self.mappings}, ensure_ascii=False, indent=2).encode("utf-8"),
             "personal": json.dumps({"wake_word": self.wake_word,
+                                     "wake_system_commands": self.wake_system_commands,
+                                     "voice_rules_version": 2,
                                      "emergency_stop_phrases": self.emergency_stop_phrases},
                                     ensure_ascii=False, indent=2).encode("utf-8"),
         }
@@ -430,7 +444,7 @@ class VoiceService:
             for temporary in staged.values():
                 temporary.unlink(missing_ok=True)
 
-    def configure(self, items, *, wake_word=None, emergency_stop_phrases=None) -> dict:
+    def configure(self, items, *, wake_word=None, wake_system_commands=None, emergency_stop_phrases=None) -> dict:
         with self._lock:
             mappings = self._validate_mappings(items)
             wake = self._validate_wake_word(wake_word) if wake_word is not None else self.wake_word
@@ -441,12 +455,15 @@ class VoiceService:
             # settings, recognizer and held outputs exactly as they were.
             candidate = copy.copy(self)
             candidate.mappings, candidate.wake_word, candidate.emergency_stop_phrases = mappings, wake, stops
+            candidate.wake_system_commands = (bool(wake_system_commands) if wake_system_commands is not None
+                                             else self.wake_system_commands)
             candidate._build_registry()
             problems = candidate._configuration_conflicts
             if problems:
                 raise ValueError(f"{problems[0]}，换一个说法")
             candidate._save_configuration()
             self.mappings, self.wake_word, self.emergency_stop_phrases = mappings, wake, stops
+            self.wake_system_commands = candidate.wake_system_commands
             self.command_registry, self._phrase_index = candidate.command_registry, candidate._phrase_index
             self._configuration_conflicts = candidate._configuration_conflicts
             self._release_locked(self.source_id)
@@ -506,8 +523,8 @@ class VoiceService:
             if phrase:
                 if self._is_game_profile_command(command_id):
                     phrase = self._without_wake_word(phrase)
-                elif not compact_text(phrase).startswith(compact_text(self.wake_word)):
-                    phrase = f"{self.wake_word}{phrase}"
+                elif self.system_wake_word and not compact_text(phrase).startswith(compact_text(self.system_wake_word)):
+                    phrase = f"{self.system_wake_word}{phrase}"
                 command["phrase"] = phrase
             aliases = binding.get("synonyms", []); command["synonyms"] = []
             for item in aliases if isinstance(aliases, list) else []:
@@ -515,8 +532,8 @@ class VoiceService:
                 if alias:
                     if self._is_game_profile_command(command_id):
                         alias = self._without_wake_word(alias)
-                    elif not compact_text(alias).startswith(compact_text(self.wake_word)):
-                        alias = f"{self.wake_word}{alias}"
+                    elif self.system_wake_word and not compact_text(alias).startswith(compact_text(self.system_wake_word)):
+                        alias = f"{self.system_wake_word}{alias}"
                     command["synonyms"].append(alias)
         for command in commands:
             if self._is_game_profile_command(command.get("id")):
@@ -525,6 +542,7 @@ class VoiceService:
                            for alias in command.get("synonyms", []) or []]
                 # 保留旧版本“唤醒词 + 本游戏口令”的语法别名；主短语仍显示为免唤醒写法。
                 if command["phrase"]:
+                    aliases.append(f"{DEFAULT_WAKE_WORD}{command['phrase']}")
                     aliases.append(f"{self.wake_word}{command['phrase']}")
                 command["synonyms"] = list(dict.fromkeys(alias for alias in aliases if alias))
             else:
@@ -626,11 +644,16 @@ class VoiceService:
                 if alias: self._phrase_index[alias] = command
 
     def _with_wake_word(self, phrase: str) -> str:
-        if self.wake_word == DEFAULT_WAKE_WORD or not phrase.startswith(DEFAULT_WAKE_WORD): return phrase
-        return self.wake_word + phrase[len(DEFAULT_WAKE_WORD):]
+        if not phrase.startswith(DEFAULT_WAKE_WORD): return phrase
+        return self.system_wake_word + phrase[len(DEFAULT_WAKE_WORD):]
+
+    @property
+    def system_wake_word(self) -> str:
+        return self.wake_word if self.wake_system_commands else DEFAULT_WAKE_WORD
 
     def spoken_emergency_phrases(self) -> list[str]:
-        return [self._with_wake_word(item) for item in self.emergency_stop_phrases]
+        return [self._with_wake_word(item) if item == DEFAULT_EMERGENCY_STOP else self.wake_word + item
+                for item in self.emergency_stop_phrases]
 
     def configure_profile_bindings(self, bindings: dict | None) -> None:
         """Overlay editable per-game trigger words on shipped command IDs."""
@@ -649,7 +672,7 @@ class VoiceService:
         used to hold a hard-coded copy, which silently drifted: a phrase added
         here was recognised by the computer microphone and by nothing else.
         """
-        # 唤醒词只是通用口令和系统口令的前缀，不是一个独立动作。
+        # 唤醒词是可选前缀，不是一个独立动作。
         # 把裸「体感」放进 Choices 会让 Windows 语音引擎在完整口令
         # （例如「体感跳跃」）还没说完时就提前选中它，造成前缀抢占。
         phrases = [*self.spoken_emergency_phrases()]
@@ -1044,10 +1067,8 @@ class VoiceService:
 
     def _match_and_execute(self, recognized: str, *, source_id: str | None = None, enforce_wake: bool = False) -> dict | None:
         got = compact_text(recognized)
-        wake = compact_text(self.wake_word)
+        wake = compact_text(self.system_wake_word)
         if got in {compact_text(item) for item in self.spoken_emergency_phrases()}:
-            if enforce_wake and (not wake or not got.startswith(wake)):
-                return {"matched": False, "reason": "wake_word_required"}
             self.last_command = DEFAULT_EMERGENCY_STOP
             self.commands_heard += 1
             self.last_action = "emergency_stop"
@@ -1063,14 +1084,17 @@ class VoiceService:
         # 本游戏口令是独立的一栏，直接说配置的短语即可。先查注册表再做唤醒词门禁，
         # 这样同名的通用口令和系统口令仍不会裸奔。
         registry_command = self._phrase_index.get(got)
+        shared_match = next((mapping for mapping in self.mappings
+                             if got in {compact_text(self.wake_word + phrase)
+                                        for phrase in [mapping["phrase"], *mapping.get("synonyms", [])]}), None)
         game_command_without_wake = (registry_command is not None and
                                       self._is_game_profile_command(registry_command.get("id")))
-        if game_command_without_wake:
+        if game_command_without_wake or shared_match is not None:
             # 一句本游戏口令本身就是完整指令，不把之前单独说过的唤醒词窗口
             # 留给下一句通用/系统口令。
             self.wake_until = 0.0
         command = got
-        if enforce_wake and not game_command_without_wake:
+        if enforce_wake and wake and not game_command_without_wake and shared_match is None:
             now = time.monotonic()
             # Phone voice_text may still arrive as two utterances: "体感" ... "截图".
             # Keep the same short wake window for that compatibility path.
@@ -1093,7 +1117,7 @@ class VoiceService:
         # honored for both computer audio and phone voice_text.
         registry_command = self._phrase_index.get(got)
         if registry_command is None and wake:
-            registry_command = self._phrase_index.get(compact_text(f"{self.wake_word}{command}"))
+            registry_command = self._phrase_index.get(compact_text(f"{self.system_wake_word}{command}"))
         if registry_command is None:
             candidate = self._phrase_index.get(command)
             if candidate is not None and self._is_game_profile_command(candidate.get("id")):
@@ -1101,12 +1125,13 @@ class VoiceService:
         if registry_command is not None:
             return self._execute_command_action(registry_command, source_id=source_id)
 
-        match = None
-        for mapping in self.mappings:
-            phrases = [mapping["phrase"], *mapping.get("synonyms", [])]
-            if command in {compact_text(item) for item in phrases}:
-                match = mapping
-                break
+        match = shared_match
+        if match is None and (not enforce_wake or not self.wake_word or got.startswith(compact_text(self.wake_word))):
+            for mapping in self.mappings:
+                phrases = [mapping["phrase"], *mapping.get("synonyms", [])]
+                if command in {compact_text(item) for item in phrases}:
+                    match = mapping
+                    break
         if match is None:
             return {"matched": False, "reason": "command_not_in_mapping"}
         action = {"type": match["type"], "target": match["target"], "behavior": match.get("behavior", "tap"),
@@ -1391,6 +1416,11 @@ class VoiceService:
             # 拦得住，这两条路拦不住，只能照实告诉界面。
             "phrase_conflicts": list(self._configuration_conflicts),
             "wake_word": self.wake_word,
+            "wake_system_commands": self.wake_system_commands,
+            "system_wake_word": self.system_wake_word,
+            "builtin_emergency_phrase": self._with_wake_word(DEFAULT_EMERGENCY_STOP),
+            "custom_emergency_stop_phrases": [item for item in self.emergency_stop_phrases
+                                              if item != DEFAULT_EMERGENCY_STOP],
             # 界面上要显示的是"要怎么说"，不是盘上存的那个写法。
             "emergency_stop_phrases": self.spoken_emergency_phrases(),
             "connected": self.connected,

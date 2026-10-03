@@ -664,12 +664,20 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .range-in input { flex: 1; min-width: 0; }
 .range-in b { min-width: 2.75rem; color: var(--text-2); font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
 .voice-prefix { margin-right: .25rem; color: var(--text-3); }
+.voice-wake-row { flex-wrap: wrap; gap: .5rem 1rem; }
+.voice-wake-field { flex: 0 1 20rem; width: 20rem; max-width: 100%; min-width: 0; }
+.voice-scope-row { flex-direction: column; align-items: flex-start; gap: .375rem; }
+.voice-scope-option { display: flex; align-items: flex-start; gap: .5rem; font-size: .8125rem; }
+.voice-scope-option input { flex: none; margin-top: .125rem; }
 
 /* 通用口令：一行一条。 */
 .voice-row { position: relative; display: grid; grid-template-columns: minmax(0, 1.3fr) 7.375rem minmax(0, 1fr) 6rem auto; align-items: center; gap: .5rem; padding: .5rem .75rem .5rem 1rem; }
 .voice-row input, .voice-row select { width: 100%; min-width: 0; }
-.voice-phrase-wrap { display: flex; align-items: center; gap: .25rem; min-width: 0; }
-.voice-phrase-wrap .voice-phrase { flex: 1; min-width: 0; }
+.voice-phrase-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem; min-width: 0; }
+.voice-phrase-wrap .voice-prefix { max-width: 100%; overflow-wrap: anywhere; }
+.voice-phrase-wrap .voice-phrase { flex: 1 1 10rem; min-width: 0; }
+.voice-system-behavior { color: var(--text-2); font-size: .8125rem; }
+.voice-command-card > div { overflow-wrap: anywhere; }
 .voice-target-cell { display: grid; gap: .375rem; min-width: 0; align-content: start; }
 .btn.voice-remove { min-height: 1.875rem; padding: 0 .5rem; background: transparent; color: var(--danger); font-size: .8125rem; }
 .btn.voice-remove:hover:not(:disabled) { background: var(--danger-tint); }
@@ -840,7 +848,7 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
 }
 /* 连接二维码只在首次需要或用户主动展开时显示。 */
 .phone-code[hidden],.phone-permission[hidden]{display:none}
-.phone-code{padding:16px;text-align:center}
+.phone-code{padding:16px;text-align:center;scroll-margin-top:5rem}
 .phone-code-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
 .phone-code img{display:block;margin:auto;background:#fff;width:288px;max-width:100%;height:auto}
 .phone-permission{padding:8px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}

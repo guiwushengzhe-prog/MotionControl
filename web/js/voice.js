@@ -11,9 +11,10 @@ export const voice={status:null};
 let voiceRevision=0;
 
 function currentVoiceWakeWord(status=voice.status){
-  const wake=String(status?.wake_word||'体感').trim();
-  return wake||'体感';
+  return String(status?.wake_word??'').trim();
 }
+
+function systemVoiceWakeWord(status=voice.status){return String(status?.system_wake_word??(status?.wake_system_commands?currentVoiceWakeWord(status):'体感')).trim()}
 
 export function isGameVoiceKey(key){return String(key||'').replace(/^voice\./,'').startsWith('game.profile_slot_')}
 
@@ -26,12 +27,14 @@ export function normalizeGameVoicePhrase(value){
 }
 
 function renderVoiceGuide(status=voice.status){
-  const wake=currentVoiceWakeWord(status),example=`${wake}地图`;
+  const wake=currentVoiceWakeWord(status),systemWake=systemVoiceWakeWord(status),example=`${wake}地图`;
   const wakeHint=$('#voiceWakeWordHint');
   setText(wakeHint,wake);
   const wakeExample=$('#voiceWakeExample');
   setText(wakeExample,example);
-  document.querySelectorAll('.voice-prefix').forEach(item=>setText(item,wake));
+  setText($('#voiceWakeDescription'),wake?`通用口令先说「${wake}」，例如「${example}」`:'留空直接说通用口令，例如「地图」');
+  setText($('#voiceSystemWakeDescription'),status?.wake_system_commands?(systemWake?`内置口令例如「${systemWake}紧急停止」`:'未填写唤醒词：内置口令也直接说，例如「紧急停止」'):'未勾选：内置口令仍先说「体感」。本游戏口令始终直接说。');
+  document.querySelectorAll('.voice-prefix').forEach(item=>{const prefix=item.dataset.scope==='builtin'?systemWake:wake;setText(item,prefix);setProperty(item,'hidden',!prefix)});
   document.querySelectorAll('.voice-trigger-phrase').forEach(input=>{
     const game=isGameVoiceKey(input.closest('.binding-row')?.dataset.trigger);
     setProperty(input,'placeholder',game?'例如：爬绳':'完整口令');
@@ -45,7 +48,7 @@ const voiceCheckQueue=new Set();
 let voiceCheckTimer=0;
 
 function voiceCheckText(input){
-  // 通用口令那一栏只填唤醒词后面的部分，实际说的是整句。
+  // 通用口令的可选前缀只在填写后拼上；本游戏口令直接检查填写的内容。
   return (input.classList.contains('voice-phrase')?currentVoiceWakeWord():'')+String(input.value||'').trim();
 }
 
@@ -106,14 +109,14 @@ export function voiceCommandPhrases(value){return voiceCommandIds(value).map(voi
 
 export function voiceCommandNames(value){return voiceCommandIds(value).map(voiceCommandName).filter(Boolean)}
 
-export function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=document.createElement('div');row.className='voice-row';const phrase=document.createElement('input');phrase.className='voice-phrase';phrase.placeholder='例：地图';phrase.title='唤醒词后面说的那句';phrase.value=mapping.phrase||'';const phraseBox=document.createElement('div');phraseBox.className='voice-phrase-wrap';const prefix=document.createElement('span');prefix.className='voice-prefix';prefix.textContent=currentVoiceWakeWord();phraseBox.append(prefix,phrase);const type=document.createElement('select');type.className='voice-type';for(const[value,label]of[['keyboard','键盘'],['gamepad','手柄'],['system','系统']]){const o=document.createElement('option');o.value=value;o.textContent=label;type.appendChild(o)}type.value=mapping.type||'keyboard';const target=document.createElement('span');target.className='voice-target-cell';const fillVoiceTarget=value=>{
+export function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){const row=document.createElement('div');row.className='voice-row';const phrase=document.createElement('input');phrase.className='voice-phrase';phrase.placeholder='例：地图';phrase.title='填写要说的口令，唤醒词可留空';phrase.value=mapping.phrase||'';const phraseBox=document.createElement('div');phraseBox.className='voice-phrase-wrap';const prefix=document.createElement('span');prefix.className='voice-prefix';prefix.textContent=currentVoiceWakeWord();prefix.hidden=!currentVoiceWakeWord();phraseBox.append(prefix,phrase);const type=document.createElement('select');type.className='voice-type';for(const[value,label]of[['keyboard','键盘'],['gamepad','手柄'],['system','系统']]){const o=document.createElement('option');o.value=value;o.textContent=label;type.appendChild(o)}type.value=mapping.type||'keyboard';const target=document.createElement('span');target.className='voice-target-cell';const fillVoiceTarget=value=>{
   if(type.value==='system'){target.replaceChildren();const sel=document.createElement('select');sel.className='binding-target';for(const[v,t]of VOICE_SYSTEM_TARGETS){const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)}if([...sel.options].some(o=>o.value===value))sel.value=value;target.appendChild(sel);return}
   // Voice rows can be built before the action catalog arrives.  Gamepad falls
   // back to its own built-in key list, but keyboard is only free text because
   // the catalog says so, and without it the picker would come out empty.
   if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){target.replaceChildren(makeKeyCaptureInput('binding-target',value||''));return}
   fillTargetControl(target,type.value,value);
-};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');const legacyBehavior={hold:'持续按住（旧设置）',release:'松开（旧设置）'}[mapping.behavior];for(const[value,label]of [['tap','点一下'],...(legacyBehavior?[[mapping.behavior,legacyBehavior]]:[])]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';behavior.title=legacyBehavior?'通用口令不再新设持续按住、松开。旧的照常生效；要按住某个键，放到「本游戏」的口令里，那边能选用哪个动作停住它':'通用口令只能点按。要按住某个键，放到「本游戏」的口令里设持续按住';const syncBehavior=()=>{behavior.disabled=type.value==='system'||behavior.options.length<2;if(type.value==='system')behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phraseBox,type,target,behavior,remove);$('#voiceRows').appendChild(row);watchVoicePhrase(phrase)}
+};fillVoiceTarget(mapping.target||'');const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});const behavior=document.createElement('select');behavior.className='voice-behavior';behavior.setAttribute('aria-label','语音动作方式');for(const[value,label]of [['tap','点一下'],['hold','持续按住'],['release','松开']]){const option=document.createElement('option');option.value=value;option.textContent=label;behavior.appendChild(option)}behavior.value=mapping.behavior||'tap';behavior.title='点按一次、持续按住，或用另一句口令松开';const systemBehavior=document.createElement('span');systemBehavior.className='voice-system-behavior';systemBehavior.textContent='执行一次';const syncBehavior=()=>{const system=type.value==='system';behavior.disabled=system;behavior.hidden=system;systemBehavior.hidden=!system;if(system)behavior.value='tap'};type.addEventListener('change',()=>{fillVoiceTarget(target.querySelector('.binding-target')?.value||'');syncBehavior()});syncBehavior();row.append(phraseBox,type,target,behavior,systemBehavior,remove);$('#voiceRows').appendChild(row);watchVoicePhrase(phrase)}
 
 function readVoiceMappings(){const rows=[...document.querySelectorAll('.voice-row')],items=[],old=new Map((voice.status?.mappings||[]).map(m=>[m.phrase,m]));for(const row of rows){const phrase=row.querySelector('.voice-phrase').value.trim(),type=row.querySelector('.voice-type').value,target=(row.querySelector('.binding-target')?.value||'').trim();if(!phrase&&!target)continue;if(!phrase||!target)throw new Error('每条口令都要填「说什么」和「输出什么」');const behavior=type==='system'?'tap':row.querySelector('.voice-behavior').value;const item={phrase,type,target,behavior},previous=old.get(phrase);if(previous?.synonyms?.length)item.synonyms=[...previous.synonyms];items.push(item)}return items}
 
@@ -133,7 +136,7 @@ function renderVoiceStatus(s=voice.status){
   const partial=String(s.last_partial||s.partial||'').trim();
   const phrase=String(s.last_final||s.final||s.last_command||'').trim();
   // 卡片上只写怎么说；没准备好时写卡在哪。听到的那一句浮在页面底下，几秒后自己走。
-  const voiceText=ready?`先说「${currentVoiceWakeWord(s)}」，再说口令`
+  const voiceText=ready?(currentVoiceWakeWord(s)?`通用口令先说「${currentVoiceWakeWord(s)}」；本游戏口令直接说`:'通用、本游戏口令直接说')
     :!s.available||!has?'语音模型没装好':!connected?(s.source_kind==='phone'?'等手机连上':'麦克风没打开'):'麦克风没声音，或者还在准备';
   if($('#voiceStatus').textContent!==voiceText)$('#voiceStatus').textContent=voiceText;
   announceVoice(s,phrase);
@@ -145,19 +148,18 @@ function renderVoiceStatus(s=voice.status){
   const diag=$('#voiceDiagnostic');setText(diag,[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`实时识别：${partial||'—'}`,`最后完成：${phrase||'—'}`,`电脑执行：${s.last_executed===true?'已执行':s.last_executed===false?'未执行':'未确认'}`,`错误：${s.last_error||'—'}`].join('\n'));
 }
 
-/* 急停口令在界面上就是通用口令里的一行：输出选「系统命令 → 紧急停止」。存的时候
- * 还是分开存——它们在自己那一份里，不跟配置分享出去，装别人的配置也冲不掉；
- * 听到了也走急停那条最快的路，不经过"游戏控制开没开"。
- * 存的写法带默认唤醒词「体感」，这样改了唤醒词，它们跟着一起换。 */
-const EMERGENCY_TARGET='EMERGENCY_STOP',DEFAULT_WAKE='体感',BUILT_IN_STOP='紧急停止';
+/* 自定义急停沿用通用口令的可选前缀，但仍独立保存、不分享，且直接走急停路径。
+ * 固定急停的前缀由“同时用于内置系统口令”决定。 */
+const EMERGENCY_TARGET='EMERGENCY_STOP',BUILT_IN_STOP='紧急停止';
 
 const isEmergencyRow=item=>item.type==='system'&&item.target===EMERGENCY_TARGET;
 
 export function voiceRowsFromStatus(s){
-  const wake=s?.wake_word||DEFAULT_WAKE;
-  const stops=(s?.emergency_stop_phrases||[])
-    .map(phrase=>String(phrase).startsWith(wake)?String(phrase).slice(wake.length):String(phrase))
-    .filter(phrase=>phrase&&phrase!==BUILT_IN_STOP)
+  const wake=currentVoiceWakeWord(s);
+  const stops=(s?.custom_emergency_stop_phrases??(s?.emergency_stop_phrases||[])
+    .filter(phrase=>phrase!==(s?.builtin_emergency_phrase||`${systemVoiceWakeWord(s)}${BUILT_IN_STOP}`))
+    .map(phrase=>wake&&String(phrase).startsWith(wake)?String(phrase).slice(wake.length):String(phrase)))
+    .filter(Boolean)
     .map(phrase=>({phrase,type:'system',target:EMERGENCY_TARGET,behavior:'tap'}));
   return [...stops,...(s?.mappings||[])];
 }
@@ -166,8 +168,8 @@ export async function saveVoiceMappings(){
   const rows=readVoiceMappings();
   const revision=++voiceRevision;
   const s=await post('/api/voice/config',{mappings:rows.filter(item=>!isEmergencyRow(item)),
-    emergency_stop_phrases:rows.filter(isEmergencyRow).map(item=>DEFAULT_WAKE+item.phrase)});
-  if(revision===voiceRevision){++voiceRevision;voice.status=s;renderVoiceStatus(s)}return s;
+    emergency_stop_phrases:rows.filter(isEmergencyRow).map(item=>item.phrase)});
+  if(revision===voiceRevision){++voiceRevision;voice.status=s;renderVoiceStatus(s);await refreshVoiceCommands()}return s;
 }
 
 // 唤醒词只属于你：不跟游戏走、也不跟配置分享出去。
@@ -175,29 +177,32 @@ function renderPersonalVoice(status){
   const wake=$('#wakeWord');
   // 正在输入就不覆盖。语音状态 0.9 秒刷一次，不让开就会把手里打一半的字抹掉。
   if(!wake||document.activeElement===wake)return;
-  const next=status?.wake_word||'';
+  const next=status?.wake_word??'';
   if(wake.value!==next){wake.value=next;queueVoiceCheck(wake)}
+  setProperty($('#wakeSystemCommands'),'checked',!!status?.wake_system_commands);
 }
 
 async function saveWakeWord(){
   const say=(text,kind='')=>{const el=$('#personalVoiceStatus');if(el){el.textContent=text;el.className=kind==='error'?'statusline error':'statusline'}};
   const value=String($('#wakeWord').value||'').trim();
-  if(!value||value===voice.status?.wake_word)return;
+  const system=$('#wakeSystemCommands').checked;
+  if(value===voice.status?.wake_word&&system===!!voice.status?.wake_system_commands)return;
   try{
     await configurationOperation(async()=>{
     // mappings 要原样带上：configure 是整份替换，不带等于把口令全删了。
     const revision=++voiceRevision;
-    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],wake_word:value});
+    const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],wake_word:value,wake_system_commands:system});
     if(revision!==voiceRevision)return;
     ++voiceRevision;
-    voice.status=s;renderVoiceStatus(s);say('唤醒词已保存');
-    // 通用口令整句是「唤醒词+后半句」，唤醒词换了要重新查。
+    voice.status=s;renderVoiceStatus(s);await refreshVoiceCommands();say(value?'唤醒词已保存':'已保存：通用口令直接说');
+    // 可选前缀改变后，重新检查实际说出的整句。
     document.querySelectorAll('.voice-phrase').forEach(queueVoiceCheck);
     });
   }catch(error){say(error.message,'error')}
 }
 
 document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
+document.getElementById('wakeSystemCommands')?.addEventListener('change',saveWakeWord);
 
 if($('#wakeWord'))watchVoicePhrase($('#wakeWord'));
 
@@ -229,13 +234,14 @@ const voiceCommandSections=new Map();
 function renderVoiceCommandCatalog(commands){
   voiceCatalog=Array.isArray(commands)?commands:[];
   const full=$('#voiceCommandGrid'),sections=[];
-  const wake=voice.status?.wake_word||'体感';
-  const shared=voiceRowsFromStatus(voice.status).map(item=>({
-    phrase:wake+item.phrase,label:'',effective_action:{type:item.type,target:item.target,behavior:item.behavior||'tap'},
-  }));
+  const mapped=action=>!!action&&action.type!=='none'&&!!action.type&&(Array.isArray(action.target)?action.target.length>0:!!String(action.target||'').trim());
+  const shared=voiceCatalog.some(item=>item.scope)?voiceCatalog.filter(item=>item.scope==='shared'&&mapped(item.effective_action))
+    :voiceRowsFromStatus(voice.status).filter(item=>mapped(item)).map(item=>({
+      phrase:currentVoiceWakeWord()+item.phrase,label:'',effective_action:{type:item.type,target:item.target,behavior:item.behavior||'tap'},
+    }));
   for (const [name,items] of [
     ['内置口令 · 不能改',voiceCatalog.filter(item=>item.system_fixed)],
-    ['本游戏口令',voiceCatalog.filter(item=>String(item.id||'').startsWith('game.profile_slot_')&&item.effective_action)],
+    ['本游戏口令',voiceCatalog.filter(item=>String(item.id||'').startsWith('game.profile_slot_')&&mapped(item.effective_action))],
     ['通用口令 · 所有游戏',shared],
   ]){
     if(!items.length)continue;

@@ -8,6 +8,7 @@ import {cancelPoseRecord,refreshPoseRecord,refreshRecordings,refreshTriggerRecor
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
+import {openPhoneCode} from './phone-connect.js';
 import {addCustomGame,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
 import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
@@ -208,6 +209,14 @@ export const headSaver=autosaver(pushHeadConfig,'headSaveStatus','retryHeadBtn',
 const voiceSaver=autosaver(saveVoiceMappings,'voiceSaveStatus','retryVoiceBtn');
 
 document.querySelectorAll('[data-view],[data-go]').forEach(el=>el.addEventListener('click',()=>showView(el.dataset.view||el.dataset.go)));
+bind('cameraStepGo',()=>{
+  showView('devices');if(currentView!=='devices')return;
+  showSettingsPane('devices');
+  const phone=$('#poseSource').value==='phone';
+  if(phone)openPhoneCode();
+  const target=phone?$('#phoneConnectPanel'):$('#sourceStartBtn');
+  target.focus({preventScroll:true});target.scrollIntoView({block:'start',behavior:'instant'});
+});
 
 bind('mainActionBtn',handleMainAction);
 
@@ -326,7 +335,7 @@ bind('calibrationCancel',startCalibration);
 
 $('#calibrationOverlay').addEventListener('cancel',e=>{e.preventDefault();void runAction(startCalibration)});
 
-$('#voiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').showModal());
+bind('voiceCommandsBtn',async()=>{await refreshVoice();await refreshVoiceCommands();$('#voiceCommandsMask').showModal()});
 
 $('#closeVoiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').close());
 

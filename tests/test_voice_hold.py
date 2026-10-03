@@ -92,7 +92,7 @@ def test_grammar_phrases_cover_every_recognisable_phrase(tmp_path):
     service.configure([
         {'phrase': '保持左肩键', 'type': 'gamepad', 'target': 'LB', 'behavior': 'hold'},
         {'phrase': '地图', 'type': 'keyboard', 'target': 'M', 'synonyms': ['打开地图']},
-    ])
+    ], wake_word='体感')
     phrases = service.grammar_phrases()
     assert service.wake_word not in phrases, '唤醒词不能作为独立口令'
     assert service.wake_word + '保持左肩键' in phrases

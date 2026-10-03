@@ -88,7 +88,7 @@ def test_repeated_polls_preserve_dynamic_values_and_own_diagnostics(voice, monke
 def test_startup_removes_old_shadowed_mappings_from_diagnostics(tmp_path):
     path = user_path("voice_mappings")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"mappings": [mapping("挪动区域")]}), encoding="utf-8")
+    path.write_text(json.dumps({"mappings": [mapping("体感挪动区域")]}), encoding="utf-8")
     folder = tmp_path / "config/generated_voice"
     folder.mkdir(parents=True)
     shutil.copy(ROOT / "config/generated_voice/voice_action_map.json", folder)

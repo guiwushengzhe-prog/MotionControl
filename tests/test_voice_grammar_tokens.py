@@ -92,9 +92,9 @@ def test_the_voice_service_says_which_phrases_it_can_never_hear(tmp_path, monkey
         {"phrase": "城堡", "type": "keyboard", "target": "N", "behavior": "tap"},
     ])
     # 设置页那一行汇总读的就是这个。
-    assert {"phrase": "体感吹笛", "chars": ["笛"]} in service.status()["unheard"]
+    assert {"phrase": "吹笛", "chars": ["笛"]} in service.status()["unheard"]
     # 发给手机的 grammar 和电脑自己用的是同一份，已经拆好词。
-    assert "体 感 城堡" in service.grammar_entries()
+    assert "城堡" in service.grammar_entries()
     assert not any("吹" in entry for entry in service.grammar_entries())
     # 输入框底下的提示问的是这个。
     assert service.check_phrases(["体感爬绳", "体感吹笛"]) == {"available": True, "results": [
