@@ -295,11 +295,19 @@ class ZoneFitSession:
     """
 
     def __init__(self, current: dict, now: float, *, grip_hands: tuple[str, ...] = (),
-                 body: bool = True, prepare_s: float = 0.0) -> None:
+                 body: bool = True, prepare_s: float = 0.0,
+                 excluded_zones: tuple[str, ...] = ()) -> None:
         """body=False 是「只量握拳」：换了只手、或者握拳认不准时用，不用再挥手跳。"""
         self.base = normalize_zone_fit(current)
         self.grip_hands = tuple(hand for hand in ("left", "right") if hand in grip_hands)
-        self.phases = (BODY_PHASES if body else ()) + tuple(
+        # 自选骨骼点或连线组合不能拿默认手脚测量覆盖，保留原区域供实际试圈。
+        self.preserved_zones = tuple(zone for zone in DEFAULT_ZONE_FIT
+                                     if body and zone in excluded_zones)
+        phases = tuple(phase for phase in BODY_PHASES if not (
+            phase == "hands" and all(zone in self.preserved_zones for zone in ("leftHand", "rightHand"))
+            or phase in ("leftFoot", "rightFoot") and phase in self.preserved_zones
+            or phase == "jump" and "headJump" in self.preserved_zones))
+        self.phases = (phases if body else ()) + tuple(
             f"{hand}{step}" for hand in self.grip_hands for step in GRIP_STEPS)
         if not self.phases:
             raise ValueError("没有要量的：握拳控制关着，又只量握拳")
@@ -328,6 +336,9 @@ class ZoneFitSession:
         self.grips: dict[str, tuple[str, float, float]] = {}
         # 内核装上了哪几个握拳阈值（量完之后由内核填）。
         self.applied_grip: dict[str, float] = {}
+        self.reference_pose: dict | None = None
+        self.foot_reference_poses: dict[str, dict] = {}
+        self.applied_regions: list[str] = []
 
     @property
     def phase(self) -> str:
@@ -434,14 +445,18 @@ class ZoneFitSession:
             sample[zone] = self._foot_sample(pose_map, frame, zone)
         self._stand.append(sample)
         if now - self._stand[0]["at"] >= STAND_S and len(self._stand) >= 5:
+            self.reference_pose = copy.deepcopy(pose_map)
             self.reached_at = now
 
     def _measure_hands(self, pose_map: dict, frame: dict, now: float) -> None:
         for zone in ("leftHand", "rightHand"):
+            if zone in self.preserved_zones:
+                continue
             sample = self._hand_sample(pose_map, frame, zone)
             if sample is not None:
                 self._hands[zone].append(sample)
-        if self.reached_at is None and all(self.hand_reached(zone) for zone in self._hands):
+        if self.reached_at is None and all(self.hand_reached(zone) for zone in self._hands
+                                          if zone not in self.preserved_zones):
             self.reached_at = now
 
     def hand_reached(self, zone: str) -> bool:
@@ -469,6 +484,8 @@ class ZoneFitSession:
     def _measure_foot(self, zone: str, pose_map: dict, frame: dict, now: float) -> None:
         sample = self._foot_sample(pose_map, frame, zone)
         if sample is not None:
+            if not self._feet or sample[0] <= min(item[0] for item in self._feet):
+                self.foot_reference_poses[zone] = copy.deepcopy(pose_map)
             self._feet.append(sample)
         rest = self._foot_rest(zone)
         if self.reached_at is None and rest is not None and any(item[0] - rest >= FOOT_REACH_MIN for item in self._feet):
@@ -530,6 +547,8 @@ class ZoneFitSession:
             self._settle_rest()
         elif phase == "hands":
             for zone, samples in self._hands.items():
+                if zone in self.preserved_zones:
+                    continue
                 fitted = fit_hand(self.rest[zone], samples) if self.rest.get(zone) else None
                 self._record(zone, fitted)
         elif phase in ("leftFoot", "rightFoot"):
@@ -634,6 +653,7 @@ class ZoneFitSession:
             "phase": self.phase,
             "phase_index": self.phase_index,
             "phases": list(self.phases),
+            "preserved_zones": list(self.preserved_zones),
             "issue": self.issue,
             "hands_reached": {zone: self.hand_reached(zone) for zone in ("leftHand", "rightHand")},
             "measured": list(self.measured),

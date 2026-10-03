@@ -245,12 +245,15 @@ const STEPS = [
       // 先教手：最好够、最好看。挑一个真的绑了键的；一个都没绑，也照样教，但得说清楚。
       const pick = ['leftHand', 'rightHand', 'headJump', 'leftFoot', 'rightFoot']
         .map(id => shown.find(zone => zone.id === id && zone.key)).find(Boolean) || shown[0];
-      const how = {leftHand: '左手伸进', rightHand: '右手伸进', headJump: '手举过头，伸进', leftFoot: '左脚踩进', rightFoot: '右脚踩进'}[pick.id] || '伸进';
+      const groups = pick.triggerGroups || [];
+      const defaultHow = {leftHand: '左手伸进', rightHand: '右手伸进', headJump: '跳起，让鼻子进入', leftFoot: '左脚伸进', rightFoot: '右脚伸进'}[pick.id] || '伸进';
+      const how = groups.length ? `让${groups.map(group => group.join('和')).join('，或')}进入` : defaultHow;
       return {
         target: '#viewer', mark: `.zone[data-zone="${pick.id}"]`, ready: true,
         say: `${how}「${pick.key || pick.body}」圈`,
         // 没绑键的圈伸进去也不会亮（亮 = 按下了一个键），这一步只能跳过。
-        hint: pick.key ? '' : '这个游戏方案没给圈绑键，伸进去不会亮；这步可以跳过',
+        hint: !pick.key ? '这个游戏方案没给圈绑键，伸进去不会亮；这步可以跳过'
+          : groups.some(group => group.length > 1) ? '同一条连线上的点要同时进圈；不同组满足一组即可' : '',
       };
     },
     check: s => ({ok: s.zones.some(zone => zone.pressed)}),
@@ -322,10 +325,15 @@ const FIT_NAME = {leftHand: '左手区', rightHand: '右手区', leftFoot: '左�
 function fitDoneSay(fit = {}) {
   const measured = fit.measured || [];
   const skipped = (fit.skipped || []).map(id => FIT_NAME[id] || id);
-  if (!measured.length) return '一项都没量到，还是原来的';
-  if (skipped.length) return `✓ 量好了 · ${skipped.join('、')}没量到，用原来的`;
-  // 「只量握拳」那一轮没动圈，不能说圈放好了。
-  return measured.some(id => !id.endsWith('Grip')) ? '✓ 量好了，圈按你的身体放好了' : '✓ 握拳量好了';
+  const preserved = (fit.preserved_zones || []).map(id => FIT_NAME[id] || id);
+  let text = !measured.length ? '一项都没量到，保留原来的设置'
+    : measured.some(id => !id.endsWith('Grip')) ? (fit.regions_mode === 'fixed'
+      ? '✓ 量好了，已更新量到的圈，仍保持固定' : '✓ 量好了，已用于跟随区域') : '✓ 握拳量好了';
+  if (skipped.length) text += ` · ${skipped.join('、')}没量到，用原来的`;
+  if (preserved.length) text += ` · ${preserved.join('、')}使用自选触发点，保留原区域，请按选中的部位试圈`;
+  if (measured.some(id => id.endsWith('Grip')) && !(fit.grip_applied || []).length)
+    text += ' · 握拳读数未能形成可用阈值，保留原来的，可只量正在使用的手';
+  return text;
 }
 
 // 录我的动作：电脑那边一项一项往下走，这里只照着它说现在做什么。
@@ -406,13 +414,16 @@ const EXTRAS = [
   {
     id: 'fit',
     name: '量身',
+    manualDone: true,
     problem: '动作圈不合适',
     doneSay: s => fitDoneSay(s.fit),
     guide(s, memo, now) {
       const fit = s.fit || {};
       // 点了「开始」之后电脑那边才有一轮在量；那之前看到的 done 是上一轮的，不算。
       if (fit.active) memo.started = true;
-      if (memo.started && fit.state === 'done') return {target: '#viewer', ready: true, say: '✓ 量好了'};
+      if (memo.started && fit.state === 'done') {
+        return {target: '#viewer', ready: true, say: fitDoneSay(fit)};
+      }
       if (memo.started && fit.state === 'preparing') {
         const left = Math.max(1, Math.ceil(Number(fit.remaining_s) || 0));
         return {
@@ -423,8 +434,11 @@ const EXTRAS = [
       }
       if (memo.started && fit.active) {
         const words = FIT_SAY[fit.phase] || FIT_SAY.stand;
+        const preserved = fit.preserved_zones || [];
+        const say = fit.phase === 'hands' && preserved.includes('leftHand') ? '右手往右边抬起来，挥一挥'
+          : fit.phase === 'hands' && preserved.includes('rightHand') ? '左手往左边抬起来，挥一挥' : words.say;
         return {
-          target: '#viewer', ready: true, say: words.say, hint: FIT_ISSUE[fit.issue] || words.hint,
+          target: '#viewer', ready: true, say, hint: FIT_ISSUE[fit.issue] || words.hint,
           // 站好那一步跳不过去：后面全靠它当基准。
           choice: fit.phase === 'stand' ? null : {label: '这一项跳过', run: 'zoneFitSkip'},
         };
@@ -437,7 +451,7 @@ const EXTRAS = [
       return {
         target: '#viewer', say: '站到你平时玩的位置',
         hint: gripOnly ? `只量握拳：张开一次、握紧一次。${prepareHint}`
-          : `${s.zonesFrozen ? '区域现在定住了；量完的大小要点「恢复跟随」才用得上，握拳照样生效' : '全身进画面，脚也要拍到。接下来挥手、伸脚、跳一下'}。${prepareHint}`,
+          : `全身进画面，脚也要拍到。接下来挥手、伸脚、跳一下${s.zonesFrozen ? '；量到的圈会直接更新，并继续固定' : ''}。${prepareHint}`,
         choice: {label: '点这里，3 秒后开始', run: gripOnly ? 'zoneFitGripOnly' : 'zoneFitStart'},
       };
     },
@@ -519,6 +533,20 @@ const EXTRAS = [
     check: (s, memo) => ({ok: !!memo.heard && s.voiceListOpen}),
   },
 ];
+
+// 首次教学复用同一量身课；已有个人结果直接沿用，局部重测入口仍会重新量。
+const fitLesson = EXTRAS.find(lesson => lesson.id === 'fit');
+STEPS.splice(STEPS.findIndex(step => step.id === 'updown'), 0, {
+  ...fitLesson,
+  guide(s, memo, now) {
+    if (!memo.started && s.fit?.measured_at_unix && (!s.fistHands.length || s.fit.grip_measured_at_unix)) {
+      memo.reused = true;
+      return {target: '#viewer', ready: true, say: '沿用上次量身', doneSay: '✓ 沿用上次量身，不需要重复测量'};
+    }
+    return fitLesson.guide(s, memo, now);
+  },
+  check: (s, memo) => memo.reused ? {ok: true} : fitLesson.check(s, memo),
+});
 
 export function createTutorial(actions = {}) {
   const root = $('tour');
@@ -742,6 +770,7 @@ export function createTutorial(actions = {}) {
       hold: need > 0 && guide.ready && !ok ? (holdSince ? (performance.now() - holdSince) / 1000 / need : 0) : null,
       skip: ok ? '' : mode === 'main' ? '这步跳过' : only ? '不做了' : '换一个',
       choiceLabel: choice?.label || '',
+      next: ok && step.manualDone ? (mode === 'main' ? '继续' : '完成') : '',
     });
   }
 
@@ -817,7 +846,8 @@ export function createTutorial(actions = {}) {
         done.add(step.id);
         skipped.delete(step.id);
         save();
-        advance = setTimeout(() => (mode === 'main' ? go(index + 1) : only ? close() : showMenu()), 1300);
+        if (!step.manualDone)
+          advance = setTimeout(() => (mode === 'main' ? go(index + 1) : only ? close() : showMenu()), 1300);
       }
     }
     renderStep(step, guide, result, ok, state);
@@ -825,8 +855,9 @@ export function createTutorial(actions = {}) {
 
   function reset() {
     // 离开一课时让它收拾一下（比如量身量到一半，电脑那边那一轮也得停）。
-    if (mode === 'extra' && extra?.leave) {
-      const run = extra.leave(actions.state?.() || {}, memos[extra.id] || {});
+    const leaving = mode === 'main' ? STEPS[index] : mode === 'extra' ? extra : null;
+    if (leaving?.leave) {
+      const run = leaving.leave(actions.state?.() || {}, memos[leaving.id] || {});
       if (run) actions[run]?.();
     }
     cursorWant = null;
@@ -915,7 +946,11 @@ export function createTutorial(actions = {}) {
   for (const block of blocks) block.addEventListener('click', nudge);
   // 「跳过教学」是给老玩家的：一下关掉，以后也不再自己弹出来。
   $('tourCloseBtn').addEventListener('click', close);
-  $('tourNextBtn').addEventListener('click', close);
+  $('tourNextBtn').addEventListener('click', () => {
+    if (mode === 'main' && STEPS[index]?.manualDone && doneAt) go(index + 1);
+    else if (mode === 'extra' && !only) showMenu();
+    else close();
+  });
   $('tourSkipBtn').addEventListener('click', () => {
     if (mode === 'extra') { if (only) close(); else showMenu(); return; }
     if (mode !== 'main') return;

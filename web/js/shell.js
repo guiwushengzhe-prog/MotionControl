@@ -54,7 +54,9 @@ function tutorialState(){
     :!vs.connected||!vs.audio_ready?'mic':!(vs.audio_alive||vs.stream_alive)?'silent':'starting';
   const zones=Object.entries(BODY_ZONES).filter(([,def])=>!def.gate).map(([id,def])=>{
     const z=k.zones?.[id]||{},key=zoneKeyLabel(id,def);
-    return {id,body:def.body,key:key==='未映射'?'':key,shown:!!z.rect,pressed:!!z.pressed};
+    const groups=z.trigger_groups||((gameProfile.zoneDefaultPoints?.[id]||[]).map(point=>[point]));
+    return {id,body:def.body,key:key==='未映射'?'':key,shown:!!z.rect,pressed:!!z.pressed,
+      triggerGroups:groups.map(group=>group.map(point=>gameProfile.zonePointLabels?.[point]||point))};
   });
   return {
     view:currentView,source:sourceMode,sourcePick:$('#poseSource')?.value||sourceMode,
@@ -248,7 +250,7 @@ $('#zoneFitBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.current
 
 $('#zoneFitGripBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.currentTarget,{gripOnly:true}));
 
-bind('zoneFitResetBtn',async()=>{renderKernelState(await post('/api/zones/fit/reset',{}));notice('区域已恢复默认大小。')});
+bind('zoneFitResetBtn',()=>zoneFit('reset'));
 
 $('#tutorialBtn').addEventListener('click',()=>{closeMenus();tutorial.open($('#helpBtn'))});
 

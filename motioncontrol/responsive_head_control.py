@@ -59,7 +59,8 @@ class ResponsiveHeadControl:
         # 只削弱原方向速度，快速回正制动更强，结果始终落在零和原速度之间。
         return confidence * (1.0 - math.exp(-(.28 * self.return_speed[source]) ** 2))
 
-    def update(self, tilt, yaw, now, *, center_tilt, noise_tilt, noise_yaw, yaw_span, deadzone):
+    def update(self, tilt, yaw, now, *, center_tilt, noise_tilt, noise_yaw, yaw_span, deadzone,
+               motion_deadzone_scale=1.0):
         if not math.isfinite(now):
             self.reset()
             return 0.0
@@ -75,6 +76,12 @@ class ResponsiveHeadControl:
         # 起动线在停止线外面一点，回正后的小抖动不会立刻重新起动。
         self.tilt_threshold = self.tilt_stop_threshold + max(.45, .15 * max(0.0, noise_tilt))
         self.yaw_threshold = self.yaw_stop_threshold + .025
+        # 先合并默认、手动设置和校准噪声，再略扩实际门槛；不写回个人设置。
+        scale = max(1.0, min(1.2, motion_deadzone_scale))
+        self.tilt_stop_threshold *= scale
+        self.yaw_stop_threshold *= scale
+        self.tilt_threshold *= scale
+        self.yaw_threshold *= scale
         tilt_delta = (tilt - center_tilt) / TILT_SPAN_DEG if all(
             math.isfinite(v) for v in (tilt, center_tilt)) else math.nan
         tilt_value = self._channel(tilt_delta, self.tilt_threshold / TILT_SPAN_DEG,

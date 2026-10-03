@@ -241,10 +241,10 @@
 <h2 class="group-title">手感</h2>
 <div class="list">
 <div class="row head-only"><label class="row-main" for="speedX">左右速度</label><div class="range-in"><input aria-label="左右视角速度" id="speedX" max="120" min="20" step="2" type="range" value="58"/><b id="speedXValue">58%</b></div></div>
-<div class="row head-only"><label class="row-main" for="deadzone"><span class="name">中心稳定区</span><span class="sub">头在这个范围内不转</span></label><div class="range-in"><input aria-label="中心稳定区" id="deadzone" max="25" min="3" type="range" value="10"/><b id="deadzoneValue">10%</b></div></div>
+<div class="row head-only"><label class="row-main" for="deadzone"><span class="name">中心稳定区</span><span class="sub" id="headThresholdStatus">结合个人校准，头在这个范围内不转</span></label><div class="range-in"><input aria-label="中心稳定区" id="deadzone" max="25" min="3" type="range" value="10"/><b id="deadzoneValue">10%</b></div></div>
 <div class="row hand-only"><label class="row-main" for="handMouseSensitivity">握拳灵敏度</label><div class="range-in"><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"/><b id="handMouseSensitivityValue">—</b></div></div>
 <div class="row hand-only"><label class="row-main" for="handMouseDeadzone"><span class="name">握拳中心死区</span><span class="sub">握住后手在这个范围内不转</span></label><div class="range-in"><input id="handMouseDeadzone" max="0.6" min="0" step="0.02" type="range"/><b id="handMouseDeadzoneValue">—</b></div></div>
-<div class="row head-only"><label class="row-main" for="bodyMotionGuard"><span class="name">做动作时稳住视角</span><span class="sub">踏步、下蹲时左右视角不跟着晃</span></label><input class="switch" id="bodyMotionGuard" type="checkbox"/></div>
+<div class="row head-only"><label class="row-main" for="bodyMotionGuard"><span class="name">做动作时稳住视角</span><span class="sub">身体运动时略增大稳定区，明显转头仍可转向；保持姿势时恢复正常</span></label><input class="switch" id="bodyMotionGuard" type="checkbox"/></div>
 </div>
 <p class="group-foot" hidden="" id="handMouseStatus"></p>
 <p class="group-foot"><span class="statusline" id="headSaveStatus" role="status"></span><span class="statusline" id="handMouseSaveStatus" role="status"></span><button class="btn link" hidden="" id="retryHeadBtn">重试保存</button></p>

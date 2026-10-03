@@ -9,9 +9,10 @@ import {handMouseConfig} from './view-control.js';
 // 量身：开始前先停掉游戏控制，和校准一样——人要挥手、伸脚、跳，别让游戏里跟着乱按。
 export async function zoneFit(action,body={}){
   try{
-    if(action==='start')await setOutput(false);
+    if(action==='start'||action==='reset')await setOutput(false);
     renderKernelState(await post('/api/zones/fit/'+action,body));
-  }catch(e){notice('量身没开始：'+(e?.message||e))}
+    if(action==='reset')notice('区域已恢复默认，固定或跟随方式保持原样。');
+  }catch(e){notice((action==='reset'?'恢复默认失败：':'量身没开始：')+(e?.message||e))}
 }
 
 // 开着握拳控制的是哪几只手。量身的握拳那一步只量这几只。
@@ -27,7 +28,7 @@ export function renderZoneFit(k=kernelState||{}){
   const zones=!fit.custom?'区域：默认大小':fit.measured_at_unix?`区域：${day(fit.measured_at_unix)}按你的身体量过`:'区域：按你的身体量过';
   const hands=fistHands();
   const grip=!hands.length?'握拳控制没开':fit.grip_measured_at_unix?`握拳：${day(fit.grip_measured_at_unix)}量过`:'握拳：还没量过，认不准就量一下';
-  const text=`${zones} · ${grip}`;if(status.textContent!==text)status.textContent=text;
+  const text=`${zones}${k.zones_frozen?' · 圈固定，量身可直接更新':''} · ${grip}`;if(status.textContent!==text)status.textContent=text;
   $('#zoneFitResetRow').hidden=!fit.custom;
   $('#zoneFitGripRow').hidden=!hands.length;
 }

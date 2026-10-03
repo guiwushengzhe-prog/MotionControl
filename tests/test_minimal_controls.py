@@ -474,7 +474,7 @@ def _head_only_pose(*, left_wrist_y=.5, right_wrist_y=.5, left_wrist_x=.2, right
 
 
 def _stub_head_controller(kernel, pitch=.8):
-    kernel.head_controller.update = lambda *args: (.2, pitch)
+    kernel.head_controller.update = lambda *args, **kwargs: (.2, pitch)
     kernel.head_controller.status = lambda now: {
         'algorithm': 'pnp', 'calibrated': True, 'enabled': True,
         'normalized_x': .2, 'normalized_y': pitch, 'output_x': .2,

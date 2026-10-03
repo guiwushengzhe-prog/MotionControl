@@ -258,16 +258,21 @@ export function renderKernelState(runtime,force=false){
   // 自定义姿势的相似度跟着主状态一起来，不另开一路轮询。
   S.customPoseScores=k.custom_pose_scores||{};if(isVisible($('#customPoseList')))paintCustomPoseScores();if(isVisible($('#poseLibraryList')))paintPoseLibrary();
   const hs=k.head||{};
-  const guardVersion=String(hs.body_motion_guard_version||k.body_motion_guard_version||'未上报');
   const guardEnabled=hs.body_motion_guard_enabled??k.body_motion_guard_enabled??false;
-  const guardActive=hs.body_motion_guard_active??k.body_motion_guard_active;
   const guardBlocked=!!hs.horizontal_paused_by_body_motion;
-  const guardReason=String(hs.body_motion_guard_veto_reason||'');
-  const guardReasonLabel={early:'提前抑制',postburst:'动作后抑制',persistent:'持续防晃'}[guardReason]||'输出抑制';
+  const motionScale=Number(hs.motion_deadzone_scale)||1;
   const guardStatus=$('#bodyMotionGuardStatus');
   if(guardStatus){
-    setText(guardStatus,guardEnabled===false?`防晃 ${guardVersion} · 已关闭`:guardBlocked?`防晃 ${guardVersion} · ${guardReasonLabel} · 左右视角已稳定`:guardActive?`防晃 ${guardVersion} · 监测中 · 当前未拦截左右视角`:`防晃 ${guardVersion} · 已启用 · 待机`);
-    setClass(guardStatus,'active',guardBlocked&&guardEnabled!==false);
+    setText(guardStatus,guardEnabled===false?'防晃 · 已关闭':`防晃 · 稳定区临时增加 ${Math.round((motionScale-1)*100)}% · 明显转头仍可转向`);
+    setClass(guardStatus,'active',motionScale>1.01&&guardEnabled!==false);
+  }
+  const threshold=$('#headThresholdStatus');
+  if(threshold){
+    const tilt=Number(hs.tilt_deadzone_deg),stop=Number(hs.responsive_tilt_stop_deg);
+    const valid=(hs.horizontal_calibrated??hs.calibrated)&&Number.isFinite(tilt)&&tilt>0;
+    setText(threshold,valid&&['roll_tilt','head_responsive'].includes(hs.horizontal_algorithm)
+      ? `已结合个人校准 · 侧倾约 ${tilt.toFixed(1)}° 起转${Number.isFinite(stop)&&stop>0?`，回到 ${stop.toFixed(1)}° 内停止`:''}${motionScale>1.01?' · 运动时略扩大':''}`
+      : '结合个人校准，头在这个范围内不转');
   }
   renderViewHud(hs,guardBlocked);
   if(hs.calibrated!==undefined){

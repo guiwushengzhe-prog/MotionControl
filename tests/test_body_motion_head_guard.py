@@ -1,4 +1,10 @@
+import math
+
 import pytest
+
+from test_responsive_controls import full_head
+from test_roll_tilt_control import eyes
+from motioncontrol.control_kernel import BODY_MOTION_GUARD_VERSION
 
 from motioncontrol.control_kernel import ControlKernel
 
@@ -73,583 +79,110 @@ def _enabled_guard_kernel(output):
     return kernel
 
 
-def test_strong_body_motion_pauses_horizontal_until_body_and_head_settle(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+# 旧的整段封锁、动作后否决和回正解锁规则已取消；改验实际输出与温和恢复。
+def frame(kernel, offset, angle, now):
+    value = {**pose(offset), **eyes(angle)}
+    kernel._update_body_motion_guard_locked(value, now)
+    kernel._update_head_locked(value, now)
+
+
+@pytest.mark.parametrize("fps", [16, 30, 60, 120])
+def test_moving_body_keeps_clear_head_turns_and_immediate_reversal(tmp_path, monkeypatch, fps):
     output = Output()
     kernel = _enabled_guard_kernel(output)
-    kernel.head_controller = Head(.7)
+    kernel.head_controller = full_head(tmp_path, monkeypatch)
     try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        for offset in (.28, -.28, .28):
-            now += 1 / 30
-            kernel._update_body_motion_guard_locked(pose(offset), now)
-        assert kernel.body_motion_guard_active is True
-        kernel._update_head_locked(pose(.28), now)
-        assert output.axes[-1] == (0.0, 0.0)
-
-        # Merely stopping the limbs is not enough if the selected head
-        # algorithm still believes the view is off-center.
-        for _ in range(12):
-            now += 1 / 30
-            kernel._update_body_motion_guard_locked(pose(.28), now)
-            kernel._update_head_locked(pose(.28), now)
-        assert kernel.body_motion_guard_active is True
-        assert output.axes[-1] == (0.0, 0.0)
-
-        kernel.head_controller.x = 0.0
-        for _ in range(4):
-            now += 1 / 30
-            kernel._update_body_motion_guard_locked(pose(.28), now)
-            kernel._update_head_locked(pose(.28), now)
-        assert kernel.body_motion_guard_active is False
+        frame(kernel, 0., 12., 10.)
+        for i in range(1, fps // 2):
+            angle = 12. if i % 2 else -12.
+            frame(kernel, .08 * math.sin(i), angle, 10. + i / fps)
+            assert output.axes[-1][0] * angle > 0
+            assert 1 <= kernel.body_motion_guard_scale <= 1.2
+            assert kernel.status()["head"]["horizontal_paused_by_body_motion"] is False
+        frame(kernel, 0., 0., 10.6)
+        assert output.axes[-1][0] == 0
     finally:
         kernel.close()
 
 
-def test_body_motion_guard_can_be_disabled(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+@pytest.mark.parametrize("fps", [16, 30, 60])
+def test_small_accidental_tilt_is_muted_but_recovers_without_recentering(tmp_path, monkeypatch, fps):
     output = Output()
-    kernel = ControlKernel(output)
-    kernel.head_controller = Head(.7)
+    kernel = _enabled_guard_kernel(output)
+    kernel.head_controller = full_head(tmp_path, monkeypatch)
     try:
-        kernel.configure_head(body_motion_guard=False)
-        kernel._update_head_locked(pose(), 10.0)
-        assert output.axes[-1] == (.7, 0.0)
-    finally:
-        kernel.close()
-
-
-def test_raw_fast_path_starts_before_ema_reaches_threshold(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(pose(.03), now)
-        assert kernel.body_motion_guard_raw >= 2.50
-        assert kernel.body_motion_guard_score < 2.50
-        assert kernel.body_motion_guard_active is True
-    finally:
-        kernel.close()
-
-
-def test_raw_fast_path_ignores_low_raw_motion(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(pose(.005), now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is False
-    finally:
-        kernel.close()
-
-
-def test_raw_fast_path_requires_eight_common_velocity_points(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        sparse = pose(.03)
-        keep = {
-            "left_shoulder", "right_shoulder", "left_hip", "right_hip",
-            "left_elbow", "right_elbow", "left_wrist",
-        }
-        sparse = {name: point for name, point in sparse.items() if name in keep}
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(sparse, now)
-        assert kernel.body_motion_guard_raw >= 2.50
-        assert kernel.body_motion_guard_score < 2.50
-        assert kernel.body_motion_guard_active is False
-    finally:
-        kernel.close()
-
-
-def test_body_motion_action_risk_starts_guard_without_raw_fast_path(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        kernel.body_motion_action_risk.add("squat")
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(pose(), now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is True
-    finally:
-        kernel.close()
-
-
-def test_motion_active_alone_no_longer_starts_body_guard(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
+        frame(kernel, 0., 0., 10.)
+        for i in range(1, fps // 2 + 1):
+            frame(kernel, .08 if i % 2 else -.08, 3.6, 10. + i / fps)
+        assert output.axes[-1][0] == 0
+        assert kernel.body_motion_guard_scale > 1.15
+        # 手脚停住，仍保持同样的小幅偏头，不需要回正或等动作标签消失。
         kernel.motion_active.add("squat")
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(pose(), now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_action_risk == set()
-        assert kernel.body_motion_guard_active is False
+        kernel.pose_active.add("custom1")
+        kernel.body_motion_action_risk.add("squat")
+        offset = .08 if (fps // 2) % 2 else -.08
+        for i in range(1, round(.45 * fps) + 1):
+            frame(kernel, offset, 3.6, 10.5 + i / fps)
+        assert output.axes[-1][0] > 0
+        assert kernel.body_motion_guard_scale < 1.01
     finally:
         kernel.close()
 
 
-def test_raw_fast_path_does_not_keep_renewing_hold_while_already_active(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+def test_jitter_single_joint_and_head_only_motion_do_not_expand_deadzone(tmp_path, monkeypatch):
     kernel = _enabled_guard_kernel(Output())
     try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(pose(.03), now)
-        assert kernel.body_motion_guard_active is True
-        first_hold = kernel.body_motion_guard_hold_until
-
-        # Another raw spike while already active must not turn the new fast path
-        # into a persistence path. Legacy EMA/motion_active own persistence.
-        kernel.body_motion_guard_score = 0.0
-        kernel.motion_active.clear()
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(pose(.045), now)
-        assert kernel.body_motion_guard_raw >= 2.50
-        assert kernel.body_motion_guard_hold_until == first_hold
+        kernel._update_body_motion_guard_locked(pose(), 10.)
+        for i in range(1, 30):
+            value = pose(.0005 * math.sin(i))
+            value["left_wrist"]["x"] += .3 * math.sin(i)
+            value.update(eyes(12. * math.sin(i)))
+            kernel._update_body_motion_guard_locked(value, 10. + i / 30)
+            assert kernel.body_motion_guard_scale == 1.
     finally:
         kernel.close()
 
 
-def shifted_pose(dx=0.0, dy=0.0):
-    result = pose()
-    for point in result.values():
-        point["x"] += dx
-        point["y"] += dy
-    return result
-
-
-def test_early_limb_pair_suppresses_current_frame_without_latching_guard(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+def test_crouch_translation_and_tracking_reset(tmp_path, monkeypatch):
     kernel = _enabled_guard_kernel(Output())
     try:
-        now = 10.0
-        base = pose()
-        kernel._update_body_motion_guard_locked(base, now)
-        moved = pose()
-        moved["left_wrist"]["x"] += 0.035
-        moved["left_elbow"]["x"] += 0.020
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_early_evidence is True
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
+        kernel._update_body_motion_guard_locked(pose(), 10.)
+        moving = pose()
+        for point in moving.values():
+            point["y"] += .03
+        kernel._update_body_motion_guard_locked(moving, 10.04)
+        assert kernel.body_motion_guard_scale > 1.
+        for point in moving.values():
+            point["score"] = .1
+        kernel._update_body_motion_guard_locked(moving, 10.08)
+        assert kernel.body_motion_guard_scale == 1.
+        kernel._update_body_motion_guard_locked(pose(), 10.12)
+        assert kernel.body_motion_guard_scale == 1.
+        kernel._update_body_motion_guard_locked(pose(.1), 11.)
+        assert kernel.body_motion_guard_scale == 1., "中断后不把坐标跳变算作身体运动"
     finally:
         kernel.close()
 
 
-def test_single_joint_spike_does_not_use_early_limb_pair_path(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
+def test_motion_boost_does_not_write_personal_settings_and_off_restores_baseline(tmp_path, monkeypatch):
+    output = Output()
+    kernel = _enabled_guard_kernel(output)
+    controller = full_head(tmp_path, monkeypatch)
+    kernel.head_controller = controller
     try:
-        now = 10.0
-        base = pose()
-        kernel._update_body_motion_guard_locked(base, now)
-        moved = pose()
-        moved["left_wrist"]["x"] += 0.040
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_early_evidence is False
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
+        before = controller.profile_path.read_bytes()
+        frame(kernel, 0., 12., 10.)
+        baseline = output.axes[-1][0]
+        frame(kernel, .08, 12., 10.04)
+        assert .85 * baseline < output.axes[-1][0] < baseline
+        assert controller.profile_path.read_bytes() == before
+        assert controller.config["deadzone"] == .1
+        kernel.configure_head(body_motion_guard=False)
+        frame(kernel, -.08, 12., 10.08)
+        assert kernel.body_motion_guard_scale == 1.
+        assert output.axes[-1][0] == pytest.approx(baseline, abs=.01)
     finally:
         kernel.close()
-
-
-def test_coherent_vertical_body_translation_suppresses_current_frame_without_latching_guard(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(shifted_pose(), now)
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(shifted_pose(dy=.01), now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_early_evidence is True
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-    finally:
-        kernel.close()
-
-
-def test_coherent_horizontal_body_translation_does_not_use_vertical_path(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(shifted_pose(), now)
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(shifted_pose(dx=.01), now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is False
-    finally:
-        kernel.close()
-
-
-def test_early_evidence_bridges_short_output_lag_without_persistent_guard(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        moved = pose()
-        moved["left_wrist"]["x"] += 0.035
-        moved["left_elbow"]["x"] += 0.020
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_active is False
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-
-        # Evidence can disappear on the next frame while the short output-only
-        # bridge still suppresses delayed head jitter.
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_early_evidence is False
-        assert kernel.body_motion_guard_active is False
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-
-        now += 0.07
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
-        assert kernel.body_motion_guard_active is False
-    finally:
-        kernel.close()
-
-
-def test_early_limb_threshold_keeps_return_like_noise_below_trigger(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        base = pose()
-        kernel._update_body_motion_guard_locked(base, now)
-        # Small multi-point displacement stays below the promoted C2.3 limb
-        # onset boundary and must not create an output-only transient lease.
-        moved = pose()
-        moved["left_wrist"]["x"] += 0.018
-        moved["left_elbow"]["x"] += 0.004
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_early_evidence is False
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
-    finally:
-        kernel.close()
-
-
-def test_coherent_vertical_threshold_promotes_body_translation_only(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        base = pose()
-        kernel._update_body_motion_guard_locked(base, now)
-        moved = pose()
-        # Translate the torso/legs coherently in Y while preserving local limb
-        # geometry. This is the path that recovers squat/onset motion removed by
-        # hip-centering, and should remain output-only rather than persistent.
-        for name in (
-            "left_shoulder", "right_shoulder", "left_hip", "right_hip",
-            "left_knee", "right_knee", "left_ankle", "right_ankle",
-            "left_elbow", "right_elbow", "left_wrist", "right_wrist",
-        ):
-            moved[name]["y"] += 0.004
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_early_evidence is True
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-    finally:
-        kernel.close()
-
-
-def test_strong_early_burst_arms_only_two_postburst_veto_frames(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        current = pose()
-        kernel._update_body_motion_guard_locked(current, now)
-        # Move only two limb points so the early pair is strong while the
-        # fastest-half average remains below the persistent raw threshold.
-        for step in range(1, 5):
-            moved = pose()
-            moved["left_wrist"]["x"] += 0.030 * step
-            moved["left_elbow"]["x"] += 0.006 * step
-            now += 1 / 30
-            kernel._update_body_motion_guard_locked(moved, now)
-            assert kernel.body_motion_guard_early_evidence is True
-            assert kernel.body_motion_guard_active is False
-            current = moved
-
-        # Falling edge after four consecutive evidence frames arms the bounded
-        # post-burst veto, but the ordinary 67 ms bridge gets first priority.
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(current, now)
-        assert kernel.body_motion_guard_early_evidence is False
-        assert kernel.body_motion_guard_postburst_budget == 2
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-        assert kernel.body_motion_guard_postburst_budget == 2
-
-        # After the ordinary bridge expires, exactly two non-zero frames can be
-        # vetoed. The third passes immediately; there is no blanket tail hold.
-        now += 0.04
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-        assert kernel.body_motion_guard_postburst_budget == 1
-        now += 0.01
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-        assert kernel.body_motion_guard_postburst_budget == 0
-        now += 0.01
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
-    finally:
-        kernel.close()
-
-
-def test_short_early_burst_does_not_arm_postburst_veto(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        current = pose()
-        kernel._update_body_motion_guard_locked(current, now)
-        for step in range(1, 4):
-            moved = pose()
-            moved["left_wrist"]["x"] += 0.030 * step
-            moved["left_elbow"]["x"] += 0.006 * step
-            now += 1 / 30
-            kernel._update_body_motion_guard_locked(moved, now)
-            current = moved
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(current, now)
-        assert kernel.body_motion_guard_postburst_budget == 0
-        now += 0.08
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
-    finally:
-        kernel.close()
-
-
-def test_distal_chain_requires_two_consecutive_supported_frames(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        base = pose()
-        kernel._update_body_motion_guard_locked(base, now)
-
-        first = pose()
-        first["left_wrist"]["x"] += 0.012
-        first["left_elbow"]["x"] += 0.001
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(first, now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_early_evidence is False
-
-        second = pose()
-        second["left_wrist"]["x"] += 0.024
-        second["left_elbow"]["x"] += 0.002
-        now += 1 / 30
-        kernel._update_body_motion_guard_locked(second, now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_early_evidence is True
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-    finally:
-        kernel.close()
-
-
-def test_segment_articulation_can_cover_motion_below_distal_threshold(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        for step in (1, 2):
-            moved = pose()
-            moved["left_wrist"]["x"] += 0.008 * step
-            moved["left_elbow"]["x"] += 0.001 * step
-            now += 1 / 30
-            kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_raw < 2.50
-        assert kernel.body_motion_guard_active is False
-        # C2.5 distal evidence remains below threshold, while the orthogonal
-        # C2.6 segment-deformation path is allowed to recognize the sustained
-        # wrist-versus-elbow articulation.
-        assert kernel.body_motion_guard_distal_runs["left_arm"] == 0
-        assert kernel.body_motion_guard_segment_runs["left_arm"] >= 2
-        assert kernel.body_motion_guard_early_evidence is True
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.0
-    finally:
-        kernel.close()
-
-
-def test_distal_chain_requires_proximal_support(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        for step in (1, 2):
-            moved = pose()
-            moved["left_wrist"]["x"] += 0.012 * step
-            now += 1 / 30
-            kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_early_evidence is False
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
-    finally:
-        kernel.close()
-
-
-def test_rigid_limb_translation_does_not_use_segment_articulation_path(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        now = 10.0
-        kernel._update_body_motion_guard_locked(pose(), now)
-        for step in (1, 2):
-            moved = pose()
-            # Wrist and elbow translate together, so the forearm segment vector
-            # does not deform even though both landmarks have measurable speed.
-            moved["left_wrist"]["x"] += 0.008 * step
-            moved["left_elbow"]["x"] += 0.008 * step
-            now += 1 / 30
-            kernel._update_body_motion_guard_locked(moved, now)
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_distal_runs["left_arm"] == 0
-        assert kernel.body_motion_guard_segment_runs["left_arm"] == 0
-        assert kernel.body_motion_guard_early_evidence is False
-        assert kernel._guard_horizontal_output_locked(0.7, now) == 0.7
-    finally:
-        kernel.close()
-
-
-def _distal_confirmation_delay_at_fps(kernel, fps):
-    """Return observed confirmation delay after the first supported sample."""
-    base = pose()
-    start = 10.0
-    kernel._update_body_motion_guard_locked(base, start)
-    first_supported_at = None
-    # Translate wrist+elbow together at ~1.5 torso-lengths/s. This exercises
-    # the C2.5 distal path without using C2.6 segment deformation or the global
-    # peak>=2.40 early-pair path.
-    for frame in range(1, 12):
-        elapsed = frame / float(fps)
-        moved = pose()
-        dx = 0.375 * elapsed  # torso is 0.25 -> normalized speed ~= 1.5/s
-        moved["left_wrist"]["x"] += dx
-        moved["left_elbow"]["x"] += dx
-        now = start + elapsed
-        kernel._update_body_motion_guard_locked(moved, now)
-        if first_supported_at is None:
-            first_supported_at = now
-        if kernel.body_motion_guard_early_evidence:
-            return now - first_supported_at
-    raise AssertionError(f"distal evidence did not confirm at {fps} FPS")
-
-
-def test_distal_confirmation_uses_time_not_frame_count_across_fps(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    delays = {}
-    for fps in (20, 30, 45, 60):
-        kernel = _enabled_guard_kernel(Output())
-        try:
-            delays[fps] = _distal_confirmation_delay_at_fps(kernel, fps)
-        finally:
-            kernel.close()
-    # A 30 ms confirmation requirement is quantized by camera sampling. At
-    # 20 FPS the next available sample is 50 ms; higher FPS must not collapse
-    # the confirmation to one 16-22 ms interval merely because more frames are
-    # available.
-    assert all(0.030 - 1e-6 <= delay <= 0.051 for delay in delays.values())
-
-
-def _drive_early_pair_for_frames(kernel, fps, frame_count, start=10.0):
-    current = pose()
-    kernel._update_body_motion_guard_locked(current, start)
-    for frame in range(1, frame_count + 1):
-        elapsed = frame / float(fps)
-        moved = pose()
-        # peak ~=3.0, second ~=0.6 normalized torso lengths/s: enough for the
-        # global transient pair but far below persistent fastest-half raw=2.5.
-        moved["left_wrist"]["x"] += 0.75 * elapsed
-        moved["left_elbow"]["x"] += 0.15 * elapsed
-        kernel._update_body_motion_guard_locked(moved, start + elapsed)
-        assert kernel.body_motion_guard_early_evidence is True
-        assert kernel.body_motion_guard_active is False
-        current = moved
-    end = start + (frame_count + 1) / float(fps)
-    kernel._update_body_motion_guard_locked(current, end)
-    assert kernel.body_motion_guard_early_evidence is False
-    return end
-
-
-def test_strong_burst_confirmation_is_time_based_across_fps(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    import math
-    for fps in (20, 30, 45, 60):
-        kernel = _enabled_guard_kernel(Output())
-        try:
-            # ceil(0.13*fps) yields a sampled burst whose first-to-last evidence
-            # duration is >=~95 ms at every target FPS.
-            frames = int(math.ceil(0.13 * fps))
-            _drive_early_pair_for_frames(kernel, fps, frames)
-            assert kernel.body_motion_guard_postburst_budget == 2
-        finally:
-            kernel.close()
-
-
-def test_four_frame_burst_at_60fps_is_not_mistaken_for_100ms_burst(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        _drive_early_pair_for_frames(kernel, 60, 4)
-        # Four 60 FPS evidence frames span only 50 ms from first to last. The
-        # old frame-count rule incorrectly treated this as equivalent to four
-        # 30 FPS frames (~100 ms).
-        assert kernel.body_motion_guard_postburst_budget == 0
-    finally:
-        kernel.close()
-
-
-def test_guard_recovery_settle_uses_time_not_three_frames(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    for fps in (20, 30, 45, 60):
-        kernel = _enabled_guard_kernel(Output())
-        try:
-            kernel.body_motion_guard_active = True
-            kernel.body_motion_guard_hold_until = 0.0
-            kernel.body_motion_guard_score = 0.0
-            now = 10.0
-            first_zero_at = None
-            released_at = None
-            for _ in range(10):
-                now += 1 / float(fps)
-                if first_zero_at is None:
-                    first_zero_at = now
-                kernel._guard_horizontal_output_locked(0.0, now)
-                if not kernel.body_motion_guard_active:
-                    released_at = now
-                    break
-            assert released_at is not None
-            elapsed = released_at - first_zero_at
-            assert 0.060 - 1e-6 <= elapsed <= 0.101
-        finally:
-            kernel.close()
 
 
 def _sample_action_risk_transition(kernel, ident, fps, on_s, off_s, activating=True):
@@ -754,57 +287,7 @@ def test_status_exposes_body_motion_guard_version(tmp_path, monkeypatch):
     kernel = _enabled_guard_kernel(Output())
     try:
         state = kernel.status()
-        assert state["body_motion_guard_version"] == "C2.10"
-        assert state["head"]["body_motion_guard_version"] == "C2.10"
-    finally:
-        kernel.close()
-
-
-def test_output_veto_reports_only_frames_that_actually_block_x(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        kernel.body_motion_guard_early_until = 10.2
-        assert kernel._guard_horizontal_output_locked(0.5, 10.0) == 0.0
-        assert kernel.body_motion_guard_output_blocked is True
-        assert kernel.body_motion_guard_veto_reason == "early"
-
-        assert kernel._guard_horizontal_output_locked(0.0, 10.05) == 0.0
-        assert kernel.body_motion_guard_output_blocked is False
-        assert kernel.body_motion_guard_veto_reason == ""
-
-        kernel.body_motion_guard_early_until = 0.0
-        kernel.body_motion_guard_postburst_budget = 1
-        kernel.body_motion_guard_postburst_until = 10.5
-        assert kernel._guard_horizontal_output_locked(-0.5, 10.3) == 0.0
-        assert kernel.body_motion_guard_output_blocked is True
-        assert kernel.body_motion_guard_veto_reason == "postburst"
-
-        kernel.body_motion_guard_active = True
-        kernel.body_motion_guard_hold_until = 11.0
-        assert kernel._guard_horizontal_output_locked(0.5, 10.4) == 0.0
-        assert kernel.body_motion_guard_output_blocked is True
-        assert kernel.body_motion_guard_veto_reason == "persistent"
-    finally:
-        kernel.close()
-
-
-def test_guard_survives_brief_core_quality_drop_then_resets(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    kernel = _enabled_guard_kernel(Output())
-    try:
-        kernel._update_body_motion_guard_locked(pose(), 10.0)
-        kernel.body_motion_guard_active = True
-        kernel.body_motion_guard_hold_until = 10.05
-        degraded = pose()
-        degraded["left_shoulder"]["score"] = 0.0
-
-        kernel._update_body_motion_guard_locked(degraded, 10.1)
-        assert kernel.body_motion_guard_active is True
-        assert kernel.body_motion_guard_hold_until == pytest.approx(10.16)
-
-        kernel._update_body_motion_guard_locked(degraded, 10.151)
-        assert kernel.body_motion_guard_active is False
-        assert kernel.body_motion_guard_last_at == 0.0
+        assert state["body_motion_guard_version"] == BODY_MOTION_GUARD_VERSION
+        assert state["head"]["body_motion_guard_version"] == BODY_MOTION_GUARD_VERSION
     finally:
         kernel.close()

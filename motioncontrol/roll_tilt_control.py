@@ -42,7 +42,7 @@ class RollTiltControl:
         self.state = "CENTER"
         self.threshold = 2.0
 
-    def update(self, angle, now, *, center, noise, deadzone):
+    def update(self, angle, now, *, center, noise, deadzone, motion_deadzone_scale=1.0):
         if not all(math.isfinite(v) for v in (angle, center, noise, now)):
             self.reset()
             self.state = "TILT_UNAVAILABLE"
@@ -53,6 +53,7 @@ class RollTiltControl:
         self.last_at = now
         delta = angle - center
         self.threshold = max(2.0, TILT_SPAN_DEG * deadzone, 3.0 * max(0.0, noise))
+        self.threshold *= max(1.0, min(1.2, motion_deadzone_scale))
         release = self.threshold * .65
         if abs(delta) <= release:
             self.reset()

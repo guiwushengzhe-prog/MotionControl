@@ -85,7 +85,7 @@ def test_explicit_true_keeps_guard_with_vertical_look_disabled():
         now += 1 / 30
         kernel._update_body_motion_guard_locked(guard_pose(.03), now)
         assert kernel.body_motion_guard_active is True
-        assert kernel._guard_horizontal_output_locked(.7, now) == 0.0
+        assert 1.0 < kernel.body_motion_guard_scale <= 1.2
     finally:
         kernel.close()
 

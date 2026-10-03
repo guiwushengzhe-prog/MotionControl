@@ -2331,6 +2331,7 @@ class HeadController:
         self.config = dict(DEFAULT_CONFIG)
         self._tilt_control = RollTiltControl()
         self._responsive_head = ResponsiveHeadControl()
+        self.motion_deadzone_scale = 1.0
         self.tilt_angle = math.nan
         self.center_tilt = math.nan
         self.noise_tilt = 0.0
@@ -3568,8 +3569,10 @@ class HeadController:
         height: int,
         now: float | None = None,
         world_pose: dict[str, dict] | list[dict] | None = None,
+        *, motion_deadzone_scale: float = 1.0,
     ) -> tuple[float, float]:
         now = time.monotonic() if now is None else now
+        self.motion_deadzone_scale = _clamp(float(motion_deadzone_scale), 1.0, 1.2)
         self._last_intent_drive = 0.0
         self.tilt_angle = eye_line_tilt(pose, width, height)
         self._last_evidence_scale = 0.0
@@ -3789,6 +3792,7 @@ class HeadController:
                 1.0, PERSONAL_PNP_FAR_MAX_DEPTH_RATIO,
             )
             start_x *= self.personal_pnp_far_depth_ratio ** PERSONAL_PNP_FAR_START_POWER
+        start_x *= self.motion_deadzone_scale
 
         self._runtime_raw_x, self._runtime_intent_raw_x, self._runtime_span_x = raw_x, intent_raw_x, span_x
         if policy == "head_responsive":
@@ -3797,6 +3801,7 @@ class HeadController:
                 self.tilt_angle, yaw, now, center_tilt=self.center_tilt,
                 noise_tilt=self.noise_tilt, noise_yaw=self.noise_yaw,
                 yaw_span=span_x, deadzone=float(self.config["deadzone"]),
+                motion_deadzone_scale=self.motion_deadzone_scale,
             ) if math.isfinite(self.center_tilt) else 0.0
             raw_x = intent_raw_x = sign * self._responsive_head.raw
             self._runtime_raw_x = self._runtime_intent_raw_x = raw_x
@@ -3806,6 +3811,7 @@ class HeadController:
             vx = sign * self._tilt_control.update(
                 self.tilt_angle, now, center=self.center_tilt, noise=self.noise_tilt,
                 deadzone=float(self.config["deadzone"]),
+                motion_deadzone_scale=self.motion_deadzone_scale,
             )
             self._last_intent_drive = vx
             self._last_evidence_scale = 1.0 if math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt) else 0.0
@@ -3927,6 +3933,7 @@ class HeadController:
             "noise_tilt_deg": self.noise_tilt,
             "tilt_state": self._responsive_head.state if responsive else self._tilt_control.state,
             "tilt_deadzone_deg": self._responsive_head.tilt_threshold if responsive else self._tilt_control.threshold,
+            "motion_deadzone_scale": self.motion_deadzone_scale,
             "responsive_head_source": self._responsive_head.source if responsive else None,
             "responsive_yaw_deadzone": self._responsive_head.yaw_threshold if responsive else None,
             "responsive_tilt_stop_deg": self._responsive_head.tilt_stop_threshold if responsive else None,
