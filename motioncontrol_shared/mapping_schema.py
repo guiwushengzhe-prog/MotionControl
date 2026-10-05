@@ -148,7 +148,8 @@ def normalize_voice_mappings(items) -> list[dict]:
             action["target"] = LEGACY_SYSTEM_TARGETS.get(target, target)
             if action["target"] not in VOICE_SYSTEM_TARGETS:
                 raise ValueError(f"暂不支持的系统命令：{target}")
-        entry = {"phrase": phrase, **normalize_action(action, default_behavior="tap")}
+        entry = {"phrase": phrase, **normalize_action(action, default_behavior="tap",
+                                                      system_targets=VOICE_SYSTEM_TARGETS)}
         if aliases:
             entry["synonyms"] = aliases
         result.append(entry)

@@ -674,7 +674,8 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .range-in b { min-width: 2.75rem; color: var(--text-2); font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
 .voice-prefix { margin-right: .25rem; color: var(--text-3); }
 .voice-wake-row { flex-wrap: wrap; gap: .5rem 1rem; }
-.voice-wake-field { flex: 0 1 20rem; width: 20rem; max-width: 100%; min-width: 0; }
+/* 宽度只靠 flex-basis 给：再写死 width 会把最小内容宽撑到 20rem，320px 窄屏横向溢出。 */
+.voice-wake-field { flex: 0 1 20rem; max-width: 100%; min-width: 0; }
 .voice-built-in-row .name, .voice-built-in-row .voice-prefix { color: var(--text); overflow-wrap: anywhere; }
 
 /* 通用口令：一行一条。 */

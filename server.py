@@ -1461,9 +1461,12 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"error": "连接码只能在这台电脑上查看"}, 403)
                 return
             port = INPUT_BRIDGE.status()["server_port"]
-            self._send_json({**connection_code(_instance_id(), socket.gethostname(),
-                                             INPUT_BRIDGE.server_candidates(), port),
-                             "firewall": FIREWALL.status()})
+            code = connection_code(_instance_id(), socket.gethostname(), INPUT_BRIDGE.server_candidates(), port)
+            if code["svg"] is None:
+                self._send_json({**code, "firewall": FIREWALL.status(),
+                                 "error": "这份程序缺少二维码组件，请在手机上用自动发现或手动输入地址连接"}, 503)
+                return
+            self._send_json({**code, "firewall": FIREWALL.status()})
             return
         if route == "/api/shutdown":
             if not self._is_loopback():
