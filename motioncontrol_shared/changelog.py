@@ -1,0 +1,104 @@
+"""读 CHANGELOG.md 这份更新日志，给网站、电脑端「这一版更新了什么」和手机热更共用。
+
+解析的是这份 CHANGELOG 自己的格式，不是通用 markdown：
+
+    ## 1.2.3 — 2026-01-01      一个版本
+    ### 装完就能用              版本下面的小节
+    - **默认全走鼠标。** …      条目，可以折行
+
+段落（不以 - 开头、也不是标题的行）留在小节的 intro 里，因为第一版那条
+「第一个公开版本。」就是这样一句话。
+
+一份更新要不要打扰用户，也由这份日志决定：这一版写了「新增 / 变更 / 移除」，
+就是用的人该知道的改动；只有「修复」或者别的小节，就是系统维护，安静地换上去。
+规则只写在这里一份，电脑端和手机端看到的结论才会一样。
+"""
+
+from __future__ import annotations
+
+import re
+
+# 手机端网页包能独立热更，于是它有自己的版本号，和电脑端那个不是一回事。两条线
+# 都可能出现 2.0.1，所以解析出来必须带上是哪条线——否则网站上两节标题一模一样，
+# 读的人说不清自己看的是哪个。channel 为 "web" 的那节只影响手机，不用重装。
+RELEASE_RE = re.compile(
+    r"^##\s+(?:(?P<channel>网页)\s+)?(?P<version>\d+\.\d+\.\d+)"
+    r"\s*(?:[—\-–]\s*(?P<date>.+))?$")
+SECTION_RE = re.compile(r"^###\s+(?P<title>.+)$")
+ITEM_RE = re.compile(r"^-\s+(?P<text>.+)$")
+
+# 出现这些小节就是功能更新：用的人能看见、要重新熟悉的变化。
+FEATURE_SECTIONS = frozenset({"新增", "新功能", "变更", "移除"})
+
+
+def parse(text: str) -> list[dict]:
+    """(version, channel, date, sections[]) 的列表，新的在前——文件里就是这个顺序。"""
+    releases: list[dict] = []
+    release: dict | None = None
+    section: dict | None = None
+
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        match = RELEASE_RE.match(line)
+        if match:
+            release = {"version": match["version"],
+                       "channel": "web" if match["channel"] else "app",
+                       "date": (match["date"] or "").strip(),
+                       "sections": []}
+            releases.append(release)
+            section = None
+            continue
+        if line.startswith("## "):
+            # 写错格式的版本标题最坏的地方是它不报错：整节连同下面所有条目一起
+            # 消失，md 里看着好好的，网站上就是没有。宁可现在炸。
+            raise ValueError(
+                f"这行像版本标题但格式不对，整节会被丢掉：{line!r}\n"
+                f"  电脑端写 '## 2.0.1 — 2026-01-01'\n"
+                f"  只热更网页包写 '## 网页 2.0.1 — 2026-01-01'")
+        if release is None:
+            # 版本号之前那一段是给读者的说明，不属于任何一版。
+            continue
+        match = SECTION_RE.match(line)
+        if match:
+            section = {"title": match["title"].strip(), "intro": "", "items": []}
+            release["sections"].append(section)
+            continue
+        match = ITEM_RE.match(line)
+        if match:
+            if section is None:
+                # 没有小节标题就直接列条目也是合法的，给它一个无名小节。
+                section = {"title": "", "intro": "", "items": []}
+                release["sections"].append(section)
+            section["items"].append(match["text"].strip())
+            continue
+        if not line.strip() or line.startswith("---") or line.startswith("|"):
+            continue
+        if section is not None and section["items"]:
+            # 折行的条目：接在上一条后面，而不是变成一段孤立的话。
+            section["items"][-1] += " " + line.strip()
+        elif section is not None:
+            section["intro"] = (section["intro"] + " " + line.strip()).strip()
+        else:
+            section = {"title": "", "intro": line.strip(), "items": []}
+            release["sections"].append(section)
+    return releases
+
+
+def version_key(text) -> tuple[int, int, int]:
+    """'2.10.0' 排在 '2.9.3' 后面；认不出的版本号当作最旧。"""
+    match = re.fullmatch(r"\s*(\d+)\.(\d+)\.(\d+)\s*", str(text or ""))
+    return (int(match[1]), int(match[2]), int(match[3])) if match else (0, 0, 0)
+
+
+def release_kind(release: dict) -> str:
+    """'feature'：写了新增、变更或移除；其余都是安静换上的 'system'。"""
+    titles = {str(section.get("title", "")).strip() for section in release.get("sections", [])}
+    return "feature" if titles & FEATURE_SECTIONS else "system"
+
+
+def releases_between(releases: list[dict], after, upto, channels=("app",)) -> list[dict]:
+    """比 after 新、不比 upto 新的那几版，新的在前；跳过好几版时一起列出来。"""
+    low, high = version_key(after), version_key(upto)
+    return [release for release in releases
+            if release.get("channel", "app") in channels
+            and low < version_key(release.get("version")) <= high]

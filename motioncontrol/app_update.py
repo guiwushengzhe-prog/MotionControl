@@ -29,6 +29,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -360,12 +361,41 @@ def check_and_stage(app_dir: Path, base_url: str = DEFAULT_BASE,
     return {**result, "state": "ready"}
 
 
+# 每次启动换包或退回的结果，写在包根目录——app/ 之外，因为退回会删掉 app/。以前
+# 它只打印在启动窗口里，用的人分不清"更新成了""没东西可更""上次更新没起来又退
+# 回去了"这三种情况。服务起来以后由 update_status 读出来交给界面。
+RESULT_NAME = "app_update_result.json"
+_VERSION_RE = re.compile(r"""^VERSION\s*=\s*["']([^"']+)["']""", re.M)
+
+
+def read_version(app_dir: Path) -> str:
+    """一份 app/ 自己是什么版本，读不出来是空串。只读文本、不导入：导入就是执行它。"""
+    try:
+        text = (Path(app_dir) / "motioncontrol" / "version.py").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = _VERSION_RE.search(text)
+    return match.group(1) if match else ""
+
+
 def promote(app_dir: Path) -> str:
     """启动时调用：把下好的换进去，并处理上一次没起来的情况。
 
     必须在导入 motioncontrol.* 之前跑完，否则换掉的是已经加载过的模块。
     """
     app_dir = Path(app_dir).resolve()
+    before = read_version(app_dir)
+    result = _promote(app_dir)
+    if result != "nothing-staged":
+        record = {"result": result, "at": time.time(), "from": before, "to": read_version(app_dir)}
+        try:
+            (app_dir.parent / RESULT_NAME).write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass  # 记不下结果不影响换包本身
+    return result
+
+
+def _promote(app_dir: Path) -> str:
     root = app_dir.parent
     staging = root / STAGING_NAME
     boot_mark = root / BOOT_MARKER
