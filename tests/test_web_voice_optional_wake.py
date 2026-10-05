@@ -2,7 +2,7 @@
 from urllib.parse import urlparse
 
 import pytest
-from playwright.sync_api import expect
+expect = pytest.importorskip("playwright.sync_api").expect
 from motioncontrol_shared.profile_schema import action_catalog
 
 from test_web_optimization import ORIGIN, desktop

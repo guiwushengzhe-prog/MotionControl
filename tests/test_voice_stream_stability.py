@@ -41,7 +41,7 @@ def service(tmp_path, **options):
     calls = []
     item = VoiceService(tmp_path, lambda action: calls.append(action) or {"executed": True}, **options)
     item.configure([{"phrase": "甲令", "type": "keyboard", "target": "F1"},
-                    {"phrase": "乙令", "type": "keyboard", "target": "F2"}])
+                    {"phrase": "乙令", "type": "keyboard", "target": "F2"}], wake_word="体感")
     item.recognizer = Recognizer()
     item.audio_ready = True
     return item, calls

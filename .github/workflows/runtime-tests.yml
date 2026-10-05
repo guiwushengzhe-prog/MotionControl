@@ -36,7 +36,7 @@ jobs:
           cache: pip
           cache-dependency-path: cloud/requirements.txt
       - name: Install logic test dependencies
-        run: python -m pip install pytest pytest-asyncio numpy opencv-python-headless cryptography -r cloud/requirements.txt
+        run: python -m pip install pytest pytest-asyncio numpy opencv-python-headless cryptography qrcode==8.2 -r cloud/requirements.txt
       - name: Run desktop logic and packaging regression tests
         env:
           MOTIONCONTROL_USER_DIR: ${{ runner.temp }}/motioncontrol-test-user-data
@@ -63,8 +63,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      # 真实服务那几条界面测试会启动 server.py，它导入时就要 numpy、cv2 和 qrcode。
       - name: Install browser test dependencies
-        run: python -m pip install pytest playwright
+        run: python -m pip install pytest playwright numpy opencv-python-headless cryptography qrcode==8.2
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
       - name: Run real browser regression tests

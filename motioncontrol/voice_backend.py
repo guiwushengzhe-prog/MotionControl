@@ -1137,6 +1137,8 @@ class VoiceService:
             return {"matched": False, "reason": "command_not_in_mapping"}
         action = {**{key: value for key, value in match.items() if key not in {"phrase", "synonyms"}},
                   "phrase": f"{self.wake_word}{match['phrase']}"}
+        # 校验过的映射总带 behavior；没走校验直接放进来的旧写法照旧按点按发。
+        action.setdefault("behavior", "tap")
         action["source"] = f"voice:{source_id}" if source_id else "voice"
         if match["type"] == "system":
             action["voice_source_id"] = source_id
