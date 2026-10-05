@@ -22,79 +22,21 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 SOURCE = ROOT / "CHANGELOG.md"
-# 只给网站。服务端再存一份是想过的，但现在没有任何东西读它——等更新通道
-# 真要带上"这一版改了什么"的时候再加，到时候也才知道它该长什么样。
+# 网站读这份生成的 JSON。电脑端更新通道直接随包带 CHANGELOG.md，运行时用同一个
+# 解析器读（见 motioncontrol/update_status.py），不经过这里。
 TARGETS = (
     ROOT / "cloud" / "web" / "public" / "changelog.json",
 )
 
-# 手机端网页包能独立热更，于是它有自己的版本号，和电脑端那个不是一回事。两条线
-# 都可能出现 2.0.1，所以解析出来必须带上是哪条线——否则网站上两节标题一模一样，
-# 读的人说不清自己看的是哪个。channel 为 "web" 的那节只影响手机，不用重装。
-RELEASE_RE = re.compile(
-    r"^##\s+(?:(?P<channel>网页)\s+)?(?P<version>\d+\.\d+\.\d+)"
-    r"\s*(?:[—\-–]\s*(?P<date>.+))?$")
-SECTION_RE = re.compile(r"^###\s+(?P<title>.+)$")
-ITEM_RE = re.compile(r"^-\s+(?P<text>.+)$")
-
-
-def parse(text: str) -> list[dict]:
-    """(version, channel, date, sections[]) 的列表，新的在前——文件里就是这个顺序。"""
-    releases: list[dict] = []
-    release: dict | None = None
-    section: dict | None = None
-
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        match = RELEASE_RE.match(line)
-        if match:
-            release = {"version": match["version"],
-                       "channel": "web" if match["channel"] else "app",
-                       "date": (match["date"] or "").strip(),
-                       "sections": []}
-            releases.append(release)
-            section = None
-            continue
-        if line.startswith("## "):
-            # 写错格式的版本标题最坏的地方是它不报错：整节连同下面所有条目一起
-            # 消失，md 里看着好好的，网站上就是没有。宁可现在炸。
-            raise ValueError(
-                f"这行像版本标题但格式不对，整节会被丢掉：{line!r}\n"
-                f"  电脑端写 '## 2.0.1 — 2026-01-01'\n"
-                f"  只热更网页包写 '## 网页 2.0.1 — 2026-01-01'")
-        if release is None:
-            # 版本号之前那一段是给读者的说明，不属于任何一版。
-            continue
-        match = SECTION_RE.match(line)
-        if match:
-            section = {"title": match["title"].strip(), "intro": "", "items": []}
-            release["sections"].append(section)
-            continue
-        match = ITEM_RE.match(line)
-        if match:
-            if section is None:
-                # 没有小节标题就直接列条目也是合法的，给它一个无名小节。
-                section = {"title": "", "intro": "", "items": []}
-                release["sections"].append(section)
-            section["items"].append(match["text"].strip())
-            continue
-        if not line.strip() or line.startswith("---") or line.startswith("|"):
-            continue
-        if section is not None and section["items"]:
-            # 折行的条目：接在上一条后面，而不是变成一段孤立的话。
-            section["items"][-1] += " " + line.strip()
-        elif section is not None:
-            section["intro"] = (section["intro"] + " " + line.strip()).strip()
-        else:
-            section = {"title": "", "intro": line.strip(), "items": []}
-            release["sections"].append(section)
-    return releases
+# 解析规则在 motioncontrol_shared.changelog：电脑端拿同一份日志告诉用户「这一版
+# 更新了什么」，两边各写一份迟早会说出两种话。
+from motioncontrol_shared.changelog import parse  # noqa: E402
 
 
 def main() -> int:

@@ -25,6 +25,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 # 监听都起来之后确认"这一份跑起来了"。
 _APP_DIR = Path(__file__).resolve().parent
 
+# 纯 Python 的第三方包放在 vendor/ 里跟着 app/ 一起更新（见 vendor/README.md）。
+# 追加在末尾：随包的 Python 里装了的照样优先，只有缺的时候才用这一份。
+if str(_APP_DIR / "vendor") not in sys.path:
+    sys.path.append(str(_APP_DIR / "vendor"))
+
 from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
 from motioncontrol.cloud_metadata_cache import PublicMetadataCache
 from motioncontrol.command_executor import CommandExecutor
@@ -53,13 +58,14 @@ from motioncontrol.connection_code import connection_code
 from motioncontrol.windows_firewall import WindowsFirewall
 from functools import lru_cache
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
+from motioncontrol.update_status import UpdateStatus
 
 # 版本号只有一处，在 motioncontrol/version.py。这里不再写数字：写了就会有第二个
 # 数字要记得跟着改，而漏改一次是看不出来的——界面和文件名各说各的。
 from motioncontrol.version import VERSION  # noqa: E402
 
-# 这次启动之后查更新的结果，界面上要显示。
-UPDATE_STATE: dict = {"state": "unknown"}
+# 更新记录：换没换包、成没成、查更新的结果和这一版多了什么，界面上要显示。
+UPDATES = UpdateStatus(_APP_DIR, user_path("update_history"), VERSION)
 UPDATE_CANCEL = threading.Event()
 
 
@@ -1496,8 +1502,7 @@ class AdminHandler(_BaseHandler):
         if route == "/api/app-update":
             # 只读。界面拿它显示"已经下好，下次启动生效"，好让人知道重启一次
             # 是有意义的——否则更新会安静地躺在那里，直到某天碰巧重启。
-            self._send_json({"version": VERSION, **UPDATE_STATE,
-                             })
+            self._send_json(UPDATES.payload())
             return
         if route == "/api/output/actions":
             self._send_json({"version": VERSION, "actions": action_catalog(),
@@ -1675,6 +1680,20 @@ class AdminHandler(_BaseHandler):
         body = self._body()
         if body is None:
             self._send_json({"ok": False, "error": "invalid json"}, 400)
+            return
+        if route in {"/api/app-update/check", "/api/app-update/seen"}:
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or (origin and origin not in {
+                    f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
+                self._send_json({"ok": False, "error": "请从本机控制页面操作"}, 403)
+                return
+            if route == "/api/app-update/seen":
+                UPDATES.acknowledge(str(body.get("version") or "") if isinstance(body, dict) else "")
+            elif not start_update_check():
+                if not UPDATES.updatable:
+                    self._send_json({"ok": False, "error": "从源码运行时不自动更新", **UPDATES.payload()}, 409)
+                    return
+            self._send_json({"ok": True, **UPDATES.payload()})
             return
         if route == "/api/phone-connect/firewall":
             if not self._is_loopback():
@@ -2389,32 +2408,47 @@ def _enable_default_xinput_merge() -> None:
         print("物理手柄合流未开启：", exc)
 
 
+def start_update_check() -> bool:
+    """在后台查一次新版本；已经在查就不重复。
+
+    只在发布包里查：直接从源码跑的 server.py 不经过启动器，下好了也换不上，以前
+    还会在仓库的上一级目录里白白建一个 app_next。任何失败都只是"这次没更新"。
+    """
+    if not UPDATES.updatable or not UPDATES.begin_check():
+        return False
+
+    def look() -> None:
+        try:
+            from motioncontrol import app_update
+            result = app_update.check_and_stage(_APP_DIR, cancel_event=UPDATE_CANCEL)
+        except Exception as exc:  # noqa: BLE001
+            result = {"state": "failed", "error": str(exc)}
+        UPDATES.finish_check(result)
+        if result.get("state") == "ready":
+            print("有新版本已经下好，下次启动生效。")
+
+    threading.Thread(target=look, name="motion-app-update", daemon=True).start()
+    return True
+
+
 def _boot_ok_and_check() -> None:
     """服务真的起来了，然后在后台看一眼有没有新版本。
 
     查更新放后台线程：服务器不通、或者慢，都不该让启动卡在那里。任何失败都只是
     "这次没更新"。
     """
+    # 先记下这次启动换没换包、上次更新有没有退回：boot_ok 会删掉 app_previous，
+    # 之后就读不到旧版本号了。
+    try:
+        UPDATES.observe_launch()
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from motioncontrol import app_update
-    except Exception:  # noqa: BLE001
-        return
-    try:
         app_update.boot_ok(_APP_DIR)
     except Exception:  # noqa: BLE001
         pass
-
-    def look() -> None:
-        try:
-            result = app_update.check_and_stage(_APP_DIR, cancel_event=UPDATE_CANCEL)
-        except Exception:  # noqa: BLE001
-            return
-        global UPDATE_STATE
-        UPDATE_STATE = result
-        if result.get("state") == "ready":
-            print("有新版本已经下好，下次启动生效。")
-
-    threading.Thread(target=look, name="motion-app-update", daemon=True).start()
+    start_update_check()
 
 
 def main():

@@ -224,6 +224,23 @@ I:\MotionControl-Pose-Models\models\mediapipe\pose_landmarker_full_compatible_07
 
 如果 8765 或 8766 已被旧的 MotionControl 实例占用，启动窗口会指明是哪一个面并退出当前实例；不会自动结束旧进程，可先关闭旧实例，或用 `--port` / `--admin-port` 分别指定其他端口。
 
+## 自动更新
+
+| 部分 | 能否自动更新 | 怎么更新 |
+|---|---|---|
+| 电脑端程序（`app/`：代码、界面、游戏配置、`vendor/` 里的纯 Python 包、带给手机的网页包） | 能 | 启动后后台向云端查新版，验签后下到 `app_next`，**下次打开软件时**换上；新版起不来会自动退回上一份 |
+| 手机端网页部分 | 能 | 手机连上电脑时从电脑取（电脑端更新时顺路带上），验签后**下次打开 App 时**换上；起不来退回 APK 自带的那份 |
+| 电脑端 Python 运行环境、带编译扩展的包、模型、虚拟手柄驱动 | 不能 | 需要重新下载完整便携包 |
+| 手机 APK 原生部分（权限、原生插件） | 不能 | 需要安装新版 APK；网页更新需要新原生能力时，手机「更多设置」里会写明 |
+
+更新结果看得见：电脑端在右上角「？」菜单里显示当前版本、更新时间、上次检查结果（已是最新 / 已下载等重启 /
+检查失败）以及「上次更新没能启动、已自动退回」，也可以手动「检查更新」；手机端在「固定摄像头 → 更多设置」
+最下面显示网页更新走到了哪一步。
+
+打不打扰人由 `CHANGELOG.md` 决定：这一版（或跳过的几版）写了「新增 / 变更 / 移除」，更新后第一次打开时弹一次
+「这次更新了什么」，看过就不再弹；只有「修复」等小节的系统维护更新安静换上。手机端只看「网页 x.y.z」那几节。
+发功能更新时记得升版本号并写好对应小节。
+
 ## 许可证
 
 Copyright (C) 2026 guiwushengzhe
@@ -249,4 +266,5 @@ Copyright (C) 2026 guiwushengzhe
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 第三方组件各自遵循自己的许可证，不受本项目许可证影响：ViGEmBus（BSD-3-Clause，
-随发布包附 `LICENSE-ViGEmBus.txt`）、MediaPipe（Apache-2.0）、Vosk（Apache-2.0）。
+随发布包附 `LICENSE-ViGEmBus.txt`）、MediaPipe（Apache-2.0）、Vosk（Apache-2.0）、
+qrcode（BSD，随程序附 `vendor/LICENSE-qrcode.txt`）。
