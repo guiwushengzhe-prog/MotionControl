@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
+expect = pytest.importorskip("playwright.sync_api").expect
 
 from test_web_optimization import ORIGIN, LocalApi
 from test_web_ui import browser as mock_browser

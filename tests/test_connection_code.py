@@ -1,5 +1,6 @@
 import json
 
+from motioncontrol import connection_code as connection_code_module
 from motioncontrol.connection_code import connection_code
 from motioncontrol.windows_firewall import WindowsFirewall
 
@@ -15,6 +16,14 @@ def test_code_contains_current_port_identity_and_no_credentials():
                                     {"host": "192.168.1.2", "port": 9876, "kind": "lan"}]
     assert set(payload) == {"type", "version", "instance", "name", "candidates"}
     assert "<svg" in data["svg"]
+
+
+def test_missing_qr_library_keeps_payload_instead_of_breaking_startup(monkeypatch):
+    # 程序更新只换 app/，旧便携包的 Python 里可能没有 qrcode：不能因此起不来。
+    monkeypatch.setattr(connection_code_module, "qrcode", None)
+    data = connection_code("0123456789ab", "电脑", [], 9876)
+    assert data["svg"] is None
+    assert json.loads(data["text"])["candidates"] == [{"host": "127.0.0.1", "port": 9876, "kind": "usb"}]
 
 
 def test_firewall_reuses_existing_rules_without_permission_prompt(tmp_path, monkeypatch):

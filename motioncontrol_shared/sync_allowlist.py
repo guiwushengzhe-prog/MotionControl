@@ -81,6 +81,9 @@ CLASSIFICATION = {
     # 同步过去等于让两台电脑自称同一台，手机会把第二台当成第一台的另一个网卡，
     # 于是永远只能看见其中一台。属于绝对不能跨机器走的那一类。
     "discovery_instance": DEVICE_CONFIGURATION,
+    # 防火墙授权只记"这台电脑、这个运行程序申请过没有"。换台机器毫无意义，同步过去
+    # 反而会让那台电脑以为问过了、永远不再弹授权。
+    "firewall_setup": DEVICE_CONFIGURATION,
     # 键盘宏就是一串键名和几个毫秒数，不含任何本机信息，换台机器一样成立——
     # 和 custom_games 是同一类东西。
     #
