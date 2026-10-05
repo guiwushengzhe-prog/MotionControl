@@ -6,7 +6,7 @@ import pytest
 from motioncontrol.voice_backend import VoiceService
 from motioncontrol_shared.canonical import canonicalize
 from motioncontrol_shared.mapping_schema import normalize_voice_mappings, shared_voice_command_id
-from motioncontrol_shared.profile_schema import normalize_action
+from motioncontrol_shared.profile_schema import normalize_bindings
 from test_configuration_coordination import application
 from test_output_actions_v097 import manager
 from motioncontrol.key_macros import MacroStore
@@ -28,7 +28,9 @@ ACTIONS = [
 @pytest.mark.parametrize("action", ACTIONS, ids=lambda action: action["type"])
 def test_shared_and_game_validation_and_cloud_round_trip_preserve_the_same_action(action):
     shared = normalize_voice_mappings([{"phrase": "口令", **action}])[0]
-    assert {k: v for k, v in shared.items() if k != "phrase"} == normalize_action(action)
+    # 本游戏口令真正走的是语音那一组的绑定校验（系统功能白名单按组区分）。
+    game = normalize_bindings({"voice": {"game.profile_slot_01": {"action": action}}})["voice"]["game.profile_slot_01"]
+    assert {k: v for k, v in shared.items() if k != "phrase"} == game["action"]
     assert canonicalize("voice_mappings", {"mappings": [shared]}).data["mappings"] == [shared]
 
 

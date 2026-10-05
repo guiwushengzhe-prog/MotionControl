@@ -1,6 +1,6 @@
 """两处口令的完整下拉、保存及独立控件布局；不采集摄像头或麦克风。"""
 import pytest
-from playwright.sync_api import expect
+expect = pytest.importorskip("playwright.sync_api").expect
 
 from motioncontrol_shared.mapping_schema import shared_voice_command_id
 from test_web_voice_optional_wake import prepare
