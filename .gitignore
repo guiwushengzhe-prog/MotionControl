@@ -35,6 +35,8 @@ config/phone_web_signing_key.txt
 # 部署时由 push.sh 从 build/app_bundle 复制过来的电脑端更新包。
 # 是构建产物，不进仓库——它就是 app/ 的一份拷贝。
 cloud/app_bundle/
+# 同上，push.sh --apk 从 build/apk_bundle 复制过来的新版 APK（App 内更新）。
+cloud/apk_bundle/
 
 # ==============================
 # AI 工作规则和本地配置
