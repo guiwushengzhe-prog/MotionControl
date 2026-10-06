@@ -5,6 +5,7 @@
 #     bash cloud/deploy/push.sh --host aliyun          # 换一台机器
 #     bash cloud/deploy/push.sh --skip-web             # 只改了后端，不重建网站
 #     bash cloud/deploy/push.sh --skip-app-bundle      # 只部署云端，不重打电脑更新包
+#     bash cloud/deploy/push.sh --apk                  # 顺带发新版 APK，手机在 App 里就能更新
 #
 # 顺序是刻意的：先构建、先打包、先上传，最后才动正在跑的服务。任何一步失败，
 # 线上那份还是原样。数据库迁移排在重启之前——反过来的话，新代码会对着旧表结构
@@ -39,12 +40,15 @@ SKIP_WEB=0
 PHONE_WEB=""
 BUNDLE_FRESH=0
 SKIP_APP_BUNDLE=0
+WITH_APK=0
+APK_FRESH=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --host) HOST="$2"; shift 2 ;;
         --skip-web) SKIP_WEB=1; shift ;;
         --skip-app-bundle) SKIP_APP_BUNDLE=1; shift ;;
+        --apk) WITH_APK=1; shift ;;
         # 同一个仓库开多个工作树之后，stage_release 那个 ../switch/mobile/dist 默认值
         # 指向的是别人那份构建产物。打出来的包能签名、能安装，只是手机上跑的是别人
         # 分支的网页，而没有任何地方会报错。所以这里必须能显式指定。
@@ -85,6 +89,23 @@ else
     echo "    没有发布包，这次不带更新包（已经在服务器上的那份保持不变）"
 fi
 
+echo "==> 手机 App 更新包"
+# 发布目录里当前版本的 APK（stage_mobile.py 放进去时已核对过签名和版本号），加上
+# 这一版的更新日志，签名后放到服务器上，手机在 App 里验签、下载、交给系统安装。
+# 要人显式加 --apk 才带：几十 MB，而且发出去就是所有手机都会看到「有新版」。
+if [ "$WITH_APK" -eq 1 ]; then
+    python tools/build_apk_bundle.py || { echo "APK 更新包没做成，不部署" >&2; exit 1; }
+    rm -rf cloud/apk_bundle
+    cp -r build/apk_bundle cloud/apk_bundle
+    APK_FRESH=1
+else
+    echo "    这次不带新版 APK（服务器上的那份保持不变；要发就加 --apk）"
+fi
+# 不带新 APK 时连本地残留的那份也不传：传上去会逐文件覆盖服务器上的，而远端只在
+# 带了新包时才先清空目录，新旧混在一起签名就对不上。
+APK_EXCLUDE=()
+[ "$APK_FRESH" = "1" ] || APK_EXCLUDE=(--exclude='cloud/apk_bundle')
+
 echo "==> 打包并上传"
 # 直接管道给 ssh，不落本地临时文件。在 Git Bash 里 /tmp 是一个 Windows 路径，
 # 而 scp 是 Windows 的 OpenSSH——它不认识 /tmp/xxx 这种写法，会报
@@ -104,6 +125,7 @@ upload() {
         --exclude='*.db' \
         --exclude='*.db-journal' \
         --exclude='.vite' \
+        ${APK_EXCLUDE[@]+"${APK_EXCLUDE[@]}"} \
         cloud motioncontrol_shared game_profiles \
       | ssh -o ServerAliveInterval=15 -o ConnectTimeout=20 "$HOST" \
             'cat > /tmp/motioncontrol-cloud.tar.gz'
@@ -127,7 +149,7 @@ echo "==> 在服务器上安装"
 # 远端用退出码 90 表示"还没初始化"，那不是失败。set -e 会在非 0 时立刻结束整个
 # 脚本，所以这里要显式关掉它来拿到退出码，否则下面的判断永远执行不到。
 set +e
-ssh "$HOST" "APP_DIR='$APP_DIR' BUNDLE_FRESH='$BUNDLE_FRESH' bash -s" <<'REMOTE'
+ssh "$HOST" "APP_DIR='$APP_DIR' BUNDLE_FRESH='$BUNDLE_FRESH' APK_FRESH='$APK_FRESH' bash -s" <<'REMOTE'
 set -euo pipefail
 
 # 第一次跑的时候这个目录还不存在，bootstrap.sh 也还没上来——它就在这个包里。
@@ -147,6 +169,10 @@ echo "    解包"
 # 现有的那份——清了就等于把还在服务的更新包删掉，换来一个空目录。
 if [ "${BUNDLE_FRESH:-0}" = "1" ]; then
     rm -rf "$APP_DIR/cloud/app_bundle"
+fi
+# 新版 APK 同理。
+if [ "${APK_FRESH:-0}" = "1" ]; then
+    rm -rf "$APP_DIR/cloud/apk_bundle"
 fi
 # 其余部分用 --overwrite 而不是先删：删掉再解压之间服务是半坏的，覆盖是逐文件替换。
 tar xzf /tmp/motioncontrol-cloud.tar.gz -C "$APP_DIR" --overwrite
