@@ -53,3 +53,23 @@ def test_the_flag_reaches_the_remote_shell():
     call = re.search(r'ssh "\$HOST" "([^"]*)bash -s"', SCRIPT)
     assert call, "找不到远端调用"
     assert "BUNDLE_FRESH=" in call.group(1), "标志没有传给远端，远端永远读到空值"
+
+
+def test_a_new_apk_bundle_is_cleared_before_unpacking_and_only_when_fresh():
+    """新版 APK 那个目录和电脑端更新包同一个道理。"""
+    clear = SCRIPT.find('rm -rf "$APP_DIR/cloud/apk_bundle"')
+    unpack = SCRIPT.find("tar xzf /tmp/motioncontrol-cloud.tar.gz")
+    assert clear != -1 and clear < unpack
+    assert SCRIPT.rfind('if [ "${APK_FRESH:-0}" = "1" ]', 0, clear) != -1
+    call = re.search(r'ssh "\$HOST" "([^"]*)bash -s"', SCRIPT)
+    assert call and "APK_FRESH=" in call.group(1)
+
+
+def test_a_stale_local_apk_bundle_never_travels():
+    """不带 --apk 时本地残留的那份不能传上去覆盖服务器上的。"""
+    built = SCRIPT.find("cp -r build/apk_bundle cloud/apk_bundle")
+    flag = SCRIPT.find("APK_FRESH=1", built)
+    assert built != -1 and flag != -1
+    assert "APK_FRESH=0" in SCRIPT
+    assert "--exclude='cloud/apk_bundle'" in SCRIPT
+    assert SCRIPT.find('${APK_EXCLUDE[@]+"${APK_EXCLUDE[@]}"}') < SCRIPT.find("cloud motioncontrol_shared game_profiles")
