@@ -46,6 +46,9 @@ USER_DATA_FILES = {
     "discovery_instance": "discovery_instance.txt",
     # 防火墙授权尝试只属于这台电脑及运行程序，不随游戏配置分享。
     "firewall_setup": "firewall_setup.json",
+    # 手机配对钥匙，藏在连接二维码里。只属于这台电脑：同步出去就等于把门钥匙发给
+    # 别人。删掉它，所有手机都要重新扫一次码。
+    "pairing_key": "pairing_key.txt",
     # 这份安装的更新记录：从几更新到几、上次有没有退回、「新功能」看过没有。
     "update_history": "update_history.json",
     # 用户自己建的键盘宏。不分游戏——建一次，哪个游戏、哪个动作都能直接选，这是

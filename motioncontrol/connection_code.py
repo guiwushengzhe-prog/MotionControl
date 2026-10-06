@@ -1,4 +1,8 @@
-"""本机生成连接二维码；电脑编号用于重连选机，不是认证凭据。"""
+"""本机生成连接二维码。
+
+电脑编号用于重连选机，不是凭据；配对钥匙（key）才是：扫过码的手机连接时带上它，
+没带的局域网设备只能连上、不能发输入（见 pairing.py）。
+"""
 from __future__ import annotations
 
 import json
@@ -12,7 +16,7 @@ except ImportError:
     qrcode = None
 
 
-def connection_code(instance: str, name: str, candidates: list[dict], port: int) -> dict:
+def connection_code(instance: str, name: str, candidates: list[dict], port: int, pairing_key: str | None = None) -> dict:
     addresses = [{"host": "127.0.0.1", "port": port, "kind": "usb"}]
     seen = {("127.0.0.1", port)}
     for item in candidates:
@@ -22,6 +26,8 @@ def connection_code(instance: str, name: str, candidates: list[dict], port: int)
             seen.add(key)
     payload = {"type": "motioncontrol-connect", "version": 1,
                "instance": instance, "name": name, "candidates": addresses[:5]}
+    if pairing_key:
+        payload["key"] = pairing_key
     text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     if qrcode is None:
         return {"payload": payload, "text": text, "svg": None}
