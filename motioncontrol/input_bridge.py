@@ -28,6 +28,10 @@ POSE_SOURCE_PREFIX = "mobile_pose:"
 SENSOR_SOURCE_PREFIX = "mobile_sensor:"
 MOUSE_SOURCE_PREFIX = "mobile_mouse:"
 VOICE_SOURCE_PREFIX = "mobile_voice:"
+# 没配对的手机连上来时收到的那一句。它还能连着：控制配置照发（旧版手机网页靠它
+# 触发热更，更新后才认得钥匙），只是发什么输入都不算数。
+PAIRING_REQUIRED_MESSAGE = ("这台手机还没和电脑配对：在电脑上打开「连接手机」，用手机扫一次二维码。"
+                            "扫过一次就记住了，以后自动连接。")
 VOICE_AUDIO_MAX_BYTES = 256 * 1024
 POSE_MAX_AGE_MS = 500.0
 
@@ -118,6 +122,9 @@ class WebSocketPeer:
         # 所以解析完握手请求的那一刻，rfile 的缓冲里除了请求本身什么都没有。
         self._inbox = bytearray()
         self.desktop = desktop
+        # 扫码配对过（或从本机地址来）。没配对的只能收，发来的输入一律丢掉。
+        self.paired = True
+        self._pairing_told = False
         self.source_ids: set[str] = set()
         self.accepted_inputs = 0
         self._send_lock = threading.Lock()
@@ -649,6 +656,9 @@ class InputBridge:
         # 最近一次因为"来源选的是电脑"而丢掉手机画面的时刻。界面靠它把这件事说
         # 出来：两边都显示正常、什么都不动，是最难查的一种坏法。
         self._phone_ignored_at = 0.0
+        # 最近一次有没配对的手机连上来的时刻。电脑界面靠它自动弹出二维码：手机上
+        # 写着「请扫码」，电脑上码已经摆好了。
+        self._unpaired_seen_at = 0.0
         self._pose_frames_with_people = 0
         self._host = "0.0.0.0"
         self._port = 8765
@@ -1063,6 +1073,9 @@ class InputBridge:
             # 手机在传，但来源选的是电脑摄像头，所以它的画面正在被丢掉。
             "phone_ignored": bool(self._phone_ignored_at
                                   and now - self._phone_ignored_at < 2.0),
+            # 有手机在连但没配对（没扫过码，或扫的是加配对之前的旧码）。
+            "unpaired_phone": bool(self._unpaired_seen_at
+                                   and now - self._unpaired_seen_at < 10.0),
             "body_mode": body_mode,
             "body_enabled": body_enabled,
             "pose_rejected": pose_rejected,
@@ -1603,6 +1616,9 @@ class InputBridge:
             if not isinstance(message, dict):
                 raise ValueError("message must be a JSON object")
             message_type = message.get("type")
+            if not getattr(peer, "paired", True) and message_type != "clock_sync":
+                self._refuse_unpaired(peer)
+                return
             if message_type == "clock_sync":
                 if not _is_number(message.get("client_sent_ms")):
                     raise ValueError("client_sent_ms must be a number")
@@ -1639,6 +1655,18 @@ class InputBridge:
             self._send_error(peer, str(exc))
         except (ConnectionError, OSError):
             self.disconnect(peer)
+
+    def _refuse_unpaired(self, peer: WebSocketPeer) -> None:
+        """没配对的输入不执行。说一次就够：手机一秒发几十帧，每帧回一句是在刷屏。"""
+        with self._lock:
+            self._unpaired_seen_at = time.monotonic()
+            told = getattr(peer, "_pairing_told", False)
+            peer._pairing_told = True
+        if not told:
+            try:
+                peer.send_json({"type": "error", "code": "pairing_required", "message": PAIRING_REQUIRED_MESSAGE})
+            except (ConnectionError, OSError):
+                self.disconnect(peer)
 
     def _clear_source_locked(self, source_id: str):
         owner = self._source_peers.pop(source_id, None)
@@ -1749,9 +1777,10 @@ class InputBridge:
             for source_id in cleared_pose_sources:
                 self._broadcast_pose_state(source_id, False, "watchdog")
 
-    def serve_websocket(self, handler, query: str) -> None:
+    def serve_websocket(self, handler, query: str, *, paired: bool = True) -> None:
         params = parse_qs(query, keep_blank_values=True)
-        desktop = params.get("client", [""])[0].lower() == "desktop"
+        # 没配对的不许冒充电脑界面：那一路会收到手机画面的骨骼流。
+        desktop = paired and params.get("client", [""])[0].lower() == "desktop"
         try:
             peer = perform_websocket_upgrade(handler, desktop=desktop)
         except (ValueError, OSError) as exc:
@@ -1760,10 +1789,13 @@ class InputBridge:
             except OSError:
                 pass
             return
+        peer.paired = paired
         self.register(peer)
+        if not paired:
+            self._refuse_unpaired(peer)
         # Without this the phone's output button would sit on "waiting" until
         # someone happened to toggle output on the desktop.
-        if not peer.desktop:
+        elif not peer.desktop:
             self._send_game_output_state(peer)
         try:
             while True:

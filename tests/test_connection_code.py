@@ -5,7 +5,7 @@ from motioncontrol.connection_code import connection_code
 from motioncontrol.windows_firewall import WindowsFirewall
 
 
-def test_code_contains_current_port_identity_and_no_credentials():
+def test_code_contains_current_port_identity_and_only_the_pairing_key():
     data = connection_code("0123456789ab", "电脑", [
         {"host": "192.168.1.2", "port": 9876, "kind": "lan"},
         {"host": "192.168.1.2", "port": 9876, "kind": "lan"},
@@ -16,6 +16,10 @@ def test_code_contains_current_port_identity_and_no_credentials():
                                     {"host": "192.168.1.2", "port": 9876, "kind": "lan"}]
     assert set(payload) == {"type", "version", "instance", "name", "candidates"}
     assert "<svg" in data["svg"]
+    # 唯一的凭据是配对钥匙：扫码就是配对（见 pairing.py）。别的什么都不放进去。
+    paired = json.loads(connection_code("0123456789ab", "电脑", [], 9876, "k" * 22)["text"])
+    assert set(paired) == {"type", "version", "instance", "name", "candidates", "key"}
+    assert paired["key"] == "k" * 22
 
 
 def test_missing_qr_library_keeps_payload_instead_of_breaking_startup(monkeypatch):
