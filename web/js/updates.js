@@ -1,6 +1,6 @@
 // 版本与更新：更了没有、成没成、这一版多了什么。
 // 功能更新（更新日志里写了新增、变更、移除）打开界面时弹一次说明；只修问题、
-// 系统维护的不弹，「？」菜单里照样看得到版本、更新时间和上次检查的结果。
+// 系统维护的不弹，「？」菜单底部照样看得到版本和一个简短的更新状态。
 import {$,api,notice,post,setClass,setProperty,setText} from './core.js';
 
 let state=null,pollTimer=0,deferTimer=0,shownNotes='';
@@ -8,26 +8,19 @@ const READY_KEY='motioncontrol_update_ready_notified';
 
 function remembered(key){try{return localStorage.getItem(key)||''}catch{return ''}}
 function remember(key,value){try{localStorage.setItem(key,value)}catch{}}
-function day(seconds){if(!seconds)return '';const date=new Date(seconds*1000);return `${date.getMonth()+1}月${date.getDate()}日`}
 
-export function updateStatusText(s){
-  if(!s.updatable)return '从源码运行，不自动更新';
-  if(s.staged)return s.staged.version&&s.staged.version!==s.version
-    ?`新版本 ${s.staged.version} 已下载，下次打开软件时生效`:'更新已下载，下次打开软件时生效';
-  if(s.state==='checking'||s.state==='unknown')return '正在检查更新…';
-  if(s.state==='current'||s.state==='none')return '已是最新版本';
-  if(s.state==='unsigned')return '服务器上的更新包签名不对，没有下载';
-  if(s.state==='refused')return '更新包大小异常，没有下载';
-  if(s.state==='cancelled')return '更新没下完，下次打开软件时接着下';
-  return `检查更新失败${s.error?`：${s.error}`:''}`;
-}
+const RECENT_ROLLBACK_S=3*24*3600;
 
-export function updateEventText(s){
+// 菜单底部只说一个短词：「已是最新」「新版下次打开生效」。出问题的细节放进悬停提示。
+export function updateStatusText(s,now=Date.now()/1000){
+  if(!s.updatable)return {text:'从源码运行'};
+  if(s.state==='checking'||s.state==='unknown')return {text:'检查中…'};
+  if(s.staged)return {text:s.staged.version&&s.staged.version!==s.version?`新版 ${s.staged.version} 下次打开生效`:'更新下次打开生效'};
   const last=(s.events||[]).at(-1);
-  if(!last)return '';
-  if(last.type==='rolled_back')return `${day(last.at)}的更新没能启动，已自动退回原来的版本`;
-  if(last.type==='updated')return last.from&&last.from!==last.to?`${day(last.at)}已从 ${last.from} 更新到 ${last.to}`:`${day(last.at)}已安装更新`;
-  return '';
+  if(last?.type==='rolled_back'&&now-last.at<RECENT_ROLLBACK_S)return {text:'上次更新没装上，已退回',warn:true};
+  if(s.state==='current'||s.state==='none')return {text:'已是最新'};
+  if(s.state==='unsigned'||s.state==='refused')return {text:'更新包有问题，未下载',title:s.detail||s.error||''};
+  return {text:'暂时没能检查更新',title:s.error||''};
 }
 
 // 条目里的 **粗体** 照样加粗；不用 innerHTML，日志里的字一律当文字。
@@ -66,13 +59,10 @@ export function openUpdateNotes(){
 function render(s){
   state=s;
   if(s.version)setText($('#appVersion'),s.version);
-  setText($('#updateStatus'),updateStatusText(s));
-  const event=updateEventText(s),last=(s.events||[]).at(-1);
-  setText($('#updateEvent'),event);setProperty($('#updateEvent'),'hidden',!event);
-  setClass($('#updateEvent'),'warn',last?.type==='rolled_back');
-  setProperty($('#updateCheckBtn'),'hidden',!s.updatable);
-  setProperty($('#updateCheckBtn'),'disabled',s.state==='checking');
-  setProperty($('#updateNotesBtn'),'hidden',!s.notes);
+  const status=updateStatusText(s),el=$('#updateStatus');
+  setText(el,status.text);setClass(el,'warn',!!status.warn);
+  if(el)el.title=status.title||'';
+  setProperty($('#updateCheckBtn'),'hidden',!s.updatable||s.state==='checking');
   const featureReady=s.staged?.kind==='feature';
   // 只有功能更新才在「？」上点一个提示；系统维护安静进行。
   setClass($('#helpBtn'),'has-update',!!s.notes||featureReady);
@@ -102,7 +92,6 @@ export function initUpdates(){
     event.stopPropagation();
     try{render(await post('/api/app-update/check',{}))}catch(error){notice(error.message)}
   });
-  $('#updateNotesBtn').addEventListener('click',()=>openUpdateNotes());
   $('#closeUpdateNotesBtn').addEventListener('click',()=>$('#updateNotesDialog').close());
   // 关掉（按钮或 Esc）就算看过，下次不再弹。
   $('#updateNotesDialog').addEventListener('close',()=>{
