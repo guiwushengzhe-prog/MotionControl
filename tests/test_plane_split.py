@@ -78,6 +78,16 @@ def test_device_plane_serves_only_the_whitelist(tree):
     assert "send_error" in called
 
 
+def test_device_plane_only_lets_paired_phones_send_input(tree):
+    """/ws/input 照样谁都能连，但只有带对钥匙（或从本机来）的才算配对，才能发输入。"""
+    do_get = _method(_class(tree, "DeviceHandler"), "do_GET")
+    calls = [node for node in ast.walk(do_get) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)]
+    names = {node.func.attr for node in calls}
+    assert {"accepts", "_is_loopback", "serve_websocket"} <= names
+    serve = next(node for node in calls if node.func.attr == "serve_websocket")
+    assert "paired" in {keyword.arg for keyword in serve.keywords}, "没把配对结果交给 serve_websocket，等于谁都能发输入"
+
+
 def test_device_plane_rejects_writes(tree):
     """No POST/HEAD surface on the LAN plane at all."""
     device = _class(tree, "DeviceHandler")

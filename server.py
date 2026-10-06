@@ -55,6 +55,7 @@ from motioncontrol_shared.model_share import ModelShare
 from motioncontrol.voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
 from motioncontrol.discovery import DiscoveryResponder
 from motioncontrol.connection_code import connection_code
+from motioncontrol.pairing import PairingKey
 from motioncontrol.windows_firewall import WindowsFirewall
 from functools import lru_cache
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
@@ -79,6 +80,7 @@ def application_root() -> Path:
 ROOT = application_root()
 WEB_DIR = ROOT / "web"
 FIREWALL = WindowsFirewall(user_path("firewall_setup"))
+PAIRING = PairingKey(user_path("pairing_key"))
 CONFIG_DIR = ROOT / "config"
 DEFAULT_MODEL_ROOT = Path(r"I:\MotionControl-Pose-Models\models")
 MODEL_RELATIVE = Path("mediapipe") / "pose_landmarker_full.task"
@@ -1467,7 +1469,8 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"error": "连接码只能在这台电脑上查看"}, 403)
                 return
             port = INPUT_BRIDGE.status()["server_port"]
-            code = connection_code(_instance_id(), socket.gethostname(), INPUT_BRIDGE.server_candidates(), port)
+            code = connection_code(_instance_id(), socket.gethostname(), INPUT_BRIDGE.server_candidates(), port,
+                                   PAIRING.key())
             if code["svg"] is None:
                 self._send_json({**code, "firewall": FIREWALL.status(),
                                  "error": "这份程序缺少二维码组件，请在手机上用自动发现或手动输入地址连接"}, 503)
@@ -2364,19 +2367,21 @@ class DeviceHandler(_BaseHandler):
     of the listening socket instead of something every new handler has to
     remember to check.
 
-    Note what this does *not* fix.  Binding the account and config APIs to
-    loopback stops a LAN device from reading them, but /ws/input itself
-    accepts any device on the same network: handle_sensor() feeds
-    output.set_sensor_state() directly, so a forged sensor_frame is real
-    gamepad input.  That is a deliberate trade -- device pairing was removed
-    because nobody used it.
+    /ws/input still accepts any device on the network, but only a paired one
+    may send input: a forged sensor_frame or mouse_frame is real gamepad and
+    mouse input.  Pairing costs the user nothing -- the key rides inside the
+    connection QR code and the phone sends it back on every connection (see
+    motioncontrol/pairing.py).  Loopback needs no key: that is a phone on a
+    USB cable through adb reverse, or a program already running here.
     """
 
     def do_GET(self):
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
         if route == "/ws/input":
-            INPUT_BRIDGE.serve_websocket(self, parsed.query)
+            key = parse_qs(parsed.query).get("key", [""])[0]
+            paired = self._is_loopback() or PAIRING.accepts(key)
+            INPUT_BRIDGE.serve_websocket(self, parsed.query, paired=paired)
             return
         if self._try_model_route(route):
             return
