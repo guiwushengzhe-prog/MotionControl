@@ -82,15 +82,27 @@ def matching_depth_body(metadata, pose_map, rotation="none"):
         points = body.get("points", {})
         if any(name not in points for name in names):
             continue
-        errors = []
-        for name in names:
-            point = points[name]
-            x, y = rotate_point(point["color_x"], point["color_y"], rotation)
-            observed = pose_map[name]
-            errors.append((x - observed["x"]) ** 2 + (y - observed["y"]) ** 2)
-        error = sum(errors) / len(errors)
-        if error < .08 ** 2 and max(errors) < .15 ** 2:
-            candidates.append((error, body))
+        mirrored = bool(metadata.get("image_mirrored"))
+        matches = []
+        # 镜像画面重新识别后，按肩髋位置确认图像与原厂骨骼的左右命名。
+        # 每个人只保留一个对应关系，不能把同一个人的两种命名当成两个人。
+        for swapped in ((False, True) if mirrored else (False,)):
+            matched = {("right_" + name[5:] if name.startswith("left_") else
+                        "left_" + name[6:] if name.startswith("right_") else name): point
+                       for name, point in points.items()} if swapped else points
+            errors = []
+            for name in names:
+                point = matched[name]
+                x, y = rotate_point(point["color_x"], point["color_y"], rotation)
+                if mirrored:
+                    x = 1 - x
+                observed = pose_map[name]
+                errors.append((x - observed["x"]) ** 2 + (y - observed["y"]) ** 2)
+            error = sum(errors) / len(errors)
+            if error < .08 ** 2 and max(errors) < .15 ** 2:
+                matches.append((error, {**body, "points": matched}))
+        if matches:
+            candidates.append(min(matches, key=lambda match: match[0]))
     if not candidates:
         return None
     # Ambiguous overlapping people are not a reliable depth match.

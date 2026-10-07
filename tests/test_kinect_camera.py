@@ -225,3 +225,71 @@ def test_depth_reaches_the_real_kernel_with_no_visible_image_lift(monkeypatch, a
         assert kernel.march_depth_source == "image"
     finally:
         kernel.close()
+
+
+@pytest.mark.parametrize("rotation", ["none", "cw", "ccw", "180"])
+@pytest.mark.parametrize("swapped", [False, True])
+def test_flipped_video_still_matches_depth_feet(rotation, swapped):
+    native = body(left=.04, right=.01)
+    pose = {}
+    for name in ("left_hip", "right_hip", "left_shoulder", "right_shoulder"):
+        native_name = (("right_" if name.startswith("left_") else "left_") +
+                       name.split("_", 1)[1]) if swapped else name
+        point = native["points"][native_name]
+        x, y = rotate_point(point["color_x"], point["color_y"], rotation)
+        pose[name] = {"x": 1 - x, "y": y, "score": 1}
+    metadata = {"depth_valid": True, "image_mirrored": True,
+                "bodies": [native], "floor": native["floor"]}
+    matched = matching_depth_body(metadata, pose, rotation)
+    assert matched["tracking_id"] == native["tracking_id"]
+    side = "right_ankle" if swapped else "left_ankle"
+    assert matched["points"]["left_ankle"] == native["points"][side]
+    assert matched["floor"] == native["floor"]
+    metadata["bodies"].append(copy.deepcopy(native))
+    assert matching_depth_body(metadata, pose, rotation) is None
+
+
+@pytest.mark.parametrize("kinect,rotation", [
+    (True, "none"), (True, "cw"), (True, "ccw"), (True, "180"), (False, "none")])
+def test_source_flip_is_shared_by_inference_and_preview(kinect, rotation, monkeypatch):
+    import cv2
+    import numpy as np
+    import threading
+    from motioncontrol import kinect_camera
+
+    raw = np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3)
+    class Capture:
+        metadata = {"sample_at": 10., "depth_valid": True}
+        def __init__(self):
+            self.once = True
+        def read(self):
+            if self.once:
+                self.once = False
+                return True, raw
+            return False, None
+    class Kinect(Capture):
+        pass
+    monkeypatch.setattr(kinect_camera, "KinectCapture", Kinect)
+    kernel = ControlKernel(Output())
+    try:
+        camera = NativeCameraService(kernel)
+        camera.applied_rotation = rotation
+        session = SimpleNamespace(stop=threading.Event(), capture=Kinect() if kinect else Capture())
+        camera._session = session
+        monkeypatch.setattr(camera, "_fail_session", lambda session, error: session.stop.set())
+        monkeypatch.setattr(camera, "_worker_finished", lambda session: None)
+        camera._capture_loop(session)
+        expected = raw
+        codes = {"cw": cv2.ROTATE_90_CLOCKWISE, "ccw": cv2.ROTATE_90_COUNTERCLOCKWISE,
+                 "180": cv2.ROTATE_180}
+        if rotation in codes:
+            expected = cv2.rotate(expected, codes[rotation])
+        if kinect:
+            expected = expected[:, ::-1]
+            assert camera._latest_depth["image_mirrored"] is True
+            assert "image_mirrored" not in session.capture.metadata
+        else:
+            assert camera._latest_depth is None
+        np.testing.assert_array_equal(camera._latest_frame, expected)
+    finally:
+        kernel.close()

@@ -45,19 +45,19 @@ def test_kinect_select_depth_toggle_and_regular_camera_ui(desktop):
     assert desktop.errors == []
 
 
-def test_kinect_video_pose_zones_and_editing_share_display_direction(desktop):
+def test_kinect_regions_and_editing_keep_original_display_direction(desktop):
     page, api = desktop.page, desktop.api
-    # 同一份识别坐标在两种显示方向下，视频、骨骼、圈、悬浮窗和编辑必须一致。
+    # 反向在采集侧完成；区域显示、悬浮窗与编辑保持原来的规则。
     rect = {"x1": .2, "x2": .35, "y1": .3, "y2": .5}
     api.runtime["kernel"].update(
         pose={"right_wrist": {"x": .25, "y": .4, "score": 1}},
         zones={"rightHand": {"rect": rect, "pressed": True}},
     )
     for source, backend, mirrored in (
-        ("computer", "kinect", False),
+        ("computer", "kinect", True),
         ("computer", "dshow", True),
         ("phone", "kinect", True),
-        ("computer", "kinect", False),
+        ("computer", "kinect", True),
     ):
         api.runtime.update(body_mode=source, camera={"running": False, "backend": backend})
         result = page.evaluate("""async runtime=>{

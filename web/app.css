@@ -276,9 +276,6 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .viewer img, .viewer canvas, .zones { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
 .viewer img { object-fit: fill; }
 .zones { pointer-events: none; }
-/* 同步翻转整个显示坐标，区域文字保留正向；不改变识别与深度的共同坐标。 */
-.viewer[data-mirrored="false"] img, .viewer[data-mirrored="false"] canvas,
-.viewer[data-mirrored="false"] .zones, .viewer[data-mirrored="false"] .zone { transform: none; }
 /* Regions are rectangles in the kernel's own hit test, so draw them as rectangles. */
 .zone { display: none; position: absolute; place-content: center; border: .125rem solid rgba(255, 255, 255, .7); border-radius: .75rem;
   background: rgba(0, 0, 0, .18); color: #fff; text-align: center; line-height: 1.2; transform: scaleX(-1); container-type: size;

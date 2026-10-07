@@ -4354,7 +4354,12 @@ class NativeCameraService:
                 if code is not None:
                     frame = cv2.rotate(frame, code)
                 height, width = frame.shape[:2]
-                depth_metadata = session.capture.metadata if isinstance(session.capture, kinect_camera.KinectCapture) else None
+                depth_metadata = None
+                if isinstance(session.capture, kinect_camera.KinectCapture):
+                    # 在采集侧校正二代的左右方向，识别和预览共用这一帧；
+                    # 区域仍沿用原有显示、编辑和实际触发坐标。
+                    frame = cv2.flip(frame, 1)
+                    depth_metadata = {**session.capture.metadata, "image_mirrored": True}
                 captured_at = depth_metadata["sample_at"] if depth_metadata else time.monotonic()
                 with self._condition:
                     if session.stop.is_set() or self._session is not session:
