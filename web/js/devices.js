@@ -108,6 +108,7 @@ function renderPerformance(data){
   }
   const line=$('#recognitionStatus');
   if(line)line.textContent=live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):'未开始';
+  if(line&&live&&sourceMode==='computer'){if(data.depth_active)line.textContent+=' · 深度已启用';else if(data.depth_error)line.textContent+=' · '+data.depth_error}
   $('#perfSummary').textContent='识别';
   $('#perfDetails').textContent=[
     `采集帧率：${formatPerf(data.capture_fps)} · 推理帧率：${formatPerf(data.inference_fps)}${data.network_fps!=null?` · 手机传来：${formatPerf(data.network_fps)}`:''}`,
@@ -166,7 +167,7 @@ function drawStereoView(el,view,other,data){
 
 export async function refreshStereo(){try{renderStereo(await api('/api/stereo'))}catch{}}
 
-export async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference;renderCameraRotation(data);renderCameraDevices(null,data.camera_index);return true}catch{return false}}
+export async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference;renderCameraRotation(data);renderCameraDevices(null,data.camera_index,data);renderCameraDepth(data);return true}catch{return false}}
 
 const ROTATION_LABELS={none:'不旋转',cw:'顺时针 90°',ccw:'逆时针 90°','180':'180°'};
 
@@ -182,21 +183,32 @@ export function renderCameraRotation(data){
 // 开机不扫。挨个序号去开摄像头要好几秒，而绝大多数人只有一个，不该为了那个
 // 下拉框每次启动都等一遍。所以先只把"现在用的是第几个"摆出来，真要换的人点
 // 一下扫描，列表才填满。
-export function renderCameraDevices(devices,current){
+export function renderCameraDevices(devices,current,data={}){
   const select=$('#cameraDevice');if(!select)return;
   if(current!==undefined&&current!==null)S.cameraIndex=Number(current);
-  const list=devices&&devices.length?devices:[{index:S.cameraIndex,width:0,height:0}];
-  select.innerHTML=list.map(d=>{
-    const size=d.width&&d.height?` · ${d.width}×${d.height}`:'';
-    return `<option value="${d.index}">摄像头 ${d.index}${size}</option>`;
-  }).join('');
-  select.value=String(S.cameraIndex);
-  if(select.value!==String(S.cameraIndex))select.selectedIndex=0;
+  S.cameraDevice=String(data.camera_device??S.cameraDevice??S.cameraIndex);
+  const list=devices?.length?[...devices]:[];
+  if(!list.some(d=>String(d.id??d.index)===S.cameraDevice))
+    list.unshift(S.cameraDevice.startsWith('kinect2:')?{id:S.cameraDevice,name:'微软 Kinect'}:{index:S.cameraIndex});
+  select.replaceChildren(...list.map(d=>{
+    const option=document.createElement('option');option.value=String(d.id??d.index);
+    const size=d.width&&d.height?' · '+d.width+'×'+d.height:'';
+    option.textContent=(d.name||'摄像头 '+d.index)+size;return option;
+  }));
+  select.value=S.cameraDevice;
+}
+
+export function renderCameraDepth(data){
+  if(data?.depth_supported!==undefined)S.cameraDepthSupported=!!data.depth_supported;
+  if(data?.depth_enabled!==undefined)S.cameraDepthEnabled=!!data.depth_enabled;
+  const box=$('#cameraDepth');if(box)box.checked=S.cameraDepthEnabled!==false;
+  syncCameraDeviceRow();
 }
 
 export function syncCameraDeviceRow(){
   const computer=($('#poseSource')?.value||'computer')==='computer';
   for(const id of ['cameraDeviceRow','cameraScanRow','cameraRotationRow']){const el=$('#'+id);if(el)el.hidden=!computer}
+  const row=$('#cameraDepthRow');if(row)row.hidden=!(computer&&S.cameraDepthSupported);
 }
 
 function renderXinputStatus(s=output.xinputStatus){if(document.activeElement?.closest('#outputSettings'))return;const select=$('#xinputMerge'),line=$('#xinputStatus');if(!select||!line)return;const users=Array.isArray(s?.connected_users)?s.connected_users:[];const current=s?.enabled&&s?.selected_user!==null&&s?.selected_user!==undefined?String(s.selected_user):'';const values=[['','关闭']];for(const user of users)values.push([String(user),`手柄 ${Number(user)+1}`]);if(current&&!values.some(([v])=>v===current))values.push([current,`手柄 ${Number(current)+1}（未连接）`]);const keep=current&&values.some(([v])=>v===current);select.replaceChildren(...values.map(([value,label])=>{const o=document.createElement('option');o.value=value;o.textContent=label;return o}));select.value=keep?current:(s?.enabled?'':'');output.xinputEnabled=!!s?.enabled;output.xinputUser=s?.selected_user??null;output.xinputMotionLeft=!!s?.motion_left_enabled;renderXinputMotionLeft();line.textContent=!s?.enabled?'':(s?.connected?`已合流 · 手柄 ${Number(s.active_user??s.selected_user)+1}`:'等手柄连上');if(s?.last_error)line.textContent+=(line.textContent?' · ':'')+s.last_error;line.className='sub'+(s?.enabled&&!s?.connected?' warn':'')}

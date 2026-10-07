@@ -1,7 +1,7 @@
 // 开始页：画面、区域框、准备卡片、触发大字、挪动区域、悬浮窗。
 import {renderIntent,renderMisfireHint,renderZoneFit,renderZoneFreeze} from './body.js';
 import {$,agoText,api,clamp,fitCanvas,isVisible,notice,post,setAttribute,setClass,setProperty,setStyle,setText,syncChildren} from './core.js';
-import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMerge,syncCameraDeviceRow} from './devices.js';
+import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMerge,renderCameraDepth,syncCameraDeviceRow} from './devices.js';
 import {renderTriggerRecord} from './diagnostics.js';
 import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseCountdown,paintPoseLibrary} from './library.js';
@@ -302,7 +302,7 @@ export function renderKernelState(runtime,force=false){
     }
   }
   const camera=runtime?.camera||{running:cameraRunning};
-  cameraRunning=!!camera.running;if(runtime?.camera)cameraInfo=runtime.camera;
+  cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
   sessionStarted=sourceMode==='phone'?true:cameraRunning;
   if(S.desiredSource===null)setProperty($('#poseSource'),'value',sourceMode);
   const computer=$('#poseSource').value==='computer';

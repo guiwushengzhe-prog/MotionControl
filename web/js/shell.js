@@ -3,7 +3,7 @@ import {createTutorial} from '../tutorial.js';
 import {fistHands,intentAction,renderBodyDescs,zoneFit} from './body.js';
 import {cloudRefresh,loadCloudEndpoint} from './cloud.js';
 import {$,api,autosaver,clamp,configurationOperation,isVisible,notice,post} from './core.js';
-import {emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow,updateInputConfig,updateOutputConfig} from './devices.js';
+import {emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraDepth,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow,updateInputConfig,updateOutputConfig} from './devices.js';
 import {cancelPoseRecord,refreshPoseRecord,refreshRecordings,refreshTriggerRecord,startPoseRecord} from './diagnostics.js';
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
@@ -62,7 +62,7 @@ function tutorialState(){
   return {
     view:currentView,source:sourceMode,sourcePick:$('#poseSource')?.value||sourceMode,
     cameraReady:sourceMode==='phone'?phoneLive:computerLive,
-    cameraRunning,cameraIndex:cameraInfo?.camera_index??S.cameraIndex,cameraError:cameraRunning?'':String(cameraInfo?.last_error||''),
+    cameraRunning,cameraIndex:cameraInfo?.depth_supported?cameraInfo.camera_device:(cameraInfo?.camera_index??S.cameraIndex),cameraError:cameraRunning?'':String(cameraInfo?.last_error||''),
     // 模型路径随第一次状态一起来；还没来之前是「不知道」，不能当成「没装」。
     modelOk:cameraInfo?!!cameraInfo.model_path:null,
     scan:cameraScan.state,scanCount:cameraScan.count,
@@ -346,9 +346,12 @@ $('#poseSource').addEventListener('change',()=>{
 });
 
 $('#cameraDevice').addEventListener('change',e=>runAction(async()=>{
-  const data=await post('/api/camera/config',{index:Number(e.target.value)});
-  S.cameraIndex=Number(data.camera_index??e.target.value);
-  notice('已选摄像头 '+S.cameraIndex+'，点「连接」看画面对不对');
+  try{
+    const data=await post('/api/camera/config',{device:e.target.value});
+    S.cameraIndex=Number(data.camera_index);S.cameraDevice=String(data.camera_device);
+    renderCameraDepth(data);
+    notice('已选择'+(data.depth_supported?'微软 Kinect':'摄像头 '+S.cameraIndex)+'，点「连接」看画面');
+  }finally{await refreshCameraConfig()}
 }));
 
 // 按钮和新手教学用的是同一个扫描：结果记在 cameraScan 里，教学据此判断这台电脑有几个摄像头。
@@ -358,7 +361,7 @@ async function scanCameras(){
   const status=$('#cameraScanStatus');if(status)status.textContent='正在逐个尝试，可能要几秒…';
   try{
     const data=await api('/api/camera/devices',{timeoutMs:60000});
-    renderCameraDevices(data.devices,data.camera_index);
+    renderCameraDevices(data.devices,data.camera_index,data);
     const n=(data.devices||[]).length;
     Object.assign(cameraScan,{state:'done',count:n,error:''});
     if(!status)return;
@@ -368,6 +371,14 @@ async function scanCameras(){
 }
 
 bind('cameraScanBtn',scanCameras);
+
+$('#cameraDepth').addEventListener('change',e=>runAction(async()=>{
+  try{
+    const data=await post('/api/camera/config',{depth_enabled:!!e.target.checked},60000);
+    renderCameraDepth(data);await refreshKernel();
+    notice(data.depth_enabled?'已开启深度':'已关闭深度');
+  }finally{await refreshCameraConfig()}
+}));
 
 // 开启要启动电脑摄像头和识别模型，十几秒都正常。
 bind('stereoToggleBtn',async()=>{

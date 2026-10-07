@@ -185,6 +185,7 @@
 <div class="list">
 <div class="row"><label class="row-main" for="poseSource">来源</label><span class="sel"><select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
 <div class="row" id="cameraDeviceRow"><label class="row-main" for="cameraDevice">使用的摄像头</label><span class="sel"><select id="cameraDevice"></select></span><button class="btn" id="cameraScanBtn" title="有外接、采集卡、虚拟摄像头时，扫一遍列出来">扫描</button></div>
+<div class="row" hidden="" id="cameraDepthRow"><label class="row-main" for="cameraDepth"><span class="name">使用深度</span><span class="sub">辅助判断抬脚高度</span></label><input class="switch" id="cameraDepth" type="checkbox" checked=""/></div>
 <div class="row-note" id="cameraScanRow"><span class="fineprint" id="cameraScanStatus"></span></div>
 <div class="row" id="cameraRotationRow"><label class="row-main" for="cameraRotation">画面方向</label><span class="sel"><select id="cameraRotation"><option value="auto">自动转正</option><option value="none">不旋转</option><option value="cw">顺时针 90°</option><option value="ccw">逆时针 90°</option><option value="180">180°</option></select></span></div>
 <div class="row"><div class="row-main"><span class="name">识别</span><span class="sub" id="recognitionStatus">未开始</span></div><button class="btn" hidden="" id="sourceStopBtn">停止</button><button class="btn primary" id="sourceStartBtn">连接</button></div>

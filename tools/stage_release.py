@@ -50,7 +50,7 @@ CONFIG_FILES = (
     "voice_commands_v094.json",
 )
 # 语音识别直接使用随包的 Vosk 模型，不再打包 Windows 系统语音桥接脚本。
-RUNTIME_FILES = ("motioncontrol/windows_firewall.ps1",)
+RUNTIME_FILES = ("motioncontrol/windows_firewall.ps1", "tools/kinect_camera/KinectCamera.cs")
 
 # Configuration that belongs to the bundle, not to the repository: it points at
 # paths *inside* the release.  The repo's copies point at a developer's machine

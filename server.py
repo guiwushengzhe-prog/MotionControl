@@ -2057,7 +2057,11 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "camera config is loopback-only"}, 403)
                 return
             try:
-                if "index" in body or "camera_index" in body:
+                if "device" in body:
+                    data = RUNTIME.camera.set_camera_device(body["device"])
+                elif "depth_enabled" in body:
+                    data = RUNTIME.configure_camera_depth(body["depth_enabled"])
+                elif "index" in body or "camera_index" in body:
                     data = RUNTIME.configure_camera_index(body.get("index", body.get("camera_index")))
                 elif "rotation" in body:
                     data = RUNTIME.camera.set_rotation(body.get("rotation"))

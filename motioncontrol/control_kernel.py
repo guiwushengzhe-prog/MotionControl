@@ -13,6 +13,7 @@ import math
 import os
 import statistics
 import sys
+import subprocess
 import threading
 import time
 from collections import Counter, deque
@@ -45,6 +46,8 @@ from motioncontrol.zone_arbiter import (
 )
 from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.responsive_march import ResponsiveMarch
+from motioncontrol.depth_march import DepthMarchLifts
+from motioncontrol import kinect_camera
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
     foot_floor_y, foot_out, is_default, normalize_zone_fit,
@@ -617,6 +620,9 @@ class ControlKernel:
         self.step = _fresh_step()
         self.march_algorithm = "legacy"
         self._responsive_march = ResponsiveMarch()
+        self._depth_march = DepthMarchLifts()
+        self.latest_depth_body = None
+        self.march_depth_source = "image"
         # 脚：站着时的基准、最近 0.3 秒的样子、这一帧算出来的离地和往外。见 _update_feet_locked。
         self.foot_base: dict[str, float] | None = None
         self.foot_history: list[tuple[float, float, float, float]] = []
@@ -1143,6 +1149,7 @@ class ControlKernel:
         height: int = 480,
         world_pose: dict[str, dict] | list[dict] | None = None,
         hands: dict[str, list[dict]] | None = None,
+        depth_body: dict | None = None,
         captured_at_ms: float | None = None,
         sample_at: float | None = None,
         return_status: bool = True,
@@ -1172,6 +1179,7 @@ class ControlKernel:
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
             self.latest_world_pose = copy.deepcopy(world_pose) if world_pose else None
+            self.latest_depth_body = copy.deepcopy(depth_body) if depth_body else None
             # Read back out inside _process_pose_locked rather than threaded
             # through it: that hook still has callers passing positional
             # arguments only, and this keeps them working untouched.
@@ -2489,6 +2497,12 @@ class ControlKernel:
         knee_near_elbow = {side: any(rules[ident].get("attempts", {}).get(side, False) for ident in lift_claimers_bound)
                            for side in ("left", "right")}
 
+        march_lifts = self._depth_march.update(self.latest_depth_body, self.feet["lift"] if self.feet else None, now)
+        self.march_depth_source = self._depth_march.source
+        if self._depth_march.source_changed:
+            self._responsive_march.reset()
+            self.step.clear()
+            self.step.update(_fresh_step())
         leg_good = math.isfinite(torso) and self._points_good(pose_map, ("left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle"))
         if leg_good:
             def rise(side: str, other: str, joint: str) -> float:
@@ -2529,7 +2543,7 @@ class ControlKernel:
                 # 后抬，还是看相对胯的脚踝和膝盖，那几个门槛是照它量的。
                 ankle = rise(side, other, "ankle")
                 knee = rise(side, other, "knee")
-                raised = self._foot_lift(side)
+                raised = march_lifts.get(side) if march_lifts else None
                 key = side + "_lift"
                 if raised is None:
                     # 脚看不清，或者人还没站稳过一次：这一帧不算抬也不算落。
@@ -2622,7 +2636,7 @@ class ControlKernel:
                 excluded = {side for side in ("left", "right")
                             if self._foot_outward(pose_map, side) or knee_meets_elbow[side] or knee_near_elbow[side]}
                 march_raw = self._responsive_march.update(
-                    self.feet["lift"] if self.feet else None, now,
+                    march_lifts, now,
                     excluded=excluded, blocked=steps_blocked or calf_raw or calf_in_progress or cross_attempting,
                     jumping=jumping,
                 )
@@ -3226,6 +3240,8 @@ class ControlKernel:
         self._responsive_march.reset()
         self.foot_history.clear()
         self.feet = None
+        self._depth_march.reset()
+        self.march_depth_source = "image"
         self.step.clear()
         self.step.update(_fresh_step())
         self.head_controller.reset_tracking()
@@ -3244,6 +3260,9 @@ class ControlKernel:
             self.head_controller.cancel_center("人体来源已断开")
         self.latest_pose = None
         self.latest_world_pose = None
+        self.latest_depth_body = None
+        self._depth_march.reset()
+        self.march_depth_source = "image"
         self.latest_hands = None
         self.pose_last_valid_at = 0.0
         self._clear_body_outputs_locked()
@@ -3366,6 +3385,7 @@ class ControlKernel:
             # them so calibration diagnostics can distinguish a missing world
             # stream from a rejected personal template.
             "world_pose_available": bool(self.latest_world_pose),
+            "march_depth_source": self.march_depth_source,
             "zones": zones,
             "buttons": self._pressed_keys_locked(),
             "motions": sorted(self.motion_active),
@@ -3500,9 +3520,20 @@ class NativeCameraService:
         # 不写死 0。一台电脑上可以有好几个摄像头（内置的、外接的、虚拟的），
         # 而 0 号未必是对着人的那个——以前这个数字没有任何地方能改，插了采集卡
         # 或者装了 OBS 虚拟摄像头的人就只能对着一块黑屏，没有别的办法。
+        explicit_camera_index = camera_index is not None
         if camera_index is None:
             camera_index = self._remembered("camera_index", 0)
         self.camera_index = max(0, min(self.MAX_CAMERA_INDEX, int(camera_index)))
+        self.camera_device = str(self.camera_index if explicit_camera_index else self._remembered("camera_device", self.camera_index))
+        if not self.camera_device.startswith(kinect_camera.PREFIX):
+            self.camera_device = str(self.camera_index)
+        self.depth_preferences = self._remembered("camera_depth_preferences", {})
+        if not isinstance(self.depth_preferences, dict):
+            self.depth_preferences = {}
+        self.depth_active = False
+        self.depth_error = None
+        self._latest_depth = None
+        self._latest_rotation = "none"
         # 笔记本立起来用、或者摄像头侧装时，画面是横躺的；人躺着，所有"上下"判定全错。
         # 读帧后立刻转正，识别、预览、宽高都只见到转正后的这一张。
         # rotation 是用户的设置（auto 或固定方向）；applied_rotation 是此刻真正在转的方向。
@@ -3602,7 +3633,7 @@ class NativeCameraService:
 
     @staticmethod
     def _backend_display_name(backend: str | None) -> str | None:
-        return {"auto": "Auto", "msmf": "MSMF", "dshow": "DirectShow"}.get(backend, backend)
+        return {"auto": "Auto", "msmf": "MSMF", "dshow": "DirectShow", "kinect": "微软 Kinect"}.get(backend, backend)
 
     @staticmethod
     def _decode_fourcc(value) -> str | None:
@@ -3639,7 +3670,7 @@ class NativeCameraService:
             return {}
 
     def _save_backend_cache(self, actual_capture_fps: float | None = None) -> None:
-        if not self.selected_backend or self.selected_backend in {self.BACKEND_AUTO, "default"}:
+        if self.depth_supported or not self.selected_backend or self.selected_backend in {self.BACKEND_AUTO, "default"}:
             return
         path = self._backend_cache_path()
         data = {
@@ -3684,15 +3715,55 @@ class NativeCameraService:
         if not 0 <= index <= self.MAX_CAMERA_INDEX:
             raise CameraUnavailable(f"摄像头序号只能是 0 到 {self.MAX_CAMERA_INDEX}")
         with self._lock:
-            if self._session is not None and index != self.camera_index:
+            if self._session is not None and (index != self.camera_index or self.depth_supported):
                 raise CameraUnavailable("摄像头运行中不能换摄像头，请先停止识别")
-            if index != self.camera_index:
+            if index != self.camera_index or self.depth_supported:
+                self.camera_device = str(index)
+                self._remember("camera_device", self.camera_device)
                 self.camera_index = index
                 self.selected_backend = None
                 self.selected_backend_name = None
                 self.selected_fourcc = None
                 self._last_probe_results = []
                 self._remember("camera_index", index)
+            return self.backend_config()
+
+    @property
+    def depth_supported(self):
+        return self.camera_device.startswith(kinect_camera.PREFIX)
+
+    @property
+    def depth_enabled(self):
+        return self.depth_supported and self.depth_preferences.get(self.camera_device, True) is not False
+
+    def set_camera_device(self, device):
+        device = str(device)
+        if not device.startswith(kinect_camera.PREFIX):
+            return self.set_camera_index(device)
+        if not device[len(kinect_camera.PREFIX):] or len(device) > 100:
+            raise CameraUnavailable("摄像头设备编号无效")
+        with self._lock:
+            if self._session is not None and device != self.camera_device:
+                raise CameraUnavailable("请先停止识别，再切换摄像头")
+            self.camera_device = device
+            self._remember("camera_device", device)
+            self.selected_backend = self.selected_backend_name = self.selected_fourcc = None
+            self.depth_active = False
+            self.depth_error = None
+            return self.backend_config()
+
+    def configure_depth(self, enabled):
+        if not isinstance(enabled, bool):
+            raise CameraUnavailable("深度开关必须为开或关")
+        with self._lock:
+            if not self.depth_supported:
+                raise CameraUnavailable("当前摄像头不支持深度")
+            if self._session is not None:
+                raise CameraUnavailable("请先停止识别，再切换深度")
+            self.depth_preferences[self.camera_device] = enabled
+            self._remember("camera_depth_preferences", self.depth_preferences)
+            self.depth_active = False
+            self.depth_error = None
             return self.backend_config()
 
     # 顺时针转几个 90°。
@@ -3803,7 +3874,7 @@ class NativeCameraService:
         api = self._backend_api(cv2, self.BACKEND_DSHOW)
         devices: list[dict] = []
         for index in range(limit + 1):
-            if running and index == current:
+            if running and not self.depth_supported and index == current:
                 devices.append({"index": index, "width": self.capture_width,
                                 "height": self.capture_height, "in_use": True})
                 continue
@@ -3825,13 +3896,26 @@ class NativeCameraService:
                         capture.release()
                     except Exception:
                         pass
-        return {"devices": devices, "camera_index": current, "scanned_to": limit}
+        if running and self.depth_supported:
+            devices.append({"id": self.camera_device, "name": "微软 Kinect", "depth_supported": True,
+                            "width": self.capture_width, "height": self.capture_height, "in_use": True})
+        else:
+            try:
+                devices.extend(kinect_camera.list_devices())
+            except (RuntimeError, OSError, ValueError, subprocess.SubprocessError):
+                pass
+        return {"devices": devices, "camera_index": current, "camera_device": self.camera_device, "scanned_to": limit}
 
     def backend_config(self) -> dict:
         with self._lock:
             cache = self._load_backend_cache()
             return {
                 "camera_index": self.camera_index,
+                "camera_device": self.camera_device,
+                "depth_supported": self.depth_supported,
+                "depth_enabled": self.depth_enabled,
+                "depth_active": self.depth_active,
+                "depth_error": self.depth_error,
                 "max_camera_index": self.MAX_CAMERA_INDEX,
                 "rotation": self.rotation,
                 "applied_rotation": self.applied_rotation,
@@ -4040,6 +4124,31 @@ class NativeCameraService:
             return self._probe_candidates(cv2, duration_s)
 
     def _select_capture(self, cv2):
+        self.requested_width = self.REQUESTED_WIDTH
+        self.requested_height = 360 if self.depth_supported else self.REQUESTED_HEIGHT
+        self.requested_fps = 30 if self.depth_supported else self.REQUESTED_FPS
+        if self.depth_supported:
+            capture = None
+            try:
+                capture = kinect_camera.KinectCapture(self.camera_device, depth_enabled=self.depth_enabled)
+                ok, first_frame = capture.read()
+                if not ok:
+                    raise CameraUnavailable(capture.last_error or "微软 Kinect 未收到画面")
+                actual_id = capture.metadata["device_id"]
+                if self.camera_device.endswith(":default"):
+                    enabled = self.depth_enabled
+                    self.camera_device = actual_id
+                    self.depth_preferences[actual_id] = enabled
+                    self._remember("camera_device", actual_id)
+                    self._remember("camera_depth_preferences", self.depth_preferences)
+                self.selected_backend = self.selected_backend_name = "kinect"
+                self.selected_fourcc = "BGR"
+                self.actual_capture_fps = None
+                return capture, first_frame
+            except Exception as exc:
+                if capture is not None:
+                    capture.release()
+                raise CameraUnavailable(str(exc)) from exc
         preference = self.backend_preference
         cache = self._load_backend_cache() if preference == self.BACKEND_AUTO else {}
         if cache:
@@ -4202,6 +4311,8 @@ class NativeCameraService:
             # complete. A new start cannot race release() or clear_source().
             self.running = False
             self._latest_frame = None
+            self._latest_depth = None
+            self.depth_active = False
             self._preview_jpeg = None
         try:
             session.capture.release()
@@ -4236,13 +4347,15 @@ class NativeCameraService:
             while not session.stop.wait(0.001):
                 ok, frame = session.capture.read()
                 if not ok:
-                    self._fail_session(session, "电脑摄像头读取失败")
+                    self._fail_session(session, getattr(session.capture, "last_error", "") or "电脑摄像头读取失败")
                     break
-                code = rotate_codes.get(self.applied_rotation)
+                frame_rotation = self.applied_rotation
+                code = rotate_codes.get(frame_rotation)
                 if code is not None:
                     frame = cv2.rotate(frame, code)
                 height, width = frame.shape[:2]
-                captured_at = time.monotonic()
+                depth_metadata = session.capture.metadata if isinstance(session.capture, kinect_camera.KinectCapture) else None
+                captured_at = depth_metadata["sample_at"] if depth_metadata else time.monotonic()
                 with self._condition:
                     if session.stop.is_set() or self._session is not session:
                         break
@@ -4251,6 +4364,10 @@ class NativeCameraService:
                     if self._latest_frame is not None and self._latest_sequence > self._last_inference_sequence:
                         self.dropped_frames += 1
                     self._latest_frame = frame
+                    self._latest_depth = depth_metadata
+                    self._latest_rotation = frame_rotation
+                    self.depth_active = bool(self.depth_enabled and depth_metadata and depth_metadata.get("depth_valid"))
+                    self.depth_error = "深度暂不可用，继续通过画面识别" if self.depth_enabled and depth_metadata and not self.depth_active else None
                     self._latest_sequence += 1
                     self._latest_capture_at = captured_at
                     self.capture_width, self.capture_height = int(width), int(height)
@@ -4273,6 +4390,8 @@ class NativeCameraService:
                         break
                     sequence = self._latest_sequence
                     frame = self._latest_frame
+                    depth_metadata = self._latest_depth
+                    frame_rotation = self._latest_rotation
                     captured_at = self._latest_capture_at
                     width, height = self.capture_width, self.capture_height
                     skipped = max(0, sequence - self._last_inference_sequence - 1)
@@ -4321,6 +4440,8 @@ class NativeCameraService:
                         self.kernel.handle_pose_map(
                             "computer_camera", pose_map, width=width, height=height,
                             world_pose=world_pose, sample_at=captured_at, return_status=False,
+                            **({"depth_body": kinect_camera.matching_depth_body(depth_metadata, pose_map, frame_rotation)}
+                               if depth_metadata else {}),
                         )
                     finished = time.monotonic()
                     inference_ms = (time.perf_counter() - started) * 1000.0
@@ -4409,6 +4530,8 @@ class NativeCameraService:
             # Clear before releasing admission/start protection. An old stop
             # must never clear a newly started session after its join finishes.
             self.kernel.clear_source("computer_camera")
+        if isinstance(session.capture, kinect_camera.KinectCapture):
+            session.capture.interrupt()
         deadline = time.monotonic() + 1.0
         for thread in session.threads:
             if thread.ident is not None and thread is not threading.current_thread():
@@ -4420,6 +4543,11 @@ class NativeCameraService:
             return {
                 "running": self.running, "lifecycle": self.lifecycle,
                 "camera_index": self.camera_index,
+                "camera_device": self.camera_device,
+                "depth_supported": self.depth_supported,
+                "depth_enabled": self.depth_enabled,
+                "depth_active": self.depth_active,
+                "depth_error": self.depth_error,
                 "frames": self.frames, "last_frame_age_ms": round(max(0.0, (time.monotonic() - self.last_frame_at) * 1000.0)) if self.last_frame_at else None,
                 "captured_frames": self._latest_sequence,
                 "last_error": self.last_error, "model_path": str(self.model_path) if self.model_path else None,
@@ -4473,6 +4601,8 @@ class NativeCameraService:
                 "preview_jpeg_avg_bytes": round(sum(self._preview_sizes) / len(self._preview_sizes)) if self._preview_sizes else None,
                 "preview_last_age_ms": round(max(0.0, (now - self._preview_at) * 1000.0)) if self._preview_at else None,
                 "running": bool(self.running),
+                "depth_active": self.depth_active,
+                "depth_error": self.depth_error,
                 "lifecycle": self.lifecycle,
                 "last_error": self.last_error,
             }
@@ -4521,6 +4651,22 @@ class LocalControlRuntime:
 
     def camera_backend_config(self) -> dict:
         return self.camera.backend_config()
+
+    def configure_camera_depth(self, enabled) -> dict:
+        if not isinstance(enabled, bool):
+            raise CameraUnavailable("深度开关必须为开或关")
+        with self._lock:
+            if not self.camera.depth_supported:
+                raise CameraUnavailable("当前摄像头不支持深度")
+            running = self.camera.running
+            if running:
+                self.camera.stop()
+                if self.camera._session is not None:
+                    raise CameraUnavailable("摄像头尚未停止，请稍后重试")
+            self.camera.configure_depth(enabled)
+            if running:
+                self.camera.start()
+            return self.camera.backend_config()
 
     def configure_camera_index(self, index) -> dict:
         return self.camera.set_camera_index(index)
