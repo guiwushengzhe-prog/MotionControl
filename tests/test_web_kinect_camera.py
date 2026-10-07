@@ -43,3 +43,55 @@ def test_kinect_select_depth_toggle_and_regular_camera_ui(desktop):
     assert {'device':'kinect2:camera-one'} in requests
     assert {'device':'0'} in requests
     assert desktop.errors == []
+
+
+def test_kinect_video_pose_zones_and_editing_share_display_direction(desktop):
+    page, api = desktop.page, desktop.api
+    # 同一份识别坐标在两种显示方向下，视频、骨骼、圈、悬浮窗和编辑必须一致。
+    rect = {"x1": .2, "x2": .35, "y1": .3, "y2": .5}
+    api.runtime["kernel"].update(
+        pose={"right_wrist": {"x": .25, "y": .4, "score": 1}},
+        zones={"rightHand": {"rect": rect, "pressed": True}},
+    )
+    for source, backend, mirrored in (
+        ("computer", "kinect", False),
+        ("computer", "dshow", True),
+        ("phone", "kinect", True),
+        ("computer", "kinect", False),
+    ):
+        api.runtime.update(body_mode=source, camera={"running": False, "backend": backend})
+        result = page.evaluate("""async runtime=>{
+          const p=await import('/js/play.js');
+          const c=document.createElement('canvas'),ctx=c.getContext('2d');
+          const marks={points:[],zones:[]};
+          const arc=ctx.arc.bind(ctx),roundRect=ctx.roundRect.bind(ctx);
+          ctx.arc=(x,y,...args)=>{
+            const m=ctx.getTransform();marks.points.push((m.a*x+m.e)/c.width);
+            return arc(x,y,...args);
+          };
+          ctx.roundRect=(x,y,...args)=>{marks.zones.push(x/c.width);return roundRect(x,y,...args)};
+          Object.assign(p.overlay,{win:{closed:false},canvas:c,ctx});
+          p.renderKernelState(runtime);
+          document.querySelector('#cameraPreview').hidden=false;
+          const layers=['#cameraPreview','#canvas','.zones','.zone[data-zone="rightHand"]'];
+          marks.layers=layers.map(s=>{
+            const t=getComputedStyle(document.querySelector(s)).transform;
+            return t==='none'?1:new DOMMatrix(t).a;
+          });
+          const r=structuredClone(runtime.kernel.zones.rightHand.rect);
+          p.rectEdit.rects.rightHand=r;
+          p.nudgeRect('rightHand','ArrowRight',false);
+          marks.movedX=p.rectEdit.rects.rightHand.x1;
+          p.nudgeRect('rightHand','ArrowRight',true);
+          marks.resized=p.rectEdit.rects.rightHand;
+          Object.assign(p.overlay,{win:null,canvas:null,ctx:null});
+          return marks;
+        }""", api.runtime)
+        sign = -1 if mirrored else 1
+        assert result["layers"] == [sign] * 4
+        assert abs(result["points"][0] - (.75 if mirrored else .25)) < 1e-6
+        assert abs(result["zones"][0] - (.65 if mirrored else .2)) < 1e-6
+        assert abs(result["movedX"] - (.19 if mirrored else .21)) < 1e-6
+        assert abs(result["resized"]["x1"] - (.18 if mirrored else .21)) < 1e-6
+        assert abs(result["resized"]["x2"] - (.34 if mirrored else .37)) < 1e-6
+    assert desktop.errors == []
