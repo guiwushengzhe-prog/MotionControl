@@ -1,0 +1,45 @@
+<p class="pane-sub">把游戏画面和体感摄像头一起保存，也可把处理后的人物叠到直播画面。</p>
+<div class="studio-workspace">
+  <div class="studio-preview-column">
+    <div class="studio-preview" id="studioPreviewBox">
+      <canvas id="studioCanvas" width="1280" height="720" aria-label="录制合成预览"></canvas>
+      <div class="studio-placeholder" id="studioPlaceholder">先开启人物预览，再选择要录制的屏幕或游戏窗口</div>
+      <span class="studio-recording-badge" id="studioRecordingBadge" hidden>● 录制中 <b id="studioElapsed">00:00</b></span>
+    </div>
+    <div class="studio-actions">
+      <button class="btn" id="studioPreviewBtn">开启人物预览</button>
+      <button class="btn primary" id="studioStartBtn">选择画面并录制</button>
+      <button class="btn stop" id="studioStopBtn" hidden>停止并保存</button>
+      <button class="btn link" id="studioBrowserAltBtn">在浏览器中录制</button>
+    </div>
+    <p class="statusline" id="studioStatus" role="status" aria-live="polite">未开启；不会自动录制</p>
+    <p class="sub" id="studioAudioStatus"></p>
+    <p class="sub" id="studioPortraitStatus"></p>
+    <p class="sub" id="studioSavedFile"></p>
+    <div class="studio-browser-hint" id="studioBrowserHint" hidden>
+      <p>当前桌面窗口不支持选取屏幕。请在浏览器中打开这个录制页，体感控制仍由原程序运行。</p>
+      <button class="btn" id="studioOpenBrowserBtn">在浏览器中打开录制页</button>
+    </div>
+  </div>
+  <div class="studio-controls">
+    <div class="group"><h2 class="group-title">画面与人物</h2><div class="list">
+      <div class="row"><label class="row-main" for="studioLayout">画面比例</label><span class="sel"><select id="studioLayout"><option value="landscape">横屏 · 1280 × 720</option><option value="portrait">竖屏 · 720 × 1280</option></select></span></div>
+      <div class="row"><label class="row-main" for="studioCapture">优先选择</label><span class="sel"><select id="studioCapture"><option value="window">游戏窗口</option><option value="monitor">屏幕</option></select></span></div>
+      <div class="row"><label class="row-main" for="studioSource">体感摄像头</label><span class="sel"><select id="studioSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
+      <div class="row"><label class="row-main" for="studioPosition">人物位置</label><span class="sel"><select id="studioPosition"><option value="bottom-right">右下角</option><option value="bottom-left">左下角</option><option value="top-right">右上角</option><option value="top-left">左上角</option></select></span></div>
+      <div class="row"><label class="row-main" for="studioSize">人物大小</label><span class="range-in"><input id="studioSize" type="range" min="15" max="65" step="1" value="30"/><b id="studioSizeValue">30%</b></span></div>
+      <div class="row"><label class="row-main" for="studioFace">人脸</label><span class="sel"><select id="studioFace"><option value="original">原样</option><option value="mask">纯色遮盖</option><option value="avatar">图片头像</option></select></span></div>
+      <div class="row studio-avatar-row" id="studioAvatarRow" hidden><label class="row-main" for="studioAvatar">选择头像图片</label><input id="studioAvatar" type="file" accept="image/png,image/jpeg,image/webp" aria-label="选择头像图片"/><span class="sub" id="studioAvatarStatus"></span></div>
+      <div class="row"><label class="row-main" for="studioBackground">人物背景</label><span class="sel"><select id="studioBackground"><option value="original">原样</option><option value="green">绿幕</option><option value="transparent">去掉背景</option></select></span></div>
+    </div><p class="group-foot">复用已连接的体感摄像头。遮脸时无法定位人脸会隐藏人物，避免露出原脸。</p></div>
+    <div class="group"><h2 class="group-title">录制声音</h2><div class="list">
+      <div class="row"><label class="row-main" for="studioSystemAudio">电脑声音</label><input class="switch" id="studioSystemAudio" type="checkbox" checked/></div>
+      <div class="row"><label class="row-main" for="studioMicrophone">麦克风</label><input class="switch" id="studioMicrophone" type="checkbox"/></div>
+    </div><p class="group-foot">电脑声音还需在浏览器选取画面时允许共享；是否收到了声音会显示在预览下方。</p></div>
+  </div>
+</div>
+<div class="group"><h2 class="group-title">保存与直播</h2><div class="list">
+  <div class="row"><div class="row-main"><span class="name">录制文件</span><span class="sub">录制时分段写入本机，不把整段视频留在内存</span></div><button class="btn" id="studioOpenFolderBtn">打开输出文件夹</button></div>
+  <div class="row studio-overlay-row"><div class="row-main"><span class="name">直播人物画面</span><span class="sub">开启人物预览后，将下方地址添加为直播软件的“浏览器来源”。去掉背景后只保留人物。</span></div><button class="btn" id="studioCopyOverlayBtn">复制地址</button><a class="btn" id="studioOverlayLink" target="_blank" rel="noopener">预览人物画面</a></div>
+  <div class="row stack"><label class="visually-hidden" for="studioOverlayUrl">直播人物网页地址</label><input class="field" id="studioOverlayUrl" readonly/></div>
+</div></div>

@@ -555,6 +555,7 @@ class ControlKernel:
         self.hand_mouse_controller = HandMouseController()
         self.pose_recorder = PoseRecorder(_user_recordings_dir())
         self.trigger_recorder = TriggerRecorder(_user_recordings_dir() / "triggered")
+        self.fitness = None  # 服务器按需接入；采集线程只更新运动记录的内存。
         # 手机为主、电脑摄像头为第二视角时的真实前后深度；没开双目时它只是闲着。
         self.stereo = StereoDepth(_stereo_calibration_path())
         self.vertical_head_anchor_pitch: float | None = None
@@ -1659,6 +1660,8 @@ class ControlKernel:
             self._clear_body_outputs_locked()
             self._update_intent_recording_locked(None, now)
             self._record_trigger_frame_locked(None, now)
+            if self.fitness is not None:
+                self.fitness.observe_pose(None, now)
             return
         # Evaluated before anything else in the frame: the zone pass and the
         # final apply() both consult the engaged state, and they run at
@@ -1693,6 +1696,12 @@ class ControlKernel:
         self._update_body_motion_guard_locked(pose_map, now)
         self._update_head_locked(pose_map, now, world_pose)
         self._record_trigger_frame_locked(pose_map, now, world_pose)
+        if self.fitness is not None:
+            physical = {f"motion.{name}" for name in self.motion_active}
+            physical.update(f"pose.{name}" for name in self.pose_active)
+            physical.update(f"zone.{name}" for name, state in self.zone_state.items()
+                            if name != "lookGate" and state.get("pressed"))
+            self.fitness.observe_pose(pose_map, self._pose_sample_time_locked(now), actions=physical)
 
     def _record_trigger_frame_locked(self, pose_map, now, world_pose=None):
         if not self.trigger_recorder.config["enabled"]:
@@ -2567,6 +2576,11 @@ class ControlKernel:
 
             left_step = step_done("left", "right")
             right_step = step_done("right", "left")
+            if self.fitness is not None:
+                if left_step:
+                    self.fitness.step_event("left", now)
+                if right_step:
+                    self.fitness.step_event("right", now)
 
             def calf_side(side: str, other: str) -> bool:
                 lift = self.step.get(side + "_lift")
@@ -3240,6 +3254,8 @@ class ControlKernel:
         self.action_chain_result = self.action_chain.result()
 
     def _clear_body_locked(self) -> None:
+        if self.fitness is not None:
+            self.fitness.observe_pose(None, time.monotonic())
         if self.head_controller.calibrating:
             self.head_controller.cancel_center("人体来源已断开")
         self.latest_pose = None
@@ -3571,6 +3587,12 @@ class NativeCameraService:
         self._preview_times: deque[float] = deque(maxlen=120)
         self._preview_durations_ms: deque[float] = deque(maxlen=120)
         self._preview_sizes: deque[int] = deque(maxlen=120)
+        self._studio_enabled = False
+        self._studio_require_mask = False
+        self._studio_sample = None
+        self._studio_error = None
+        self._detector_masks_enabled = False
+        self._studio_switch_after = 0.0
 
     def _remembered(self, key: str, default):
         """内核那份 general_settings.json。拿不到就用默认值。
@@ -3897,6 +3919,7 @@ class NativeCameraService:
         self._preview_times.clear()
         self._preview_durations_ms.clear()
         self._preview_sizes.clear()
+        self._studio_sample = None
 
     def configure_model(self, model_path) -> None:
         with self._lock:
@@ -3915,6 +3938,7 @@ class NativeCameraService:
             from mediapipe.tasks.python import vision
         except Exception as exc:
             raise CameraUnavailable("本地 Python 未安装 mediapipe；电脑摄像头内核无法启动") from exc
+        segmentation_enabled = self._studio_require_mask
         options = vision.PoseLandmarkerOptions(
             base_options=python.BaseOptions(model_asset_path=str(self.model_path)),
             running_mode=vision.RunningMode.VIDEO,
@@ -3922,8 +3946,11 @@ class NativeCameraService:
             min_pose_detection_confidence=0.35,
             min_pose_presence_confidence=0.35,
             min_tracking_confidence=0.35,
+            output_segmentation_masks=segmentation_enabled,
         )
-        return mp, vision.PoseLandmarker.create_from_options(options)
+        detector = vision.PoseLandmarker.create_from_options(options)
+        self._detector_masks_enabled = segmentation_enabled
+        return mp, detector
 
     @staticmethod
     def _backend_api(cv2, backend: str):
@@ -4280,6 +4307,24 @@ class NativeCameraService:
                     self.skipped_frames += skipped
                 if frame is None:
                     continue
+                # 复用同一采集流；只有录制要求抠图时才启用模型的分割输出。
+                if (self._studio_require_mask != self._detector_masks_enabled
+                        and time.monotonic() >= self._studio_switch_after):
+                    try:
+                        mp, detector = self._create_detector()
+                    except Exception as exc:
+                        self._studio_error = str(exc)
+                        self._studio_switch_after = time.monotonic() + 5.0
+                    else:
+                        with self._condition:
+                            if session.stop.is_set() or self._session is not session:
+                                detector.close()
+                                break
+                            old_detector = session.detector
+                            session.mp, session.detector = mp, detector
+                            self._detector = detector
+                            self._studio_error = None
+                        old_detector.close()
                 started = time.perf_counter()
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = session.mp.Image(image_format=session.mp.ImageFormat.SRGB, data=rgb)
@@ -4336,6 +4381,22 @@ class NativeCameraService:
                     self._inference_durations_ms.append(inference_ms)
                     self._latencies_ms.append(self.last_latency_ms)
                     self.frames += 1
+                # 控制先提交，人像缓存随后更新；帧、点和遮罩来自同次识别。
+                if self._studio_enabled:
+                    masks = getattr(result, "segmentation_masks", None)
+                    try:
+                        mask = masks[0].numpy_view().copy() if masks else None
+                    except Exception as exc:
+                        # 可选录制失败不能中断正在进行的体感控制。
+                        mask = None
+                        self._studio_error = str(exc)
+                    with self._condition:
+                        if (self._studio_enabled and not session.stop.is_set()
+                                and self._session is session):
+                            self._studio_sample = {
+                                "frame": frame, "pose": pose_map, "mask": mask,
+                                "arrived_at": captured_at, "sequence": sequence,
+                            }
         except Exception as exc:
             self._fail_session(session, str(exc))
         finally:
@@ -4493,6 +4554,30 @@ class NativeCameraService:
         """Return the latest raw OpenCV frame (BGR) or None. Used by scene capture."""
         with self._lock:
             return self._latest_frame.copy() if self._latest_frame is not None else None
+
+    def studio_snapshot(self, *, require_mask=False, require_pose=False):
+        """返回同一帧的画面和识别结果；不打开第二个摄像头。"""
+        with self._condition:
+            self._studio_enabled = True
+            # 启用后保持到显式关闭，避免配置切换反复重建识别器。
+            self._studio_require_mask = self._studio_require_mask or bool(require_mask)
+            sample = self._studio_sample if require_mask or require_pose else {
+                "frame": self._latest_frame, "pose": None, "mask": None,
+                "arrived_at": self._latest_capture_at, "sequence": self._latest_sequence,
+            }
+            if not self.running or not sample or sample.get("frame") is None:
+                return None
+            if require_mask and sample.get("mask") is None:
+                return None
+            return {**sample, "frame": sample["frame"].copy()}
+
+    def release_studio(self):
+        with self._condition:
+            self._studio_enabled = False
+            self._studio_require_mask = False
+            self._studio_sample = None
+            self._studio_error = None
+            self._studio_switch_after = 0.0
 
 
 class LocalControlRuntime:

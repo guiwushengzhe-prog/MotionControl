@@ -12,6 +12,8 @@ import './js/diagnostics.js';
 import './js/library.js';
 import './js/macros.js';
 import './js/cloud.js';
+import './js/studio.js';
+import './js/fitness.js';
 import {init} from './js/shell.js';
 
 init();
