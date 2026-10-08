@@ -76,6 +76,41 @@ def test_pause_resume_lost_pose_and_stream_gap_do_not_backfill(factory):
     assert state["elapsed_seconds"] == pytest.approx(2)
 
 
+def test_recording_follows_actual_output_including_error_and_resumes_same_session(factory, tmp_path, monkeypatch):
+    from test_output_actions_v097 import manager
+
+    clock = Clock()
+    store = factory(clock)
+    output, mouse, _, _ = manager(tmp_path)
+    output.set_config(enabled=False)
+    try:
+        output.bind_control_listener(store.output_changed)
+        assert store.state()["status"] == "idle"
+        output.set_config(enabled=True)
+        session_id = store.state()["session_id"]
+        march_for(store, clock, .5)
+        output.set_config(enabled=True)  # 重复设置不能打断正在累计的基线。
+        clock.advance(.5)
+        store.observe_pose(pose(), clock.now, actions=("motion.march",))
+        assert store.state()["active_seconds"] == pytest.approx(1)
+        output.emergency_stop()
+        assert store.state()["status"] == "paused"
+        store.control({"action": "resume"})  # 独立的旧入口不能在控制暂停时偷开记录。
+        assert store.state()["status"] == "paused"
+        output.set_config(enabled=True)
+        assert store.state()["session_id"] == session_id
+        assert store.state()["status"] == "active"
+
+        def failure(*args):
+            raise RuntimeError("合成输出失败")
+        monkeypatch.setattr(mouse, "move", failure)
+        output.apply(1)
+        assert not output.enabled
+        assert store.state()["status"] == "paused"
+    finally:
+        output.close()
+
+
 def test_duplicate_backwards_steps_and_steps_while_paused_are_ignored(factory):
     clock = Clock()
     store = factory(clock)

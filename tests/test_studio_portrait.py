@@ -19,6 +19,22 @@ class Camera:
         pass
 
 
+def test_person_mirror_is_applied_once_after_mask_and_does_not_modify_source():
+    frame = np.zeros((20, 40, 3), dtype=np.uint8)
+    frame[:, :20] = [12, 30, 200]
+    frame[:, 20:] = [220, 80, 10]
+    mask = np.zeros((20, 40), dtype=np.float32)
+    mask[:, :20] = 1
+    original = frame.copy()
+    config = {"background": "transparent", "face": "original", "mirror": True}
+    mirrored, _ = render_portrait(frame, None, mask, config)
+    assert mirrored[10, 30].tolist() == [12, 30, 200, 255]
+    assert mirrored[10, 5].tolist() == [0, 0, 0, 0]
+    unmirrored, _ = render_portrait(frame, None, mask, {**config, "mirror": False})
+    assert unmirrored[10, 5].tolist() == [12, 30, 200, 255]
+    assert np.array_equal(frame, original)
+
+
 def test_cutout_alpha_and_green_background_use_same_segmentation():
     frame = np.full((64, 64, 3), 180, dtype=np.uint8)
     mask = np.zeros((64, 64), dtype=np.float32)

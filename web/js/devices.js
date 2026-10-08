@@ -2,13 +2,21 @@ import {renderRecognitionPerformance} from './recognition-models.js';
 // 设置 → 设备：摄像头、手机、麦克风、游戏输出。
 import {$,api,formatPerf,notice,post} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
-import {cameraRunning,renderKernelState,renderMainStatus,sourceMode,zoneEditMode} from './play.js';
+import {cameraRunning,renderKernelState,renderMainStatus,setPreviewMirror,sourceMode,zoneEditMode} from './play.js';
 import {runAction} from './shell.js';
 import {S,gameProfile,output} from './state.js';
 import {handMouseConfig} from './view-control.js';
 import {syncPhoneCode} from './phone-connect.js';
 
 let audioDevice='';
+$('#cameraMirror')?.addEventListener('change',async event=>{
+  const field=event.target,selected=field.checked;field.disabled=true;
+  try{
+    const result=await post('/api/studio/config',{mirror:selected});
+    setPreviewMirror(result.config.mirror,result.config_revision);
+  }catch(error){field.checked=!selected;notice('镜像设置未保存：'+error.message)}
+  finally{field.disabled=false}
+});
 // 急停真的被按了几次。教学的最后一步要认的是急停，不是随便哪种关掉输出。
 export const CAMERA_REQUEST_TIMEOUT=90000;
 export let emergencyStops=0;

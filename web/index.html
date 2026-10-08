@@ -77,6 +77,11 @@
 <div class="run-time" id="runElapsed">00:00</div>
 <p class="run-sub" id="runSub">F9 随时停</p>
 </section>
+<section class="card home-fitness" id="homeFitnessCard">
+<div class="card-head"><h2 class="card-title" id="homeFitnessTitle">今日运动</h2><button class="btn link" id="homeFitnessGo">查看记录</button></div>
+<div class="home-fitness-metrics"><div><b id="homeFitnessMinutes">—</b><span>活动分钟</span></div><div><b id="homeFitnessSteps">—</b><span>步数</span></div><div><b id="homeFitnessKcal">—</b><span>估算千卡</span></div></div>
+<p class="card-sub" id="homeFitnessHint">开始控制后自动记录</p>
+</section>
 <section class="card control-voice">
 <div class="card-head"><h2 class="card-title">语音</h2><span class="tag" id="voicePill">语音</span></div>
 <p class="card-sub" id="voiceStatus">正在检查…</p>
@@ -190,6 +195,7 @@
 <div class="row" hidden="" id="cameraDepthRow"><label class="row-main" for="cameraDepth"><span class="name">使用深度</span><span class="sub">辅助判断抬脚高度</span></label><input class="switch" id="cameraDepth" type="checkbox" checked=""/></div>
 <div class="row-note" id="cameraScanRow"><span class="fineprint" id="cameraScanStatus"></span></div>
 <div class="row" id="cameraRotationRow"><label class="row-main" for="cameraRotation">画面方向</label><span class="sel"><select id="cameraRotation"><option value="auto">自动转正</option><option value="none">不旋转</option><option value="cw">顺时针 90°</option><option value="ccw">逆时针 90°</option><option value="180">180°</option></select></span></div>
+<div class="row"><label class="row-main" for="cameraMirror"><span class="name">镜像画面</span><span class="sub">开始页、录制与直播人物画面保持一致</span></label><input class="switch" id="cameraMirror" type="checkbox" checked/></div>
 <div class="row"><div class="row-main"><span class="name">识别</span><span class="sub" id="recognitionStatus">未开始</span></div><button class="btn" hidden="" id="sourceStopBtn">停止识别</button><button class="btn primary" id="sourceStartBtn">开始识别</button></div>
 </div>
 <p class="group-foot warn" id="modelStatus"></p>

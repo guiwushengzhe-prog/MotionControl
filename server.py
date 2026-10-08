@@ -151,6 +151,7 @@ def _remember_output_speed() -> None:
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
 FITNESS = FitnessStore(user_path("fitness"))
 KERNEL.fitness = FITNESS
+OUTPUT.bind_control_listener(FITNESS.output_changed)
 PROFILE_UPDATE_LOCK = threading.RLock()
 INPUT_SOURCE_LOCK = threading.RLock()
 INPUT_STOP_LOCK = threading.Lock()
@@ -163,7 +164,8 @@ def runtime_status() -> dict:
     # Capture the revision with the state it describes; a poll started before
     # a successful configuration change cannot overwrite its response.
     with PROFILE_UPDATE_LOCK:
-        return {**RUNTIME.status(), "config_revision": CONFIG_REVISION}
+        return {**RUNTIME.status(), "config_revision": CONFIG_REVISION,
+                "preview_mirror": STUDIO.config["mirror"]}
 PROFILES = GameProfileStore(ROOT)
 KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
 
@@ -189,7 +191,6 @@ def emergency_stop_all() -> dict:
     if executor is not None:
         executor.invalidate()
     result = OUTPUT.emergency_stop()
-    FITNESS.output_changed(False)
     _broadcast_game_output_state()
     KERNEL.cancel_calibration("紧急停止")
     timer = globals().get("POSE_TIMER")
@@ -296,7 +297,6 @@ def execute_system_target(target: str, *, command_generation=None, command_actio
                 return {"executed": False, "reason": "操作已被停止或切换取消"}
             enabled = target == "OUTPUT.START" or (target == "OUTPUT.TOGGLE" and not OUTPUT.enabled)
             result = OUTPUT.set_config(enabled=enabled)
-            FITNESS.output_changed(enabled)
         _broadcast_game_output_state()
         return {"executed": True, **result}
     if target == "HEAD.CENTER":
@@ -628,7 +628,6 @@ def _instance_id() -> str:
 def _set_output_enabled(enabled: bool) -> dict:
     SYSTEM_COMMANDS.invalidate()
     result = OUTPUT.set_config(enabled=enabled)
-    FITNESS.output_changed(enabled)
     return result
 
 
@@ -1789,7 +1788,11 @@ class AdminHandler(_BaseHandler):
                     CLOUD_ACCOUNT.logout()
                     data = CLOUD_ACCOUNT.status()
                 elif route == "/api/studio/config":
-                    data = STUDIO.update(body)
+                    with PROFILE_UPDATE_LOCK:
+                        data = STUDIO.update(body)
+                        if "mirror" in body:
+                            CONFIG_REVISION += 1
+                        data["config_revision"] = CONFIG_REVISION
                 elif route == "/api/studio/video-demand":
                     data = STUDIO.demand(body.get("enabled"), body.get("client_id", "main"))
                 elif route == "/api/studio/recording/start":
@@ -2508,8 +2511,6 @@ class AdminHandler(_BaseHandler):
                         xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
                         physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
                     )
-                    if "enabled" in body:
-                        FITNESS.output_changed(bool(OUTPUT.enabled))
                 finally:
                     _remember_output_mode()
                     if any(key in body for key in _OUTPUT_SPEED_FIELDS):

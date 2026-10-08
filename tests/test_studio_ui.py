@@ -71,9 +71,9 @@ def studio_server():
                 if state["fail_config"]:
                     self.respond({"error": "设置保存失败"}, 500)
                 else:
-                    state["config"] = body
+                    state["config"].update(body)
                     state["revision"] += 1
-                    self.respond({"config": body})
+                    self.respond({"config": state["config"]})
             elif self.path == "/api/studio/recording/start":
                 self.respond({"id": "synthetic-video", "file_name": "synthetic.webm"})
             elif self.path == "/api/studio/recording/finish":
@@ -134,6 +134,61 @@ def test_cancel_never_creates_recording(browser, studio_server):
     page.click("#studioStartBtn")
     page.wait_for_function("document.getElementById('studioStatus').textContent.includes('没有开始录制')")
     assert not any(path == "/api/studio/recording/start" for path, _ in state["posts"])
+    page.close()
+
+
+def test_composite_preview_crop_cancel_and_recording_reuse_selected_screen(browser, studio_server):
+    base, state = studio_server
+    page = browser.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.add_init_script(FAKE_CAPTURE)
+    ready(page, base)
+    page.click("#studioScreenBtn")
+    page.wait_for_function("document.getElementById('studioViewLabel').textContent==='合成预览' && document.getElementById('studioStartBtn').textContent==='开始录制'")
+    page.wait_for_function("document.getElementById('studioCanvas').getContext('2d').getImageData(1100,600,1,1).data[0]===255")
+    pixel = page.evaluate("Array.from(document.getElementById('studioCanvas').getContext('2d').getImageData(640,360,1,1).data)")
+    # 视频流经过颜色转换，允许单个通道的舍入误差。
+    assert all(abs(actual - expected) <= 2 for actual, expected in zip(pixel, [10, 132, 255, 255]))
+    assert not any(path == "/api/studio/recording/start" for path, _ in state["posts"])
+    page.click("#studioCropBtn")
+    page.fill("#studioCropleft", "20")
+    page.locator("#studioCropleft").dispatch_event("change")
+    page.click("#studioCropCancel")
+    assert not any("screen_crop" in body for path, body in state["posts"] if path == "/api/studio/config")
+    page.click("#studioCropBtn")
+    page.fill("#studioCropleft", "20")
+    page.locator("#studioCropleft").dispatch_event("change")
+    page.click("#studioCropApply")
+    page.wait_for_function("!document.getElementById('studioCropDialog').open")
+    assert state["config"]["screen_crop"] == {"x": .2, "y": 0, "width": .8, "height": 1}
+    page.click("#studioStartBtn")
+    page.wait_for_selector("#studioRecordingBadge:not([hidden])")
+    assert page.evaluate("captureRequests.length") == 1
+    page.wait_for_timeout(1100)
+    page.click("#studioStopBtn")
+    page.wait_for_function("document.getElementById('studioStatus').textContent.includes('录制完成')")
+    assert state["chunks"]
+    assert page.evaluate("syntheticTracks.every(track=>track.readyState==='ended')")
+    assert errors == []
+    page.close()
+
+
+def test_cartoon_presets_save_real_image_and_overlay_uses_person_crop(browser, studio_server):
+    base, state = studio_server
+    page = browser.new_page()
+    ready(page, base)
+    page.select_option("#studioFace", "avatar")
+    page.click('[data-avatar-preset="fox"]')
+    page.wait_for_function("document.querySelector('[data-avatar-preset=fox]').getAttribute('aria-pressed')==='true'")
+    page.wait_for_function("document.getElementById('studioAvatarStatus').textContent.includes('卡通')")
+    assert state["config"]["avatar_preset"] == "fox"
+    assert state["config"]["avatar_data_url"].startswith("data:image/png;base64,")
+    # 直播页复用人物裁切，透明背景不变成不透明黑块。
+    state["config"].update(face="original", portrait_crop={"x": .25, "y": 0, "width": .5, "height": 1})
+    page.goto(base + "/studio-overlay.html")
+    page.wait_for_function("document.getElementById('portrait').width===2 && document.getElementById('portrait').height===4")
+    assert page.evaluate("document.getElementById('portrait').getContext('2d').getImageData(0,0,1,1).data[3]") == 255
     page.close()
 
 

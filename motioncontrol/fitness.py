@@ -63,6 +63,7 @@ class FitnessStore:
         self.sessions = []
         self.checkins = set()
         self.current = None
+        self._control_enabled = None
         self.error = ""
         self._dirty = False
         self._last_at = None
@@ -133,6 +134,9 @@ class FitnessStore:
     def control(self, message):
         with self.lock:
             action = message.get("action")
+            # 接到体感控制后，开始/暂停只有一个来源；独立运动记录仍支持原有入口。
+            if self._control_enabled is not None and action in {"start", "resume", "pause"}:
+                action = "start" if self._control_enabled else "pause"
             if action == "profile":
                 self.state()  # 已经达标的日子保留，不因提高目标而撤销打卡。
                 before = dict(self.profile)
@@ -167,13 +171,17 @@ class FitnessStore:
             if self.current:
                 self.current["updated_at_ms"] = round(self.wall() * 1000)
             self._dirty = True
+            if action == "finish" and self._control_enabled:
+                return self.control({"action": "start"})
             return self.state()
 
     def output_changed(self, enabled):
-        if enabled:
-            self.control({"action": "start"})
-        else:
-            self.control({"action": "pause"})
+        with self.lock:
+            enabled = bool(enabled)
+            if enabled == self._control_enabled:
+                return
+            self._control_enabled = enabled
+            self.control({"action": "start" if enabled else "pause"})
 
     def _day(self):
         key = datetime.fromtimestamp(self.wall()).astimezone().date().isoformat()
@@ -375,6 +383,8 @@ class FitnessStore:
             result.update(type="fitness_state_v1", profile=dict(self.profile), today=day, daily=days,
                           checkins=checkins, streak=streak, experience=experience, level=1 + experience // 100,
                           error=self.error, estimation_reference=ESTIMATION_REFERENCE)
+            result["control_enabled"] = self._control_enabled
+            result["heart_rate"] = self._fresh_hr(self.clock())
             return result
 
     def flush(self):

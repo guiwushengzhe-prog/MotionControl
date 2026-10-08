@@ -139,7 +139,8 @@ def test_saved_configuration_survives_restart_without_starting_video(factory):
     clock = Clock()
     service, _, _ = factory(clock)
     expected = {"source": "phone", "background": "transparent", "face": "mask",
-                "layout": "portrait", "size": 45, "system_audio": False, "microphone": True}
+                "layout": "portrait", "size": 45, "system_audio": False, "microphone": True,
+                "mirror": False, "portrait_crop": {"x": .1, "y": .1, "width": .8, "height": .8}}
     service.update(expected)
     service.demand(True, "preview")
     service.close()
@@ -148,3 +149,17 @@ def test_saved_configuration_survives_restart_without_starting_video(factory):
     assert all(state["config"][key] == value for key, value in expected.items())
     assert not portrait.enabled and not bridge.enabled
     assert restored.frame_png() is None
+
+
+@pytest.mark.parametrize("crop", [
+    {"x": -.1, "y": 0, "width": 1, "height": 1},
+    {"x": .4, "y": 0, "width": .8, "height": 1},
+    {"x": 0, "y": 0, "width": .01, "height": 1},
+    {"x": True, "y": 0, "width": 1, "height": 1},
+])
+def test_invalid_crop_keeps_previous_configuration(factory, crop):
+    service, _, _ = factory(Clock())
+    before = service.state()["config"]
+    with pytest.raises(ValueError, match="裁切"):
+        service.update({"screen_crop": crop})
+    assert service.state()["config"] == before

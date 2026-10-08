@@ -1,7 +1,9 @@
 // 摄像头只取后端共享采集的处理结果；浏览器仅负责用户选择的屏幕、声音和合成编码。
 import {readStudioFrame} from './studio-frame.js';
+import {compose,FULL_CROP} from './studio-compose.js';
+import {cropEditor} from './studio-crop.js';
 const root=document.querySelector('#studioRoot');
-const defaults={source:'computer',background:'original',face:'original',layout:'landscape',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false};
+const defaults={source:'computer',background:'original',face:'original',layout:'landscape',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false,mirror:true,avatar_preset:'',screen_crop:FULL_CROP,portrait_crop:FULL_CROP};
 const $=id=>document.getElementById(id);
 const clientId=globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random();
 let config={...defaults},loaded=false,preview=false,starting=false,recording=false,saving=false;
@@ -40,6 +42,7 @@ function renderControls(){
   $('studioSizeValue').textContent=config.size+'%';
   $('studioAvatarRow').hidden=config.face!=='avatar';
   $('studioAvatarStatus').textContent=config.avatar_data_url?'已保存头像':'尚未选择头像；暂用遮盖保护人脸';
+  for(const button of root.querySelectorAll('[data-avatar-preset]'))button.setAttribute('aria-pressed',String(button.dataset.avatarPreset===config.avatar_preset));
   const canvas=$('studioCanvas'),portrait=config.layout==='portrait';
   canvas.width=portrait?720:1280;canvas.height=portrait?1280:720;
   $('studioPreviewBox').classList.toggle('portrait',portrait);
@@ -52,19 +55,26 @@ function renderButtons(){
   $('studioPreviewBtn').disabled=!loaded||starting||saving||recording;
   $('studioStartBtn').hidden=recording||saving;
   $('studioStartBtn').disabled=!loaded||starting||!screenCaptureSupported();
+  $('studioStartBtn').textContent=screenStream?'开始录制':'选择画面并录制';
+  $('studioScreenBtn').disabled=!loaded||busy||!screenCaptureSupported();
+  $('studioScreenBtn').textContent=screenStream?'重新选择画面':'选择画面预览';
+  $('studioReleaseScreenBtn').hidden=!screenStream||busy;
+  $('studioCropBtn').disabled=!loaded||starting||saving||(!screenStream&&!frame);
   $('studioStopBtn').hidden=!recording&&!saving;
   $('studioStopBtn').disabled=saving;
   $('studioStopBtn').textContent=saving?'正在保存…':'停止并保存';
   $('studioRecordingBadge').hidden=!recording;
   for(const id of ['studioLayout','studioCapture','studioSystemAudio','studioMicrophone'])$(id).disabled=!loaded||busy;
+  $('studioSystemAudio').disabled=!loaded||busy||!!screenStream;
   for(const id of ['studioSource','studioBackground','studioFace','studioPosition','studioSize','studioAvatar'])$(id).disabled=!loaded||starting||saving;
+  for(const button of root.querySelectorAll('[data-avatar-preset]'))button.disabled=!loaded||starting||saving;
 }
 
 function screenCaptureSupported(){return !!navigator.mediaDevices?.getDisplayMedia&&typeof MediaRecorder!=='undefined'&&!!HTMLCanvasElement.prototype.captureStream}
 
 function persist(patch){
   config={...config,...patch};frameBlocked++;forgetFrame();renderControls();
-  const snapshot={...config};
+  const snapshot={...patch};
   const result=saveTail.then(()=>request('/api/studio/config',snapshot));
   saveTail=result.catch(error=>{status('设置未保存：'+errorText(error));throw error});
   // 保存失败不能让之后的设置一直卡住；本次帧继续隐藏，直到下次成功保存。
@@ -102,27 +112,13 @@ async function getFrame(){
   finally{frameBusy=false}
 }
 
-function contained(ctx,image,x,y,width,height){
-  const iw=image.videoWidth||image.width,ih=image.videoHeight||image.height;
-  if(!iw||!ih)return;
-  const scale=Math.min(width/iw,height/ih),w=iw*scale,h=ih*scale;
-  ctx.drawImage(image,x+(width-w)/2,y+(height-h)/2,w,h);
-}
-
 function draw(){
   const canvas=$('studioCanvas');if(!canvas)return;
   const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;
-  ctx.fillStyle='#101014';ctx.fillRect(0,0,w,h);
-  if(screenVideo?.readyState>=2)contained(ctx,screenVideo,0,0,w,h);
   const usableFrame=frame&&Date.now()-frameAt<1500&&!frameBlocked;
-  if(usableFrame){
-    if(!screenStream)contained(ctx,frame,0,0,w,h);
-    else{
-      const width=w*Math.max(.15,Math.min(.65,Number(config.size)/100)),height=Math.min(h*.75,width*frame.height/frame.width);
-      const inset=Math.round(Math.min(w,h)*.025),left=config.position.endsWith('left'),top=config.position.startsWith('top');
-      contained(ctx,frame,left?inset:w-width-inset,top?inset:h-height-inset,width,height);
-    }
-  }
+  compose(ctx,screenVideo?.readyState>=2?screenVideo:null,usableFrame?frame:null,w,h,config);
+  $('studioViewLabel').textContent=screenStream?'合成预览':usableFrame?'人物预览':'合成预览';
+  $('studioCropBtn').disabled=!loaded||starting||saving||(!screenStream&&!usableFrame);
   $('studioPlaceholder').hidden=!!screenStream||!!usableFrame;
   if(recording){
     const seconds=Math.floor((Date.now()-startedAt)/1000);
@@ -138,6 +134,41 @@ function releaseRecordingSources(){
   if(audioContext){void audioContext.close().catch(()=>{});audioContext=null}
   if(screenVideo){screenVideo.pause();screenVideo.srcObject=null;screenVideo=null}
   clearInterval(drawTimer);drawTimer=0;draw();
+}
+
+async function acquireScreen(){
+  // 浏览器要求在用户点击中直接发起选屏；只能共享用户选中的来源。
+  const selected=await navigator.mediaDevices.getDisplayMedia({video:{displaySurface:config.capture,frameRate:30},audio:!!config.system_audio,systemAudio:config.system_audio?'include':'exclude',windowAudio:config.system_audio?'system':'exclude',selfBrowserSurface:'exclude'});
+  const videoTrack=selected.getVideoTracks()[0],video=document.createElement('video');
+  try{
+    if(!videoTrack)throw new Error('没有取得所选画面');
+    video.muted=true;video.playsInline=true;video.srcObject=selected;await video.play();
+    if(videoTrack.readyState==='ended')throw new Error('屏幕共享已结束，请重新选择');
+  }catch(error){stopTracks(selected);video.srcObject=null;throw error}
+  const previous=screenStream;
+  if(screenVideo){screenVideo.pause();screenVideo.srcObject=null}
+  screenStream=selected;screenVideo=video;stopTracks(previous);
+  videoTrack.addEventListener('ended',()=>{
+    if(screenStream!==selected)return;
+    if(recording)stopRecording();
+    else{releaseRecordingSources();renderButtons();status('所选画面已停止共享')}
+  });
+  clearInterval(drawTimer);drawTimer=setInterval(draw,1000/30);
+  renderAudioStatus();draw();
+  return videoTrack;
+}
+
+async function selectScreenPreview(){
+  if(starting||recording||saving)return;
+  starting=true;renderButtons();status('请选择要预览的窗口或屏幕…');
+  const previous=screenStream;
+  try{
+    await acquireScreen();
+    await saveTail;if(configSaveError)throw new Error('请先重新保存人物设置：'+configSaveError);
+    await demand(true);preview=true;void getFrame();
+    status('正在预览实际合成画面，尚未录制；可先裁切和调整人物位置');
+  }catch(error){if(screenStream!==previous)releaseRecordingSources();status(errorText(error))}
+  finally{starting=false;renderButtons()}
 }
 
 function pickMime(){
@@ -192,15 +223,11 @@ async function startRecording(){
   starting=true;renderButtons();status('请选择要录制的屏幕或游戏窗口…');
   uploadError='';pendingBytes=0;uploadTail=Promise.resolve();
   try{
-    // 必须在这次真实点击中直接调用；在异步接口后调用会失去浏览器的选屏授权。
-    screenStream=await navigator.mediaDevices.getDisplayMedia({video:{displaySurface:config.capture,frameRate:30},audio:!!config.system_audio,systemAudio:config.system_audio?'include':'exclude',windowAudio:config.system_audio?'system':'exclude',selfBrowserSurface:'exclude'});
+    if(!screenStream)await acquireScreen();
     const videoTrack=screenStream.getVideoTracks()[0];
     if(!videoTrack)throw new Error('没有取得屏幕画面');
-    videoTrack.addEventListener('ended',()=>{if(recording)stopRecording()});
     if(config.microphone)micStream=await navigator.mediaDevices.getUserMedia({video:false,audio:{echoCancellation:true,noiseSuppression:true}});
     await saveTail;if(configSaveError)throw new Error('请先重新保存人物设置：'+configSaveError);await demand(true);
-    screenVideo=document.createElement('video');screenVideo.muted=true;screenVideo.playsInline=true;screenVideo.srcObject=screenStream;
-    await screenVideo.play();
     if(videoTrack.readyState==='ended')throw new Error('屏幕共享已结束，没有开始录制');
     draw();canvasStream=$('studioCanvas').captureStream(30);
     const audioTracks=[];
@@ -226,7 +253,7 @@ async function startRecording(){
     recorder.addEventListener('stop',()=>void finishRecording());
     recorder.addEventListener('error',()=>{uploadError='视频编码失败';stopRecording()});
     recorder.start(1000);recording=true;startedAt=Date.now();
-    drawTimer=setInterval(draw,1000/30);void getFrame();
+    clearInterval(drawTimer);drawTimer=setInterval(draw,1000/30);void getFrame();
     status('正在录制。停止后自动保存，体感控制可以继续使用。');
   }catch(error){
     releaseRecordingSources();
@@ -245,15 +272,29 @@ async function chooseAvatar(event){
     const bitmap=await createImageBitmap(file),canvas=document.createElement('canvas');
     const scale=Math.min(1,512/Math.max(bitmap.width,bitmap.height));canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
     canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
-    await persist({avatar_data_url:canvas.toDataURL('image/png'),face:'avatar'});
+    await persist({avatar_data_url:canvas.toDataURL('image/png'),avatar_preset:'',face:'avatar'});
     $('studioAvatarStatus').textContent='头像已保存';
   }catch(error){$('studioAvatarStatus').textContent=errorText(error)}
+}
+
+async function choosePreset(name){
+  if(!['cat','fox','robot'].includes(name))return;
+  try{
+    const image=new Image();image.src='/assets/studio-'+name+'.svg';await image.decode();
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=320;
+    canvas.getContext('2d').drawImage(image,0,0,320,320);
+    await persist({avatar_data_url:canvas.toDataURL('image/png'),avatar_preset:name,face:'avatar'});
+    $('studioAvatarStatus').textContent='卡通头像已保存，会跟随人脸';
+  }catch(error){status(errorText(error))}
 }
 
 async function refreshState(){
   try{
     liveState=await request('/api/studio/state');
     if(!loaded){config={...defaults,...(liveState.config||{})};loaded=true;renderControls();status('未开启；不会自动录制')}
+    else if(!frameBlocked&&config.mirror!==liveState.config?.mirror&&typeof liveState.config?.mirror==='boolean'){
+      config.mirror=liveState.config.mirror;forgetFrame();
+    }
     if(preview||recording){
       $('studioPortraitStatus').textContent=liveState.message||liveState.status_message||(!frame?'等待处理后的人物画面，请先连接所选体感摄像头':'');
       if(Date.now()-renewAt>10000)await demand(true);
@@ -273,6 +314,8 @@ async function mount(){
     const overlayUrl=new URL('/studio-overlay.html',location.href).href;
     $('studioOverlayUrl').value=overlayUrl;$('studioOverlayLink').href=overlayUrl;
     $('studioPreviewBtn').addEventListener('click',()=>void togglePreview());
+    $('studioScreenBtn').addEventListener('click',()=>void selectScreenPreview());
+    $('studioReleaseScreenBtn').addEventListener('click',()=>{releaseRecordingSources();renderButtons();status('画面预览已结束')});
     $('studioStartBtn').addEventListener('click',()=>void startRecording());
     $('studioStopBtn').addEventListener('click',stopRecording);
     for(const [id,key] of Object.entries({studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size'})){
@@ -281,6 +324,8 @@ async function mount(){
     $('studioSize').addEventListener('input',event=>{$('studioSizeValue').textContent=event.target.value+'%';config.size=Number(event.target.value);draw()});
     for(const [id,key] of [['studioSystemAudio','system_audio'],['studioMicrophone','microphone']])$(id).addEventListener('change',event=>void persist({[key]:event.target.checked}).catch(()=>{}));
     $('studioAvatar').addEventListener('change',event=>void chooseAvatar(event));
+    for(const button of root.querySelectorAll('[data-avatar-preset]'))button.addEventListener('click',()=>void choosePreset(button.dataset.avatarPreset));
+    cropEditor({source:kind=>kind==='screen'?(screenVideo?.readyState>=2?screenVideo:null):frame,config:()=>config,persist,status});
     $('studioOpenBrowserBtn').addEventListener('click',()=>void request('/api/studio/open-browser',{}).catch(error=>status(errorText(error))));
     $('studioBrowserAltBtn').addEventListener('click',()=>void request('/api/studio/open-browser',{}).catch(error=>status(errorText(error))));
     $('studioOpenFolderBtn').addEventListener('click',()=>void request('/api/studio/recording/open-folder',{}).catch(error=>status(errorText(error))));
