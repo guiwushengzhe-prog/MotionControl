@@ -66,6 +66,7 @@ from motioncontrol.windows_firewall import WindowsFirewall
 from functools import lru_cache
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
 from motioncontrol.recording_storage import organize_recordings, recordings_summary
+from motioncontrol.owned_process import ensure_lifetime_job
 from motioncontrol.update_status import UpdateStatus
 
 # 版本号只有一处，在 motioncontrol/version.py。这里不再写数字：写了就会有第二个
@@ -2643,6 +2644,7 @@ def _boot_ok_and_check() -> None:
 
 def main():
     global MODEL_ROOT, MODEL_PATH, RECOGNITION_MODELS
+    ensure_lifetime_job()
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="0.0.0.0", help="监听地址；默认允许局域网手机连接")
     ap.add_argument("--port", type=int, default=8765)

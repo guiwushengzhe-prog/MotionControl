@@ -77,7 +77,9 @@ class WindowsFirewall:
         script = str(Path(__file__).with_suffix(".ps1"))
         command = [shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
                    "-Mode", mode, "-Program", self.program, "-Port", str(self.port)]
-        process = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
+        from motioncontrol import owned_process
+        command.extend(["-LifetimeJob", owned_process.ensure_lifetime_job()])
+        process = owned_process.run(command, capture_output=True, text=True, encoding="utf-8",
                                  errors="replace", timeout=180, creationflags=subprocess.CREATE_NO_WINDOW)
         if process.returncode:
             raise RuntimeError(process.stderr.strip() or "Windows 防火墙检查失败")

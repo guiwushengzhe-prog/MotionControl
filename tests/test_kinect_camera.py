@@ -262,6 +262,8 @@ def test_source_flip_is_shared_by_inference_and_preview(kinect, rotation, monkey
         metadata = {"sample_at": 10., "depth_valid": True}
         def __init__(self):
             self.once = True
+        def release(self):
+            pass
         def read(self):
             if self.once:
                 self.once = False
@@ -274,7 +276,8 @@ def test_source_flip_is_shared_by_inference_and_preview(kinect, rotation, monkey
     try:
         camera = NativeCameraService(kernel)
         camera.applied_rotation = rotation
-        session = SimpleNamespace(stop=threading.Event(), capture=Kinect() if kinect else Capture())
+        session = SimpleNamespace(stop=threading.Event(), capture=Kinect() if kinect else Capture(),
+                                  capture_released=False)
         camera._session = session
         monkeypatch.setattr(camera, "_fail_session", lambda session, error: session.stop.set())
         monkeypatch.setattr(camera, "_worker_finished", lambda session: None)

@@ -10,6 +10,8 @@ import time
 import uuid
 from pathlib import Path
 
+from motioncontrol import owned_process
+
 
 SEACO_MODEL_ID = "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
 SEACO_DIRNAME = "speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
@@ -147,10 +149,15 @@ class FunAsrWorkerClient:
         self._response_queue: queue.Queue[dict] = queue.Queue()
         self._reader_thread: threading.Thread | None = None
         self._request_lock = threading.Lock()
+        self._lifecycle_lock = threading.RLock()
         self._stderr_handle = None
         self._closed = False
 
     def start(self) -> None:
+        with self._lifecycle_lock:
+            self._start_locked()
+
+    def _start_locked(self) -> None:
         if self._closed:
             raise RuntimeError("FunASR worker 已关闭")
         if self.process is not None and self.process.poll() is None:
@@ -169,7 +176,7 @@ class FunAsrWorkerClient:
             "--vad-model", str(self.vad_model_path),
         ]
         try:
-            self.process = subprocess.Popen(
+            self.process = owned_process.popen(
                 cmd,
                 cwd=str(self.root),
                 stdin=subprocess.PIPE,
@@ -191,7 +198,11 @@ class FunAsrWorkerClient:
         self.last_error = None
         self._ready_event.clear()
         self._reader_thread = threading.Thread(target=self._reader_loop, name="funasr-worker-reader", daemon=True)
-        self._reader_thread.start()
+        try:
+            self._reader_thread.start()
+        except Exception:
+            self.close()
+            raise
 
     def start_async(self) -> None:
         try:
@@ -305,6 +316,10 @@ class FunAsrWorkerClient:
         }
 
     def close(self) -> None:
+        with self._lifecycle_lock:
+            self._close_locked()
+
+    def _close_locked(self) -> None:
         self._closed = True
         proc = self.process
         self.process = None
@@ -317,15 +332,14 @@ class FunAsrWorkerClient:
                 pass
             try:
                 proc.wait(timeout=1.5)
-            except Exception:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=1.0)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
+            except subprocess.TimeoutExpired:
+                owned_process.terminate_and_wait(proc, timeout=1.0)
+            if self._reader_thread is not None and self._reader_thread.ident is not None:
+                self._reader_thread.join(timeout=1.0)
+            if proc.stdin is not None:
+                proc.stdin.close()
+            if proc.stdout is not None:
+                proc.stdout.close()
         if self._stderr_handle is not None:
             try:
                 self._stderr_handle.close()

@@ -2,9 +2,39 @@
     [ValidateSet('Check', 'Ensure', 'Install')][string]$Mode = 'Check',
     [Parameter(Mandatory)][string]$Program,
     [ValidateRange(1, 65535)][int]$Port = 8765,
-    [string]$ResultPath = ''
+    [string]$ResultPath = '',
+    [string]$LifetimeJob = ''
 )
 $ErrorActionPreference = 'Stop'
+if ($LifetimeJob) {
+    # 提权助手由 Windows 创建，需主动加入主后台的作业；加入后不保留句柄。
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class MotionControlLifetime {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr OpenJobObject(uint access, bool inherit, string name);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool member);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    public static void Bind(string name) {
+        IntPtr job = OpenJobObject(0x5, false, name); // 加入和查询权限。
+        if (job == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            bool member;
+            if (!IsProcessInJob(GetCurrentProcess(), job, out member) ||
+                (!member && !AssignProcessToJobObject(job, GetCurrentProcess())))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        } finally { CloseHandle(job); }
+    }
+}
+'@
+    [MotionControlLifetime]::Bind($LifetimeJob)
+}
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $Program = [System.IO.Path]::GetFullPath($Program)
 if (-not (Test-Path -LiteralPath $Program -PathType Leaf)) { throw '软件运行程序不存在' }
@@ -48,7 +78,7 @@ try {
             $temporaryResult = [IO.Path]::GetTempFileName()
             try {
                 # 单次系统授权，仅提升这个配置助手；主程序仍保持原有权限。
-                $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Mode Install -Program "{1}" -Port {2} -ResultPath "{3}"' -f $PSCommandPath, $Program, $Port, $temporaryResult
+                $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Mode Install -Program "{1}" -Port {2} -ResultPath "{3}" -LifetimeJob "{4}"' -f $PSCommandPath, $Program, $Port, $temporaryResult, $LifetimeJob
                 $child = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -PassThru -Wait
                 if ($child.ExitCode -ne 0) { throw '管理员配置未完成' }
                 $result = Get-Content -LiteralPath $temporaryResult -Raw -Encoding UTF8 | ConvertFrom-Json
