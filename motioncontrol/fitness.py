@@ -11,11 +11,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from motioncontrol.config_transaction import atomic_bytes
+from motioncontrol_shared import fitness_schema
 
 DEFAULT_PROFILE = {"weight_kg": 70.0, "goal_active_minutes": 20,
                    "goal_steps": 2000, "goal_kcal": 100, "primary_goal": "minutes",
                    # 按心率算热量要用。可以不填：没填按平均成年人算。
-                   "age": None, "sex": None}
+                   "age": None, "sex": None,
+                   # 最后一次改的时刻。登录了云端账号时，两台电脑各改一次，后改的留下。
+                   "updated_at_ms": 0}
 # 2024 成人活动强度汇编，02140/02064/02056。根据动作作近似分类，并非个体测量。
 # https://pacompendium.com/conditioning-exercise/
 ESTIMATION_REFERENCE = "https://pacompendium.com/conditioning-exercise/"
@@ -67,6 +70,8 @@ class FitnessStore:
         self._held = set()
         self._step_at = {"left": -math.inf, "right": -math.inf}
         self._hr = None  # (心率, 收到的时刻)
+        # 云端同步记的账：每次锻炼传到了哪一版、拉到了哪里、身体数据传到了哪一版。
+        self.cloud = {"uploaded": {}, "cursor": "", "profile_pushed_ms": 0}
         self._stop = threading.Event()
         self._load()
         self._thread = None
@@ -82,8 +87,14 @@ class FitnessStore:
             self._profile(data.get("profile", {}))
             self.sessions = [s for s in data["sessions"] if isinstance(s, dict) and s.get("session_id")]
             self.checkins = {date for date in data.get("checkins", []) if isinstance(date, str)}
-            if self.sessions and self.sessions[-1].get("status") in {"active", "paused"}:
-                self.current = self.sessions[-1]
+            cloud = data.get("cloud")
+            if isinstance(cloud, dict) and isinstance(cloud.get("uploaded"), dict):
+                self.cloud = {"uploaded": dict(cloud["uploaded"]), "cursor": str(cloud.get("cursor") or ""),
+                              "profile_pushed_ms": int(cloud.get("profile_pushed_ms") or 0)}
+            # 从云端拉回来的（别的电脑上的）锻炼不能被这台电脑接着记。
+            mine = [s for s in self.sessions if s.get("origin") != "remote"]
+            if mine and mine[-1].get("status") in {"active", "paused"}:
+                self.current = mine[-1]
                 self.current["status"] = "paused"
                 self._dirty = True
         except FileNotFoundError:
@@ -111,6 +122,8 @@ class FitnessStore:
             if patch["sex"] not in {None, "male", "female"}:
                 raise ValueError("性别只能是男、女或不填")
             result["sex"] = patch["sex"]
+        if isinstance(patch.get("updated_at_ms"), int) and not isinstance(patch["updated_at_ms"], bool):
+            result["updated_at_ms"] = max(0, patch["updated_at_ms"])
         if "primary_goal" in patch:
             if patch["primary_goal"] not in {"minutes", "steps", "kcal"}:
                 raise ValueError("每日主目标必须是运动分钟、步数或热量")
@@ -122,7 +135,12 @@ class FitnessStore:
             action = message.get("action")
             if action == "profile":
                 self.state()  # 已经达标的日子保留，不因提高目标而撤销打卡。
-                self._profile(message.get("profile", {}))
+                before = dict(self.profile)
+                patch = message.get("profile", {})
+                self._profile({key: value for key, value in patch.items() if key != "updated_at_ms"}
+                              if isinstance(patch, dict) else patch)
+                if self.profile != before:
+                    self.profile["updated_at_ms"] = round(self.wall() * 1000)
             elif action == "start":
                 if self.current and self.current["status"] != "finished":
                     self.current["status"] = "active"
@@ -130,7 +148,8 @@ class FitnessStore:
                     self.current = {"session_id": uuid.uuid4().hex, "status": "active",
                                     "started_at_ms": round(self.wall() * 1000), "updated_at_ms": 0,
                                     "elapsed_seconds": 0., "active_seconds": 0., "steps": 0,
-                                    "action_count": 0, "estimated_kcal": 0., "source": "motion_estimate", "days": {}}
+                                    "action_count": 0, "estimated_kcal": 0., "source": "motion_estimate", "days": {},
+                                    "origin": "local"}
                     self.sessions.append(self.current)
             elif action in {"pause", "resume", "finish"}:
                 requested = message.get("session_id")
@@ -255,6 +274,76 @@ class FitnessStore:
                 self._dirty = True
             self._last_at, self._previous, self._held = now, points, held
 
+    # ---------- 云端同步（见 fitness_sync） ----------
+
+    def cloud_pending(self, limit=fitness_schema.MAX_SESSIONS_PER_UPLOAD):
+        """还没传上去的：改过的锻炼摘要、改过的身体数据、打卡日子。"""
+        with self.lock:
+            uploaded = self.cloud["uploaded"]
+            sessions, bad = [], 0
+            for session in self.sessions:
+                if session.get("updated_at_ms", 0) <= uploaded.get(session["session_id"], -1):
+                    continue
+                try:
+                    sessions.append(fitness_schema.normalize_session(session))
+                except ValueError:
+                    bad += 1  # 坏的一条不拖累别的
+                if len(sessions) >= limit:
+                    break
+            profile = dict(self.profile) if self.profile.get("updated_at_ms", 0) > self.cloud["profile_pushed_ms"] else None
+            return {"sessions": sessions, "profile": profile, "checkins": sorted(self.checkins), "skipped": bad}
+
+    def cloud_mark_uploaded(self, sessions):
+        with self.lock:
+            for doc in sessions:
+                self.cloud["uploaded"][doc["session_id"]] = doc["updated_at_ms"]
+            self._dirty = True
+
+    def cloud_mark_profile(self, updated_at_ms):
+        with self.lock:
+            self.cloud["profile_pushed_ms"] = max(self.cloud["profile_pushed_ms"], int(updated_at_ms))
+            self._dirty = True
+
+    def cloud_reset(self):
+        """换了账号（或者退出再登录）：从头拉、从头传。"""
+        with self.lock:
+            self.cloud = {"uploaded": {}, "cursor": "", "profile_pushed_ms": 0}
+            self._dirty = True
+
+    def merge_remote(self, payload, cursor=None):
+        """把云端拉回来的并进本机。规则和云端合并同一份（fitness_schema.merge_session）。"""
+        with self.lock:
+            local = {session["session_id"]: session for session in self.sessions}
+            for raw in payload.get("sessions", []):
+                remote = fitness_schema.normalize_session(raw)
+                mine = local.get(remote["session_id"])
+                if mine is None:
+                    imported = {key: value for key, value in remote.items() if key != "schema"}
+                    imported.update(source="motion_estimate", origin="remote")
+                    self.sessions.append(imported)
+                    local[remote["session_id"]] = imported
+                    self.cloud["uploaded"][remote["session_id"]] = remote["updated_at_ms"]
+                    continue
+                try:
+                    merged = fitness_schema.merge_session(fitness_schema.normalize_session(mine), remote)
+                except ValueError:
+                    continue
+                mine.update({key: value for key, value in merged.items() if key != "schema"})
+                if remote["updated_at_ms"] >= mine.get("updated_at_ms", 0):
+                    self.cloud["uploaded"][remote["session_id"]] = mine["updated_at_ms"]
+            self.sessions.sort(key=lambda session: session.get("started_at_ms", 0))
+            remote_profile = payload.get("profile")
+            if isinstance(remote_profile, dict) and remote_profile.get("updated_at_ms", 0) > self.profile.get("updated_at_ms", 0):
+                try:
+                    self._profile({key: value for key, value in remote_profile.items() if key != "schema"})
+                    self.cloud["profile_pushed_ms"] = self.profile["updated_at_ms"]
+                except ValueError:
+                    pass
+            self.checkins.update(day for day in payload.get("checkins", []) if isinstance(day, str))
+            if cursor is not None:
+                self.cloud["cursor"] = cursor
+            self._dirty = True
+
     def history(self):
         with self.lock:
             return copy.deepcopy(self.sessions)
@@ -294,7 +383,8 @@ class FitnessStore:
             if not self._dirty or self.error.startswith("历史记录读取失败"):
                 return
             data = json.dumps({"schema": 1, "profile": self.profile, "sessions": self.sessions,
-                               "checkins": sorted(self.checkins)}, ensure_ascii=False).encode("utf-8")
+                               "checkins": sorted(self.checkins), "cloud": self.cloud},
+                              ensure_ascii=False).encode("utf-8")
             self._dirty = False
         try:
             atomic_bytes(self.path, data)

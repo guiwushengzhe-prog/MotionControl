@@ -42,6 +42,8 @@ from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import CameraUnavailable, ControlKernel, LocalControlRuntime, NativeCameraService, RUNTIME_BODY_ZONES
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.fitness import FitnessStore
+from motioncontrol.cloud_account import CloudAccount, CloudAccountError
+from motioncontrol.fitness_sync import FitnessSync
 from motioncontrol.studio import MAX_CHUNK_BYTES, StudioService
 from motioncontrol.studio_portrait import StudioPortrait
 from motioncontrol.intent_library import ZoneLearner
@@ -889,6 +891,13 @@ def cloud_endpoint() -> str:
     return configured or DEFAULT_CLOUD_ENDPOINT
 
 
+# 这台电脑登录的云端账号，和运动记录的云端同步。没登录就什么都不做；云端连不上，
+# 本机记录照常，下一轮再传。用哪个云端每次都问 cloud_endpoint：用户能改。
+CLOUD_ACCOUNT = CloudAccount(user_path("cloud_account"), cloud_endpoint,
+                             name=f"MotionControl {VERSION} · {socket.gethostname()}")
+FITNESS_SYNC = FitnessSync(FITNESS, CLOUD_ACCOUNT)
+
+
 def _cached_cloud_read(kind: str, parameters: dict | None = None, *, force: bool = False):
     client = CloudClient(cloud_endpoint())
     arguments = parameters or {}
@@ -1477,6 +1486,13 @@ class AdminHandler(_BaseHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
+        if route == "/api/cloud/account":
+            # 只给本机控制页：里面没有凭证，但登录这件事只该在本机发起。
+            if not self._is_loopback():
+                self._send_json({"error": "请从本机控制页面查看"}, 403)
+                return
+            self._send_json({**CLOUD_ACCOUNT.status(), "sync": FITNESS_SYNC.status()})
+            return
         if route in {"/api/fitness/state", "/api/fitness/history", "/api/studio/state", "/api/studio/frame.png"}:
             if not self._is_loopback():
                 self._send_json({"error": "请从本机控制页面查看"}, 403)
@@ -1707,7 +1723,8 @@ class AdminHandler(_BaseHandler):
     def do_POST(self):
         global CONFIG_REVISION
         route = urlparse(self.path).path
-        if route.startswith("/api/studio/") or route == "/api/fitness/control":
+        if route.startswith("/api/studio/") or route in {"/api/fitness/control", "/api/cloud/account/login",
+                                                          "/api/cloud/account/cancel", "/api/cloud/account/logout"}:
             origin = self.headers.get("Origin")
             if not self._is_loopback() or (origin and origin not in {
                     f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
@@ -1730,6 +1747,21 @@ class AdminHandler(_BaseHandler):
                     raise ValueError("操作内容无效")
                 if route == "/api/fitness/control":
                     data = FITNESS.control(body)
+                    if body.get("action") in {"finish", "profile"}:
+                        FITNESS_SYNC.wake()  # 刚结束一次、刚改了身体数据：别等一分钟
+                elif route == "/api/cloud/account/login":
+                    try:
+                        data = CLOUD_ACCOUNT.begin_login()
+                    except CloudAccountError as exc:
+                        raise ValueError(str(exc)) from None
+                    # 浏览器由这边打开：网页里等接口回来再 window.open 会被当成弹窗拦掉。
+                    webbrowser.open(data["verification_uri"])
+                elif route == "/api/cloud/account/cancel":
+                    CLOUD_ACCOUNT.cancel_login()
+                    data = CLOUD_ACCOUNT.status()
+                elif route == "/api/cloud/account/logout":
+                    CLOUD_ACCOUNT.logout()
+                    data = CLOUD_ACCOUNT.status()
                 elif route == "/api/studio/config":
                     data = STUDIO.update(body)
                 elif route == "/api/studio/video-demand":
@@ -2641,6 +2673,7 @@ def main():
         OUTPUT.emergency_stop()
         VOICE.close()
         STUDIO.close()
+        FITNESS_SYNC.close()
         FITNESS.close()
         INPUT_BRIDGE.close()
         RUNTIME.close()
