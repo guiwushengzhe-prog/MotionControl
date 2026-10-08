@@ -49,7 +49,7 @@ def test_nothing_is_written_until_the_recording_ends(recorder):
     recorder.start(delay_s=0.0, duration_s=15.0, now=0.0)
     for i in range(10):
         recorder.capture(frame(), now=i * 0.1)
-    assert not list(recorder.directory.glob("*.jsonl")), "disk I/O belongs after the run, not during"
+    assert not list(recorder.directory.rglob("*.jsonl")), "disk I/O belongs after the run, not during"
 
 
 def test_file_is_written_when_the_duration_elapses(recorder):
@@ -61,9 +61,11 @@ def test_file_is_written_when_the_duration_elapses(recorder):
 
     status = recorder.status()
     assert status["state"] == "done"
-    files = list(recorder.directory.glob("*.jsonl"))
+    files = list(recorder.directory.rglob("*.jsonl"))
     assert len(files) == 1
     assert status["file"] == str(files[0])
+    assert files[0].relative_to(recorder.directory).parts[0] == "姿态点"
+    assert "骨骼_1秒" in files[0].name
 
 
 def test_saved_file_is_a_header_line_then_one_line_per_frame(recorder):
@@ -125,7 +127,7 @@ def test_cancel_discards_without_writing(recorder):
     recorder.capture(frame(), now=0.1)
     status = recorder.cancel()
     assert status["state"] == "cancelled"
-    assert not list(recorder.directory.glob("*.jsonl"))
+    assert not list(recorder.directory.rglob("*.jsonl"))
 
 
 def test_a_second_start_is_refused_while_running(recorder):
@@ -156,7 +158,7 @@ def test_frame_cap_stops_a_recorder_nobody_stopped(recorder, monkeypatch):
 def test_capture_is_inert_when_idle(recorder):
     recorder.capture(frame(), now=1.0)
     assert recorder.status()["state"] == "idle"
-    assert not list(recorder.directory.glob("*.jsonl"))
+    assert not list(recorder.directory.rglob("*.jsonl"))
 
 
 def test_slow_save_leaves_capture_and_status_responsive(recorder, monkeypatch):
@@ -223,7 +225,7 @@ def test_failed_save_reports_error_and_does_not_publish_partial_recording(record
     assert recorder.wait(timeout=2.0)
     assert recorder.status()["state"] == "error"
     assert "disk full" in recorder.status()["error"]
-    assert not list(recorder.directory.glob("*.jsonl"))
+    assert not list(recorder.directory.rglob("*.jsonl"))
 
 
 def test_close_saves_recorded_frames_without_needing_another_camera_frame(recorder):

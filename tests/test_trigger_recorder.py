@@ -19,7 +19,7 @@ def pose(x=.5):
 def documents(recorder):
     recorder.close()
     return [[json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-            for path in sorted(recorder.directory.glob("*.jsonl"))]
+            for path in sorted(recorder.directory.rglob("*.jsonl"))]
 
 
 def configured(tmp_path):
@@ -60,6 +60,8 @@ def test_only_trigger_window_is_saved_with_complete_hold_and_capture_clock(tmp_p
     assert all(frame["source"] == "phone" for frame in frames)
     assert len([frame for frame in frames if frame["selected_active"]]) == 31
     assert recorder.saved_clips == 1
+    assert "_手机_触发_原地踏步" in Path(recorder.last_file).name
+    assert Path(recorder.last_file).relative_to(recorder.directory).parts[0] == "姿态点"
 
 
 def test_overlapping_pre_and_post_windows_merge_but_later_event_is_separate(tmp_path):

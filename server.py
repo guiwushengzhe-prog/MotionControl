@@ -54,6 +54,7 @@ from motioncontrol.connection_code import connection_code
 from motioncontrol.windows_firewall import WindowsFirewall
 from functools import lru_cache
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
+from motioncontrol.recording_storage import organize_recordings, recordings_summary
 
 # 版本号只有一处，在 motioncontrol/version.py。这里不再写数字：写了就会有第二个
 # 数字要记得跟着改，而漏改一次是看不出来的——界面和文件名各说各的。
@@ -646,26 +647,6 @@ def _select_camera_input(device) -> dict:
         if INPUT_BRIDGE.status().get("body_enabled"):
             _set_audio_source(AUDIO_SOURCE)
         return {**data, **_audio_payload(), "output": OUTPUT.status()}
-
-def recordings_summary(folder: Path) -> dict:
-    """录下的骨骼数据有几段、一共多大，给「排查问题」最下面那一行用。
-
-    只报数，不报路径：数据在 C 盘的用户目录里，要找就点「打开文件夹」。每段录制
-    是一个 .jsonl；大小把文件夹里所有文件都算上。
-    """
-    count = total = 0
-    if folder.is_dir():
-        for path in folder.rglob("*"):
-            try:
-                if not path.is_file():
-                    continue
-                total += path.stat().st_size
-            except OSError:
-                continue
-            if path.suffix == ".jsonl":
-                count += 1
-    return {"count": count, "bytes": total}
-
 
 def find_phone_web(root: Path) -> Path | None:
     """手机的网页包在哪：发布包里带着，开发时用隔壁仓库的构建产物。
@@ -2275,7 +2256,7 @@ class AdminHandler(_BaseHandler):
                 return
             folder = user_data_root() / "recordings"
             if body.get("which") == "triggered":
-                folder = folder / "triggered"
+                folder = folder / "姿态点"
             try:
                 folder.mkdir(parents=True, exist_ok=True)
                 os.startfile(str(folder))  # type: ignore[attr-defined]  # Windows only
@@ -2531,6 +2512,14 @@ def main():
             return
 
     MODEL_ROOT = choose_model_root(args.model_root)
+    try:
+        organized = organize_recordings(user_data_root() / "recordings")
+        if organized["moved"]:
+            print(f"已按日期整理 {len(organized['moved'])} 段录制，原始数据保留")
+        for error in organized["errors"]:
+            print(f"录制整理未完成：{error}")
+    except (OSError, ValueError) as exc:
+        print(f"录制整理未完成：{exc}")
     RECOGNITION_MODELS = RecognitionModels(MODEL_ROOT, ROOT / "models")
     MODEL_PATH = RECOGNITION_MODELS.paths.get("full")
     RUNTIME.camera.configure_models(RECOGNITION_MODELS.paths)

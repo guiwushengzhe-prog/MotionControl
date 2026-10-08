@@ -11,6 +11,9 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+from motioncontrol.recording_storage import available_path, recording_path
+from motioncontrol_shared.describe import trigger_name
+
 SCHEMA = "motioncontrol.trigger_recording.v1"
 DEFAULT_CONFIG = {"enabled": False, "triggers": [], "pre_s": 1.0, "post_s": 1.0}
 
@@ -37,7 +40,14 @@ class _ClipWriter:
     """一段文件的后台写入器；识别线程只投递帧，不等待磁盘。"""
 
     def __init__(self, directory, frames, header, done):
-        self.path = directory / ("trigger-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".jsonl")
+        selected = frames[-1]["selected_active"]
+        poses = (header.get("snapshot") or {}).get("custom_poses", [])
+        names = {"pose." + str(item.get("id")): str(item.get("name", "自定义动作")) for item in poses}
+        label = "触发_" + "、".join(names.get(key) or trigger_name(key) for key in selected[:2])
+        if len(selected) > 2:
+            label += f"等{len(selected)}项"
+        self.path = recording_path(directory, source=frames[-1]["source"],
+                                   recorded_at=header["recorded_at"], label=label)
         self.frames = frames
         self.header = header
         self.done = done
@@ -61,10 +71,11 @@ class _ClipWriter:
     def _run(self):
         error, count, duration = "", 0, 0.0
         try:
+            self.path = available_path(self.path)
             self.path.parent.mkdir(parents=True, exist_ok=True)
             start = self.frames[0]["at"]
             with self.path.open("x", encoding="utf-8", newline="\n") as stream:
-                stream.write(json.dumps({"schema": SCHEMA, **self.header}, ensure_ascii=False) + "\n")
+                stream.write(json.dumps({"schema": SCHEMA, **self.header}, ensure_ascii=False, separators=(",", ":")) + "\n")
 
                 def write(frame):
                     nonlocal count, duration
@@ -72,7 +83,7 @@ class _ClipWriter:
                     duration = max(0., frame["at"] - start)
                     row["t"] = round(duration, 4)
                     row["sample_t"] = round(frame["sample_at"] - start, 4)
-                    stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
                     count += 1
 
                 for frame in self.frames:
@@ -190,7 +201,7 @@ class TriggerRecorder:
                         self.error = "保存太慢，录制已中止"
                         return
                     header = {"recorded_at": datetime.now().astimezone().isoformat(),
-                              "config": copy.deepcopy(self.config),
+                              "source": str(source), "config": copy.deepcopy(self.config),
                               "first_trigger_t": round(now - self._buffer[0]["at"], 4),
                               "snapshot": snapshot_factory() if snapshot_factory else {}}
                     writer = _ClipWriter(self.directory, list(self._buffer), header, self._saved)

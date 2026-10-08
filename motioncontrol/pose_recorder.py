@@ -33,6 +33,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from motioncontrol.recording_storage import available_path, recording_path
+
 SCHEMA = "motioncontrol.pose_recording.v1"
 
 DEFAULT_DELAY_S = 3.0
@@ -60,6 +62,7 @@ class PoseRecorder:
         self.last_frames = 0
         self.last_error = ""
         self.source = ""
+        self.recorded_at = ""
         self._writer: threading.Thread | None = None
         self._saved = threading.Event()
         self._saved.set()
@@ -90,6 +93,8 @@ class PoseRecorder:
             self.last_error = ""
             self.last_path = None
             self.last_frames = 0
+            self.source = ""
+            self.recorded_at = ""
             return self.status(now=now)
 
     def cancel(self) -> dict:
@@ -110,6 +115,7 @@ class PoseRecorder:
                     return
                 self.state = "recording"
                 self.source = str(source)
+                self.recorded_at = datetime.now().astimezone().isoformat(timespec="microseconds")
             if self.state != "recording":
                 return
             if now >= self.ends_at or len(self._frames) >= MAX_FRAMES:
@@ -142,7 +148,7 @@ class PoseRecorder:
         self._saved.clear()
         header = {
             "schema": SCHEMA,
-            "recorded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "recorded_at": self.recorded_at or datetime.now().astimezone().isoformat(timespec="microseconds"),
             "duration_s": round(self.duration_s, 3),
             "delay_s": round(self.delay_s, 3),
             "frames": len(frames),
@@ -164,17 +170,18 @@ class PoseRecorder:
         saved_path: Path | None = None
         error = ""
         try:
-            self.directory.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-            path = self.directory / f"pose-{stamp}.jsonl"
+            path = available_path(recording_path(self.directory, source=header["source"],
+                                                 recorded_at=header["recorded_at"],
+                                                 label=f"骨骼_{header['duration_s']:g}秒"))
+            path.parent.mkdir(parents=True, exist_ok=True)
             # JSON Lines: a header line then one line per frame, so a long
             # recording streams instead of needing to be parsed whole.
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
-                                             dir=self.directory, suffix=".tmp", delete=False) as stream:
+                                             dir=path.parent, suffix=".tmp", delete=False) as stream:
                 temporary = Path(stream.name)
-                stream.write(json.dumps(header, ensure_ascii=False) + "\n")
+                stream.write(json.dumps(header, ensure_ascii=False, separators=(",", ":")) + "\n")
                 for frame in frames:
-                    stream.write(json.dumps(frame, ensure_ascii=False) + "\n")
+                    stream.write(json.dumps(frame, ensure_ascii=False, separators=(",", ":")) + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, path)

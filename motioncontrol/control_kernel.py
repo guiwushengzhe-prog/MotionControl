@@ -559,7 +559,7 @@ class ControlKernel:
         self.vertical_gate_active = False
         self.hand_mouse_controller = HandMouseController()
         self.pose_recorder = PoseRecorder(_user_recordings_dir())
-        self.trigger_recorder = TriggerRecorder(_user_recordings_dir() / "triggered")
+        self.trigger_recorder = TriggerRecorder(_user_recordings_dir())
         # 手机为主、电脑摄像头为第二视角时的真实前后深度；没开双目时它只是闲着。
         self.stereo = StereoDepth(_stereo_calibration_path())
         self.vertical_head_anchor_pitch: float | None = None

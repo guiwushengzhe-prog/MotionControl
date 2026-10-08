@@ -35,14 +35,19 @@ export async function refreshPoseRecord(){
   finally{poseRecordBusy=false}
 }
 
-// 「录下的数据」：几段、多大，加一个打开文件夹。还没录过就整行不出现。
-// 不摆路径——在 C 盘的用户目录里，路径又长又吓人，要找点按钮就到。
+// 姿态点、视频和原始深度分别显示，方便判断要清理哪一类。
 function formatBytes(n){return n>=1048576?`${(n/1048576).toFixed(1)} MB`:`${Math.max(1,Math.round(n/1024))} KB`}
 export async function refreshRecordings(){
   try{
     const data=await api('/api/recordings');
-    $('#recordingsRow').hidden=!data.count;
-    $('#recordingsSummary').textContent=data.count?`${data.count} 段 · ${formatBytes(data.bytes)}`:'';
+    $('#recordingsRow').hidden=!data.count&&!data.bytes;
+    const parts=[];
+    for(const [key,name] of [['pose','姿态点'],['video','视频'],['depth','深度']]){
+      const group=data[key];
+      if(group?.bytes||group?.count)parts.push(`${name} ${group.count} 段 · ${formatBytes(group.bytes)}`);
+    }
+    if(data.other?.bytes)parts.push(`其他 ${formatBytes(data.other.bytes)}`);
+    $('#recordingsSummary').textContent=parts.length?parts.join('； '):(data.count?`${data.count} 段 · ${formatBytes(data.bytes)}`:'');
   }catch{}
 }
 
