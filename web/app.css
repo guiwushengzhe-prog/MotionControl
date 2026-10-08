@@ -286,6 +286,7 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
   .viewer { width: min(100%, calc(max(100dvh - 12.5rem, 21.25rem) * var(--frame-ratio, 1.3333))); }
 }
 .viewer img, .viewer canvas, .zones { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+.viewer.unmirrored img, .viewer.unmirrored canvas, .viewer.unmirrored .zones, .viewer.unmirrored .zone { transform: none; }
 .viewer img { object-fit: fill; }
 .zones { pointer-events: none; }
 /* Regions are rectangles in the kernel's own hit test, so draw them as rectangles. */
@@ -691,10 +692,33 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .voice-built-in-row .name, .voice-built-in-row .voice-prefix { color: var(--text); overflow-wrap: anywhere; }
 
 /* 通用口令：一行一条。 */
+.home-fitness-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: .875rem 0; }
+.home-fitness-metrics div { display: grid; gap: .25rem; min-width: 0; }
+.home-fitness-metrics b { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.home-fitness-metrics span { color: var(--text-2); font-size: .75rem; }
+.home-fitness .card-head { gap: .5rem; flex-wrap: wrap; }
 .studio-workspace { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(19rem, 1fr); gap: 1.25rem; align-items: start; }
 .studio-preview-column { display: grid; gap: .625rem; min-width: 0; }
 .studio-preview { position: relative; overflow: hidden; border-radius: var(--radius-lg); background: #101014; aspect-ratio: 16 / 9; }
 .studio-preview canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+.studio-view-label { position: absolute; right: .75rem; top: .75rem; color: #fff; background: rgba(0,0,0,.6); padding: .25rem .625rem; border-radius: var(--radius-sm); font-size: .75rem; pointer-events: none; }
+.studio-avatar-presets { display: flex; gap: .625rem; flex-wrap: wrap; }
+.studio-avatar-presets button { background: transparent; border: 2px solid transparent; border-radius: var(--radius); padding: .25rem; display: grid; gap: .25rem; color: var(--text-2); font-size: .75rem; }
+.studio-avatar-presets button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.studio-avatar-presets img { width: 3.5rem; height: 3.5rem; border-radius: .625rem; }
+.studio-crop-dialog { width: min(42rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; padding: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius-lg); color: var(--text); background: var(--card); }
+.studio-crop-dialog::backdrop { background: var(--scrim); }
+.studio-crop-area { position: relative; overflow: hidden; background: #101014; margin: 1rem 0; max-width: 100%; touch-action: none; }
+.studio-crop-area canvas { display: block; width: 100%; height: 100%; }
+.studio-crop-selection { position: absolute; border: 2px solid #0a84ff; box-shadow: 0 0 0 100vmax rgba(0,0,0,.5); box-sizing: border-box; cursor: move; touch-action: none; }
+.studio-crop-selection i { position: absolute; width: 1rem; height: 1rem; background: #fff; border: 2px solid #0a84ff; border-radius: .25rem; }
+.studio-crop-selection [data-corner="nw"] { top: -.5rem; left: -.5rem; cursor: nwse-resize; }
+.studio-crop-selection [data-corner="ne"] { top: -.5rem; right: -.5rem; cursor: nesw-resize; }
+.studio-crop-selection [data-corner="sw"] { bottom: -.5rem; left: -.5rem; cursor: nesw-resize; }
+.studio-crop-selection [data-corner="se"] { bottom: -.5rem; right: -.5rem; cursor: nwse-resize; }
+.studio-crop-fields { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: .5rem; margin: 1rem 0; }
+.studio-crop-fields label { display: grid; gap: .375rem; color: var(--text-2); font-size: .75rem; }
+.studio-crop-fields input { width: 100%; min-width: 0; }
 .studio-preview.portrait { aspect-ratio: 9 / 16; max-height: 32rem; width: min(100%, 18rem); justify-self: center; }
 .studio-placeholder { position: absolute; inset: 0; display: grid; place-items: center; padding: 1.25rem; color: #a1a1a6; font-size: .8125rem; text-align: center; pointer-events: none; }
 .studio-recording-badge { position: absolute; top: .75rem; left: .75rem; padding: .25rem .625rem; border-radius: var(--radius-sm); background: rgba(0, 0, 0, .7); color: #ff6961; font-size: .8125rem; font-variant-numeric: tabular-nums; }

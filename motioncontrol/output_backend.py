@@ -711,7 +711,8 @@ class OutputManager:
         # 模式切回 gamepad，见 configure_xinput_merge。合流默认是关的，所以
         # 这里不会和它打架。
         self.mode = "mouse"
-        self.enabled = False
+        self._enabled = False
+        self._control_listener = None
         self.mouse_speed_x = 600.0
         self.mouse_speed_y = 450.0
         self.gamepad_gain = 1.6
@@ -770,6 +771,26 @@ class OutputManager:
         self._watchdog.start()
         self._xinput_thread = threading.Thread(target=self._xinput_loop, name="xinput-physical-merge", daemon=True)
         self._xinput_thread.start()
+
+    def bind_control_listener(self, listener) -> None:
+        """运动记录跟随真实控制状态，包括输出异常导致的自动暂停。"""
+        with self._lock:
+            self._control_listener = listener
+            listener(self._enabled)
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value) -> None:
+        with self._lock:
+            value = bool(value)
+            if value == self._enabled:
+                return
+            self._enabled = value
+            if self._control_listener is not None:
+                self._control_listener(value)
 
     @property
     def vigem_dll(self) -> Path | None:

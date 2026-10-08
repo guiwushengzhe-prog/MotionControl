@@ -18,6 +18,14 @@ export let cameraRunning=false;
 export let sessionStarted=false;
 // 摄像头的完整状态。新手教学要按它判断画面来没来。
 export let cameraInfo=null;
+export let previewMirrored=true;
+export function setPreviewMirror(enabled,revision){
+  if(Number.isFinite(revision))latestConfigRevision=Math.max(latestConfigRevision,revision);
+  previewMirrored=!!enabled;
+  setClass(viewer,'unmirrored',!previewMirrored);
+  setProperty($('#cameraMirror'),'checked',previewMirrored);
+  renderOverlay();
+}
 let serviceReady=false;
 let kernelConnected=false;
 export let zoneEditMode=false;
@@ -235,6 +243,7 @@ export function renderKernelState(runtime,force=false){
     }
   }
   latestRuntime=runtime;
+  if(typeof runtime?.preview_mirror==='boolean')setPreviewMirror(runtime.preview_mirror);
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   currentPoseMap=k.pose||null;
   // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
@@ -367,14 +376,14 @@ function drawOverlayZones(octx,w,h,zones={}){
     const fill=active?'rgba(255,70,80,.26)':phase==='pending'?'rgba(255,204,51,.22)':'rgba(0,0,0,.12)';
     octx.save();octx.lineWidth=Math.max(2,w/220);octx.strokeStyle=isGate?(active?'#62ff91':'#62d982'):stroke;octx.fillStyle=isGate?(active?'rgba(45,210,95,.30)':'rgba(30,150,75,.15)'):fill;if(isGate&&!active)octx.setLineDash([Math.max(4,w/100),Math.max(3,w/140)]);
     let x=0,y=0,ww=0,hh=0;const r=state.rect;
-    if(r){x=(1-Number(r.x2))*w;y=Number(r.y1)*h;ww=(Number(r.x2)-Number(r.x1))*w;hh=(Number(r.y2)-Number(r.y1))*h}
+    if(r){x=(previewMirrored?1-Number(r.x2):Number(r.x1))*w;y=Number(r.y1)*h;ww=(Number(r.x2)-Number(r.x1))*w;hh=(Number(r.y2)-Number(r.y1))*h}
     if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.34,w/9)))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):zoneKeyLabel(id,def),x+ww/2,y+hh/2);octx.restore();
   }
 }
 
 function renderOverlay(map=currentPoseMap){
   if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx;fitCanvas(c,4/3,500000);const w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);
-  draw(map,octx,w,h,true);
+  draw(map,octx,w,h,previewMirrored);
   drawOverlayZones(octx,w,h,kernelState?.zones||{});const buttons=kernelState?.buttons||[],motions=kernelState?.motions||[];const gate=!!kernelState?.vertical_gate_active;const latch=voiceLatchText(output);const text=gate?'上下视角已开启':(buttons.length?`区域 ${buttons.join('+')}`:(motions.length?`动作 ${motions.join('+')}`:(map?'未触发':'未识别人体')));octx.fillStyle=latch?'rgba(70,32,0,.78)':'rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle=latch?'#ffc46b':'#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.textAlign='left';octx.textBaseline='alphabetic';octx.fillText(latch?`${latch} · 说松开才会放`:`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))
 }
 
@@ -414,9 +423,9 @@ function closeLiveZoneEditor(){
 }
 
 // 显示用的框（镜像过的，左边就是屏幕左边）和原始坐标互换。拖的时候全在显示坐标里算。
-const rectToDisplay=r=>({left:1-r.x2,right:1-r.x1,top:r.y1,bottom:r.y2});
+const rectToDisplay=r=>({left:previewMirrored?1-r.x2:r.x1,right:previewMirrored?1-r.x1:r.x2,top:r.y1,bottom:r.y2});
 
-const rectFromDisplay=d=>({x1:1-d.right,x2:1-d.left,y1:d.top,y2:d.bottom});
+const rectFromDisplay=d=>({x1:previewMirrored?1-d.right:d.left,x2:previewMirrored?1-d.left:d.right,y1:d.top,y2:d.bottom});
 
 function startRectDrag(e,el,id){
   rectEdit.selected=id;

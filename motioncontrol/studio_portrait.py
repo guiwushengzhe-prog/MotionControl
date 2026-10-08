@@ -12,7 +12,7 @@ import time
 
 MAX_FRAME_AGE = 0.9
 FRAME_INTERVAL = 1.0 / 8.0
-DEFAULT_CONFIG = {"source": "computer", "background": "original", "face": "original"}
+DEFAULT_CONFIG = {"source": "computer", "background": "original", "face": "original", "mirror": True}
 
 
 def face_rectangle(pose, width, height):
@@ -124,7 +124,11 @@ def render_portrait(frame, pose, mask, config, avatar=None):
         else:
             # 透明像素不保留原背景颜色，避免其他合成工具忽略透明通道时泄露。
             image[alpha == 0] = 0
-    return np.dstack((image, alpha)), None
+    output = np.dstack((image, alpha))
+    # 镜像属于人物输出，而非识别坐标；录像、合成预览和直播复用同一结果。
+    if config.get("mirror", True):
+        output = cv2.flip(output, 1)
+    return output, None
 
 
 class StudioPortrait:
@@ -141,6 +145,7 @@ class StudioPortrait:
         self._thread = None
         self._config = dict(DEFAULT_CONFIG)
         self._avatar = None
+        self._avatar_data_url = ""
         self._enabled = False
         self._revision = 0
         self._frame = None
@@ -164,10 +169,17 @@ class StudioPortrait:
                         raise ValueError(f"人像设置 {name} 的值无效")
                     candidate[name] = config[name]
             avatar = self._avatar
-            if "avatar_data_url" in config:
+            if "mirror" in config:
+                if type(config["mirror"]) is not bool:
+                    raise ValueError("人物镜像必须为开启或关闭")
+                candidate["mirror"] = config["mirror"]
+            avatar_changed = "avatar_data_url" in config and config["avatar_data_url"] != self._avatar_data_url
+            if avatar_changed:
                 avatar = decode_avatar(config["avatar_data_url"]) if config["avatar_data_url"] else None
-            if candidate != self._config or "avatar_data_url" in config:
+            if candidate != self._config or avatar_changed:
                 self._config, self._avatar = candidate, avatar
+                if avatar_changed:
+                    self._avatar_data_url = config["avatar_data_url"]
                 self._revision += 1
                 self._clear_locked("等待新设置的画面")
                 self._wake.set()

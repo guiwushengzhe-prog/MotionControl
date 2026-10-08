@@ -15,7 +15,10 @@ from motioncontrol.studio_portrait import decode_avatar
 
 DEFAULT_CONFIG = {"source": "computer", "background": "original", "face": "original",
                   "avatar_data_url": "", "layout": "landscape", "position": "bottom-right",
-                  "size": 30, "capture": "window", "system_audio": True, "microphone": False}
+                  "size": 30, "capture": "window", "system_audio": True, "microphone": False,
+                  "mirror": True, "avatar_preset": "",
+                  "screen_crop": {"x": 0, "y": 0, "width": 1, "height": 1},
+                  "portrait_crop": {"x": 0, "y": 0, "width": 1, "height": 1}}
 MAX_CHUNK_BYTES = 16 * 1024 * 1024
 
 
@@ -32,7 +35,7 @@ class StudioService:
         self._stop = threading.Event()
         self._thread = None
         self.error = ""
-        self.config = dict(DEFAULT_CONFIG)
+        self.config = copy.deepcopy(DEFAULT_CONFIG)
         try:
             saved = json.loads(self.config_path.read_text(encoding="utf-8"))
             self.config = self._validated(saved)
@@ -52,22 +55,34 @@ class StudioService:
         choices = {"source": {"computer", "phone"}, "background": {"original", "green", "transparent"},
                    "face": {"original", "mask", "avatar"}, "layout": {"landscape", "portrait"},
                    "position": {"bottom-right", "bottom-left", "top-right", "top-left"},
-                   "capture": {"window", "monitor"}}
+                   "capture": {"window", "monitor"}, "avatar_preset": {"", "cat", "fox", "robot"}}
         for key, allowed in choices.items():
             if key in patch:
                 if patch[key] not in allowed:
                     raise ValueError("录制选项无效：" + key)
                 config[key] = patch[key]
-        for key in ("microphone", "system_audio"):
+        for key in ("microphone", "system_audio", "mirror"):
             if key in patch:
                 if type(patch[key]) is not bool:
-                    raise ValueError("声音选项必须为开启或关闭")
+                    raise ValueError("开关选项必须为开启或关闭")
                 config[key] = patch[key]
         if "size" in patch:
             size = patch["size"]
             if isinstance(size, bool) or not isinstance(size, (int, float)) or not math.isfinite(size) or not 15 <= size <= 65:
                 raise ValueError("人物大小必须在15%到65%之间")
             config["size"] = int(size)
+        for key in ("screen_crop", "portrait_crop"):
+            if key not in patch:
+                continue
+            rect = patch[key]
+            if not isinstance(rect, dict) or any(
+                    isinstance(rect.get(k), bool) or not isinstance(rect.get(k), (int, float))
+                    or not math.isfinite(rect[k]) for k in ("x", "y", "width", "height")):
+                raise ValueError("裁切范围无效")
+            x, y, width, height = (float(rect[k]) for k in ("x", "y", "width", "height"))
+            if x < 0 or y < 0 or width < .05 or height < .05 or x + width > 1.000001 or y + height > 1.000001:
+                raise ValueError("裁切范围必须在画面内，至少保留5%")
+            config[key] = dict(x=x, y=y, width=width, height=height)
         if "avatar_data_url" in patch:
             avatar = patch["avatar_data_url"]
             if not isinstance(avatar, str) or len(avatar) > 2 * 1024 * 1024:

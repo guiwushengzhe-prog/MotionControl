@@ -7,7 +7,8 @@ if(pane){
     <p class="muted">体感游戏中的身体活动自动记录。热量按动作和体重估算，原地踏步记为步数。</p>
     <div class="fitness-card"><div class="fitness-heading"><h3>这次运动</h3><span id="fitnessStatus">未开始</span></div>
       <div class="fitness-metrics"><div><strong id="fitnessMinutes">0.0</strong><span>活动分钟</span></div><div><strong id="fitnessSteps">0</strong><span>步数</span></div><div><strong id="fitnessKcal">0.0</strong><span>估算活动千卡</span></div></div>
-      <div class="fitness-actions"><button id="fitnessStart" class="primary">开始记录</button><button id="fitnessPause" hidden>暂停记录</button><button id="fitnessFinish" hidden>结束这次</button></div>
+      <p class="muted">开始控制时自动记录，暂停控制或停止识别时暂停；再次开始控制会继续这次运动。</p>
+      <div class="fitness-actions"><button id="fitnessFinish" hidden>结束这次</button></div>
       <p id="fitnessError" class="muted" role="status"></p>
     </div>
     <div class="fitness-card"><div class="fitness-heading"><h3>每日目标</h3><span id="fitnessLevel">等级 1</span></div>
@@ -38,7 +39,7 @@ if(pane){
     const running=data.status==='active',paused=data.status==='paused';
     setText(el('fitnessStatus'),running?'记录中':paused?'已暂停':data.status==='finished'?'已结束':'未开始');
     setText(el('fitnessMinutes'),minutes(data.active_seconds));setText(el('fitnessSteps'),number(data.steps).toLocaleString());setText(el('fitnessKcal'),number(data.estimated_kcal).toFixed(1));
-    el('fitnessStart').hidden=running;setText(el('fitnessStart'),paused?'继续记录':'开始记录');el('fitnessPause').hidden=!running;el('fitnessFinish').hidden=!(running||paused);
+    el('fitnessFinish').hidden=!paused;
     const profile=data.profile||{},today=data.today||{},goal=profile.primary_goal||'minutes';
     const actual=goal==='steps'?number(today.steps):goal==='kcal'?number(today.estimated_kcal):number(today.active_seconds)/60;
     const target=number(profile[{minutes:'goal_active_minutes',steps:'goal_steps',kcal:'goal_kcal'}[goal]])||1;
@@ -52,10 +53,29 @@ if(pane){
   }
   async function control(action,extra={}){
     if(busy)return;busy=true;
-    try{render(await api('/api/fitness/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,session_id:state.session_id,...extra})}));}
+    try{render(await api('/api/fitness/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,session_id:state.session_id,...extra})}));if(action==='finish')lastHistoryAt=0;}
     catch(error){notice(error.message)}finally{busy=false}
   }
-  el('fitnessStart').onclick=()=>control(state.status==='paused'?'resume':'start');el('fitnessPause').onclick=()=>control('pause');el('fitnessFinish').onclick=()=>control('finish');
+  el('fitnessFinish').onclick=()=>control('finish');
+  el('homeFitnessGo')?.addEventListener('click',()=>{
+    document.querySelector('[data-view="devices"]')?.click();
+    document.querySelector('#settingsNav [data-pane="fitness"]')?.click();
+  });
+  function renderHome(data){
+    const active=data.control_enabled===true;
+    const today=data.today||{},session=data.status==='active'||data.status==='paused';
+    const values=active?data:today;
+    setText(el('homeFitnessTitle'),active?'这次运动':'今日运动');
+    setText(el('homeFitnessMinutes'),minutes(values.active_seconds));
+    setText(el('homeFitnessSteps'),number(values.steps).toLocaleString());
+    setText(el('homeFitnessKcal'),number(values.estimated_kcal).toFixed(1));
+    const hr=active&&data.heart_rate? ` · 心率 ${data.heart_rate} 次/分`:'';
+    const profile=data.profile||{},goal=profile.primary_goal||'minutes';
+    const actual=goal==='steps'?number(today.steps):goal==='kcal'?number(today.estimated_kcal):number(today.active_seconds)/60;
+    const target=number(profile[{minutes:'goal_active_minutes',steps:'goal_steps',kcal:'goal_kcal'}[goal]])||1;
+    setText(el('homeFitnessHint'),data.error||(active?'自动记录中'+hr:
+      `今日目标 ${Math.min(100,Math.floor(actual/target*100))}% · ${session?'开始控制后继续记录':'开始控制后自动记录'}`));
+  }
   form.addEventListener('input',()=>{editing=true});
   // 年龄、性别不填就是 null；别的都是数（主目标是字）。
   const fieldValue=(key,value)=>key==='primary_goal'?value:key==='sex'?(value||null):key==='age'?(value===''?null:Number(value)):Number(value);
@@ -77,9 +97,13 @@ if(pane){
   }
   el('fitnessCloudLogin').onclick=()=>cloud('login');el('fitnessCloudCancel').onclick=()=>cloud('cancel');el('fitnessCloudLogout').onclick=()=>cloud('logout');
   async function poll(){
-    if(!isVisible(pane))return;
+    const showPane=isVisible(pane),showHome=isVisible(el('homeFitnessCard'));
+    if(!showPane&&!showHome)return;
     try{
-      render(await api('/api/fitness/state'));
+      const data=await api('/api/fitness/state');
+      if(showHome)renderHome(data);
+      if(!showPane)return;
+      render(data);
       renderCloud(await api('/api/cloud/account'));
       if(Date.now()-lastHistoryAt<5000)return;lastHistoryAt=Date.now();
       const result=await api('/api/fitness/history'),rows=(result.sessions||[]).slice(-12).reverse(),signature=JSON.stringify(rows);

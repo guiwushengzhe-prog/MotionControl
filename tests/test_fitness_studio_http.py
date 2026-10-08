@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from test_studio_ui import FAKE_CAPTURE, PNG, browser  # noqa: F401
+from test_output_actions_v097 import Mouse, Keyboard, Pad
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,6 +44,12 @@ def app_http(isolated_user_data, monkeypatch):
     spec = importlib.util.spec_from_file_location("fitness_studio_http_test_server", ROOT / "server.py")
     app = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(app)
+    app.OUTPUT.mouse, app.OUTPUT.keyboard, app.OUTPUT._pad = Mouse(), Keyboard(), Pad()
+    # 选择未连接的手机模式；网页启停控制绝不能顺带打开真实摄像头。
+    app.RUNTIME.body_mode = "phone"
+    app.INPUT_BRIDGE.set_body_mode("phone")
+    app.INPUT_BRIDGE.set_body_enabled(True)
+    monkeypatch.setattr(app.RUNTIME.camera, "start", lambda: pytest.fail("测试不允许启动摄像头"))
     original = app.STUDIO.portrait
     original.close()
     portrait = SyntheticPortrait()
@@ -106,23 +113,30 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     page.on("request", lambda request: fitness_calls.append((request.method, request.url)) if "/api/fitness/" in request.url else None)
     page.add_init_script("localStorage.setItem('motioncontrol_tutorial_v2',JSON.stringify({done:[],skipped:[],seen:1,offered:true}));localStorage.setItem('motioncontrol_tips_seen',JSON.stringify(['help','gameMenu']));")
     page.goto(base + "/")
+    page.wait_for_function("!document.getElementById('mainActionBtn').disabled")
+    page.click("#mainActionBtn")
+    page.wait_for_function("document.getElementById('homeFitnessTitle').textContent==='这次运动'")
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="fitness"]')
     page.wait_for_function("document.querySelector('#fitnessProfile [name=weight_kg]').value !== ''")
-    page.click("#fitnessStart")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='记录中'")
+    assert page.locator("#fitnessStart").count() == 0
+    assert page.locator("#fitnessPause").count() == 0
     session_id = app.FITNESS.state()["session_id"]
     # 可重复的踏步事件，只注入运动计数，不向电脑输出游戏按键。
     app.FITNESS.step_event("left", 10.)
     app.FITNESS.step_event("right", 10.4)
     page.wait_for_function("document.getElementById('fitnessSteps').textContent==='2'")
-    page.click("#fitnessPause")
+    page.click("#mainActionBtn")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已暂停'")
-    page.click("#fitnessStart")
+    page.click("#mainActionBtn")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='记录中'")
+    assert app.FITNESS.state()["session_id"] == session_id
+    page.click("#mainActionBtn")
+    page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已暂停'")
     page.click("#fitnessFinish")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已结束'")
-    page.wait_for_selector(".fitness-history-row", timeout=8000)
+    page.wait_for_function("document.getElementById('fitnessHistory').textContent.includes('2 步')", timeout=8000)
     assert "2 步" in page.locator("#fitnessHistory").inner_text()
     assert app.FITNESS.history()[-1]["session_id"] == session_id
     assert app.FITNESS.history()[-1]["steps"] == 2
@@ -137,4 +151,45 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     assert all(any(endpoint in url for _, url in fitness_calls) for endpoint in ("/api/fitness/state", "/api/fitness/control", "/api/fitness/history"))
     assert errors == []
     assert missing == []
+    page.close()
+
+
+def test_device_mirror_updates_all_view_layers_and_persists(browser, app_http):
+    app, base, _ = app_http
+    page = browser.new_page()
+    page.add_init_script("localStorage.setItem('motioncontrol_tutorial_v2',JSON.stringify({done:[],skipped:[],seen:1,offered:true}));")
+    page.goto(base + "/")
+    page.click('nav [data-view="devices"]')
+    page.wait_for_function("!document.getElementById('cameraMirror').disabled")
+    page.uncheck("#cameraMirror")
+    page.wait_for_function("document.getElementById('viewer').classList.contains('unmirrored')")
+    assert app.STUDIO.config["mirror"] is False
+    runtime = page.evaluate("async()=>await (await fetch('/api/kernel/status')).json()")
+    assert runtime["preview_mirror"] is False
+    assert page.evaluate("getComputedStyle(document.getElementById('canvas')).transform") == "none"
+    assert page.evaluate("getComputedStyle(document.querySelector('.zones')).transform") == "none"
+    # 屏幕上向右挪区域，非镜像时原坐标增大；镜像时原坐标减小。
+    # 只改隔离浏览器里的编辑草稿，不向服务保存，也不触发游戏输出。
+    original_rect = {"x1": .15, "y1": .25, "x2": .35, "y2": .45}
+    unmirrored = page.evaluate("""async rect=>{
+      const play=await import('/js/play.js');play.rectEdit.rects.leftHand={...rect};
+      play.nudgeRect('leftHand','ArrowRight',false);return play.rectEdit.rects.leftHand;
+    }""", original_rect)
+    assert unmirrored["x1"] == pytest.approx(.16)
+    assert unmirrored["x2"] == pytest.approx(.36)
+    page.reload()
+    page.click('nav [data-view="devices"]')
+    page.wait_for_function("!document.getElementById('cameraMirror').checked")
+    page.check("#cameraMirror")
+    page.wait_for_function("!document.getElementById('viewer').classList.contains('unmirrored')")
+    assert app.STUDIO.config["mirror"] is True
+    mirrored = page.evaluate("""async rect=>{
+      const play=await import('/js/play.js');play.rectEdit.rects.leftHand={...rect};
+      play.nudgeRect('leftHand','ArrowRight',false);return play.rectEdit.rects.leftHand;
+    }""", original_rect)
+    assert mirrored["x1"] == pytest.approx(.14)
+    assert mirrored["x2"] == pytest.approx(.34)
+    page.click('nav [data-view="play"]')
+    page.click("#homeFitnessGo")
+    assert page.locator("#pane-fitness").is_visible()
     page.close()
