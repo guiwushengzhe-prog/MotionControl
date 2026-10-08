@@ -3538,13 +3538,9 @@ class NativeCameraService:
         # 笔记本立起来用、或者摄像头侧装时，画面是横躺的；人躺着，所有"上下"判定全错。
         # 读帧后立刻转正，识别、预览、宽高都只见到转正后的这一张。
         # rotation 是用户的设置（auto 或固定方向）；applied_rotation 是此刻真正在转的方向。
-        # auto 从上次自动判出的方向起步，重启后第一帧就是正的。
+        # 自动模式每次从当前原始画面判定，不沿用另一个姿态或设备的旧判向。
         self.rotation = self._parse_rotation(self._remembered("camera_rotation", "auto")) or "auto"
-        remembered_auto = self._parse_rotation(self._remembered("camera_auto_rotation", "none"))
-        self.applied_rotation = (
-            (remembered_auto if remembered_auto in self.QUARTER_TURNS else "none")
-            if self.rotation == "auto" else self.rotation
-        )
+        self.applied_rotation = "none" if self.rotation == "auto" else self.rotation
         self._rotation_votes: deque[int] = deque(maxlen=self.ROTATION_VOTE_FRAMES)
         self._rotation_locked = False
         self._rotation_changed_at = 0.0
@@ -3793,8 +3789,7 @@ class NativeCameraService:
             self._remember("camera_rotation", rotation)
             self._rotation_votes.clear()
             self._rotation_locked = False
-            if rotation != "auto":
-                self._apply_rotation_locked(rotation)
+            self._apply_rotation_locked("none" if rotation == "auto" else rotation)
             return self.backend_config()
 
     def _apply_rotation_locked(self, rotation: str) -> None:
@@ -3806,42 +3801,40 @@ class NativeCameraService:
 
     @staticmethod
     def _upright_turns(pose_map: dict, width: int, height: int) -> int | None:
-        """人在这张画面里还要再顺时针转几个 90° 才是直立的；拿不准返回 None。
-
-        身体朝上的方向取髋部中点指向肩部中点；髋部出画（坐着、离得近）时取肩部中点指向鼻子。
-        """
-        def point(name: str, min_score: float = 0.6):
+        """选择鼻子高于双肩中点、双肩连线接近水平的画面方向。"""
+        def point(name: str):
             p = pose_map.get(name)
-            if not p or float(p.get("score", 0.0)) < min_score:
+            if not p or float(p.get("score", 0.0)) < 0.6:
                 return None
-            return float(p["x"]) * width, float(p["y"]) * height
+            x, y = float(p["x"]), float(p["y"])
+            # 出画的推断点不能用来判断相机朝向。
+            return (x * width, y * height) if 0 <= x <= 1 and 0 <= y <= 1 else None
 
-        ls, rs = point("left_shoulder"), point("right_shoulder")
-        if not ls or not rs:
+        ls, rs, nose = point("left_shoulder"), point("right_shoulder"), point("nose")
+        if ls is None or rs is None or nose is None:
             return None
-        top = ((ls[0] + rs[0]) / 2, (ls[1] + rs[1]) / 2)
-        lh, rh = point("left_hip", 0.5), point("right_hip", 0.5)
-        if lh and rh:
-            base = ((lh[0] + rh[0]) / 2, (lh[1] + rh[1]) / 2)
-        else:
-            nose = point("nose")
-            if not nose:
-                return None
-            base, top = top, nose
-        dx, dy = top[0] - base[0], top[1] - base[1]
-        if math.hypot(dx, dy) < 1e-6:
+        sx, sy = rs[0] - ls[0], rs[1] - ls[1]
+        span = math.hypot(sx, sy)
+        if span < 4:
             return None
-        angle = math.degrees(math.atan2(dx, -dy))  # 0 = 朝上，+90 = 头朝画面右边
-        turns = round(angle / 90.0)
-        if abs(angle - turns * 90.0) > 30.0:
-            return None
-        return (-turns) % 4
+        dx = nose[0] - (ls[0] + rs[0]) / 2
+        dy = nose[1] - (ls[1] + rs[1]) / 2
+        min_gap = max(2.0, span * 0.05)
+        slope_limit = math.tan(math.radians(30))
+        for turns in range(4):
+            if dy < -min_gap and abs(sy) <= abs(sx) * slope_limit:
+                return turns
+            # 向量每次顺时针转90°，平移不影响头肩关系。
+            dx, dy, sx, sy = -dy, dx, -sy, sx
+        return None
 
-    def _vote_rotation_locked(self, pose_map: dict, width: int, height: int) -> None:
+    def _vote_rotation_locked(self, pose_map: dict, width: int, height: int, *, mirrored=False) -> None:
         turns = self._upright_turns(pose_map, width, height)
         if turns is None:
+            self._rotation_votes.clear()
             return
-        self._rotation_votes.append(turns)
+        # 采集先旋转再左右镜像，镜像画面里的转向需换回原始画面的转向。
+        self._rotation_votes.append((-turns) % 4 if mirrored else turns)
         if len(self._rotation_votes) < self.ROTATION_VOTE_FRAMES:
             return
         best, count = Counter(self._rotation_votes).most_common(1)[0]
@@ -3853,7 +3846,6 @@ class NativeCameraService:
         total = (self.QUARTER_TURNS[self.applied_rotation] + best) % 4
         rotation = next(name for name, value in self.QUARTER_TURNS.items() if value == total)
         self._apply_rotation_locked(rotation)
-        self._remember("camera_auto_rotation", rotation)
 
     @staticmethod
     def _camera_catalog(*, refresh=False) -> dict | None:
@@ -4012,7 +4004,9 @@ class NativeCameraService:
         return round(value, digits) if value is not None and math.isfinite(value) else None
 
     def _reset_runtime_locked(self) -> None:
-        # 每次启动重新判一次方向：两次启动之间设备可能被转过。
+        # 启动和切换设备均从原始画面重新判断；固定方向继续沿用。
+        if self.rotation == "auto":
+            self._apply_rotation_locked("none")
         self._rotation_votes.clear()
         self._rotation_locked = False
         self.frames = 0
@@ -4523,9 +4517,10 @@ class NativeCameraService:
                         )
                     finished = time.monotonic()
                     inference_ms = (time.perf_counter() - started) * 1000.0
-                    if (pose_map and self.rotation == "auto" and not self._rotation_locked
+                    if (self.rotation == "auto" and not self._rotation_locked
                             and captured_at >= self._rotation_changed_at):
-                        self._vote_rotation_locked(pose_map, width, height)
+                        self._vote_rotation_locked(pose_map or {}, width, height,
+                            mirrored=bool(depth_metadata and depth_metadata.get("image_mirrored")))
                     self.last_frame_at = finished
                     self.last_inference_at = finished
                     self.last_inference_ms = inference_ms

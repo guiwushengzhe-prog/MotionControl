@@ -94,10 +94,10 @@ def test_auto_rotation_turns_then_locks(kernel, isolated_user_data):
             camera._vote_rotation_locked(upright, w, h)
     assert camera._rotation_locked
 
-    # 下次启动直接从判出的方向起步。
+    # 下次启动重新检查原始画面，不继承上一轮自动判出的方向。
     again = ControlKernel(Output())
     try:
-        assert NativeCameraService(again).applied_rotation == "ccw"
+        assert NativeCameraService(again).applied_rotation == "none"
     finally:
         again.close()
 
@@ -115,3 +115,81 @@ def test_a_fixed_rotation_is_used_as_is_and_remembered(kernel, isolated_user_dat
 def test_a_nonsense_rotation_is_refused(kernel):
     with pytest.raises(CameraUnavailable):
         NativeCameraService(kernel).set_rotation("45")
+
+
+@pytest.mark.parametrize("turns", [0, 1, 2, 3])
+def test_near_camera_nose_offset_uses_shoulder_line_for_orientation(turns):
+    # 本次实际故障：鼻子只比肩中点高一点，横向偏移更大。
+    # 头向右偏不能让已经正向的画面被误转90°。
+    points = {"nose": (302.7, 260.6), "left_shoulder": (345.8, 263.9),
+              "right_shoulder": (211.2, 280.8)}
+    pose, width, height = pose_map(points, 640, 360, turns)
+    assert NativeCameraService._upright_turns(pose, width, height) == (-turns) % 4
+
+
+def test_nose_level_with_shoulders_is_ambiguous():
+    pose, w, h = pose_map({"nose": (320, 259), "left_shoulder": (380, 260),
+                          "right_shoulder": (260, 260)}, 640, 480, 0)
+    assert NativeCameraService._upright_turns(pose, w, h) is None
+
+
+def test_out_of_frame_inferred_point_cannot_choose_orientation():
+    pose, w, h = pose_map(upright_pose(), 640, 480, 0)
+    pose["nose"]["y"] = -0.2
+    assert NativeCameraService._upright_turns(pose, w, h) is None
+
+
+def test_choose_auto_rechecks_from_raw_picture(kernel):
+    camera = NativeCameraService(kernel)
+    camera.set_rotation("cw")
+    camera._rotation_locked = True
+    camera.set_rotation("auto")
+    assert camera.rotation == "auto"
+    assert camera.applied_rotation == "none"
+    assert not camera._rotation_locked
+
+
+def test_camera_restart_rechecks_direction_but_fixed_direction_stays(kernel):
+    camera = NativeCameraService(kernel)
+    camera.applied_rotation = "ccw"
+    camera._rotation_locked = True
+    camera._reset_runtime_locked()
+    assert camera.applied_rotation == "none"
+    assert not camera._rotation_locked
+    camera.set_rotation("cw")
+    camera._reset_runtime_locked()
+    assert camera.applied_rotation == "cw"
+
+
+def test_bad_observation_breaks_automatic_vote_streak(kernel):
+    camera = NativeCameraService(kernel)
+    pose, width, height = pose_map(upright_pose(), 640, 480, 0)
+    for _ in range(camera.ROTATION_VOTE_FRAMES - 1):
+        camera._vote_rotation_locked(pose, width, height)
+    camera._vote_rotation_locked({}, width, height)
+    camera._vote_rotation_locked(pose, width, height)
+    assert not camera._rotation_locked
+    assert list(camera._rotation_votes) == [0]
+
+
+@pytest.mark.parametrize("mirrored", [False, True])
+@pytest.mark.parametrize("turns", [0, 1, 2, 3])
+def test_auto_correction_matches_capture_order_with_or_without_mirror(kernel, turns, mirrored):
+    camera = NativeCameraService(kernel)
+    def observation(turn):
+        pose, width, height = pose_map(upright_pose(), 640, 480, turn)
+        if mirrored:
+            for point in pose.values():
+                point["x"] = 1 - point["x"]
+        return pose, width, height
+
+    pose, width, height = observation(turns)
+    for _ in range(camera.ROTATION_VOTE_FRAMES):
+        camera._vote_rotation_locked(pose, width, height, mirrored=mirrored)
+    assert camera.QUARTER_TURNS[camera.applied_rotation] == (-turns) % 4
+    # 原始画面执行修正再镜像后，应锁定正向，不往错误方向继续旋转。
+    total = (turns + camera.QUARTER_TURNS[camera.applied_rotation]) % 4
+    pose, width, height = observation(total)
+    for _ in range(camera.ROTATION_VOTE_FRAMES):
+        camera._vote_rotation_locked(pose, width, height, mirrored=mirrored)
+    assert camera._rotation_locked
