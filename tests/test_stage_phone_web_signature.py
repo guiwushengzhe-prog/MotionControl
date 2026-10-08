@@ -101,6 +101,26 @@ def test_it_lands_inside_app_so_the_pc_update_carries_it(built, tmp_path):
         "phone_web 落在 app/ 同级了，电脑端自更新带不上它")
 
 
+def test_release_notes_ride_inside_the_signed_bundle(built, tmp_path, monkeypatch):
+    """手机换上热更后拿它说「这次更新了什么」；只收网页那几节，变了签名就作废。"""
+    import json
+
+    import tools.stage_release as stage
+
+    target = tmp_path / "release"
+    stage_phone_web(built, target)
+    notes = json.loads((target / "app" / "phone_web" / "release-notes.json").read_text(encoding="utf-8"))
+    assert all(release["channel"] == "web" and release["kind"] in {"feature", "system"}
+               for release in notes["releases"])
+    signature(target).write_text("假装这是签名", encoding="utf-8")
+    stage_phone_web(built, target)
+    assert signature(target).is_file(), "说明没变，签名留着"
+
+    monkeypatch.setattr(stage, "phone_release_notes", lambda: b'{"releases": []}\n')
+    stage_phone_web(built, target)
+    assert not signature(target).exists(), "说明变了，签名必须跟着作废"
+
+
 def test_the_bundle_builder_checks_the_signature_after_restaging():
     """顺序：restage 会在内容变了时丢掉签名，所以验签必须排在它之后、打包之前。
 

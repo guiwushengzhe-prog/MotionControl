@@ -39,8 +39,10 @@ RELEASE_PROVENANCE_NAME = "release-provenance.json"
 
 # Directories copied wholesale.  config/ is deliberately absent: since 2.0.x the
 # user's own files live in %LOCALAPPDATA%, and shipping a stale copy of them
-# would give a fresh install someone else's mappings.
-COPY_TREES = ("web", "game_profiles")
+# would give a fresh install someone else's mappings.  vendor/ holds pure-Python
+# third-party packages, so an app-only update can deliver a new dependency
+# without replacing the bundled interpreter (see vendor/README.md).
+COPY_TREES = ("web", "game_profiles", "vendor")
 
 # Program configuration that is identical everywhere, so it comes from the
 # repository.  Listed explicitly rather than globbed so a user-data file can
@@ -50,8 +52,9 @@ CONFIG_FILES = (
     "voice_commands_v094.json",
 )
 # 语音识别直接使用随包的 Vosk 模型，不再打包 Windows 系统语音桥接脚本。
+# CHANGELOG.md 跟着 app/ 走：更新后界面靠它说「这次更新了什么」（update_status）。
 RUNTIME_FILES = ("motioncontrol/windows_firewall.ps1", "tools/kinect_camera/KinectCamera.cs",
-                 "tools/camera_devices/CameraDevices.cs")
+                 "tools/camera_devices/CameraDevices.cs", "CHANGELOG.md")
 
 # Configuration that belongs to the bundle, not to the repository: it points at
 # paths *inside* the release.  The repo's copies point at a developer's machine
@@ -330,6 +333,20 @@ def verify_release_provenance(app: Path, *, check_sources: bool = False) -> dict
 # 手机网页包里不进发布的部分：模型和 WASM 有 25 MB，它们留在 APK 里，手机永远
 # 从 APK 读（见 WebUpdateRoutes）。进来的只有真正会变的那 200 KB。
 PHONE_WEB_SKIP = ("models/", "wasm/")
+# 热更换上新网页时，手机拿它说「这次更新了什么」（mobile/src/release-notes.ts）。
+# 放在网页包里跟着一起签名；只收 CHANGELOG 里「网页 x.y.z」那几节。
+PHONE_RELEASE_NOTES = "release-notes.json"
+MAX_PHONE_RELEASES = 12
+
+
+def phone_release_notes() -> bytes:
+    from motioncontrol_shared.changelog import parse, release_kind
+
+    changelog = ROOT / "CHANGELOG.md"
+    text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
+    releases = [release for release in parse(text) if release["channel"] == "web"][:MAX_PHONE_RELEASES]
+    payload = {"releases": [{**release, "kind": release_kind(release)} for release in releases]}
+    return (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 
 def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
@@ -358,7 +375,7 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
         relative = path.relative_to(source).as_posix()
         if relative.startswith(PHONE_WEB_SKIP) or relative.endswith(".map"):
             continue
-        if relative == signature_name:
+        if relative in (signature_name, PHONE_RELEASE_NOTES):
             # 源目录自己也可能被签过：开发时电脑端直接从 switch/mobile/dist 供包
             # 给手机，那份就得签。但它签的是 dist 的清单，不是这份发布包的，抄过
             # 来永远对不上。更糟的是它和目标那份的签发时间不同，于是每次都判成
@@ -366,7 +383,7 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
             # 刚签好的签名删掉，而删完不报错，只有真手机去更新时才拒绝。
             continue
         wanted[relative] = path
-    keep = {signature_name}
+    keep = {signature_name, PHONE_RELEASE_NOTES}
     changed = False
     for existing in sorted(root.rglob("*"), reverse=True):
         if existing.is_file():
@@ -386,6 +403,12 @@ def stage_phone_web(source: Path, target: Path) -> tuple[int, int]:
             shutil.copy2(path, destination)
             changed = True
         total += path.stat().st_size
+    notes = root / PHONE_RELEASE_NOTES
+    content = phone_release_notes()
+    if not notes.is_file() or notes.read_bytes() != content:
+        root.mkdir(parents=True, exist_ok=True)
+        notes.write_bytes(content)
+        changed = True
     if changed:
         (root / ".signature").unlink(missing_ok=True)
     return len(wanted), total

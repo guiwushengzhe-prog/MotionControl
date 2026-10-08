@@ -44,12 +44,13 @@ ACTION_TYPES = {
     # （区域、动作、姿势、语音）都能绑它，永远是触发一次。
     "voice_release",
     # 系统功能：不按游戏里的键，让本程序自己做一件事（定住区域、视角回正……）。
-    # target 必须在 BINDING_SYSTEM_TARGETS 里，电脑端按名字执行。永远是触发一次。
+    # target 必须在白名单里（身体映射 BINDING_SYSTEM_TARGETS，语音 VOICE_SYSTEM_TARGETS），
+    # 电脑端按名字执行。永远是触发一次。
     "system",
 }
 # 映射表里能选的系统功能。白名单：电脑端按名字执行，云端校验别人上传的配置也照这
-# 一份。两类语音都使用下面的 VOICE_SYSTEM_TARGETS；身体映射的界面仅列这组常用
-# 功能，录姿势等操作放在语音里。
+# 一份。两类语音都使用下面的 VOICE_SYSTEM_TARGETS；身体映射的界面和校验都只认这组
+# 常用功能，录姿势等操作放在语音里。
 BINDING_SYSTEM_TARGETS = {
     "ZONES.FREEZE_TOGGLE",  # 定住 / 恢复跟随，来回切
     "ZONES.FREEZE",         # 定住区域
@@ -123,7 +124,13 @@ _GAMEPAD_ACTION_TYPES = {"gamepad", "gamepad_trigger", "gamepad_axis"}
 _KEY_RE = re.compile(r"^[A-Z0-9_]+(?:\+[A-Z0-9_]+){0,3}$")
 
 
-def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
+def _system_targets_for(group: str) -> set[str]:
+    """语音能选全部系统功能；身体映射只认常用那组——录姿势这类身体正摆着时按不到。"""
+    return VOICE_SYSTEM_TARGETS if group == "voice" else BINDING_SYSTEM_TARGETS
+
+
+def normalize_action(action: dict, *, default_behavior: str = "hold",
+                     system_targets: set[str] = BINDING_SYSTEM_TARGETS) -> dict:
     if not isinstance(action, dict):
         raise ValueError("action must be an object")
     action_type = str(action.get("type", "")).strip().lower()
@@ -170,7 +177,7 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
         target = _normalize_voice_command_targets(raw_target)
     elif action_type == "system":
         target = str(raw_target).strip().upper()
-        if target not in VOICE_SYSTEM_TARGETS:
+        if target not in system_targets:
             raise ValueError(f"不支持的系统功能：{target or '(空)'}")
     else:
         target = str(raw_target).strip().upper()
@@ -217,7 +224,8 @@ def normalize_action(action: dict, *, default_behavior: str = "hold") -> dict:
     return out
 
 
-def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
+def normalize_binding(binding: dict, *, default_behavior: str,
+                      system_targets: set[str] = BINDING_SYSTEM_TARGETS) -> dict:
     if not isinstance(binding, dict):
         raise ValueError("binding must be an object")
     point_settings = {}
@@ -244,13 +252,15 @@ def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
     if bool(binding.get("disabled")):
         return {"disabled": True, **point_settings}
     action = binding.get("action") if isinstance(binding.get("action"), dict) else binding
-    out = {"action": normalize_action(action, default_behavior=default_behavior), **point_settings}
+    out = {"action": normalize_action(action, default_behavior=default_behavior, system_targets=system_targets),
+           **point_settings}
     rule_fields = {"alternate_mode", "alternate_action", "alternate_when", "reset_trigger", "extra_actions"}
     if rule_fields & binding.keys():
         mode = binding.get("alternate_mode")
         if mode not in {"with_trigger", "cycle"} or "alternate_action" not in binding:
             raise ValueError("第二输出须选择配合动作或按次数循环")
-        alternate = normalize_action(binding["alternate_action"], default_behavior=default_behavior)
+        alternate = normalize_action(binding["alternate_action"], default_behavior=default_behavior,
+                                     system_targets=system_targets)
         if alternate["behavior"] == "release":
             raise ValueError("第二输出不能使用松开方式")
         out["alternate_mode"] = mode
@@ -268,7 +278,7 @@ def normalize_binding(binding: dict, *, default_behavior: str) -> dict:
                 raise ValueError("后续输出必须是列表")
             out["extra_actions"] = []
             for item in extras:
-                step = normalize_action(item, default_behavior=default_behavior)
+                step = normalize_action(item, default_behavior=default_behavior, system_targets=system_targets)
                 if step["behavior"] == "release":
                     raise ValueError("循环输出不能使用松开方式")
                 out["extra_actions"].append(step)
@@ -333,7 +343,8 @@ def normalize_bindings(bindings: dict | None) -> dict:
             ident = str(trigger_id).strip()
             if not ident or not isinstance(binding, dict):
                 continue
-            normalized = normalize_binding(binding, default_behavior=default_behavior)
+            normalized = normalize_binding(binding, default_behavior=default_behavior,
+                                           system_targets=_system_targets_for(group))
             _validate_body_rule(group, ident, normalized)
             if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
                 raise ValueError("松开方式仅适用于语音映射")
@@ -388,7 +399,8 @@ def _merge_bindings(base: dict, overrides: dict) -> dict:
             merged[group][ident] = {"disabled": True}
             continue
         default_behavior = "tap" if group in {"poses", "voice"} else "hold"
-        normalized = normalize_binding(value, default_behavior=default_behavior)
+        normalized = normalize_binding(value, default_behavior=default_behavior,
+                                       system_targets=_system_targets_for(group))
         _validate_body_rule(group, ident, normalized)
         if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
             raise ValueError("松开方式仅适用于语音映射")
@@ -459,7 +471,8 @@ def normalize_override_entry(trigger: str, value):
     if value is None:
         return group, ident, {"disabled": True}
     default_behavior = "tap" if group in {"poses", "voice"} else "hold"
-    normalized = normalize_binding(value, default_behavior=default_behavior)
+    normalized = normalize_binding(value, default_behavior=default_behavior,
+                                   system_targets=_system_targets_for(group))
     _validate_body_rule(group, ident, normalized)
     if group != "voice" and normalized.get("action", {}).get("behavior") == "release":
         raise ValueError("松开方式仅适用于语音映射")

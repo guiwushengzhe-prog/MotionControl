@@ -2,7 +2,7 @@
 from urllib.parse import urlparse
 
 import pytest
-from playwright.sync_api import expect
+expect = pytest.importorskip("playwright.sync_api").expect
 
 from motioncontrol.custom_poses import CustomPoseStore
 from test_custom_poses import ARMS_UP, T_POSE
