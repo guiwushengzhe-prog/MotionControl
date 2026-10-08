@@ -103,8 +103,12 @@ else
 fi
 # 不带新 APK 时连本地残留的那份也不传：传上去会逐文件覆盖服务器上的，而远端只在
 # 带了新包时才先清空目录，新旧混在一起签名就对不上。
-APK_EXCLUDE=()
-[ "$APK_FRESH" = "1" ] || APK_EXCLUDE=(--exclude='cloud/apk_bundle')
+UPLOAD_EXCLUDE=()
+[ "$APK_FRESH" = "1" ] || UPLOAD_EXCLUDE=(--exclude='cloud/apk_bundle')
+# 电脑更新包同理：这次没重打（--skip-app-bundle，或者没有发布目录），本地残留的那份
+# 不能跟着 cloud/ 一起传上去——它会逐文件盖住服务器上正在用的更新包，新旧混在一起
+# 签名就对不上，所有电脑的自更新悄悄停摆（和 2026-09-22 那次一样）。
+[ "$BUNDLE_FRESH" = "1" ] || UPLOAD_EXCLUDE+=(--exclude='cloud/app_bundle')
 
 echo "==> 打包并上传"
 # 直接管道给 ssh，不落本地临时文件。在 Git Bash 里 /tmp 是一个 Windows 路径，
@@ -125,7 +129,7 @@ upload() {
         --exclude='*.db' \
         --exclude='*.db-journal' \
         --exclude='.vite' \
-        ${APK_EXCLUDE[@]+"${APK_EXCLUDE[@]}"} \
+        ${UPLOAD_EXCLUDE[@]+"${UPLOAD_EXCLUDE[@]}"} \
         cloud motioncontrol_shared game_profiles \
       | ssh -o ServerAliveInterval=15 -o ConnectTimeout=20 "$HOST" \
             'cat > /tmp/motioncontrol-cloud.tar.gz'
