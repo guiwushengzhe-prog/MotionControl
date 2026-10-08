@@ -1,6 +1,6 @@
 """去连接应选择设备栏目，并定位二维码；电脑摄像头则定位连接按钮。"""
 import pytest
-from playwright.sync_api import expect
+expect = pytest.importorskip("playwright.sync_api").expect
 
 from test_web_optimization import ORIGIN, desktop
 from test_web_ui import browser as mock_browser

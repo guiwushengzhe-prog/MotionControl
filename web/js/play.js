@@ -264,7 +264,7 @@ export function renderKernelState(runtime,force=false){
   const motionScale=Number(hs.motion_deadzone_scale)||1;
   const guardStatus=$('#bodyMotionGuardStatus');
   if(guardStatus){
-    setText(guardStatus,guardEnabled===false?'防晃 · 已关闭':`防晃 · 稳定区临时增加 ${Math.round((motionScale-1)*100)}% · 明显转头仍可转向`);
+    setText(guardStatus,guardEnabled===false?'防晃 · 已关闭':motionScale>1.01?`防晃 · 稳定区临时增加 ${Math.round((motionScale-1)*100)}% · 明显转头仍可转向`:'防晃 · 已开启 · 身体动起来时略增大稳定区');
     setClass(guardStatus,'active',motionScale>1.01&&guardEnabled!==false);
   }
   const threshold=$('#headThresholdStatus');

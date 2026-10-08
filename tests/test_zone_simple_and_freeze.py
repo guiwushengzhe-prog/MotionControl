@@ -19,7 +19,7 @@ from motioncontrol.control_kernel import (
 )
 from motioncontrol_shared.mapping_schema import normalize_voice_mappings
 from motioncontrol_shared.profile_schema import (
-    BINDING_SYSTEM_TARGETS, action_catalog, normalize_action, normalize_bindings,
+    BINDING_SYSTEM_TARGETS, action_catalog, normalize_action, normalize_bindings, normalize_override_entry,
 )
 from test_zone_smart import into, with_elbows
 from test_minimal_controls import KernelOutput, _standing_pose, _zone_feeder
@@ -315,6 +315,20 @@ def test_schema_accepts_only_listed_system_functions_and_always_taps():
     assert action_catalog()["system"]["targets"] == sorted(BINDING_SYSTEM_TARGETS)
     grouped = normalize_bindings({"poses": {"hands_cross": {"action": {"type": "system", "target": "HEAD.CENTER"}}}})
     assert grouped["poses"]["hands_cross"]["action"]["type"] == "system"
+
+
+def test_voice_bindings_get_the_full_system_list_but_body_bindings_do_not():
+    """本游戏口令和通用口令一样能选录姿势、急停；身体映射还是只认常用那组。"""
+    voice = normalize_bindings({"voice": {"game.profile_slot_01": {
+        "action": {"type": "system", "target": "POSE.RECORD"}}}})
+    assert voice["voice"]["game.profile_slot_01"]["action"]["target"] == "POSE.RECORD"
+    _, _, override = normalize_override_entry("voice.game.profile_slot_02", {
+        "action": {"type": "system", "target": "EMERGENCY_STOP"}})
+    assert override["action"]["target"] == "EMERGENCY_STOP"
+    with pytest.raises(ValueError, match="不支持的系统功能"):
+        normalize_bindings({"zones": {"headJump": {"action": {"type": "system", "target": "EMERGENCY_STOP"}}}})
+    with pytest.raises(ValueError, match="不支持的系统功能"):
+        normalize_override_entry("pose.hands_cross", {"action": {"type": "system", "target": "POSE.RECORD"}})
 
 
 def test_voice_commands_can_freeze_and_follow_too():

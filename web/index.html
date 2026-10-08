@@ -21,7 +21,7 @@
 <hr/>
 <a class="menu-item" href="https://motioncontrol.guiwu-aware.icu/feedback" rel="noopener" target="_blank">问题反馈</a>
 <a class="menu-item" href="https://github.com/guiwushengzhe-prog/MotionControl" rel="noopener" target="_blank">源码 · AGPL-3.0</a>
-<div class="menu-foot">MotionControl <span id="appVersion"></span> · QQ 群 1101605483</div>
+<div class="menu-foot"><div class="menu-update">MotionControl <span id="appVersion"></span> · <span id="updateStatus"></span><button class="btn link" hidden="" id="updateCheckBtn" type="button">检查更新</button></div>QQ 群 1101605483</div>
 </div></div>
 </div>
 </header>
@@ -366,6 +366,7 @@
 </section>
 </main>
 
+<dialog aria-labelledby="updateNotesTitle" id="updateNotesDialog"><div class="dialog-head"><h2 id="updateNotesTitle">这次更新了什么</h2><button class="btn primary" id="closeUpdateNotesBtn">知道了</button></div><div class="update-notes" id="updateNotesBody"></div></dialog>
 <dialog aria-labelledby="voiceTitle" id="voiceCommandsMask"><div class="dialog-head"><h2 id="voiceTitle">口令</h2><button class="btn" id="closeVoiceCommandsBtn">关闭</button></div><div id="voiceCommandGrid"></div></dialog>
 <div class="tour" hidden="" id="tour"><div class="tour-block"></div><div class="tour-block"></div><div class="tour-block"></div><div class="tour-block"></div><div class="tour-spot" id="tourSpot"></div><div aria-hidden="true" class="tour-cursor" hidden="" id="tourCursor"><svg viewBox="0 0 20 28" width="20" height="28"><path d="M2 2v21l5.5-5.2 3.6 8.2 3.4-1.5-3.6-8.1H18z"></path></svg><span>虚拟鼠标</span></div><section aria-label="新手教学" class="tour-card" data-side="none" id="tourCard">
 <div class="tour-head"><span id="tourStep">新手教学</span><button class="btn" id="tourCloseBtn">跳过教学</button></div>

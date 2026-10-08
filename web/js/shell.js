@@ -13,6 +13,7 @@ import {openPhoneCode} from './phone-connect.js';
 import {addCustomGame,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
 import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
+import {initUpdates,refreshUpdates} from './updates.js';
 import {ensureViewControlReady,handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
 import {addVoiceRow,refreshVoice,refreshVoiceCommands,renderVoiceRows,saveVoiceMappings,voice,voiceInputReady,voiceRowsFromStatus} from './voice.js';
 
@@ -173,7 +174,8 @@ export async function init(){
     return ready;
   };
   poll(warmLibraries,2500,()=>!profileLibrariesReady);
-  const initialTasks=[refreshRecognitionModels,refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshTriggerRecord,()=>api('/api/models').then(data=>{
+  initUpdates();
+  const initialTasks=[refreshRecognitionModels,refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshTriggerRecord,refreshUpdates,()=>api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
       if(data.version)$('#appVersion').textContent=data.version;
       $('#modelStatus').textContent=modelAvailable?'':'这台电脑的人体识别模型用不了，只能用手机摄像头';

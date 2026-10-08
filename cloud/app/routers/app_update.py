@@ -27,6 +27,13 @@ BUNDLE_DIR = Path(__file__).resolve().parent.parent.parent / "app_bundle"
 
 _share = ModelShare("pc-app", BUNDLE_DIR if BUNDLE_DIR.is_dir() else None)
 
+# 手机 App 本身（APK）。网页部分随电脑热更，原生部分只能换安装包；手机在 App 里
+# 验签、下载，再交给系统安装器，装不装由人确认。同样是可选的：没有这个目录，
+# 手机得到的就是"没有新版"。由 push.sh --apk 放上来（tools/build_apk_bundle.py）。
+ANDROID_DIR = Path(__file__).resolve().parent.parent.parent / "apk_bundle"
+
+_android = ModelShare("android-apk", ANDROID_DIR if ANDROID_DIR.is_dir() else None)
+
 
 @router.get("/pc")
 async def manifest() -> dict:
@@ -42,6 +49,21 @@ async def one_file(path: str = Query(..., max_length=400)) -> FileResponse:
     走目录生成的，所以不在那张表里的东西根本不存在。
     """
     resolved = _share.resolve(path)
+    if resolved is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+    return FileResponse(resolved)
+
+
+@router.get("/android")
+async def android_manifest() -> dict:
+    """新版 APK 的清单：MotionControl.apk 和 apk.json（版本号与更新日志），连同签名。"""
+    return _android.manifest()
+
+
+@router.get("/android/file")
+async def android_file(path: str = Query(..., max_length=400)) -> FileResponse:
+    """发 APK 或它的说明。同上：只发清单里列出来的路径。"""
+    resolved = _android.resolve(path)
     if resolved is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
     return FileResponse(resolved)

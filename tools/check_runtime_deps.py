@@ -102,6 +102,9 @@ def main() -> int:
     missing_other = []
     for distribution, module in zip(distributions, modules):
         version = found[module]
+        if version is None and (ROOT / "vendor" / module).is_dir():
+            # 随 app/ 带着一份（vendor/README.md），解释器里缺它也照样能用。
+            version = "vendor/"
         if version is None:
             mark = "MISSING"
             (missing_critical if distribution in CRITICAL else missing_other).append(distribution)
