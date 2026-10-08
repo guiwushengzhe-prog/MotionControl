@@ -128,6 +128,19 @@ class LocalApi:
         elif path == "/api/output/stop":
             self.output["enabled"] = False
             data = self.output
+        elif path == "/api/input/stop":
+            self.output["enabled"] = False
+            self.runtime["camera"]["running"] = False
+            self.input["body_enabled"] = False
+            self.voice.update(connected=False, audio_ready=False)
+            self.input["voice"] = self.voice
+            data = {**self.runtime, "output": self.output}
+        elif path == "/api/input/source":
+            self.runtime["body_mode"] = body["source"]
+            self.runtime["camera"]["running"] = body["source"] == "computer" and body.get("enabled", True)
+            self.input["body_enabled"] = body.get("enabled", True)
+            self.output["enabled"] = False
+            data = self.runtime
         elif path == "/api/output-status": data = self.output
         elif path == "/api/input/status": data = self.input
         elif path == "/api/voice/status": data = self.voice
@@ -154,7 +167,15 @@ class LocalApi:
                 self.fulfill(route, {"error": "audio scan unavailable"}, 503)
                 return
             data = {"devices": []}
-        elif path == "/api/camera/config": data = {"camera_index": 0, "rotation": "auto"}
+        elif path == "/api/camera/config":
+            if body and "device" in body:
+                self.runtime["camera"].update(running=True, camera_device=body["device"],
+                                             camera_index=int(body["device"]))
+                self.input["body_enabled"] = True
+                self.runtime["body_mode"] = "computer"
+            data = {"camera_index": self.runtime["camera"].get("camera_index", 0),
+                    "camera_device": self.runtime["camera"].get("camera_device", "0"),
+                    "rotation": "auto", **self.runtime}
         elif path == "/api/pose/trigger-recording": data = {"choices": [], "recording": {"config": {}, "state": "off"}}
         elif path == "/api/pose/record": data = {"recording": self.recording}
         elif path == "/api/recordings": data = {"count": 1 if self.recording["state"] == "done" else 0, "bytes": 64}

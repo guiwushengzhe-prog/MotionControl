@@ -15,6 +15,7 @@ import numpy as np
 from motioncontrol.user_paths import user_data_root
 
 PREFIX = "kinect2:"
+STARTUP_TIMEOUT_S = 45
 
 
 def _runtime_dll():
@@ -153,8 +154,14 @@ class KinectCapture:
                 metadata = json.loads(self._exact(self._process.stdout, meta_size))
                 if image_size:
                     pixels = self._exact(self._process.stdout, image_size)
-                    if self.device_id != "kinect2:default" and metadata.get("device_id") != self.device_id:
-                        raise ValueError("Kinect 设备已改变，请重新扫描选择摄像头")
+                    reported_id = metadata.get("device_id")
+                    if reported_id in (None, "", "kinect2:", "kinect2:default"):
+                        # 原厂接口刚重连时可能先供图、后给序列号；这类帧先不接纳。
+                        if not self._sequence and time.monotonic() - self._started >= STARTUP_TIMEOUT_S:
+                            raise RuntimeError("微软 Kinect 尚未准备好设备编号，请稍后重试")
+                        continue
+                    if self.device_id != "kinect2:default" and reported_id != self.device_id:
+                        raise ValueError(f"Kinect 设备已改变（当前 {reported_id}，选择 {self.device_id}），请重新扫描选择摄像头")
                     metadata["sample_at"] = metadata["qpc"] + time.monotonic() - time.perf_counter()
                     frame = np.frombuffer(pixels, dtype=np.uint8).reshape(360, 640, 3)
                     with self._condition:
@@ -163,7 +170,7 @@ class KinectCapture:
                         self._condition.notify_all()
                 elif metadata.get("gap_s", 0) >= 5 and self._sequence:
                     raise RuntimeError("微软 Kinect 已停止供帧，请检查连接后重新连接")
-                elif time.monotonic() - self._started >= 20 and not self._sequence:
+                elif time.monotonic() - self._started >= STARTUP_TIMEOUT_S and not self._sequence:
                     raise RuntimeError("微软 Kinect 未收到画面，请检查电源、USB 接口或设备占用")
         except EOFError:
             if not self._closed:
@@ -178,7 +185,7 @@ class KinectCapture:
 
     def read(self):
         with self._condition:
-            deadline = time.monotonic() + 22
+            deadline = time.monotonic() + (STARTUP_TIMEOUT_S + 2 if not self._sequence else 7)
             while (not self._closed and not self.last_error and self._reader.is_alive()
                    and self._sequence <= self._read_sequence):
                 remaining = deadline - time.monotonic()

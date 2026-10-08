@@ -135,6 +135,8 @@ def _remember_output_speed() -> None:
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
 PROFILE_UPDATE_LOCK = threading.RLock()
 INPUT_SOURCE_LOCK = threading.RLock()
+INPUT_STOP_LOCK = threading.Lock()
+INPUT_STOP_GENERATION = 0
 AUDIO_SOURCE_LOCK = threading.RLock()
 CONFIG_REVISION = 0
 
@@ -187,7 +189,26 @@ def _broadcast_game_output_state() -> None:
             pass
 
 
-HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
+def stop_recognition_all() -> dict:
+    # 先松开输出；相机释放和麦克风关闭不能拖延按键释放。
+    global INPUT_STOP_GENERATION
+    result = emergency_stop_all()
+    with INPUT_STOP_LOCK:
+        INPUT_STOP_GENERATION += 1
+    RUNTIME.camera.cancel_start()
+    INPUT_BRIDGE.set_body_enabled(False)
+    INPUT_BRIDGE.set_body_mode("computer")
+    with INPUT_SOURCE_LOCK:
+        try:
+            RUNTIME.stop_body()
+        finally:
+            _set_audio_source(AUDIO_SOURCE, start=False)
+            INPUT_BRIDGE.set_audio_mode("computer")
+            VOICE.disconnect()
+        return {**runtime_status(), **_audio_payload(), "output": result}
+
+
+HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=stop_recognition_all)
 
 
 def _note_voice_trigger(action: dict) -> None:
@@ -592,18 +613,38 @@ def _set_output_enabled(enabled: bool) -> dict:
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE, on_output_control=_set_output_enabled)
 
 
-def _set_body_input(source: str, enabled: bool) -> dict:
+def _set_body_input(source: str, enabled: bool, *, device=None) -> dict:
+    with INPUT_STOP_LOCK:
+        generation = INPUT_STOP_GENERATION
     with INPUT_SOURCE_LOCK:
         SYSTEM_COMMANDS.invalidate()
+        _set_output_enabled(False)
         INPUT_BRIDGE.set_body_enabled(False)
         INPUT_BRIDGE.set_body_mode("computer")
         try:
-            return RUNTIME.set_source(source, start_computer=True) if enabled else RUNTIME.stop_body()
+            if generation != INPUT_STOP_GENERATION:
+                raise CameraUnavailable("识别启动已被停止")
+            if device is not None:
+                data = RUNTIME.configure_camera_device(device)
+            else:
+                data = RUNTIME.set_source(source, start_computer=True) if enabled else RUNTIME.stop_body()
+            if generation != INPUT_STOP_GENERATION:
+                RUNTIME.stop_body()
+                raise CameraUnavailable("识别启动已被停止")
+            return data
         finally:
-            # Keep the established automatic phone fallback on camera failure,
-            # while an explicit stop remains closed to all incoming pose frames.
-            INPUT_BRIDGE.set_body_mode(source if enabled else "computer")
-            INPUT_BRIDGE.set_body_enabled(enabled)
+            # 主动停止不会被迟到的相机请求或手机姿态重新打开。
+            active = enabled and generation == INPUT_STOP_GENERATION
+            INPUT_BRIDGE.set_body_mode(source if active else "computer")
+            INPUT_BRIDGE.set_body_enabled(active)
+
+
+def _select_camera_input(device) -> dict:
+    data = _set_body_input("computer", True, device=device)
+    with INPUT_SOURCE_LOCK:
+        if INPUT_BRIDGE.status().get("body_enabled"):
+            _set_audio_source(AUDIO_SOURCE)
+        return {**data, **_audio_payload(), "output": OUTPUT.status()}
 
 def recordings_summary(folder: Path) -> dict:
     """录下的骨骼数据有几段、一共多大，给「排查问题」最下面那一行用。
@@ -1338,12 +1379,16 @@ class _BaseHandler(SimpleHTTPRequestHandler):
 
     def _send_json(self, data: dict, status: int = 200):
         raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(raw)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # 客户端离开或取消长时间启动时，连接已断开，不能再发送第二份错误响应。
+            self.close_connection = True
 
     def _body(self):
         try:
@@ -2027,6 +2072,15 @@ class AdminHandler(_BaseHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **runtime_status(), "voice": VOICE.status()}, 400)
             return
+        if route == "/api/input/stop":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "停止识别仅限本机操作"}, 403)
+                return
+            try:
+                self._send_json({"ok": True, **stop_recognition_all()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), "output": OUTPUT.status()}, 400)
+            return
         if route == "/api/input/audio-device":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "audio device is loopback-only"}, 403)
@@ -2058,11 +2112,11 @@ class AdminHandler(_BaseHandler):
                 return
             try:
                 if "device" in body:
-                    data = RUNTIME.camera.set_camera_device(body["device"])
+                    data = _select_camera_input(body["device"])
                 elif "depth_enabled" in body:
                     data = RUNTIME.configure_camera_depth(body["depth_enabled"])
                 elif "index" in body or "camera_index" in body:
-                    data = RUNTIME.configure_camera_index(body.get("index", body.get("camera_index")))
+                    data = _select_camera_input(str(body.get("index", body.get("camera_index"))))
                 elif "rotation" in body:
                     data = RUNTIME.camera.set_rotation(body.get("rotation"))
                 else:

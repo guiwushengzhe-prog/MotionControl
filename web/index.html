@@ -12,8 +12,8 @@
 <div class="top-actions">
 <span id="serviceStatus" role="status">正在连接服务…</span>
 <button class="game-chip" data-go="games" title="换游戏、改按键"><span class="game-chip-label">游戏</span><strong id="currentGameName">正在读取…</strong></button>
-<button class="btn primary cta" disabled="" id="mainActionBtn">连接设备</button>
-<button class="btn stop" id="stopBtn" title="任何时候按 F9 都能停">急停 <kbd>F9</kbd></button>
+<button class="btn primary cta" disabled="" id="mainActionBtn">开始控制</button>
+<button class="btn stop" id="stopBtn" title="停止识别并松开所有体感输出，快捷键 F9">停止识别 <kbd>F9</kbd></button>
 <div class="menu-wrap"><button aria-expanded="false" aria-haspopup="menu" aria-label="帮助与外观" class="icon-btn" id="helpBtn" title="帮助与外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.5M12 16.8h.01"></path></svg></button>
 <div class="menu" hidden="" id="helpMenu" role="menu">
 <button class="menu-item" id="tutorialBtn" role="menuitem">新手教学</button>
@@ -188,7 +188,7 @@
 <div class="row" hidden="" id="cameraDepthRow"><label class="row-main" for="cameraDepth"><span class="name">使用深度</span><span class="sub">辅助判断抬脚高度</span></label><input class="switch" id="cameraDepth" type="checkbox" checked=""/></div>
 <div class="row-note" id="cameraScanRow"><span class="fineprint" id="cameraScanStatus"></span></div>
 <div class="row" id="cameraRotationRow"><label class="row-main" for="cameraRotation">画面方向</label><span class="sel"><select id="cameraRotation"><option value="auto">自动转正</option><option value="none">不旋转</option><option value="cw">顺时针 90°</option><option value="ccw">逆时针 90°</option><option value="180">180°</option></select></span></div>
-<div class="row"><div class="row-main"><span class="name">识别</span><span class="sub" id="recognitionStatus">未开始</span></div><button class="btn" hidden="" id="sourceStopBtn">停止</button><button class="btn primary" id="sourceStartBtn">连接</button></div>
+<div class="row"><div class="row-main"><span class="name">识别</span><span class="sub" id="recognitionStatus">未开始</span></div><button class="btn" hidden="" id="sourceStopBtn">停止识别</button><button class="btn primary" id="sourceStartBtn">开始识别</button></div>
 </div>
 <p class="group-foot warn" id="modelStatus"></p>
 </div>

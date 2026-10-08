@@ -41,7 +41,7 @@ function connectGuide(s, memo, now) {
   }
 
   if (s.sourcePick === 'phone') {
-    if (s.source !== 'phone') return {target: '#sourceStartBtn', say: '点「连接」'};
+    if (s.source !== 'phone') return {target: '#sourceStartBtn', say: '点「开始识别」'};
     return {
       target: ['#poseSource', '#mobileStatus'], say: '打开手机上的 MotionControl',
       hint: `选「固定摄像头」，点「连接并开始」 · ${s.usbTether ? '数据线已接通' : '手机和电脑连同一个 WiFi'}`,
@@ -51,12 +51,12 @@ function connectGuide(s, memo, now) {
   // 下面都是「电脑摄像头」。
   if (s.phoneStreaming) return {target: '#poseSource', say: '来源改成「手机摄像头」', hint: '手机已经在传画面了'};
   if (s.modelOk === false) return {target: '#poseSource', say: '来源改成「手机摄像头」', hint: '这台电脑的识别模型没装好，电脑摄像头认不出人'};
-  if (repick) return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '换一个摄像头，点「连接」'};
+  if (repick) return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '选择另一个摄像头，会自动开始识别'};
 
   if (s.cameraRunning) {
     memo.noFrameSince = memo.noFrameSince || now;
     return now - memo.noFrameSince > 5000
-      ? {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '这个摄像头没有画面，换一个', hint: '换好再点「连接」'}
+      ? {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '这个摄像头没有画面，换一个', hint: '选中后自动开始识别'}
       : {target: '#cameraDeviceRow', say: '等画面出来…'};
   }
   memo.noFrameSince = 0;
@@ -74,9 +74,9 @@ function connectGuide(s, memo, now) {
     return {target: ['#poseSource', '#cameraScanBtn'], say: '没找到摄像头', hint: '被别的软件占着就关掉它再点「扫描」；没有就改用「手机摄像头」'};
   }
   if (s.scanCount > 1) {
-    return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '选一个摄像头，点「连接」', hint: `找到 ${s.scanCount} 个；画面里不是你就换一个`};
+    return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '选择一个摄像头，会自动开始识别', hint: `找到 ${s.scanCount} 个；画面里不是你就换一个`};
   }
-  return {target: '#sourceStartBtn', say: '点「连接」', hint: s.scanCount === 1 ? '找到 1 个摄像头' : ''};
+  return {target: '#sourceStartBtn', say: '点「开始识别」', hint: s.scanCount === 1 ? '找到 1 个摄像头' : ''};
 }
 
 // 人在不在画面里、站得够不够远。只看头和双肩：程序第一次定位也只要这三样。
@@ -275,11 +275,11 @@ const STEPS = [
   },
   {
     id: 'stop',
-    name: '紧急停止',
+    name: '停止识别',
     doneSay: '✓ 全停了',
     guide(s, memo) {
       if (memo.stopsBefore === undefined) memo.stopsBefore = s.stops;
-      return {target: '#stopBtn', ready: true, say: '按 F9', hint: '或者点「急停」'};
+      return {target: '#stopBtn', ready: true, say: '按 F9', hint: '或者点「停止识别」'};
     },
     // 数的是急停真的被触发了几次，而不是输出关没关：点「暂停游戏控制」也会关，但那不是急停。
     check: (s, memo) => ({ok: s.stops > (memo.stopsBefore ?? s.stops)}),

@@ -121,11 +121,11 @@ export function renderMainStatus(){
   serviceReady=kernelConnected&&outputConnected;
   const main=$('#mainActionBtn');
   setProperty(main,'disabled',!serviceReady||actionBusy||zoneEditMode);
-  setText(main,output.enabled?'暂停控制':(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady?'连接设备':'开始控制'));
+  setText(main,output.enabled?'暂停控制':'开始控制');
   setClass(main,'running',!!output.enabled);setClass(main,'primary',!output.enabled);
   // 服务连着的时候什么都不说；断了才冒出来。
-  setText($('#serviceStatus'),serviceReady?'本地服务已连接':'服务断开，急停仍可重试');
-  setClass($('#serviceStatus'),'online',serviceReady);setClass($('#serviceStatus'),'offline',!serviceReady);
+  setText($('#serviceStatus'),S.sourceConnecting?'正在准备识别，请稍候…':serviceReady?'本地服务已连接':'服务断开，可重试停止识别');
+  setClass($('#serviceStatus'),'online',serviceReady||!!S.sourceConnecting);setClass($('#serviceStatus'),'offline',!serviceReady&&!S.sourceConnecting);
   if(isVisible(viewer)){renderViewerMessage();renderReadiness();renderConflicts()}
 }
 
@@ -133,7 +133,7 @@ export function renderMainStatus(){
 function renderViewerMessage(){
   const hint=$('#hint');if(!hint)return;
   const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
-  const [title,detail]=!live?[sourceMode==='phone'?'等手机连上':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':'在「设置 → 设备」里点「连接」']
+  const [title,detail]=S.sourceConnecting?['正在准备识别','相机启动可能需要几十秒，请稍候']:!live?[sourceMode==='phone'?'等手机连上':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':'在「设置 → 设备」里选择摄像头，或点「开始识别」']
     :!currentPoseMap?['站到镜头前','头和双肩入镜就能开始']:['',''];
   setProperty(hint,'hidden',!title);
   const key=title+'|'+detail;if(hint.dataset.key===key)return;hint.dataset.key=key;
@@ -303,7 +303,7 @@ export function renderKernelState(runtime,force=false){
   }
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
-  sessionStarted=sourceMode==='phone'?true:cameraRunning;
+  sessionStarted=sourceMode==='phone'?inputStatus.body_enabled!==false:cameraRunning;
   if(S.desiredSource===null)setProperty($('#poseSource'),'value',sourceMode);
   const computer=$('#poseSource').value==='computer';
   if(['cameraDeviceRow','cameraScanRow','cameraRotationRow'].some(id=>$('#'+id)?.hidden!==!computer))syncCameraDeviceRow();
@@ -315,8 +315,9 @@ export function renderKernelState(runtime,force=false){
       URL.revokeObjectURL(cameraPreview.src);cameraPreview.removeAttribute('src');
     }
   }
-  // 真在识别才给「停止」。
-  setProperty($('#sourceStopBtn'),'hidden',!(sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning));
+  const recognizing=sourceMode==='phone'?inputStatus.body_enabled!==false&&!!inputStatus.mobile_pose_connected:cameraRunning;
+  setProperty($('#sourceStopBtn'),'hidden',!recognizing&&!S.sourceConnecting);
+  setProperty($('#sourceStartBtn'),'hidden',recognizing||!!S.sourceConnecting);
   // 旧版上下视角（绿框）开着才有这一块。
   const gateActive=!!k.vertical_gate_active;const gateStatus=$('#lookGateStatus');if(gateStatus){setProperty(gateStatus,'hidden',!k.vertical_look?.enabled||!head.verticalLookEnabled||!currentPoseMap);const paused=!!hs.horizontal_paused_by_vertical_gate;const text=gateActive?`上下视角开${paused?' · 左右暂停':''}`:'左手放进绿框开上下视角';setText(gateStatus,text);setProperty(gateStatus,'className','hud hud-gate'+(gateActive?' active':''))}renderOverlay(currentPoseMap);renderMainStatus();
 

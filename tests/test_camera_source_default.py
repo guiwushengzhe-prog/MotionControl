@@ -44,6 +44,10 @@ class FakeCamera:
     def stop(self):
         self.stopped += 1
 
+    stop_and_wait = stop
+    def cancel_start(self):
+        pass
+
     def status(self):
         return {"running": False}
 

@@ -3565,6 +3565,8 @@ class NativeCameraService:
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._stop = threading.Event()
+        self._start_cancel = threading.Event()
+        self._opening_capture = None
         self._session: _CameraSession | None = None
         self._generation = 0
         self.lifecycle = "stopped"
@@ -4131,7 +4133,13 @@ class NativeCameraService:
             capture = None
             try:
                 capture = kinect_camera.KinectCapture(self.camera_device, depth_enabled=self.depth_enabled)
-                ok, first_frame = capture.read()
+                self._opening_capture = capture
+                if self._start_cancel.is_set():
+                    capture.interrupt()
+                try:
+                    ok, first_frame = capture.read()
+                finally:
+                    self._opening_capture = None
                 if not ok:
                     raise CameraUnavailable(capture.last_error or "微软 Kinect 未收到画面")
                 actual_id = capture.metadata["device_id"]
@@ -4227,6 +4235,7 @@ class NativeCameraService:
                 return self.status()
             if self._session is not None:
                 raise CameraUnavailable("摄像头上一轮尚未退出，请等待设备停止后再启动")
+            self._start_cancel.clear()
             self.lifecycle = "starting"
             try:
                 import cv2
@@ -4237,7 +4246,12 @@ class NativeCameraService:
             detector = None
             try:
                 mp, detector = self._create_detector()
+                if self._start_cancel.is_set():
+                    raise CameraUnavailable("摄像头启动已取消")
                 capture, first_frame = self._select_capture(cv2)
+                if self._start_cancel.is_set():
+                    capture.release()
+                    raise CameraUnavailable("摄像头启动已取消")
             except CameraUnavailable as exc:
                 if detector is not None:
                     try:
@@ -4519,7 +4533,24 @@ class NativeCameraService:
         finally:
             self._worker_finished(session)
 
+    def cancel_start(self) -> None:
+        # 启动正等待第一帧时，不等待相机锁就能中断 Kinect 的读取。
+        self._start_cancel.set()
+        capture = self._opening_capture
+        if capture is not None:
+            capture.interrupt()
+
+    def stop_and_wait(self, timeout_s: float = 8.0) -> dict:
+        deadline = time.monotonic() + timeout_s
+        self.stop()
+        with self._condition:
+            if not self._condition.wait_for(lambda: self._session is None,
+                                            timeout=max(0.0, deadline - time.monotonic())):
+                raise CameraUnavailable("上一台摄像头还在释放，请稍后重试")
+            return self.status()
+
     def stop(self) -> dict:
+        self.cancel_start()
         with self._lock:
             session = self._session
             if session is None:
@@ -4665,16 +4696,25 @@ class LocalControlRuntime:
                 raise CameraUnavailable("当前摄像头不支持深度")
             running = self.camera.running
             if running:
-                self.camera.stop()
-                if self.camera._session is not None:
-                    raise CameraUnavailable("摄像头尚未停止，请稍后重试")
+                self.camera.stop_and_wait()
             self.camera.configure_depth(enabled)
             if running:
                 self.camera.start()
             return self.camera.backend_config()
 
+    def configure_camera_device(self, device) -> dict:
+        with self._lock:
+            self.camera.stop_and_wait()
+            self.camera.set_camera_device(device)
+            self.camera.assist = False
+            self.kernel.clear_body()
+            self.body_mode = "computer"
+            self.kernel.remember_general_setting("body_source", "computer")
+            self.camera.start()
+            return {**self.camera.backend_config(), **self.status()}
+
     def configure_camera_index(self, index) -> dict:
-        return self.camera.set_camera_index(index)
+        return self.configure_camera_device(str(index))
 
     def list_cameras(self) -> dict:
         return self.camera.list_cameras()
@@ -4684,7 +4724,7 @@ class LocalControlRuntime:
         if source not in {"computer", "phone"}:
             raise ValueError("source must be computer or phone")
         with self._lock:
-            self.camera.stop()
+            self.camera.stop_and_wait()
             self.camera.assist = False
             self.kernel.clear_body()
             self.body_mode = source
@@ -4724,8 +4764,9 @@ class LocalControlRuntime:
             return self.status()
 
     def stop_body(self) -> dict:
+        self.camera.cancel_start()
         with self._lock:
-            self.camera.stop()
+            self.camera.stop_and_wait()
             self.camera.assist = False
             self.kernel.clear_body()
             return self.status()

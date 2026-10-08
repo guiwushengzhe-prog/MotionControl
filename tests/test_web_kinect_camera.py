@@ -19,7 +19,9 @@ def test_kinect_select_depth_toggle_and_regular_camera_ui(desktop):
                 state["depth_enabled"] = state["depth_supported"]
             if "depth_enabled" in body:
                 state["depth_enabled"] = body["depth_enabled"]
-        api.fulfill(route, state)
+        if route.request.method == "POST" and "device" in route.request.post_data_json:
+            api.runtime["camera"] = {**state, "running": True}
+        api.fulfill(route, {**state, **api.runtime})
     page.route("**/api/camera/config", camera)
     page.goto("http://motioncontrol.test")
     page.click('nav [data-view="devices"]')

@@ -3,7 +3,7 @@ import {createTutorial} from '../tutorial.js';
 import {fistHands,intentAction,renderBodyDescs,zoneFit} from './body.js';
 import {cloudRefresh,loadCloudEndpoint} from './cloud.js';
 import {$,api,autosaver,clamp,configurationOperation,isVisible,notice,post} from './core.js';
-import {emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraDepth,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow,updateInputConfig,updateOutputConfig} from './devices.js';
+import {CAMERA_REQUEST_TIMEOUT,emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraDepth,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,selectCamera,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow,updateInputConfig,updateOutputConfig} from './devices.js';
 import {cancelPoseRecord,refreshPoseRecord,refreshRecordings,refreshTriggerRecord,startPoseRecord} from './diagnostics.js';
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
@@ -98,11 +98,11 @@ function tutorialState(){
 }
 
 async function handleMainAction(){
+  if(output.enabled){await setOutput(false);return}
   if(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady){
     await setSource($('#poseSource').value,true);
-    return;
   }
-  await setOutput(!output.enabled);
+  await setOutput(true);
 }
 
 export async function runAction(action){
@@ -222,7 +222,7 @@ bind('mainActionBtn',handleMainAction);
 
 bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
 
-bind('sourceStopBtn',()=>setSource(sourceMode,false));
+$('#sourceStopBtn').addEventListener('click',()=>void emergencyStop());
 
 $('#audioSource').addEventListener('change',e=>runAction(async()=>{
   const value=e.target.value;
@@ -339,20 +339,13 @@ bind('voiceCommandsBtn',async()=>{await refreshVoice();await refreshVoiceCommand
 
 $('#closeVoiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').close());
 
-$('#poseSource').addEventListener('change',()=>{
+$('#poseSource').addEventListener('change',()=>void runAction(async()=>{
   S.desiredSource=$('#poseSource').value;$('#phoneGuide').open=S.desiredSource==='phone';
   syncCameraDeviceRow();renderInputStatus(inputStatus);
-  notice('已选'+(S.desiredSource==='phone'?'手机摄像头':'电脑摄像头')+'，点「连接」生效');
-});
-
-$('#cameraDevice').addEventListener('change',e=>runAction(async()=>{
-  try{
-    const data=await post('/api/camera/config',{device:e.target.value});
-    S.cameraIndex=Number(data.camera_index);S.cameraDevice=String(data.camera_device);
-    renderCameraDepth(data);
-    notice('已选择'+(data.depth_supported?'微软 Kinect':'摄像头 '+S.cameraIndex)+'，点「连接」看画面');
-  }finally{await refreshCameraConfig()}
+  await setSource(S.desiredSource,true);
 }));
+
+$('#cameraDevice').addEventListener('change',e=>void runAction(()=>selectCamera(e.target.value)));
 
 // 按钮和新手教学用的是同一个扫描：结果记在 cameraScan 里，教学据此判断这台电脑有几个摄像头。
 async function scanCameras(){
@@ -365,7 +358,7 @@ async function scanCameras(){
     const n=(data.devices||[]).length;
     Object.assign(cameraScan,{state:'done',count:n,error:''});
     if(!status)return;
-    status.textContent=n?`找到 ${n} 个，选一个再点「连接」`
+    status.textContent=n?`找到 ${n} 个，选中后自动开始识别`
       :'一个也没找到：可能被别的软件占着，或者改用手机摄像头';
   }catch(e){Object.assign(cameraScan,{state:'failed',error:String(e?.message||e)});if(status)status.textContent='扫描失败：'+cameraScan.error}
 }
@@ -374,7 +367,7 @@ bind('cameraScanBtn',scanCameras);
 
 $('#cameraDepth').addEventListener('change',e=>runAction(async()=>{
   try{
-    const data=await post('/api/camera/config',{depth_enabled:!!e.target.checked},60000);
+    const data=await post('/api/camera/config',{depth_enabled:!!e.target.checked},CAMERA_REQUEST_TIMEOUT);
     renderCameraDepth(data);await refreshKernel();
     notice(data.depth_enabled?'已开启深度':'已关闭深度');
   }finally{await refreshCameraConfig()}

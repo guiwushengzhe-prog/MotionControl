@@ -9,6 +9,7 @@ import {syncPhoneCode} from './phone-connect.js';
 
 let audioDevice='';
 // 急停真的被按了几次。教学的最后一步要认的是急停，不是随便哪种关掉输出。
+export const CAMERA_REQUEST_TIMEOUT=90000;
 export let emergencyStops=0;
 export let kernelEpoch=0;
 export let inputStatus={};
@@ -107,8 +108,8 @@ function renderPerformance(data){
     if(show){const text=`${Math.round(fps)} 帧/秒`;if(hud.textContent!==text)hud.textContent=text;hud.classList.toggle('slow',fps<15)}
   }
   const line=$('#recognitionStatus');
-  if(line)line.textContent=live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):'未开始';
-  if(line&&live&&sourceMode==='computer'){if(data.depth_active)line.textContent+=' · 深度已启用';else if(data.depth_error)line.textContent+=' · '+data.depth_error}
+  if(line)line.textContent=S.sourceConnecting?'正在启动摄像头，请稍候…':live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):'未开始';
+  if(line&&!S.sourceConnecting&&live&&sourceMode==='computer'){if(data.depth_active)line.textContent+=' · 深度已启用';else if(data.depth_error)line.textContent+=' · '+data.depth_error}
   $('#perfSummary').textContent='识别';
   $('#perfDetails').textContent=[
     `采集帧率：${formatPerf(data.capture_fps)} · 推理帧率：${formatPerf(data.inference_fps)}${data.network_fps!=null?` · 手机传来：${formatPerf(data.network_fps)}`:''}`,
@@ -130,7 +131,7 @@ export function renderStereo(data){
   calibrate.disabled=!data.enabled||data.state==='solving';
   let status;
   if(!data.enabled)status=data.body_mode==='phone'?'未开启':'未开启：双目以手机为主画面，先把摄像头来源切到手机';
-  else if(!data.pc_camera_running)status=data.pc_camera_error?'电脑摄像头打不开：'+data.pc_camera_error:'已开启：在「设备」里点「连接」，电脑摄像头会一起打开';
+  else if(!data.pc_camera_running)status=data.pc_camera_error?'电脑摄像头打不开：'+data.pc_camera_error:'已开启：在「设备」里点「开始识别」，电脑摄像头会一起打开';
   else if(data.message&&(busy||data.state==='failed'||/标定/.test(data.message)))status=data.message;
   else if(!data.calibrated)status='还没有标定：站到平时玩的位置，点「标定」，然后活动双臂 30 秒';
   else status='运行中';
@@ -183,11 +184,13 @@ export function renderCameraRotation(data){
 // 开机不扫。挨个序号去开摄像头要好几秒，而绝大多数人只有一个，不该为了那个
 // 下拉框每次启动都等一遍。所以先只把"现在用的是第几个"摆出来，真要换的人点
 // 一下扫描，列表才填满。
+let cameraDevices=[];
 export function renderCameraDevices(devices,current,data={}){
   const select=$('#cameraDevice');if(!select)return;
   if(current!==undefined&&current!==null)S.cameraIndex=Number(current);
   S.cameraDevice=String(data.camera_device??S.cameraDevice??S.cameraIndex);
-  const list=devices?.length?[...devices]:[];
+  if(Array.isArray(devices))cameraDevices=[...devices];
+  const list=[...cameraDevices];
   if(!list.some(d=>String(d.id??d.index)===S.cameraDevice))
     list.unshift(S.cameraDevice.startsWith('kinect2:')?{id:S.cameraDevice,name:'微软 Kinect'}:{index:S.cameraIndex});
   select.replaceChildren(...list.map(d=>{
@@ -209,6 +212,35 @@ export function syncCameraDeviceRow(){
   const computer=($('#poseSource')?.value||'computer')==='computer';
   for(const id of ['cameraDeviceRow','cameraScanRow','cameraRotationRow']){const el=$('#'+id);if(el)el.hidden=!computer}
   const row=$('#cameraDepthRow');if(row)row.hidden=!(computer&&S.cameraDepthSupported);
+}
+
+function setCameraConnecting(connecting){
+  S.sourceConnecting=connecting;
+  for(const id of ['poseSource','cameraDevice','cameraDepth','sourceStartBtn','cameraScanBtn']){
+    const el=$('#'+id);if(el)el.disabled=connecting;
+  }
+  if(connecting)$('#recognitionStatus').textContent='正在启动摄像头，请稍候…';
+  renderMainStatus();
+}
+
+export async function selectCamera(device){
+  const resume=output.enabled;
+  await setOutput(false);
+  const epoch=++kernelEpoch;
+  ++S.inputEpoch;setCameraConnecting(true);
+  try{
+    const result=await post('/api/camera/config',{device},CAMERA_REQUEST_TIMEOUT);
+    if(epoch!==kernelEpoch)throw new Error('相机切换已被停止');
+    if(!result.camera?.running)throw new Error(result.camera?.last_error||'摄像头启动失败');
+    S.desiredSource='computer';
+    renderCameraDevices(null,result.camera_index,result);renderCameraDepth(result);
+    renderKernelState(result);await refreshInput();
+    if(epoch!==kernelEpoch)throw new Error('相机切换已被停止');
+    if(resume)await setOutput(true);
+    notice('摄像头已切换，识别已开始');
+  }finally{
+    setCameraConnecting(false);await refreshCameraConfig();await refreshPerformance();
+  }
 }
 
 function renderXinputStatus(s=output.xinputStatus){if(document.activeElement?.closest('#outputSettings'))return;const select=$('#xinputMerge'),line=$('#xinputStatus');if(!select||!line)return;const users=Array.isArray(s?.connected_users)?s.connected_users:[];const current=s?.enabled&&s?.selected_user!==null&&s?.selected_user!==undefined?String(s.selected_user):'';const values=[['','关闭']];for(const user of users)values.push([String(user),`手柄 ${Number(user)+1}`]);if(current&&!values.some(([v])=>v===current))values.push([current,`手柄 ${Number(current)+1}（未连接）`]);const keep=current&&values.some(([v])=>v===current);select.replaceChildren(...values.map(([value,label])=>{const o=document.createElement('option');o.value=value;o.textContent=label;return o}));select.value=keep?current:(s?.enabled?'':'');output.xinputEnabled=!!s?.enabled;output.xinputUser=s?.selected_user??null;output.xinputMotionLeft=!!s?.motion_left_enabled;renderXinputMotionLeft();line.textContent=!s?.enabled?'':(s?.connected?`已合流 · 手柄 ${Number(s.active_user??s.selected_user)+1}`:'等手柄连上');if(s?.last_error)line.textContent+=(line.textContent?' · ':'')+s.last_error;line.className='sub'+(s?.enabled&&!s?.connected?' warn':'')}
@@ -295,11 +327,13 @@ export async function setOutput(enabled){
 }
 
 export async function emergencyStop(){
-  ++S.outputEpoch;++kernelEpoch;++emergencyStops;
+  ++S.outputEpoch;++kernelEpoch;++S.inputEpoch;++emergencyStops;
   try{
-    const result=await post('/api/output/stop',{});
-    if(result.enabled!==false)throw new Error('服务尚未确认');
-    ++S.outputEpoch;renderOutput(result);notice(output.xinputEnabled?'体感已停止，实体手柄继续透传。':'游戏控制已紧急停止。');
+    const result=await post('/api/input/stop',{},CAMERA_REQUEST_TIMEOUT);
+    if(result.output?.enabled!==false)throw new Error('服务尚未确认');
+    ++S.outputEpoch;renderOutput(result.output);renderKernelState(result);
+    await refreshInput();await refreshPerformance();
+    notice('识别已停止，所有体感输出已松开');
   }catch(error){
     notice('还没确认停下：'+error.message+'。再按一次 F9');
   }
@@ -310,8 +344,13 @@ export async function setSource(source,enabled=true){
   const epoch=++kernelEpoch;
   ++S.inputEpoch;
   const selectedAudio=$('#audioSource')?.value||S.audioSource||'computer';
-  const result=await post('/api/input/source',{source,enabled,audio_source:selectedAudio});
-  if(epoch!==kernelEpoch)throw new Error('操作已中断');
+  let result;
+  setCameraConnecting(enabled);
+  try{
+    result=await post('/api/input/source',{source,enabled,audio_source:selectedAudio},CAMERA_REQUEST_TIMEOUT);
+    if(epoch!==kernelEpoch)throw new Error('操作已被停止');
+  }finally{setCameraConnecting(false)}
+  if(epoch!==kernelEpoch)throw new Error('操作已被停止');
   if(enabled&&source==='computer'&&!result.camera?.running){
     // 没有摄像头的电脑在这里是死路：报一句"无法打开"然后没有下文。所以失败时
     // 直接把另外两条出路说出来——换一个摄像头，或者改用手机。
