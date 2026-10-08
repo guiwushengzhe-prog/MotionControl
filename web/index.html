@@ -263,6 +263,14 @@
 
 <section class="settings-pane" data-pane="body" hidden="">
 <h1 class="pane-title">身体识别</h1>
+<div class="group" id="recognitionModels">
+<h2 class="group-title">识别模型</h2>
+<div class="list">
+<div class="row"><div class="row-main"><span class="name">电脑身体模型</span><span class="sub" id="poseModelStatus">自动按识别性能选择</span></div><select class="sel" id="poseModelSelect" aria-label="电脑身体模型"><option value="auto">自动选择</option><option value="full">完整（Full）</option><option value="heavy">高精度（Heavy）</option></select></div>
+<div class="row"><div class="row-main"><span class="name">手势识别</span><span class="sub" id="gestureModelStatus">需要握拳等手势功能时自动加载</span></div><span class="tag">MediaPipe Gesture Recognizer</span></div>
+<div class="row"><div class="row-main"><span class="name">手机高精度模型</span><span class="sub">手机默认用完整模型，收到高精度模型后可自行选择</span></div><button class="btn" id="sendHeavyModelBtn">发送给手机</button></div>
+</div>
+</div>
 <div class="group" id="zoneFitSettings">
 <h2 class="group-title">量身</h2>
 <div class="list">

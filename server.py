@@ -47,6 +47,7 @@ from motioncontrol_shared.pose_points import POSE_CONNECTIONS, POSE_POINT_LABELS
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
 from motioncontrol_shared.model_share import ModelShare
+from motioncontrol.recognition_models import RecognitionModels
 from motioncontrol.voice_backend import SYSTEM_HEAD_CALIBRATION_START, VoiceService, find_vosk_model
 from motioncontrol.discovery import DiscoveryResponder
 from motioncontrol.connection_code import connection_code
@@ -735,6 +736,7 @@ def _phone_control_payload_locked() -> dict:
         # 控鼠标时才让它跑。手也一起告诉它：设备按这只手的手腕裁图，裁哪里是这
         # 边说了算的，就不存在把左右手认反的问题。
         "hand_tracking": _hand_tracking_request(),
+        "pose_model_offer": copy.deepcopy(PHONE_MODEL_OFFER),
     }
 
 
@@ -866,6 +868,8 @@ KERNEL.configure_trigger_listener(_queue_trigger_state)
 
 MODEL_ROOT: Path | None = None
 MODEL_PATH: Path | None = None
+RECOGNITION_MODELS = RecognitionModels(None)
+PHONE_MODEL_OFFER: dict | None = None
 # 电脑自己的识别器加载的就是这个目录，手机要的是同一份。找不到也不报错：这台
 # 机器没配语音，手机那边会看到 available 为假，然后照实说，而不是装死。
 VOICE_MODEL = ModelShare("vosk-model-small-cn-0.22", find_vosk_model(ROOT))
@@ -1398,7 +1402,7 @@ class _BaseHandler(SimpleHTTPRequestHandler):
             return None
 
     def end_headers(self):
-        if urlparse(self.path).path == "/api/models":
+        if urlparse(self.path).path == "/api/models" or urlparse(self.path).path.startswith("/api/model/"):
             self.send_header("Access-Control-Allow-Origin", "*")
         # Assets under WEB_DIR are served by the base handler, which sends only
         # Last-Modified.  Browsers then apply heuristic caching and can keep
@@ -1439,27 +1443,18 @@ class _BaseHandler(SimpleHTTPRequestHandler):
         it turns out to fetch one over HTTP.
         """
         if route == "/api/models":
-            available = bool(MODEL_PATH and MODEL_PATH.is_file())
             self._send_json({
-                "version": VERSION,
-                "instance": _instance_id(),
-                "name": socket.gethostname(),
+                "version": VERSION, "instance": _instance_id(), "name": socket.gethostname(),
                 "model_root": str(MODEL_ROOT) if MODEL_ROOT else None,
-                "models": [{
-                    "id": "mp-full",
-                    "name": "MediaPipe Pose Full",
-                    "points": 33,
-                    "input_size": "256×256",
-                    "available": available,
-                    "size_bytes": MODEL_PATH.stat().st_size if available else 0,
-                }],
+                "models": RECOGNITION_MODELS.manifest(),
             })
             return True
-        if route == "/api/model/mp-full":
-            if MODEL_PATH is None:
-                self.send_error(404, "MediaPipe Full model unavailable")
+        if route in {"/api/model/mp-full", "/api/model/mp-heavy", "/api/model/mp-gesture"}:
+            path = RECOGNITION_MODELS.paths.get(route.rsplit("-", 1)[1])
+            if path is None:
+                self.send_error(404, "Model unavailable")
             else:
-                self._serve_file(MODEL_PATH)
+                self._serve_file(path)
             return True
         # 中文语音模型。手机以前自己背一份 41.5 MB 的副本，占了安装包的一半，
         # 而那些文件跟这台电脑上的逐字节一样——手机本来就要连着一台电脑，让它
@@ -1608,6 +1603,10 @@ class AdminHandler(_BaseHandler):
             return
         if route == "/api/stereo":
             self._send_json(stereo_payload())
+            return
+        if route == "/api/recognition/models":
+            self._send_json({"ok": True, "models": RECOGNITION_MODELS.manifest(),
+                             **RUNTIME.camera.status()})
             return
         if route == "/api/camera/config":
             self._send_json(RUNTIME.camera_backend_config())
@@ -2106,6 +2105,40 @@ class AdminHandler(_BaseHandler):
             except (ValueError, CameraUnavailable) as exc:
                 self._send_json({"ok": False, "error": str(exc), **stereo_payload()}, 400)
             return
+        if route in {"/api/recognition/models", "/api/recognition/models/send"}:
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "模型设置仅限本机操作"}, 403)
+                return
+            try:
+                if route.endswith("/send"):
+                    global PHONE_MODEL_OFFER
+                    metadata = RECOGNITION_MODELS.metadata("heavy")
+                    if not metadata["available"]:
+                        raise ValueError("高精度模型尚未安装")
+                    state = INPUT_BRIDGE.status()
+                    if not (state.get("mobile_pose_connected") or state.get("handheld_connected")):
+                        raise ValueError("请先连接手机")
+                    PHONE_MODEL_OFFER = {**metadata, "request_id": str(time.time_ns())}
+                    INPUT_BRIDGE.broadcast_control_config(_phone_control_payload())
+                    self._send_json({"ok": True, "offered": True})
+                else:
+                    with INPUT_STOP_LOCK:
+                        generation = INPUT_STOP_GENERATION
+                    with INPUT_SOURCE_LOCK:
+                        if generation != INPUT_STOP_GENERATION:
+                            raise CameraUnavailable("模型切换已被停止")
+                        try:
+                            RUNTIME.configure_pose_model(str(body.get("preference", "")))
+                        finally:
+                            if generation != INPUT_STOP_GENERATION:
+                                RUNTIME.stop_body()
+                        if generation != INPUT_STOP_GENERATION:
+                            raise CameraUnavailable("模型切换已被停止")
+                    self._send_json({"ok": True, "models": RECOGNITION_MODELS.manifest(),
+                                     **RUNTIME.camera.status()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if route == "/api/camera/config":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "camera config is loopback-only"}, 403)
@@ -2473,7 +2506,7 @@ def _boot_ok_and_check() -> None:
 
 
 def main():
-    global MODEL_ROOT, MODEL_PATH
+    global MODEL_ROOT, MODEL_PATH, RECOGNITION_MODELS
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="0.0.0.0", help="监听地址；默认允许局域网手机连接")
     ap.add_argument("--port", type=int, default=8765)
@@ -2498,8 +2531,9 @@ def main():
             return
 
     MODEL_ROOT = choose_model_root(args.model_root)
-    MODEL_PATH = resolve_full_model(MODEL_ROOT)
-    RUNTIME.configure_model(MODEL_PATH)
+    RECOGNITION_MODELS = RecognitionModels(MODEL_ROOT, ROOT / "models")
+    MODEL_PATH = RECOGNITION_MODELS.paths.get("full")
+    RUNTIME.camera.configure_models(RECOGNITION_MODELS.paths)
     INPUT_BRIDGE.configure_endpoint(args.host, args.port)
     FIREWALL.enabled = args.host not in {"127.0.0.1", "localhost", "::1"}
     # 启动时恢复两种独立输入：身体来源只决定姿态，音频来源只决定语音。

@@ -49,6 +49,7 @@ from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.responsive_march import ResponsiveMarch
 from motioncontrol.depth_march import DepthMarchLifts
 from motioncontrol import kinect_camera
+from motioncontrol.recognition_models import AutoPoseChoice, LazyGestureRecognizer
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
     foot_floor_y, foot_out, is_default, normalize_zone_fit,
@@ -3518,6 +3519,13 @@ class NativeCameraService:
     def __init__(self, kernel: ControlKernel, model_path=None, camera_index: int | None = None) -> None:
         self.kernel = kernel
         self.model_path = model_path
+        self.model_paths = {"full": model_path} if model_path else {}
+        self.model_preference = self._remembered("pose_model", "auto")
+        if self.model_preference not in {"auto", "full", "heavy"}:
+            self.model_preference = "auto"
+        self.actual_model = "full"
+        self._auto_pose = AutoPoseChoice()
+        self.hand_model_state, self.hand_model_error = "idle", None
         # 不写死 0。一台电脑上可以有好几个摄像头（内置的、外接的、虚拟的），
         # 而 0 号未必是对着人的那个——以前这个数字没有任何地方能改，插了采集卡
         # 或者装了 OBS 虚拟摄像头的人就只能对着一块黑屏，没有别的办法。
@@ -4038,10 +4046,20 @@ class NativeCameraService:
     def configure_model(self, model_path) -> None:
         with self._lock:
             self.model_path = model_path
+            self.model_paths = {"full": model_path} if model_path else {}
 
-    def _create_detector(self):
+    def configure_models(self, paths: dict) -> None:
+        with self._lock:
+            self.model_paths = dict(paths)
+            self.model_path = paths.get("full")
+
+    def _create_detector(self, choice=None):
+        choice = choice or (self.model_preference if self.model_preference != "auto" else
+                            "heavy" if self.model_paths.get("heavy") else "full")
+        self.actual_model = choice
+        self.model_path = self.model_paths.get(choice)
         if not self.model_path or not getattr(self.model_path, "is_file", lambda: False)():
-            raise CameraUnavailable("MediaPipe Full task 未找到")
+            raise CameraUnavailable("所选人体识别模型未找到")
         # mediapipe 只为拿一个文档装饰器就去 import tensorflow（找不到时自己退回空实现）。
         # 装了 tensorflow 的机器上这一下要 30 多秒，还会连带加载 keras/sklearn——其中任何
         # 一个包坏了，电脑摄像头就整个起不来。本程序不用 tensorflow，直接让它"不存在"。
@@ -4296,7 +4314,14 @@ class NativeCameraService:
                 raise CameraUnavailable(self.last_error) from exc
             detector = None
             try:
-                mp, detector = self._create_detector()
+                self._auto_pose = AutoPoseChoice()
+                try:
+                    mp, detector = self._create_detector()
+                except Exception:
+                    if self.model_preference != "auto" or self.actual_model != "heavy" or not self.model_paths.get("full"):
+                        raise
+                    mp, detector = self._create_detector("full")
+                    self._auto_pose.reason = "高精度模型无法加载，继续使用完整模型"
                 if self._start_cancel.is_set():
                     raise CameraUnavailable("摄像头启动已取消")
                 capture, first_frame = self._select_capture(cv2)
@@ -4452,6 +4477,7 @@ class NativeCameraService:
             self._worker_finished(session)
 
     def _inference_loop(self, session: _CameraSession) -> None:
+        gesture = LazyGestureRecognizer(self.model_paths.get("gesture"))
         try:
             import cv2
             while True:
@@ -4501,6 +4527,11 @@ class NativeCameraService:
                         }
                         for index, point in enumerate(world_landmarks)
                     }
+                controller = getattr(self.kernel, "hand_mouse_controller", None)
+                request = controller.tracking_request() if controller and not self.assist else {}
+                sides = request.get("hands", []) if request.get("enabled") else []
+                hands = gesture.recognize(rgb, pose_map, sides, session.mp)
+                self.hand_model_state, self.hand_model_error = gesture.state, gesture.error
                 with self._condition:
                     if session.stop.is_set() or self._session is not session:
                         break
@@ -4511,7 +4542,7 @@ class NativeCameraService:
                     else:
                         self.kernel.handle_pose_map(
                             "computer_camera", pose_map, width=width, height=height,
-                            world_pose=world_pose, sample_at=captured_at, return_status=False,
+                            world_pose=world_pose, hands=hands, sample_at=captured_at, return_status=False,
                             **({"depth_body": kinect_camera.matching_depth_body(depth_metadata, pose_map, frame_rotation)}
                                if depth_metadata else {}),
                         )
@@ -4530,9 +4561,25 @@ class NativeCameraService:
                     self._inference_durations_ms.append(inference_ms)
                     self._latencies_ms.append(self.last_latency_ms)
                     self.frames += 1
+                if self.model_preference == "auto" and self.actual_model == "heavy":
+                    choice = self._auto_pose.observe(inference_ms, self.actual_capture_fps,
+                        visible=bool(landmarks), hands_ready=gesture.state != "loading")
+                    if choice == "full" and self.model_paths.get("full"):
+                        _, replacement = self._create_detector("full")
+                        with self._condition:
+                            if session.stop.is_set() or self._session is not session:
+                                replacement.close()
+                                break
+                            previous = session.detector
+                            session.detector = self._detector = replacement
+                            self._inference_durations_ms.clear()
+                            self._inference_times.clear()
+                        previous.close()
         except Exception as exc:
             self._fail_session(session, str(exc))
         finally:
+            gesture.close()
+            self.hand_model_state, self.hand_model_error = "idle", None
             self._worker_finished(session)
 
     def _preview_loop(self, session: _CameraSession) -> None:
@@ -4643,6 +4690,10 @@ class NativeCameraService:
                 "frames": self.frames, "last_frame_age_ms": round(max(0.0, (time.monotonic() - self.last_frame_at) * 1000.0)) if self.last_frame_at else None,
                 "captured_frames": self._latest_sequence,
                 "last_error": self.last_error, "model_path": str(self.model_path) if self.model_path else None,
+                "model_preference": self.model_preference, "actual_model": self.actual_model,
+                "auto_model_reason": self._auto_pose.reason,
+                "auto_model_measured_ms": self._auto_pose.measured_ms,
+                "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "resolution": {"width": self.capture_width, "height": self.capture_height},
                 "backend_preference": self.backend_preference,
                 "backend": self.selected_backend,
@@ -4661,7 +4712,11 @@ class NativeCameraService:
             resolution = {"width": self.capture_width, "height": self.capture_height}
             return {
                 "source": "computer",
-                "model": "MediaPipe Pose Full",
+                "model": "MediaPipe Pose " + self.actual_model.title(),
+                "model_preference": self.model_preference,
+                "actual_model": self.actual_model,
+                "auto_model_reason": self._auto_pose.reason,
+                "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "camera_resolution": resolution,
                 "capture_fps": self._round_or_none(self._rate(self._capture_times), 2),
                 "backend": self.selected_backend,
@@ -4738,6 +4793,28 @@ class LocalControlRuntime:
 
     def configure_model(self, model_path) -> None:
         self.camera.configure_model(model_path)
+
+    def configure_pose_model(self, preference: str) -> dict:
+        if preference not in {"auto", "full", "heavy"}:
+            raise ValueError("请选择自动、完整或高精度模型")
+        if preference != "auto" and not self.camera.model_paths.get(preference):
+            raise ValueError("所选模型尚未安装")
+        with self._lock:
+            running = self.camera.running
+            if running:
+                self.camera.stop_and_wait()
+            previous = self.camera.model_preference
+            self.camera.model_preference = preference
+            try:
+                if running:
+                    self.camera.start()
+            except Exception:
+                self.camera.model_preference = previous
+                if running:
+                    self.camera.start()
+                raise
+            self.kernel.remember_general_setting("pose_model", preference)
+            return self.camera.status()
 
     def configure_camera_backend(self, preference: str | None) -> dict:
         return self.camera.configure_backend(preference)

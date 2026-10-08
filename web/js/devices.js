@@ -1,3 +1,4 @@
+import {renderRecognitionPerformance} from './recognition-models.js';
 // 设置 → 设备：摄像头、手机、麦克风、游戏输出。
 import {$,api,formatPerf,notice,post} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
@@ -98,6 +99,7 @@ export async function refreshAudioDevices(){
 }
 
 function renderPerformance(data){
+  renderRecognitionPerformance(data);
   // 画面左上角只写一个数：每秒认几帧。毫秒、丢帧、CPU 这些排查问题才看，放在「实验与诊断」。
   // 手机那边不报推理帧率，用每秒收到几帧代替——人看到的就是这个。
   const fps=Number(data.inference_fps??data.network_fps);

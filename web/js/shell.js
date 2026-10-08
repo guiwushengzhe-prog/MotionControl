@@ -1,3 +1,4 @@
+import {refreshRecognitionModels,selectPoseModel,sendHeavyModel} from './recognition-models.js';
 // 页面外壳：页签、菜单、白天/夜间、教学、事件绑定、启动。
 import {createTutorial} from '../tutorial.js';
 import {fistHands,intentAction,renderBodyDescs,zoneFit} from './body.js';
@@ -172,7 +173,7 @@ export async function init(){
     return ready;
   };
   poll(warmLibraries,2500,()=>!profileLibrariesReady);
-  const initialTasks=[refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshTriggerRecord,()=>api('/api/models').then(data=>{
+  const initialTasks=[refreshRecognitionModels,refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshTriggerRecord,()=>api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
       if(data.version)$('#appVersion').textContent=data.version;
       $('#modelStatus').textContent=modelAvailable?'':'这台电脑的人体识别模型用不了，只能用手机摄像头';
@@ -345,6 +346,8 @@ $('#poseSource').addEventListener('change',()=>void runAction(async()=>{
   await setSource(S.desiredSource,true);
 }));
 
+$('#poseModelSelect').addEventListener('change',e=>void runAction(()=>selectPoseModel(e.target.value)));
+$('#sendHeavyModelBtn').addEventListener('click',()=>void runAction(sendHeavyModel));
 $('#cameraDevice').addEventListener('change',e=>void runAction(()=>selectCamera(e.target.value)));
 
 // 按钮和新手教学用的是同一个扫描：结果记在 cameraScan 里，教学据此判断这台电脑有几个摄像头。
