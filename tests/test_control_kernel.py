@@ -214,7 +214,8 @@ def test_native_camera_has_explicit_dependency_or_device_smoke():
         try:
             camera.start()
         except CameraUnavailable as exc:
-            assert "MediaPipe" in str(exc) or "摄像头" in str(exc)
+            # 缺的是哪一样要说清楚：识别库、模型文件，还是摄像头。
+            assert any(word in str(exc) for word in ("MediaPipe", "mediapipe", "模型", "摄像头"))
         else:
             camera.stop()
             assert camera.status()["running"] is False
