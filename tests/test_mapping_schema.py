@@ -161,10 +161,12 @@ def test_motions_are_sorted_so_reordering_does_not_create_a_version():
     assert [m["id"] for m in forward.data["motions"]] == ["hands_up", "march", "squat"]
 
 
-def test_motion_conflict_rule_applies_on_upload():
-    """A jumping jack contains the hands-overhead pose; mapping both double-fires."""
+def test_motion_conflict_rule_applies_on_upload(monkeypatch):
+    """互斥的两个动作同时映射会一个动作按两个键。现在没有互斥的组，造一组来测规则还在。"""
+    from motioncontrol_shared import motion_conflicts
+    monkeypatch.setattr(motion_conflicts, "MOTION_CONFLICT_GROUPS", (("squat", "hands_up"),))
     doc = {"motions": [
-        {"id": "jumping_jack", "name": "开合跳", "enabled": True, "type": "gamepad", "target": "A"},
+        {"id": "squat", "name": "下蹲", "enabled": True, "type": "gamepad", "target": "A"},
         {"id": "hands_up", "name": "双手举过头顶", "enabled": True, "type": "gamepad", "target": "Y"},
     ]}
     with pytest.raises(ValueError, match="不能同时映射"):

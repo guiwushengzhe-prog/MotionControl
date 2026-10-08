@@ -601,6 +601,13 @@ class InputBridge:
         self.kernel = kernel
         self._voice_service = voice
         self._control_config_provider = None
+        self._fitness = None
+        self._fitness_sent_at = 0.0
+        self._studio_video_enabled = False
+        self._studio_video_generation = 0
+        self._studio_video_frame = None
+        self._studio_video_peer = None
+        self._studio_video_sequences = {}
         self._lock = threading.RLock()
         self._peers: set[WebSocketPeer] = set()
         self._source_peers: dict[str, WebSocketPeer] = {}
@@ -708,6 +715,80 @@ class InputBridge:
         """Provide the current PC-authoritative game/Zone configuration to phones."""
         with self._lock:
             self._control_config_provider = provider
+
+    def configure_fitness(self, store) -> None:
+        self._fitness = store
+
+    def _send_fitness(self, peer, *, history=False):
+        if self._fitness is None or peer.desktop or not getattr(peer, "paired", True):
+            return
+        peer.send_json(self._fitness.state())
+        if history:
+            peer.send_json({"type": "fitness_history_v1", "sessions": self._fitness.history(),
+                            "profile": dict(self._fitness.profile)})
+
+    def set_studio_video(self, enabled):
+        enabled = bool(enabled)
+        with self._lock:
+            changed = enabled != self._studio_video_enabled
+            self._studio_video_enabled = enabled
+            if changed:
+                self._studio_video_generation += 1
+            if not enabled:
+                self._studio_video_frame = self._studio_video_peer = None
+                self._studio_video_sequences.clear()
+            peers = [p for p in self._peers if not p.desktop and getattr(p, "paired", True)] if changed else []
+        for peer in peers:
+            try:
+                peer.send_json({"type": "studio_video_request_v1", "enabled": enabled, "fps": 12, "max_width": 640})
+            except (ConnectionError, OSError):
+                self.disconnect(peer)
+
+    def latest_studio_frame(self):
+        with self._lock:
+            frame = self._studio_video_frame
+            if not self._studio_video_enabled or frame is None or time.monotonic() - frame["arrived_at"] > .9:
+                return None
+            return {**frame, "frame": frame["frame"].copy()}
+
+    def _handle_studio_video(self, peer, message):
+        with self._lock:
+            if not self._studio_video_enabled or getattr(peer, "_mobile_role", "") != "camera":
+                return
+            if getattr(peer, "_closed", False):
+                return
+            generation = self._studio_video_generation
+            sequence = message.get("sequence")
+            if not _is_int(sequence) or sequence <= self._studio_video_sequences.get(peer, -1):
+                return
+            # 活跃的第一台相机拥有视频，其他手机不会逐帧抢占。
+            if self._studio_video_peer is not None and self._studio_video_peer is not peer:
+                if self._studio_video_frame and time.monotonic() - self._studio_video_frame["arrived_at"] <= .9:
+                    return
+            self._studio_video_sequences[peer] = sequence
+        encoded = message.get("jpeg")
+        if not isinstance(encoded, str) or len(encoded) > 700000:
+            raise ValueError("手机视频片段过大或无效")
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise ValueError("手机视频编码无效") from exc
+        if not raw.startswith(b"\xff\xd8"):
+            raise ValueError("手机视频必须是相机图片")
+        import cv2
+        import numpy as np
+        frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None or max(frame.shape[:2]) > 640:
+            raise ValueError("手机视频尺寸超出当前设置")
+        with self._lock:
+            if not self._studio_video_enabled or generation != self._studio_video_generation or getattr(peer, "_closed", False):
+                return
+            if self._studio_video_peer is not None and self._studio_video_peer is not peer:
+                if self._studio_video_frame and time.monotonic() - self._studio_video_frame["arrived_at"] <= .9:
+                    return
+            self._studio_video_peer = peer
+            self._studio_video_frame = {"frame": frame, "arrived_at": time.monotonic(), "sequence": sequence,
+                                        "captured_at_ms": message.get("captured_at_ms")}
 
     def _control_config_snapshot(self) -> dict | None:
         with self._lock:
@@ -1108,6 +1189,15 @@ class InputBridge:
                 except (ConnectionError, OSError):
                     self.disconnect(peer)
                     return
+            if getattr(peer, "paired", True):
+                try:
+                    self._send_fitness(peer, history=True)
+                    if self._studio_video_enabled:
+                        peer.send_json({"type": "studio_video_request_v1", "enabled": True,
+                                        "fps": 12, "max_width": 640})
+                except (ConnectionError, OSError):
+                    self.disconnect(peer)
+                    return
         if peer.desktop and active_source:
             try:
                 peer.send_json({
@@ -1254,6 +1344,7 @@ class InputBridge:
 
     def _handle_pose(self, peer: WebSocketPeer, message: dict) -> None:
         _validate_pose_frame(message)
+        peer._mobile_role = "camera"
         device_id = message["device_id"].strip()
         source_id = POSE_SOURCE_PREFIX + device_id
         received_at = time.monotonic()
@@ -1649,6 +1740,28 @@ class InputBridge:
                 self._handle_voice_command(peer, message)
             elif message_type == "game_output_control":
                 self._handle_game_output_control(peer, message)
+            elif message_type == "hello_v1":
+                if message.get("role") not in {"fitness", "camera", "handheld"}:
+                    raise ValueError("手机会话角色无效")
+                peer._mobile_role = message["role"]
+                self._send_fitness(peer, history=True)
+                if peer._mobile_role == "camera":
+                    peer.send_json({"type": "studio_video_request_v1", "enabled": self._studio_video_enabled,
+                                    "fps": 12, "max_width": 640})
+            elif message_type == "fitness_control_v1":
+                if self._fitness is None:
+                    raise ValueError("运动记录暂未启用")
+                if message.get("action") == "history":
+                    self._send_fitness(peer, history=True)
+                else:
+                    self._fitness.control(message)
+                    self._send_fitness(peer)
+            elif message_type == "heart_rate_v1":
+                # 手机从手环「心率广播」读到的心率，每秒最多一条。没在记录就丢掉。
+                if self._fitness is not None:
+                    self._fitness.heart_rate(message)
+            elif message_type == "studio_video_frame_v1":
+                self._handle_studio_video(peer, message)
             else:
                 raise ValueError(f"unknown input type: {message_type}")
         except (ValueError, TypeError) as exc:
@@ -1722,6 +1835,9 @@ class InputBridge:
         cleared_pose_sources: list[str] = []
         with self._lock:
             self._peers.discard(peer)
+            self._studio_video_sequences.pop(peer, None)
+            if self._studio_video_peer is peer:
+                self._studio_video_frame = self._studio_video_peer = None
             self._pose_sessions.pop(peer, None)
             self._superseded_pose_peers.discard(peer)
             self._clock_synced_peers.discard(peer)
@@ -1776,6 +1892,15 @@ class InputBridge:
             self._flush_voice_clears()
             for source_id in cleared_pose_sources:
                 self._broadcast_pose_state(source_id, False, "watchdog")
+            if self._fitness is not None and now - self._fitness_sent_at >= 1.0:
+                self._fitness_sent_at = now
+                with self._lock:
+                    peers = list(self._peers)
+                for peer in peers:
+                    try:
+                        self._send_fitness(peer)
+                    except (ConnectionError, OSError):
+                        self.disconnect(peer)
 
     def serve_websocket(self, handler, query: str, *, paired: bool = True) -> None:
         params = parse_qs(query, keep_blank_values=True)

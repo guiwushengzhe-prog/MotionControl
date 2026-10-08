@@ -29,6 +29,7 @@ import json
 from dataclasses import dataclass
 from hashlib import sha256
 
+from . import fitness_schema
 from .mapping_schema import (
     normalize_motion_item,
     normalize_voice_mappings,
@@ -218,11 +219,18 @@ _NORMALIZERS = {
     "game_bundle": _normalize_game_bundle,
 }
 
+# 不是可以上传、分享的配置，而是一个人自己的记录：运动记录的身体数据和每次锻炼的
+# 摘要（规则在 fitness_schema）。单独放一张表，云端配置接口收的文档类型就还是上面那几种。
+_RECORD_NORMALIZERS = {
+    "fitness_profile": fitness_schema.normalize_profile,
+    "fitness_session": fitness_schema.normalize_session,
+}
+
 
 def canonicalize(doc_type: str, raw) -> Canonical:
     """Validate, normalise, serialise, digest -- in that order, always."""
     try:
-        normalizer = _NORMALIZERS[doc_type]
+        normalizer = _NORMALIZERS.get(doc_type) or _RECORD_NORMALIZERS[doc_type]
     except KeyError:
         raise ValueError(f"unknown document type: {doc_type!r}") from None
     data = normalizer(raw)

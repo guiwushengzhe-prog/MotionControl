@@ -14,24 +14,44 @@ from motioncontrol_shared.motion_conflicts import (
 )
 
 
-def test_jumping_jack_and_hands_up_are_mutually_exclusive():
-    conflicts = find_motion_conflicts(("jumping_jack", "hands_up"))
-    assert conflicts == (("jumping_jack", "hands_up"),)
-    with pytest.raises(ValueError, match="开合跳.*双手举过头"):
+# 开合跳下架后现在没有互斥的动作了（见 motion_conflicts）。规则本身还在，下面用一组
+# 假的互斥来测它，免得以后再加一组时发现早就坏了。
+@pytest.fixture
+def squat_excludes_hands_up(monkeypatch):
+    from motioncontrol_shared import motion_conflicts
+    monkeypatch.setattr(motion_conflicts, "MOTION_CONFLICT_GROUPS", (("squat", "hands_up"),))
+
+
+def test_there_are_no_conflicting_motions_now():
+    validate_motion_bindings(
+        {
+            "motions": {
+                "jump": {"action": {"type": "gamepad", "target": "A"}},
+                "hands_up": {"action": {"type": "gamepad", "target": "Y"}},
+                "side_step_jack": {"action": {"type": "gamepad", "target": "B"}},
+            }
+        }
+    )
+
+
+def test_a_conflict_group_is_refused_on_save(squat_excludes_hands_up):
+    conflicts = find_motion_conflicts(("squat", "hands_up"))
+    assert conflicts == (("squat", "hands_up"),)
+    with pytest.raises(ValueError, match="下蹲.*双手举过头"):
         validate_motion_bindings(
             {
                 "motions": {
-                    "jumping_jack": {"action": {"type": "gamepad", "target": "A"}},
+                    "squat": {"action": {"type": "gamepad", "target": "A"}},
                     "hands_up": {"action": {"type": "gamepad", "target": "Y"}},
                 }
             }
         )
 
 
-def test_disabled_binding_does_not_count_as_selected():
+def test_disabled_binding_does_not_count_as_selected(squat_excludes_hands_up):
     bindings = {
         "motions": {
-            "jumping_jack": {"disabled": True},
+            "squat": {"disabled": True},
             "hands_up": {"action": {"type": "gamepad", "target": "Y"}},
         }
     }
@@ -39,12 +59,12 @@ def test_disabled_binding_does_not_count_as_selected():
     validate_motion_bindings(bindings)
 
 
-def test_legacy_config_conflicts_are_rejected_only_when_enabled():
+def test_legacy_config_conflicts_are_rejected_only_when_enabled(squat_excludes_hands_up):
     items = [
-        {"id": "jumping_jack", "enabled": True, "target": "A"},
+        {"id": "squat", "enabled": True, "target": "A"},
         {"id": "hands_up", "enabled": False, "target": "Y"},
     ]
-    assert selected_motion_ids_from_config(items) == {"jumping_jack"}
+    assert selected_motion_ids_from_config(items) == {"squat"}
     validate_motion_config(items)
     items[1]["enabled"] = True
     with pytest.raises(ValueError, match="动作不能同时映射"):
@@ -62,19 +82,8 @@ def test_other_motion_combinations_remain_configurable():
     validate_motion_bindings(bindings)
 
 
-def test_jumping_jack_and_side_step_jack_are_configurable_together():
-    validate_motion_bindings(
-        {
-            "motions": {
-                "jumping_jack": {"action": {"type": "gamepad", "target": "A"}},
-                "side_step_jack": {"action": {"type": "gamepad", "target": "B"}},
-            }
-        }
-    )
-
-
 def test_the_mapping_table_greys_out_downloaded_motions_too():
-    """开合跳、双手举过头是从官方动作库下载的，不在程序自带的那份触发器里。
+    """下蹲、双手举过头是从官方动作库下载的，不在程序自带的那份触发器里。
 
     界面上的互斥原来只遍历自带的原地踏步、小腿向后抬起，于是选了开合跳，双手举过头
     照样能选，要到保存时才被服务端退回来。tools/check_ui_v2.cjs 在浏览器里走了一遍。

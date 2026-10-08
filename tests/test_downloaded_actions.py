@@ -38,10 +38,10 @@ def feed(kernel: ControlKernel, pose: dict, frames: int) -> None:
 def test_an_action_that_was_not_downloaded_is_not_recognised(no_downloaded_actions):
     kernel = ControlKernel(KernelOutput())
     try:
-        # 开合跳示范里跳开的那一帧：两脚分开、两手举过头。
-        feed(kernel, demo_pose("jumping_jack", 1), 6)
-        assert "jumping_jack" not in kernel.motion_active
-        assert "jumping_jack" not in kernel.motion_raw
+        # 下蹲示范里蹲下去的那一帧。
+        feed(kernel, demo_pose("squat", 1), 6)
+        assert "squat" not in kernel.motion_active
+        assert "squat" not in kernel.motion_raw
         feed(kernel, demo_pose("hands_cross", 1), 6)
         assert "hands_cross" not in kernel.pose_active
     finally:
@@ -51,10 +51,10 @@ def test_an_action_that_was_not_downloaded_is_not_recognised(no_downloaded_actio
 def test_a_downloaded_action_is_recognised_right_away(no_downloaded_actions):
     kernel = ControlKernel(KernelOutput())
     try:
-        kernel.configure_pose_actions([doc for doc in official_pose_docs() if doc["id"] == "jumping_jack"])
-        feed(kernel, demo_pose("jumping_jack", 1), 6)
-        assert "jumping_jack" in kernel.motion_active
-        # 只装了开合跳：别的照样不认。
+        kernel.configure_pose_actions([doc for doc in official_pose_docs() if doc["id"] == "squat"])
+        feed(kernel, demo_pose("squat", 1), 6)
+        assert "squat" in kernel.motion_active
+        # 只装了下蹲：别的照样不认。
         feed(kernel, demo_pose("hands_cross", 1), 6)
         assert "hands_cross" not in kernel.pose_active
     finally:

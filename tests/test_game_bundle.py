@@ -57,11 +57,13 @@ def test_a_bundle_never_carries_personal_settings():
     assert set(data) == {"schema", "game_id", "overrides", "motions"}
 
 
-def test_motions_go_through_the_same_rules_as_before():
-    """开合跳和双手过头顶不能同时映射。合成一份不是放宽规则的借口。"""
+def test_motions_go_through_the_same_rules_as_before(monkeypatch):
+    """互斥的动作不能同时映射。合成一份不是放宽规则的借口。"""
+    from motioncontrol_shared import motion_conflicts
+    monkeypatch.setattr(motion_conflicts, "MOTION_CONFLICT_GROUPS", (("squat", "hands_up"),))
     with pytest.raises(ValueError):
         canonicalize("game_bundle", bundle(motions=[
-            {"id": "jumping_jack", "name": "开合跳", "enabled": True,
+            {"id": "squat", "name": "下蹲", "enabled": True,
              "type": "gamepad", "target": "A"},
             {"id": "hands_up", "name": "双手过头", "enabled": True,
              "type": "gamepad", "target": "Y"},

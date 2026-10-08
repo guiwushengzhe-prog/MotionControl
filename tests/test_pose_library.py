@@ -1,6 +1,6 @@
 """动作库：每个动作都有名字、怎么做、火柴人示范、星级，以及做的时候会扫过哪些圈。
 
-程序只自带原地踏步和小腿向后抬起，别的动作从云端官方动作库下载（conftest 默认
+程序只自带原地踏步、小腿向后抬起和跳跃，别的动作从云端官方动作库下载（conftest 默认
 当作全都下载了）。"""
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ def test_names_are_written_once():
 
 
 def test_which_actions_sweep_which_zones():
-    """2026-09-25 的真人录像里量出来的：举双手扫过两边手区，开合跳还会跳进头顶区。"""
-    assert set(zone_crossers("leftHand")) >= {"motion.hands_up", "motion.jumping_jack"}
-    assert "motion.jumping_jack" in zone_crossers("headJump")
+    """2026-09-25 的真人录像里量出来的：举双手扫过两边手区；跳起来鼻子穿过头顶区。"""
+    assert "motion.hands_up" in zone_crossers("leftHand")
+    assert "motion.jump" in zone_crossers("headJump")
     assert "motion.march" not in zone_crossers("leftFoot"), "踏步是往上抬，不往外伸"
     known = {zone for entry in pose_library.entries() for zone in entry["passes_zones"]}
     assert known <= {"leftHand", "rightHand", "leftFoot", "rightFoot", "headJump"}
@@ -47,20 +47,20 @@ def test_which_actions_sweep_which_zones():
 
 # --- 内置和下载 ---------------------------------------------------------------
 
-def test_only_march_and_calf_back_come_with_the_program(no_downloaded_actions):
+def test_only_march_calf_back_and_jump_come_with_the_program(no_downloaded_actions):
     payload = library_payload()
-    assert [item["id"] for item in payload] == ["march", "calf_back"]
+    assert [item["id"] for item in payload] == ["march", "calf_back", "jump"]
     assert all(item["source"] == "builtin" for item in payload)
-    assert set(describe.MOTION_NAMES) == {"march", "calf_back"}
+    assert set(describe.MOTION_NAMES) == {"march", "calf_back", "jump"}
     assert not describe.POSE_NAMES
     assert zone_crossers("leftHand") == ()
 
 
 def test_downloaded_actions_join_the_library_and_the_names():
     payload = {item["id"]: item for item in library_payload()}
-    assert payload["jumping_jack"]["source"] == "cloud"
-    assert payload["jumping_jack"]["revision"] >= 1
-    assert describe.MOTION_NAMES["jumping_jack"] == "开合跳"
+    assert payload["squat"]["source"] == "cloud"
+    assert payload["squat"]["revision"] >= 1
+    assert describe.MOTION_NAMES["squat"] == "下蹲"
     assert describe.POSE_NAMES["hands_cross"] == "双手交叉"
 
 
@@ -76,16 +76,16 @@ def test_every_action_has_all_three_ratings_and_at_least_one_body_part():
 
 
 def test_the_ratings_order_the_actions_the_way_a_player_would():
-    """几条一眼就该对的：开合跳比举手累，下蹲练腿最多，提膝碰肘练核心最多。"""
+    """几条一眼就该对的：跳跃比举手累，下蹲练腿最多，提膝碰肘练核心最多。"""
     items = {item["id"]: item for item in library_payload()}
-    assert items["jumping_jack"]["ratings"]["intensity"] > items["hands_up"]["ratings"]["intensity"]
+    assert items["jump"]["ratings"]["intensity"] > items["hands_up"]["ratings"]["intensity"]
     assert max(items, key=lambda ident: items[ident]["body_parts"].get("legs", 0)) == "squat"
     assert max(items, key=lambda ident: items[ident]["body_parts"].get("core", 0)) == "cross_knee_elbow"
 
 
 # --- 官方动作文件 ------------------------------------------------------------
 
-def _doc(ident="jumping_jack"):
+def _doc(ident="squat"):
     return copy.deepcopy(next(doc for doc in official_pose_docs() if doc["id"] == ident))
 
 
@@ -114,3 +114,10 @@ def test_signing_bytes_do_not_depend_on_key_order():
     shuffled = json.loads(json.dumps(doc, sort_keys=False))
     reordered = dict(reversed(list(shuffled.items())))
     assert pose_library.canonical_bytes(doc) == pose_library.canonical_bytes(reordered)
+
+
+def test_a_retired_action_is_not_published_but_old_configs_still_name_it():
+    """开合跳 2026-10-08 下架：官方动作库里没有了，别人旧配置里那一行还看得出是什么。"""
+    assert "jumping_jack" not in {doc["id"] for doc in official_pose_docs()}
+    assert "jumping_jack" not in describe.MOTION_NAMES
+    assert describe.trigger_name("motion.jumping_jack") == "开合跳"

@@ -50,6 +50,7 @@ from motioncontrol.responsive_march import ResponsiveMarch
 from motioncontrol.depth_march import DepthMarchLifts
 from motioncontrol import kinect_camera
 from motioncontrol.recognition_models import AutoPoseChoice, LazyGestureRecognizer
+from motioncontrol.jump_detect import JumpDetector
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
     foot_floor_y, foot_out, is_default, normalize_zone_fit,
@@ -174,7 +175,11 @@ BODY_MOTION_GUARD_VERSION = "轻度动态死区1"
 BODY_MOTION_ACTION_RISK_TIMING = {
     "march": (0.000, 0.030),
     "calf_back": (0.060, 0.095),
+    # 落地那一下头还在晃，多留一会儿。
+    "jump": (0.000, 0.100),
 }
+# 程序自带、写在代码里的动作。别的动作都是下载的动作文件，在 self._motion_rules 里。
+BUILTIN_MOTIONS = tuple(BODY_MOTION_ACTION_RISK_TIMING)
 
 # Head-jump anchor tuning.  The anchor exists so the target above the head can
 # track a changed stance without also riding up with a jump.  Lateral drift is
@@ -560,6 +565,7 @@ class ControlKernel:
         self.hand_mouse_controller = HandMouseController()
         self.pose_recorder = PoseRecorder(_user_recordings_dir())
         self.trigger_recorder = TriggerRecorder(_user_recordings_dir())
+        self.fitness = None  # 服务器按需接入；采集线程只更新运动记录的内存。
         # 手机为主、电脑摄像头为第二视角时的真实前后深度；没开双目时它只是闲着。
         self.stereo = StereoDepth(_stereo_calibration_path())
         self.vertical_head_anchor_pitch: float | None = None
@@ -606,14 +612,14 @@ class ControlKernel:
         self.motion_config: list[dict] = []
         self.motion_active: set[str] = set()
         self.motion_debounce = {
-            key: {"active": False, "on": 0, "off": 0} for key in ("march", "calf_back")
+            key: {"active": False, "on": 0, "off": 0} for key in BUILTIN_MOTIONS
         }
         self.body_motion_action_risk: set[str] = set()
         self.body_motion_action_risk_debounce = {
-            key: {"active": False, "on_since": 0.0, "off_since": 0.0} for key in ("march", "calf_back")
+            key: {"active": False, "on_since": 0.0, "off_since": 0.0} for key in BUILTIN_MOTIONS
         }
-        # 从云端下载的动作：编号 → 动作文件（含识别规则）。原地踏步、小腿向后抬起是
-        # 写在下面的代码，不在这里。见 configure_pose_actions。
+        # 从云端下载的动作：编号 → 动作文件（含识别规则）。原地踏步、小腿向后抬起、
+        # 跳跃是写在下面的代码，不在这里。见 configure_pose_actions。
         self.pose_actions: dict[str, dict] = {}
         self._motion_rules: dict[str, dict] = {}
         self._motion_rule_order: list[str] = []
@@ -625,6 +631,7 @@ class ControlKernel:
         self._depth_march = DepthMarchLifts()
         self.latest_depth_body = None
         self.march_depth_source = "image"
+        self._jump = JumpDetector()
         # 脚：站着时的基准、最近 0.3 秒的样子、这一帧算出来的离地和往外。见 _update_feet_locked。
         self.foot_base: dict[str, float] | None = None
         self.foot_history: list[tuple[float, float, float, float]] = []
@@ -1287,7 +1294,7 @@ class ControlKernel:
         for entry in (*pose_library.BUILTIN, *pose_library.registered().values()):
             names.setdefault(entry["id"], entry["name"])
         out = []
-        for ident in ("march", "calf_back", *self._motion_rules):
+        for ident in (*BUILTIN_MOTIONS, *self._motion_rules):
             out.append((f"motion.{ident}", names.get(ident, ident)))
         for ident in self._pose_rules:
             out.append((f"pose.{ident}", names.get(ident, ident)))
@@ -1669,6 +1676,8 @@ class ControlKernel:
             self._clear_body_outputs_locked()
             self._update_intent_recording_locked(None, now)
             self._record_trigger_frame_locked(None, now)
+            if self.fitness is not None:
+                self.fitness.observe_pose(None, now)
             return
         # Evaluated before anything else in the frame: the zone pass and the
         # final apply() both consult the engaged state, and they run at
@@ -1703,6 +1712,12 @@ class ControlKernel:
         self._update_body_motion_guard_locked(pose_map, now)
         self._update_head_locked(pose_map, now, world_pose)
         self._record_trigger_frame_locked(pose_map, now, world_pose)
+        if self.fitness is not None:
+            physical = {f"motion.{name}" for name in self.motion_active}
+            physical.update(f"pose.{name}" for name in self.pose_active)
+            physical.update(f"zone.{name}" for name, state in self.zone_state.items()
+                            if name != "lookGate" and state.get("pressed"))
+            self.fitness.observe_pose(pose_map, self._pose_sample_time_locked(now), actions=physical)
 
     def _record_trigger_frame_locked(self, pose_map, now, world_pose=None):
         if not self.trigger_recorder.config["enabled"]:
@@ -2071,6 +2086,11 @@ class ControlKernel:
                 inside = False
             # 身体确实在框里没有，不管判定按不按。「录我的动作」数进框次数用它。
             state["raw_inside"] = inside
+            if name in RUNTIME_BODY_ZONES and not self._effective_binding_locked(f"zone.{name}"):
+                # 没绑键的框不判断，画面上也不画（见 _zones_snapshot_locked）。
+                changed = changed or bool(state.get("pressed"))
+                self.zone_state[name] = {**fresh_zone_state(), "raw_inside": inside}
+                continue
             # The look gate is a safety arm, so leaving it must cut vertical
             # output on the very first missing frame.  Body action zones
             # retain their normal two-frame hysteresis.
@@ -2116,7 +2136,7 @@ class ControlKernel:
 
     def _bound_action_triggers_locked(self) -> list[str]:
         """绑了键的动作和姿势（内置、下载的、自己录的），框要不要让路只看这些。"""
-        idents = [f"motion.{ident}" for ident in ("march", "calf_back", *self._motion_rules)]
+        idents = [f"motion.{ident}" for ident in (*BUILTIN_MOTIONS, *self._motion_rules)]
         idents += [f"pose.{ident}" for ident in self._pose_rules]
         store = self.custom_pose_store
         if store is not None:
@@ -2482,7 +2502,20 @@ class ControlKernel:
         hip = _midpoint(pose_map["left_hip"], pose_map["right_hip"]) if self._points_good(pose_map, ("left_hip", "right_hip")) else None
         torso = max(0.025, abs(hip["y"] - shoulder["y"])) if shoulder and hip else math.nan
         calf_raw = march_raw = False
-        # 从云端下载的动作（下蹲、双手举过头、开合跳……）：规则是数据，交给规则引擎。
+        # 跳跃：肩和胯一起比站着时高出一截，见 jump_detect。膝盖弯着算蹲着，站着的基准
+        # 不往下跟——蹲下再站起来只是回到原来的高度。算速度用认出时刻，不受到达抖动影响。
+        if shoulder and hip:
+            legs = ("left_hip", "left_knee", "left_ankle", "right_hip", "right_knee", "right_ankle")
+            knees_bent = self._points_good(pose_map, legs) and min(
+                self._angle_at(pose_map["left_hip"], pose_map["left_knee"], pose_map["left_ankle"]),
+                self._angle_at(pose_map["right_hip"], pose_map["right_knee"], pose_map["right_ankle"]),
+            ) < HEAD_JUMP_KNEE_BENT
+            jump_raw = self._jump.update(shoulder["y"], hip["y"], self._pose_sample_time_locked(now),
+                                         crouched=knees_bent)
+        else:
+            self._jump.reset()
+            jump_raw = False
+        # 从云端下载的动作（下蹲、双手举过头……）：规则是数据，交给规则引擎。
         # 以前写死在这里的判断原样搬进了各自的规则，逐帧一致（tests/test_pose_rules.py）。
         rules = pose_rules.evaluate_rules(self._motion_rules, pose_map, self.width, self.height,
                                           self._motion_rule_order)
@@ -2583,6 +2616,11 @@ class ControlKernel:
 
             left_step = step_done("left", "right")
             right_step = step_done("right", "left")
+            if self.fitness is not None:
+                if left_step:
+                    self.fitness.step_event("left", now)
+                if right_step:
+                    self.fitness.step_event("right", now)
 
             def calf_side(side: str, other: str) -> bool:
                 lift = self.step.get(side + "_lift")
@@ -2610,7 +2648,8 @@ class ControlKernel:
             # observed and the walk would otherwise expire in mid-air.  Zones
             # are evaluated before motions, so this reads the current frame.
             # Only an already-running walk is held; a standing jump starts none.
-            jumping = bool(self.zone_state.get("headJump", {}).get("pressed"))
+            # 跳跃动作不管绑没绑都在认；头顶区没绑键时不判断，所以两个都看。
+            jumping = jump_raw or bool(self.zone_state.get("headJump", {}).get("pressed"))
             if jumping and now < self.step["active_until"]:
                 self.step["active_until"] = now + MARCH_HOLD_S
             if now - self.step["last_at"] > 1.55 and not jumping:
@@ -2647,7 +2686,7 @@ class ControlKernel:
             self.step.update(_fresh_step())
             self._responsive_march.reset()
 
-        raw_motion = {"march": march_raw, "calf_back": calf_raw}
+        raw_motion = {"march": march_raw, "calf_back": calf_raw, "jump": jump_raw}
         raw_motion.update({ident: result["raw"] for ident, result in rules.items()})
         self.motion_raw = dict(raw_motion)
         risk = set()
@@ -2670,6 +2709,8 @@ class ControlKernel:
         march_off_frames = 1 if self.march_algorithm == "responsive" else 2
         if self._set_motion_debounced("march", march_raw, 1, march_off_frames): active.add("march")
         if self._set_motion_debounced("calf_back", calf_raw, 3, 4): active.add("calf_back")
+        # 人在空中只有 0.2 秒上下，起跳那一帧就按，落地那一帧就松。
+        if self._set_motion_debounced("jump", jump_raw, 1, 1): active.add("jump")
         for ident, result in rules.items():
             on_frames, off_frames = self.pose_actions[ident]["debounce"]
             if self._set_motion_debounced(ident, result["raw"], on_frames, off_frames):
@@ -3240,6 +3281,7 @@ class ControlKernel:
         self.trigger_previous.clear()
         self.foot_base = None
         self._responsive_march.reset()
+        self._jump.reset()
         self.foot_history.clear()
         self.feet = None
         self._depth_march.reset()
@@ -3258,6 +3300,8 @@ class ControlKernel:
         self.action_chain_result = self.action_chain.result()
 
     def _clear_body_locked(self) -> None:
+        if self.fitness is not None:
+            self.fitness.observe_pose(None, time.monotonic())
         if self.head_controller.calibrating:
             self.head_controller.cancel_center("人体来源已断开")
         self.latest_pose = None
@@ -3309,12 +3353,14 @@ class ControlKernel:
             state = {"pressed": recognized and mapped, "recognized": recognized}
             state["trigger_groups"] = self._zone_point_groups_locked(name)
             # 画成什么样：idle 灰、pending 判断中（黄）、pressed 亮、swept 判定是扫过（闪红）。
-            # 没绑键的框不判断也不亮，一律 idle。progress 是系统功能框「稳住」走到哪了。
+            # 没绑键的框不判断也不画：没有 rect，网页和手机上就不出现。progress 是系统
+            # 功能框「稳住」走到哪了。
             phase = zone_phase_for_display(raw, now) if mapped and raw else "idle"
             state["phase"] = phase
             if phase == "pending" and raw.get("progress"):
                 state["progress"] = round(float(raw["progress"]), 2)
-            zones[name] = {"rect": _snapshot_copy(self.zone_rects.get(name)), **state}
+            rect = self.zone_rects.get(name) if mapped else None
+            zones[name] = {"rect": _snapshot_copy(rect), **state}
         # Keep the old four identifiers in status for clients that have not yet
         # learned the merged names. They are aliases only; no second trigger is
         # evaluated or dispatched for them.
@@ -3610,6 +3656,12 @@ class NativeCameraService:
         self._preview_times: deque[float] = deque(maxlen=120)
         self._preview_durations_ms: deque[float] = deque(maxlen=120)
         self._preview_sizes: deque[int] = deque(maxlen=120)
+        self._studio_enabled = False
+        self._studio_require_mask = False
+        self._studio_sample = None
+        self._studio_error = None
+        self._detector_masks_enabled = False
+        self._studio_switch_after = 0.0
 
     def _remembered(self, key: str, default):
         """内核那份 general_settings.json。拿不到就用默认值。
@@ -4042,6 +4094,7 @@ class NativeCameraService:
         self._preview_times.clear()
         self._preview_durations_ms.clear()
         self._preview_sizes.clear()
+        self._studio_sample = None
 
     def configure_model(self, model_path) -> None:
         with self._lock:
@@ -4070,6 +4123,7 @@ class NativeCameraService:
             from mediapipe.tasks.python import vision
         except Exception as exc:
             raise CameraUnavailable("本地 Python 未安装 mediapipe；电脑摄像头内核无法启动") from exc
+        segmentation_enabled = self._studio_require_mask
         options = vision.PoseLandmarkerOptions(
             base_options=python.BaseOptions(model_asset_path=str(self.model_path)),
             running_mode=vision.RunningMode.VIDEO,
@@ -4077,8 +4131,11 @@ class NativeCameraService:
             min_pose_detection_confidence=0.35,
             min_pose_presence_confidence=0.35,
             min_tracking_confidence=0.35,
+            output_segmentation_masks=segmentation_enabled,
         )
-        return mp, vision.PoseLandmarker.create_from_options(options)
+        detector = vision.PoseLandmarker.create_from_options(options)
+        self._detector_masks_enabled = segmentation_enabled
+        return mp, detector
 
     @staticmethod
     def _backend_api(cv2, backend: str):
@@ -4497,6 +4554,25 @@ class NativeCameraService:
                     self.skipped_frames += skipped
                 if frame is None:
                     continue
+                # 复用同一采集流；只有录制要求抠图时才启用模型的分割输出。
+                # 换的是同一个模型：「自动」已经因为太慢退到 Full 的，不能借这一下又换回 Heavy。
+                if (self._studio_require_mask != self._detector_masks_enabled
+                        and time.monotonic() >= self._studio_switch_after):
+                    try:
+                        mp, detector = self._create_detector(self.actual_model)
+                    except Exception as exc:
+                        self._studio_error = str(exc)
+                        self._studio_switch_after = time.monotonic() + 5.0
+                    else:
+                        with self._condition:
+                            if session.stop.is_set() or self._session is not session:
+                                detector.close()
+                                break
+                            old_detector = session.detector
+                            session.mp, session.detector = mp, detector
+                            self._detector = detector
+                            self._studio_error = None
+                        old_detector.close()
                 started = time.perf_counter()
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = session.mp.Image(image_format=session.mp.ImageFormat.SRGB, data=rgb)
@@ -4575,6 +4651,22 @@ class NativeCameraService:
                             self._inference_durations_ms.clear()
                             self._inference_times.clear()
                         previous.close()
+                # 控制先提交，人像缓存随后更新；帧、点和遮罩来自同次识别。
+                if self._studio_enabled:
+                    masks = getattr(result, "segmentation_masks", None)
+                    try:
+                        mask = masks[0].numpy_view().copy() if masks else None
+                    except Exception as exc:
+                        # 可选录制失败不能中断正在进行的体感控制。
+                        mask = None
+                        self._studio_error = str(exc)
+                    with self._condition:
+                        if (self._studio_enabled and not session.stop.is_set()
+                                and self._session is session):
+                            self._studio_sample = {
+                                "frame": frame, "pose": pose_map, "mask": mask,
+                                "arrived_at": captured_at, "sequence": sequence,
+                            }
         except Exception as exc:
             self._fail_session(session, str(exc))
         finally:
@@ -4771,6 +4863,30 @@ class NativeCameraService:
         """Return the latest raw OpenCV frame (BGR) or None. Used by scene capture."""
         with self._lock:
             return self._latest_frame.copy() if self._latest_frame is not None else None
+
+    def studio_snapshot(self, *, require_mask=False, require_pose=False):
+        """返回同一帧的画面和识别结果；不打开第二个摄像头。"""
+        with self._condition:
+            self._studio_enabled = True
+            # 启用后保持到显式关闭，避免配置切换反复重建识别器。
+            self._studio_require_mask = self._studio_require_mask or bool(require_mask)
+            sample = self._studio_sample if require_mask or require_pose else {
+                "frame": self._latest_frame, "pose": None, "mask": None,
+                "arrived_at": self._latest_capture_at, "sequence": self._latest_sequence,
+            }
+            if not self.running or not sample or sample.get("frame") is None:
+                return None
+            if require_mask and sample.get("mask") is None:
+                return None
+            return {**sample, "frame": sample["frame"].copy()}
+
+    def release_studio(self):
+        with self._condition:
+            self._studio_enabled = False
+            self._studio_require_mask = False
+            self._studio_sample = None
+            self._studio_error = None
+            self._studio_switch_after = 0.0
 
 
 class LocalControlRuntime:

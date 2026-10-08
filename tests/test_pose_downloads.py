@@ -35,11 +35,11 @@ def signed(ident: str, key=KEY, change=None) -> tuple[str, str]:
 def test_a_signed_action_is_installed_and_survives_a_restart(tmp_path):
     path = tmp_path / "pose_actions.json"
     store = PoseActionStore(path, public_key=PUBLIC)
-    doc = store.install(*signed("jumping_jack"), expected_id="jumping_jack")
-    assert doc["name"] == "开合跳"
+    doc = store.install(*signed("hands_up"), expected_id="hands_up")
+    assert doc["name"] == "双手举过头"
     again = PoseActionStore(path, public_key=PUBLIC)
-    assert [doc["id"] for doc in again.docs()] == ["jumping_jack"]
-    assert again.revision("jumping_jack") == doc["revision"]
+    assert [doc["id"] for doc in again.docs()] == ["hands_up"]
+    assert again.revision("hands_up") == doc["revision"]
 
 
 def test_a_changed_byte_breaks_the_signature():
@@ -57,7 +57,7 @@ def test_a_file_signed_by_someone_else_is_refused():
 def test_getting_a_different_action_than_asked_for_is_refused(tmp_path):
     store = PoseActionStore(tmp_path / "pose_actions.json", public_key=PUBLIC)
     with pytest.raises(PoseDownloadError, match="不是同一个"):
-        store.install(*signed("squat"), expected_id="jumping_jack")
+        store.install(*signed("squat"), expected_id="hands_up")
     assert store.docs() == []
 
 
@@ -103,3 +103,29 @@ def test_the_official_files_would_verify_against_the_desktop_key_once_signed():
     for ident, entry in entries.items():
         payload = canonical_bytes(docs[ident])
         verify(base64.b64encode(payload).decode("ascii"), entry["signature"], _public_key())
+
+
+
+def _retired_jumping_jack() -> tuple[str, str]:
+    """下架前发出去的开合跳：签名是真的，只是官方动作库里已经没有它了。"""
+    doc = next(doc for doc in official_pose_docs() if doc["id"] == "squat")
+    doc = {**doc, "id": "jumping_jack", "name": "开合跳"}
+    payload = canonical_bytes(doc)
+    signature = KEY.sign(payload, ec.ECDSA(hashes.SHA256()))
+    return base64.b64encode(payload).decode("ascii"), base64.b64encode(signature).decode("ascii")
+
+
+def test_a_retired_action_stays_on_disk_but_is_not_loaded_or_installed(tmp_path):
+    from motioncontrol.pose_downloads import SCHEMA
+    document, signature = _retired_jumping_jack()
+    path = tmp_path / "pose_actions.json"
+    path.write_text(json.dumps({"schema": SCHEMA, "actions": [{"document": document, "signature": signature}]}),
+                    encoding="utf-8")
+    store = PoseActionStore(path, public_key=PUBLIC)
+    assert store.docs() == [] and store.last_error == ""
+    store.install(*signed("squat"))
+    # 用户下载过的东西不替他删：装别的动作存盘时，它还在文件里。
+    kept = json.loads(path.read_text(encoding="utf-8"))["actions"]
+    assert document in {item["document"] for item in kept}
+    with pytest.raises(PoseDownloadError, match="开合跳.*下架"):
+        store.install(document, signature)
