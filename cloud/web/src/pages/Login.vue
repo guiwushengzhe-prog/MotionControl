@@ -15,11 +15,14 @@
  * it stays sharp, reflows, and can be read aloud or translated.
  */
 import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "../api";
 import { user } from "../session";
 
 const router = useRouter();
+const route = useRoute();
+// 只认站内路径：next 是网址里来的，不能被拿去跳到别的网站。
+const next = typeof route.query.next === "string" && /^\/(?![\/\\])/.test(route.query.next) ? route.query.next : "/";
 const mode = ref<"login" | "register">("login");
 const email = ref("");
 const password = ref("");
@@ -53,7 +56,7 @@ async function submit() {
           password: password.value,
           display_name: displayName.value,
         });
-    router.push("/");
+    router.push(next);
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "出错了";
   } finally {

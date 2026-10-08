@@ -62,6 +62,10 @@ USER_DATA_FILES = {
     # 从云端官方动作库下载的动作（下蹲、开合跳……），连同各自的签名。程序只自带原地
     # 踏步和小腿向后抬起，别的动作在这里有才认得出来。
     "pose_actions": "pose_actions.json",
+    "fitness": "fitness.json",
+    # 这台电脑登录的云端账号：同步凭证和显示的名字。退出登录就删掉。
+    "cloud_account": "cloud_account.json",
+    "studio": "studio.json",
 }
 
 # Where 2.0 and earlier wrote them, relative to the program directory.  Only

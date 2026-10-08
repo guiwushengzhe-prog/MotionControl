@@ -2,11 +2,11 @@
 
 新手不用自己录，打开就能看到"这个动作长什么样"，照着做，直接绑键。
 
-## 内置的两个，和从云端下载的
+## 内置的三个，和从云端下载的
 
-程序自带的只有**原地踏步**和**小腿向后抬起**。它俩要跟着一次抬脚从抬起看到落下
-（抬到多高、膝盖动没动），是写在 control_kernel 里的代码，写在这里的只有给人看的
-那部分。
+程序自带的只有**原地踏步**、**小腿向后抬起**和**跳跃**。它们要跟着一次动作从开始
+看到结束（抬到多高、膝盖动没动、什么时候落地），是写在 control_kernel（跳跃在
+jump_detect）里的代码，写在这里的只有给人看的那部分。
 
 别的动作都在云端的**官方动作库**里（仓库里的 cloud/official_poses/），用户下载了才有。
 下载回来的是一份动作文件：名字、怎么做、示范、星级，外加**识别规则**——规则是数据，
@@ -92,6 +92,18 @@ SIDE = {
     "left_ankle": (0.505, 0.900), "right_ankle": (0.495, 0.900),
 }
 
+# 正面站立。人的左边在画面右边。
+FRONT = {
+    "nose": (0.500, 0.100),
+    "left_shoulder": (0.575, 0.220), "right_shoulder": (0.425, 0.220),
+    "left_elbow": (0.600, 0.360), "right_elbow": (0.400, 0.360),
+    "left_wrist": (0.610, 0.490), "right_wrist": (0.390, 0.490),
+    "left_hip": (0.550, 0.500), "right_hip": (0.450, 0.500),
+    "left_knee": (0.555, 0.700), "right_knee": (0.445, 0.700),
+    "left_ankle": (0.560, 0.900), "right_ankle": (0.440, 0.900),
+}
+_FEET = ("left_ankle", "right_ankle")
+
 BUILTIN: tuple[dict, ...] = (
     {
         "id": "march", "group": "motion", "name": "原地踏步",
@@ -119,8 +131,33 @@ BUILTIN: tuple[dict, ...] = (
         "frame_s": 0.55,
         "frames": (SIDE, _figure(SIDE, left_knee=(0.515, 0.700), left_ankle=(0.660, 0.600))),
     },
+    {
+        "id": "jump", "group": "motion", "name": "跳跃",
+        "how": "原地往上跳，双脚离地。在空中时按着",
+        "ratings": {"intensity": 4, "recognition": 5, "difficulty": 1},
+        "body_parts": {"legs": 4, "glutes": 2, "core": 1},
+        # 跳起来鼻子会穿过头顶区。头顶区默认「做动作时也要按」（人在空中只停一瞬间），
+        # 两个都绑了键就一起按。
+        "passes_zones": ("headJump",),
+        "frame_s": 0.30,
+        "frames": (
+            FRONT,
+            # 先往下一沉，再整个人往上离地，落回来。
+            _figure({k: (x, y if k in _FEET else y + 0.06) for k, (x, y) in FRONT.items()},
+                    left_knee=(0.585, 0.740), right_knee=(0.415, 0.740)),
+            _figure({k: (x, y - 0.10) for k, (x, y) in FRONT.items()},
+                    left_elbow=(0.630, 0.200), right_elbow=(0.370, 0.200),
+                    left_wrist=(0.650, 0.080), right_wrist=(0.350, 0.080)),
+            FRONT,
+        ),
+    },
 )
 BUILTIN_IDS = frozenset(entry["id"] for entry in BUILTIN)
+
+# 下架的动作。已经下载过的不再加载（文件不删），配置里绑了它的也不提示去下载；
+# 留着名字，别人分享的旧配置里还能看出那一行原来是什么。
+# 开合跳：每一下都是一次真跳，和内置的跳跃抢同一个动作，手也常扫过两边的手区。
+RETIRED = {"jumping_jack": "开合跳"}
 
 
 # --- 官方动作文件 ------------------------------------------------------------

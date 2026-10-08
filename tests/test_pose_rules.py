@@ -36,10 +36,10 @@ FRAMES = frames(20000)
 
 
 def test_every_official_action_has_a_rule():
-    assert set(RULES) == {"squat", "hands_up", "jumping_jack", "side_step_jack", "cross_knee_elbow", "hands_cross"}
+    assert set(RULES) == {"squat", "hands_up", "side_step_jack", "cross_knee_elbow", "hands_cross"}
 
 
-@pytest.mark.parametrize("ident", ["squat", "hands_up", "jumping_jack", "side_step_jack", "cross_knee_elbow"])
+@pytest.mark.parametrize("ident", ["squat", "hands_up", "side_step_jack", "cross_knee_elbow"])
 def test_motion_rules_match_the_old_kernel_code_frame_by_frame(ident):
     positives = 0
     for index, (pose, width, height) in enumerate(FRAMES):

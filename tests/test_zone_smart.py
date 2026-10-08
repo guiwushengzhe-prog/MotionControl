@@ -203,8 +203,11 @@ def test_recorded_rates_win_over_what_the_action_file_says(kernel, monkeypatch):
 
 # ---------- 要跳的框、做动作时也要按 ----------
 
+JUMP = [{"id": "jump", "enabled": True, "type": "gamepad", "target": "Y"}]
+
+
 def test_the_jump_zone_presses_along_with_a_jumping_motion_by_default(kernel):
-    kernel.configure_motions([{"id": "jumping_jack", "enabled": True, "type": "gamepad", "target": "Y"}])
+    kernel.configure_motions(HANDS_UP + JUMP)
     overlaps = kernel.status()["zone_overlaps"]
     assert overlaps["headJump"]["with_motion"] is True and overlaps["headJump"]["yields"] is False
     assert overlaps["leftHand"]["with_motion"] is False and overlaps["leftHand"]["yields"] is True
@@ -216,7 +219,7 @@ def test_with_motion_can_be_switched_per_zone(kernel):
         "leftHand": {"action": {"type": "gamepad", "target": "X"}, "with_motion": True},
         "headJump": {"action": {"type": "gamepad", "target": "A"}, "with_motion": False},
     }})
-    kernel.configure_motions([{"id": "jumping_jack", "enabled": True, "type": "gamepad", "target": "Y"}])
+    kernel.configure_motions(HANDS_UP + JUMP)
     overlaps = kernel.status()["zone_overlaps"]
     assert overlaps["leftHand"]["yields"] is False
     assert overlaps["headJump"]["yields"] is True

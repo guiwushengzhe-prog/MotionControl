@@ -54,12 +54,6 @@ def test_leg_cross_actions_are_removed():
 def test_new_body_actions_are_detected_as_configurable_motion_triggers():
     out=Output(); k=ControlKernel(out)
     try:
-        jumping=base_pose()
-        jumping.update({"left_wrist":pt(.20,.25),"right_wrist":pt(.80,.25),"left_ankle":pt(.25,.95),"right_ankle":pt(.75,.95)})
-        k._update_motion_locked(jumping,0.0); k._update_motion_locked(jumping,.03)
-        assert "jumping_jack" in k.motion_active
-
-        for state in k.motion_debounce.values(): state.update({"on":0,"off":0,"active":False})
         side=base_pose()
         side.update({"left_wrist":pt(.20,.47),"right_wrist":pt(.80,.47),"left_ankle":pt(.25,.95),"right_ankle":pt(.75,.95)})
         k._update_motion_locked(side,.06); k._update_motion_locked(side,.09)

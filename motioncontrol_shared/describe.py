@@ -105,6 +105,9 @@ def trigger_name(trigger: str) -> str:
              "pose": POSE_NAMES, "voice": VOICE_COMMAND_NAMES}.get(prefix)
     if table is None:
         return str(trigger)
+    if prefix == "motion" and ident not in table and ident in pose_library.RETIRED:
+        # 下架的动作：别人的旧配置里还看得出那一行原来是什么。
+        return pose_library.RETIRED[ident]
     return table.get(ident, ident)
 
 
