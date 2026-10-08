@@ -41,6 +41,9 @@ from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
 from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import CameraUnavailable, ControlKernel, LocalControlRuntime, NativeCameraService, RUNTIME_BODY_ZONES
 from motioncontrol.input_bridge import InputBridge
+from motioncontrol.fitness import FitnessStore
+from motioncontrol.studio import MAX_CHUNK_BYTES, StudioService
+from motioncontrol.studio_portrait import StudioPortrait
 from motioncontrol.intent_library import ZoneLearner
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
 from motioncontrol.game_launch import is_administrator, launch_as_administrator, wait_for_previous_process
@@ -141,6 +144,8 @@ def _remember_output_speed() -> None:
 
 
 RUNTIME = LocalControlRuntime(KERNEL, NativeCameraService(KERNEL))
+FITNESS = FitnessStore(user_path("fitness"))
+KERNEL.fitness = FITNESS
 PROFILE_UPDATE_LOCK = threading.RLock()
 INPUT_SOURCE_LOCK = threading.RLock()
 AUDIO_SOURCE_LOCK = threading.RLock()
@@ -177,6 +182,7 @@ def emergency_stop_all() -> dict:
     if executor is not None:
         executor.invalidate()
     result = OUTPUT.emergency_stop()
+    FITNESS.output_changed(False)
     _broadcast_game_output_state()
     KERNEL.cancel_calibration("紧急停止")
     timer = globals().get("POSE_TIMER")
@@ -264,6 +270,7 @@ def execute_system_target(target: str, *, command_generation=None, command_actio
                 return {"executed": False, "reason": "操作已被停止或切换取消"}
             enabled = target == "OUTPUT.START" or (target == "OUTPUT.TOGGLE" and not OUTPUT.enabled)
             result = OUTPUT.set_config(enabled=enabled)
+            FITNESS.output_changed(enabled)
         _broadcast_game_output_state()
         return {"executed": True, **result}
     if target == "HEAD.CENTER":
@@ -594,10 +601,16 @@ def _instance_id() -> str:
 
 def _set_output_enabled(enabled: bool) -> dict:
     SYSTEM_COMMANDS.invalidate()
-    return OUTPUT.set_config(enabled=enabled)
+    result = OUTPUT.set_config(enabled=enabled)
+    FITNESS.output_changed(enabled)
+    return result
 
 
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE, on_output_control=_set_output_enabled)
+INPUT_BRIDGE.configure_fitness(FITNESS)
+STUDIO = StudioService(StudioPortrait(RUNTIME.camera, kernel=KERNEL,
+                                    phone_provider=INPUT_BRIDGE.latest_studio_frame),
+                       INPUT_BRIDGE, user_data_root())
 
 
 def _set_body_input(source: str, enabled: bool) -> dict:
@@ -1464,6 +1477,26 @@ class AdminHandler(_BaseHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
+        if route in {"/api/fitness/state", "/api/fitness/history", "/api/studio/state", "/api/studio/frame.png"}:
+            if not self._is_loopback():
+                self._send_json({"error": "请从本机控制页面查看"}, 403)
+                return
+            if route == "/api/studio/frame.png":
+                png, revision = STUDIO.frame_snapshot_png()
+                self.send_response(200 if png else 204)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Studio-Revision", str(revision))
+                self.send_header("Content-Length", str(len(png) if png else 0))
+                self.end_headers()
+                if png:
+                    self.wfile.write(png)
+            else:
+                data = FITNESS.state() if route == "/api/fitness/state" else (
+                    {"sessions": FITNESS.history(), "profile": FITNESS.state()["profile"]}
+                    if route == "/api/fitness/history" else STUDIO.state())
+                self._send_json(data)
+            return
         if route == "/api/phone-connect":
             if not self._is_loopback():
                 self._send_json({"error": "连接码只能在这台电脑上查看"}, 403)
@@ -1673,6 +1706,51 @@ class AdminHandler(_BaseHandler):
     def do_POST(self):
         global CONFIG_REVISION
         route = urlparse(self.path).path
+        if route.startswith("/api/studio/") or route == "/api/fitness/control":
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or (origin and origin not in {
+                    f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
+                self._send_json({"error": "请从本机控制页面操作"}, 403)
+                return
+            try:
+                if route == "/api/studio/recording/chunk":
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= MAX_CHUNK_BYTES:
+                        self._send_json({"error": "录像片段为空或过大"}, 413)
+                        return
+                    chunk = self.rfile.read(length)
+                    if len(chunk) != length:
+                        raise ValueError("录像片段传输未完成")
+                    ident = parse_qs(urlparse(self.path).query).get("id", [""])[0]
+                    self._send_json({"ok": True, **STUDIO.append_recording(ident, chunk)})
+                    return
+                body = self._body()
+                if not isinstance(body, dict):
+                    raise ValueError("操作内容无效")
+                if route == "/api/fitness/control":
+                    data = FITNESS.control(body)
+                elif route == "/api/studio/config":
+                    data = STUDIO.update(body)
+                elif route == "/api/studio/video-demand":
+                    data = STUDIO.demand(body.get("enabled"), body.get("client_id", "main"))
+                elif route == "/api/studio/recording/start":
+                    data = STUDIO.start_recording(body)
+                elif route == "/api/studio/recording/finish":
+                    data = STUDIO.finish_recording(str(body.get("id") or ""), interrupted=body.get("interrupted", False))
+                elif route == "/api/studio/recording/open-folder":
+                    STUDIO.folder.mkdir(parents=True, exist_ok=True)
+                    os.startfile(STUDIO.folder)
+                    data = {}
+                elif route == "/api/studio/open-browser":
+                    webbrowser.open(f"http://127.0.0.1:{self.server.server_port}/studio.html")
+                    data = {}
+                else:
+                    self._send_json({"error": "找不到这个录制操作"}, 404)
+                    return
+                self._send_json({"ok": True, **data})
+            except (ValueError, TypeError, OSError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if route == "/api/voice/audio":
             self._send_json({
                 "ok": False,
@@ -2324,6 +2402,8 @@ class AdminHandler(_BaseHandler):
                         xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
                         physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
                     )
+                    if "enabled" in body:
+                        FITNESS.output_changed(bool(OUTPUT.enabled))
                 finally:
                     _remember_output_mode()
                     if any(key in body for key in _OUTPUT_SPEED_FIELDS):
@@ -2559,6 +2639,8 @@ def main():
         perf_thread.join(timeout=1.0)
         OUTPUT.emergency_stop()
         VOICE.close()
+        STUDIO.close()
+        FITNESS.close()
         INPUT_BRIDGE.close()
         RUNTIME.close()
         HOTKEYS.close()
