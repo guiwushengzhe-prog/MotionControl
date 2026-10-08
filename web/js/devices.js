@@ -102,14 +102,15 @@ function renderPerformance(data){
   // 手机那边不报推理帧率，用每秒收到几帧代替——人看到的就是这个。
   const fps=Number(data.inference_fps??data.network_fps);
   const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
+  const black=sourceMode==='computer'&&live&&data.picture_black;
   const hud=$('#fpsHud');
   if(hud){
-    const show=live&&Number.isFinite(fps)&&fps>0;hud.hidden=!show;
-    if(show){const text=`${Math.round(fps)} 帧/秒`;if(hud.textContent!==text)hud.textContent=text;hud.classList.toggle('slow',fps<15)}
+    const show=black||(live&&Number.isFinite(fps)&&fps>0);hud.hidden=!show;
+    if(show){const text=black?'画面全黑':`${Math.round(fps)} 帧/秒`;if(hud.textContent!==text)hud.textContent=text;hud.classList.toggle('slow',!!black||fps<15)}
   }
   const line=$('#recognitionStatus');
-  if(line)line.textContent=S.sourceConnecting?'正在启动摄像头，请稍候…':live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):'未开始';
-  if(line&&!S.sourceConnecting&&live&&sourceMode==='computer'){if(data.depth_active)line.textContent+=' · 深度已启用';else if(data.depth_error)line.textContent+=' · '+data.depth_error}
+  if(line)line.textContent=S.sourceConnecting?'正在启动摄像头，请稍候…':black?'摄像头画面全黑':live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):'未开始';
+  if(line&&!S.sourceConnecting&&live&&sourceMode==='computer'){if(!black&&data.depth_active)line.textContent+=' · 深度已启用';else if(!black&&data.depth_error)line.textContent+=' · '+data.depth_error}
   $('#perfSummary').textContent='识别';
   $('#perfDetails').textContent=[
     `采集帧率：${formatPerf(data.capture_fps)} · 推理帧率：${formatPerf(data.inference_fps)}${data.network_fps!=null?` · 手机传来：${formatPerf(data.network_fps)}`:''}`,
@@ -192,11 +193,14 @@ export function renderCameraDevices(devices,current,data={}){
   if(Array.isArray(devices))cameraDevices=[...devices];
   const list=[...cameraDevices];
   if(!list.some(d=>String(d.id??d.index)===S.cameraDevice))
-    list.unshift(S.cameraDevice.startsWith('kinect2:')?{id:S.cameraDevice,name:'微软 Kinect'}:{index:S.cameraIndex});
+    list.unshift(S.cameraDevice.startsWith('kinect2:')?{id:S.cameraDevice,name:'微软 Kinect'}:{index:S.cameraIndex,name:data.camera_name,picture_state:data.picture_black?'black':undefined});
   select.replaceChildren(...list.map(d=>{
     const option=document.createElement('option');option.value=String(d.id??d.index);
     const size=d.width&&d.height?' · '+d.width+'×'+d.height:'';
-    option.textContent=(d.name||'摄像头 '+d.index)+size;return option;
+    const name=d.name||'摄像头 '+d.index;
+    const state=d.picture_state==='black'?' · 画面全黑'
+      :['unavailable','no_frames'].includes(d.picture_state)?' · 暂无画面':'';
+    option.textContent=name+(d.virtual&&!name.includes('虚拟')?'（虚拟）':'')+size+state;return option;
   }));
   select.value=S.cameraDevice;
 }

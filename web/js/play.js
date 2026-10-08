@@ -134,6 +134,7 @@ function renderViewerMessage(){
   const hint=$('#hint');if(!hint)return;
   const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
   const [title,detail]=S.sourceConnecting?['正在准备识别','相机启动可能需要几十秒，请稍候']:!live?[sourceMode==='phone'?'等手机连上':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':'在「设置 → 设备」里选择摄像头，或点「开始识别」']
+    :sourceMode==='computer'&&cameraRunning&&cameraInfo.picture_black?['摄像头画面全黑',cameraInfo.camera_virtual?'请启动虚拟摄像头的画面来源，或换一个摄像头':'请检查镜头遮挡，或换一个摄像头']
     :!currentPoseMap?['站到镜头前','头和双肩入镜就能开始']:['',''];
   setProperty(hint,'hidden',!title);
   const key=title+'|'+detail;if(hint.dataset.key===key)return;hint.dataset.key=key;
@@ -153,12 +154,12 @@ function setStep(name,state,sub){
 function renderReadiness(){
   const hs=kernelState?.head||{};
   const phoneMode=sourceMode==='phone';
-  const cameraOk=phoneMode?!!inputStatus.mobile_pose_connected:cameraRunning;
+  const cameraOk=phoneMode?!!inputStatus.mobile_pose_connected:cameraRunning&&!cameraInfo.picture_black;
   const posed=!!currentPoseMap;
   const handHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand);
   const needCal=!handHorizontal&&head.enabled;
   const calibrated=!needCal||!!(hs.horizontal_calibrated??hs.calibrated);
-  setStep('camera',cameraOk?'done':'warn',phoneMode?(cameraOk?'手机摄像头':'等手机连上'):(cameraOk?'电脑摄像头':'还没连接'));
+  setStep('camera',cameraOk?'done':'warn',phoneMode?(cameraOk?'手机摄像头':'等手机连上'):(cameraRunning&&cameraInfo.picture_black?'画面全黑，请检查镜头或画面来源':cameraOk?(cameraInfo.camera_name||'电脑摄像头'):'还没连接'));
   const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk);
   setStep('pose',posed?'done':(cameraOk?'warn':''),posed?'已识别':'站到镜头前，头和双肩入镜');
   setStep('game',gameProfile.selected?'done':'',gameProfile.selected?.name||'正在读取…');

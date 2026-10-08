@@ -35,6 +35,7 @@ from motioncontrol_shared.pose_points import MP_NAMES, trigger_point_groups
 from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
 from motioncontrol.axis_hand_mouse import AxisHandMouseController as HandMouseController
+from motioncontrol import windows_cameras
 from motioncontrol.pose_recorder import PoseRecorder
 from motioncontrol.trigger_recorder import TriggerRecorder
 from motioncontrol.intent_recording import (
@@ -3567,6 +3568,7 @@ class NativeCameraService:
         self._stop = threading.Event()
         self._start_cancel = threading.Event()
         self._opening_capture = None
+        self.picture_black = None
         self._session: _CameraSession | None = None
         self._generation = 0
         self.lifecycle = "stopped"
@@ -3853,15 +3855,60 @@ class NativeCameraService:
         self._apply_rotation_locked(rotation)
         self._remember("camera_auto_rotation", rotation)
 
+    @staticmethod
+    def _camera_catalog(*, refresh=False) -> dict | None:
+        if os.name != "nt":
+            return None
+        try:
+            return {item["index"]: item for item in windows_cameras.list_devices(refresh=refresh)}
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            return None
+
+    def _camera_identity(self) -> dict:
+        if self.depth_supported:
+            return {"camera_name": "微软 Kinect", "camera_virtual": False}
+        info = (self._camera_catalog() or {}).get(self.camera_index, {})
+        # 原生名称对应直接采集顺序；兼容采集的数字顺序不作未经确认的名称匹配。
+        named = (self.selected_backend or self.backend_preference) == self.BACKEND_DSHOW
+        return {"camera_name": info.get("name") if named else None,
+                "camera_virtual": bool(named and info.get("virtual"))}
+
+    @staticmethod
+    def _picture_is_black(frame):
+        # 仅抽样约32×32像素，不保存画面。
+        try:
+            h, w = frame.shape[:2]
+            sample = frame[::max(1, h // 32), ::max(1, w // 32)]
+            return bool(sample.max() <= 3)
+        except (AttributeError, TypeError, ValueError, IndexError):
+            return None
+
+    @classmethod
+    def _scan_picture(cls, capture) -> dict:
+        # 连续检查几帧，给初始化中的设备短暂预热；静止画面也正常，
+        # 不把像素没变化误判成断流。黑帧只提示，不删除可能被遮住的设备。
+        deadline = time.perf_counter() + 2.0
+        last_frame = None
+        valid_frames = 0
+        for _ in range(3):
+            ok, frame = capture.read()
+            if ok and cls._valid_frame(frame):
+                last_frame = frame
+                valid_frames += 1
+            if time.perf_counter() >= deadline:
+                break
+        if last_frame is None:
+            return {"picture_state": "no_frames", "picture_black": None, "sampled_frames": 0}
+        height, width = map(int, last_frame.shape[:2])
+        black = cls._picture_is_black(last_frame)
+        return {"width": width, "height": height, "picture_state": "black" if black else "ready",
+                "picture_black": black, "sampled_frames": valid_frames}
+
     def list_cameras(self, limit: int | None = None) -> dict:
-        """挨个序号试着打开，看哪几个是真的在。
+        """枚举真实设备，再分别检查画面；发现设备不等于画面可用。
 
-        OpenCV 给不出摄像头的名字，所以这里只能报序号和分辨率——名字要靠
-        Windows 那边另外一套接口，为一个下拉框不值得。分辨率加上界面里那块
-        实时画面，已经够人认出哪个是对着自己的：选一个、开一下、看画面。
-
-        正在用的那一个不去开第二遍：设备多半是独占的，第二次打开会失败，
-        于是"正在用的摄像头"反而会被报成不存在。
+        正在使用的相机不重复打开。原生枚举失败才退回数字探测；
+        没画面、虚拟源未启动和画面全黑都保留设备，明确说明当前状态。
         """
         limit = self.MAX_CAMERA_INDEX if limit is None else max(0, min(self.MAX_CAMERA_INDEX, int(limit)))
         with self._lock:
@@ -3871,42 +3918,50 @@ class NativeCameraService:
         except Exception as exc:
             raise CameraUnavailable("本地 Python 未安装 opencv-python，无法列出摄像头") from exc
 
-        # DSHOW 打不开的序号失败得快；MSMF 会在不存在的设备上等很久。列表要
-        # 人站在那里等结果，所以这里选快的那个。
         api = self._backend_api(cv2, self.BACKEND_DSHOW)
+        catalog = self._camera_catalog(refresh=True)
+        # 按系统实际枚举结果探测，不再盲开不存在的 0～5 号设备。
+        indices = sorted(index for index in catalog if index <= limit) if catalog is not None else range(limit + 1)
+        native_kinect = []
+        if running and self.depth_supported:
+            native_kinect = [{"id": self.camera_device, "name": "微软 Kinect", "depth_supported": True,
+                              "width": self.capture_width, "height": self.capture_height, "in_use": True}]
+        else:
+            try:
+                native_kinect = kinect_camera.list_devices()
+            except (RuntimeError, OSError, ValueError, subprocess.SubprocessError):
+                pass
         devices: list[dict] = []
-        for index in range(limit + 1):
+        for index in indices:
+            info = (catalog or {}).get(index, {})
+            if native_kinect and info.get("kinect_v2"):
+                continue  # 同一台 Kinect 使用原厂接口，避免重复列出无画面的普通入口。
+            identity = {"name": info.get("name"), "virtual": bool(info.get("virtual"))}
             if running and not self.depth_supported and index == current:
-                devices.append({"index": index, "width": self.capture_width,
-                                "height": self.capture_height, "in_use": True})
+                devices.append({"index": index, **identity, "width": self.capture_width,
+                                "height": self.capture_height, "in_use": True,
+                                "picture_black": self.picture_black,
+                                "picture_state": "black" if self.picture_black else "ready"})
                 continue
             capture = None
+            entry = {"index": index, **identity, "in_use": False, "picture_state": "unavailable"}
             try:
                 capture = cv2.VideoCapture(index, api)
-                if not capture.isOpened():
-                    continue
-                ok, frame = capture.read()
-                if not ok or not self._valid_frame(frame):
-                    continue
-                height, width = int(frame.shape[0]), int(frame.shape[1])
-                devices.append({"index": index, "width": width, "height": height, "in_use": False})
+                if capture.isOpened():
+                    entry.update(self._scan_picture(capture))
             except Exception:
-                continue
+                entry["picture_state"] = "unavailable"
             finally:
                 if capture is not None:
                     try:
                         capture.release()
                     except Exception:
                         pass
-        if running and self.depth_supported:
-            devices.append({"id": self.camera_device, "name": "微软 Kinect", "depth_supported": True,
-                            "width": self.capture_width, "height": self.capture_height, "in_use": True})
-        else:
-            try:
-                devices.extend(kinect_camera.list_devices())
-            except (RuntimeError, OSError, ValueError, subprocess.SubprocessError):
-                pass
-        return {"devices": devices, "camera_index": current, "camera_device": self.camera_device, "scanned_to": limit}
+            if info or entry["picture_state"] in ("ready", "black"):
+                devices.append(entry)
+        devices.extend(native_kinect)
+        return {"devices": devices, "camera_index": current, "camera_device": self.camera_device,
+                **self._camera_identity(), "picture_black": self.picture_black, "scanned_to": limit}
 
     def backend_config(self) -> dict:
         with self._lock:
@@ -3914,6 +3969,8 @@ class NativeCameraService:
             return {
                 "camera_index": self.camera_index,
                 "camera_device": self.camera_device,
+                **self._camera_identity(),
+                "picture_black": self.picture_black,
                 "depth_supported": self.depth_supported,
                 "depth_enabled": self.depth_enabled,
                 "depth_active": self.depth_active,
@@ -4271,6 +4328,7 @@ class NativeCameraService:
                 raise CameraUnavailable(f"电脑摄像头内核初始化失败：{exc}") from exc
             self._capture, self._detector, self._mp = capture, detector, mp
             self._reset_runtime_locked()
+            self.picture_black = self._picture_is_black(first_frame)
             # The first frame was consumed only for backend validation.  It is
             # intentionally not pushed into the inference path so all timing
             # starts at the same boundary for every backend.
@@ -4383,6 +4441,7 @@ class NativeCameraService:
                     if self._latest_frame is not None and self._latest_sequence > self._last_inference_sequence:
                         self.dropped_frames += 1
                     self._latest_frame = frame
+                    self.picture_black = self._picture_is_black(frame)
                     self._latest_depth = depth_metadata
                     self._latest_rotation = frame_rotation
                     self.depth_active = bool(self.depth_enabled and depth_metadata and depth_metadata.get("depth_valid"))
@@ -4580,6 +4639,8 @@ class NativeCameraService:
                 "running": self.running, "lifecycle": self.lifecycle,
                 "camera_index": self.camera_index,
                 "camera_device": self.camera_device,
+                **self._camera_identity(),
+                "picture_black": self.picture_black,
                 "depth_supported": self.depth_supported,
                 "depth_enabled": self.depth_enabled,
                 "depth_active": self.depth_active,
@@ -4627,6 +4688,7 @@ class NativeCameraService:
                 "skipped_frames": int(self.skipped_frames),
                 "web_render_fps": None,
                 "recent_humans": int(self.last_pose_count),
+                "picture_black": self.picture_black,
                 "preview_ready": bool(self._preview_jpeg),
                 "preview_fps": self._round_or_none(self._rate(self._preview_times), 2),
                 "preview_encode_avg_ms": self._round_or_none(
