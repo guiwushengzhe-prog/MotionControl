@@ -3533,6 +3533,7 @@ class _CameraSession:
     stop: threading.Event = field(default_factory=threading.Event)
     threads: list[threading.Thread] = field(default_factory=list)
     workers_left: int = 3
+    capture_released: bool = False
 
 
 class NativeCameraService:
@@ -4462,10 +4463,7 @@ class NativeCameraService:
             self._latest_depth = None
             self.depth_active = False
             self._preview_jpeg = None
-        try:
-            session.capture.release()
-        except Exception:
-            pass
+        self._release_capture(session)
         try:
             session.detector.close()
         except Exception:
@@ -4487,6 +4485,20 @@ class NativeCameraService:
                     if self.lifecycle != "failed":
                         self.lifecycle = "stopped"
                     self._condition.notify_all()
+
+    def _release_capture(self, session: _CameraSession) -> None:
+        with self._condition:
+            if session.capture_released:
+                return
+            session.capture_released = True
+        try:
+            session.capture.release()
+        except Exception as exc:
+            with self._condition:
+                if self._session is session:
+                    if not self.last_error:
+                        self.last_error = str(exc)
+                    self.lifecycle = "failed"
 
     def _capture_loop(self, session: _CameraSession) -> None:
         try:
@@ -4531,6 +4543,7 @@ class NativeCameraService:
         except Exception as exc:
             self._fail_session(session, str(exc))
         finally:
+            self._release_capture(session)
             self._worker_finished(session)
 
     def _inference_loop(self, session: _CameraSession) -> None:
@@ -5052,8 +5065,10 @@ class LocalControlRuntime:
         return self.camera.latest_preview()
 
     def close(self) -> None:
-        self.camera.stop()
-        self.kernel.close()
+        try:
+            self.camera.stop_and_wait()
+        finally:
+            self.kernel.close()
 
 
 # Keep the hand-anchor logic at the input/recognition boundary.  The existing

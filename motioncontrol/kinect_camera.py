@@ -12,6 +12,7 @@ import time
 
 import numpy as np
 
+from motioncontrol import owned_process
 from motioncontrol.user_paths import user_data_root
 
 PREFIX = "kinect2:"
@@ -39,7 +40,7 @@ def bridge_executable():
     if not compiler.is_file():
         raise RuntimeError("未找到 Windows 自带的 .NET 编译工具，无法准备 Kinect 采集程序。")
     root.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run([str(compiler), "/nologo", "/target:exe", "/platform:x64",
+    result = owned_process.run([str(compiler), "/nologo", "/target:exe", "/platform:x64",
                              "/r:System.Web.Extensions.dll", "/r:" + str(runtime),
                              "/out:" + str(executable), str(source)],
                             capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -54,7 +55,7 @@ def bridge_executable():
 def list_devices():
     if _runtime_dll() is None:
         return []
-    result = subprocess.run([str(bridge_executable()), "--list"], capture_output=True,
+    result = owned_process.run([str(bridge_executable()), "--list"], capture_output=True,
                             timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:
         return []
@@ -127,12 +128,20 @@ class KinectCapture:
         self._latest = None
         self._sequence = self._read_sequence = 0
         self._closed = False
+        self._release_lock = threading.Lock()
+        self._released = False
         self._condition = threading.Condition()
         self._started = time.monotonic()
-        self._process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        self._process = owned_process.popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                          creationflags=subprocess.CREATE_NO_WINDOW)
         self._reader = threading.Thread(target=self._read_loop, daemon=True, name="kinect-pipe")
-        self._reader.start()
+        try:
+            self._reader.start()
+        except Exception:
+            owned_process.terminate_and_wait(self._process)
+            self._process.stdout.close()
+            self._process.stderr.close()
+            raise
 
     @staticmethod
     def _exact(stream, size):
@@ -174,6 +183,7 @@ class KinectCapture:
                     raise RuntimeError("微软 Kinect 未收到画面，请检查电源、USB 接口或设备占用")
         except EOFError:
             if not self._closed:
+                owned_process.terminate_and_wait(self._process)
                 self.last_error = self._process.stderr.read().decode("utf-8", errors="replace").strip() or "Kinect 采集程序已退出"
         except Exception as exc:
             self.last_error = str(exc)
@@ -206,12 +216,12 @@ class KinectCapture:
         if self._process.poll() is None:
             self._process.terminate()
     def release(self):
-        self.interrupt()
-        try:
-            self._process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait(timeout=3)
-        self._reader.join(timeout=3)
-        self._process.stdout.close()
-        self._process.stderr.close()
+        with self._release_lock:
+            if self._released:
+                return
+            self.interrupt()
+            owned_process.terminate_and_wait(self._process)
+            self._reader.join(timeout=3)
+            self._process.stdout.close()
+            self._process.stderr.close()
+            self._released = True

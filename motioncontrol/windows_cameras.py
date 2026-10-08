@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import threading
+from motioncontrol import owned_process
 from motioncontrol.user_paths import user_data_root
 
 _lock = threading.Lock()
@@ -24,12 +25,12 @@ def list_devices(*, refresh=False):
             if not executable.is_file():
                 compiler = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
                 cache.mkdir(parents=True, exist_ok=True)
-                result = subprocess.run([str(compiler), "/nologo", "/target:exe", "/platform:x64",
+                result = owned_process.run([str(compiler), "/nologo", "/target:exe", "/platform:x64",
                                          "/r:System.Web.Extensions.dll", "/out:" + str(executable), str(source)],
                                         capture_output=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
                 if result.returncode:
                     raise RuntimeError("无法读取摄像头名称：" + result.stdout.decode("utf-8", errors="replace"))
-            result = subprocess.run([str(executable)], capture_output=True, timeout=8,
+            result = owned_process.run([str(executable)], capture_output=True, timeout=8,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
             if result.returncode:
                 raise RuntimeError("无法读取摄像头名称：" + result.stderr.decode("utf-8", errors="replace"))

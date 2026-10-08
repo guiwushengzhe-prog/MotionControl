@@ -399,7 +399,8 @@ def _service_running() -> bool:
     if os.name != "nt":
         return False
     try:
-        cp = subprocess.run(
+        from motioncontrol import owned_process
+        cp = owned_process.run(
             ["sc.exe", "query", "ViGEmBus"],
             capture_output=True,
             text=True,

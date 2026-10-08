@@ -384,7 +384,11 @@ def test_camera_stop_blocks_restart_and_discards_old_session_results(monkeypatch
         assert state["lifecycle"] == "stopping"
         assert not state["running"]
         assert camera._session is session
-        assert capture.release_count == detector.close_count == 0
+        assert detector.close_count == 0
+        if blocked_stage == "capture":
+            assert capture.release_count == 0
+        else:
+            _wait_until(lambda: capture.release_count == 1)
         with pytest.raises(CameraUnavailable):
             camera.start()
         assert camera._session is session
@@ -399,6 +403,39 @@ def test_camera_stop_blocks_restart_and_discards_old_session_results(monkeypatch
         capture.finish.set()
         detector.finish.set()
         camera.stop()
+
+
+def test_camera_releases_usb_device_without_waiting_for_blocked_inference(monkeypatch):
+    capture, detector = FakeCapture(one_frame=True), FakeDetector(blocked=True)
+    camera = _camera(monkeypatch, capture, detector)
+    try:
+        camera.start()
+        assert detector.entered.wait(1)
+        _shorten_worker_joins(camera, monkeypatch)
+        camera.stop()
+        capture.finish.set()
+        _wait_until(lambda: capture.release_count == 1)
+        assert camera._session is not None
+        assert detector.close_count == 0
+        detector.finish.set()
+        camera.stop_and_wait(timeout_s=1)
+        assert capture.release_count == detector.close_count == 1
+    finally:
+        capture.finish.set()
+        detector.finish.set()
+        camera.stop_and_wait(timeout_s=2)
+
+
+def test_runtime_close_clears_output_even_when_camera_stop_fails():
+    from motioncontrol.control_kernel import LocalControlRuntime
+    runtime = object.__new__(LocalControlRuntime)
+    closed = []
+    runtime.camera = SimpleNamespace(stop_and_wait=lambda:
+                                    (_ for _ in ()).throw(CameraUnavailable("测试停止超时")))
+    runtime.kernel = SimpleNamespace(close=lambda: closed.append(True))
+    with pytest.raises(CameraUnavailable, match="测试停止超时"):
+        runtime.close()
+    assert closed == [True]
 
 
 def test_timestamped_motion_debounce_keeps_the_same_duration_at_different_fps(monkeypatch):
