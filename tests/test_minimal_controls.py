@@ -30,7 +30,7 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
     app = read_web_js(ROOT)
     # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩（动作测试也并在这里），
     # 本游戏 = 换游戏会变的，设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
-    for required in ['id="appVersion"', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', '急停 <kbd>F9</kbd>', '通用口令', '三维头姿', '挪动区域', 'profileBindingRows']:
+    for required in ['id="appVersion"', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', '停止识别 <kbd>F9</kbd>', '通用口令', '三维头姿', '挪动区域', 'profileBindingRows']:
         assert required in page
     assert 'data-view="range"' not in page, '动作测试已经并进开始页'
     assert '开始控制' in app and '暂停控制' in app
@@ -98,7 +98,7 @@ def test_first_start_no_longer_records_a_reference_scene():
     app = read_web_js(ROOT)
     assert 'ensureInitialSceneLayout' not in app
     assert '/api/scene/' not in app
-    assert 'await setOutput(!output.enabled)' in app
+    assert 'if(output.enabled){await setOutput(false);return}' in app
     assert 'inputStatus.handheld_connected' in app
 
 
@@ -291,6 +291,24 @@ def test_voice_counts_each_command_heard_but_not_the_bare_wake_word(tmp_path):
     assert service.status()['commands_heard'] == 2
 
 
+def _controller_js() -> str:
+    """控制页的脚本，不含录制与直播（studio*.js）。
+
+    录制页录像时要把麦克风录进去，用浏览器拿麦克风是它的本职；语音控制和游戏悬浮窗
+    不许碰浏览器的麦克风、摄像头。所以下面两条查控制页，录制页单独查。
+    """
+    web = ROOT / 'web'
+    files = [web / 'app.js', *(path for path in sorted((web / 'js').glob('*.js')) if not path.name.startswith('studio'))]
+    return '\n'.join(path.read_text(encoding='utf-8') for path in files)
+
+
+def test_recording_page_takes_only_the_microphone_from_the_browser():
+    studio = (ROOT / 'web' / 'js' / 'studio.js').read_text(encoding='utf-8')
+    # 人像用的是和体感识别同一路摄像头（电脑端采集），浏览器里不再开一次摄像头。
+    assert studio.count('getUserMedia(') == 1
+    assert 'getUserMedia({video:false' in studio
+
+
 def test_voice_api_uses_local_mic_or_phone_command_not_browser_audio():
     server = (ROOT / 'server.py').read_text(encoding='utf-8')
     assert '/api/voice/status' in server
@@ -298,7 +316,7 @@ def test_voice_api_uses_local_mic_or_phone_command_not_browser_audio():
     assert '/api/voice/audio' in server
     assert 'browser voice endpoint disabled' in server
     assert '/ws/input voice_command(command_id)' in server
-    app = read_web_js(ROOT)
+    app = _controller_js()
     assert 'getUserMedia' not in app
     assert 'postBinary' not in app
     assert 'createScriptProcessor' not in app
@@ -314,7 +332,7 @@ def test_output_api_is_loopback_only_and_has_buttons_route():
 
 
 def test_game_overlay_uses_same_body_relative_zones():
-    app = read_web_js(ROOT)
+    app = _controller_js()
     assert 'documentPictureInPicture.requestWindow' in app
     assert 'renderOverlay' in app
     assert 'renderKernelZones' in app
