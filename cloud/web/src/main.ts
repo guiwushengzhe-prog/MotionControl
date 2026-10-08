@@ -5,6 +5,7 @@ import App from "./App.vue";
 import Browse from "./pages/Browse.vue";
 import Changelog from "./pages/Changelog.vue";
 import ConfigDetail from "./pages/ConfigDetail.vue";
+import Device from "./pages/Device.vue";
 import Feedback from "./pages/Feedback.vue";
 import Login from "./pages/Login.vue";
 import Invite from "./pages/Invite.vue";
@@ -22,6 +23,8 @@ const router = createRouter({
     // Not marked auth: a public or unlisted config is readable by a visitor,
     // and the server decides that, not this guard.
     { path: "/config/:id", component: ConfigDetail },
+    // 电脑登录账号：电脑打开这一页，人登录网站后点「允许」。
+    { path: "/device", component: Device, meta: { auth: true } },
     // 不加 auth：绝大多数用这个软件的人没有账号，注册还要邀请码。
     // 反馈入口要求先登录，等于这个入口不存在。
     { path: "/feedback", component: Feedback },
@@ -37,7 +40,8 @@ router.beforeEach(async (to) => {
   // there is one is to ask. Waiting for that first answer is what stops a
   // signed-in user being bounced to the login page on a page reload.
   if (!ready.value) await refresh();
-  if (to.meta.auth && !user.value) return { path: "/login" };
+  // 带上原来要去的地方，登录完回来（电脑登录那一页就靠这个）。
+  if (to.meta.auth && !user.value) return { path: "/login", query: to.fullPath === "/" ? {} : { next: to.fullPath } };
   return true;
 });
 

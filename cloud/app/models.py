@@ -33,6 +33,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -284,6 +285,89 @@ class Feedback(Base):
     ip_hash: Mapped[str] = mapped_column(String(HASH_LEN), default="")
     handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reply: Mapped[str] = mapped_column(Text, default="")
+
+
+class DeviceAuthorization(Base):
+    """一台电脑申请登录这个账号，等人在浏览器里点「允许」。
+
+    电脑拿着 device_code 等（只存摘要），人在浏览器里看到的是短的 user_code。两个分开：
+    user_code 短到能看能对，所以猜得到；拿着它最多只能把电脑的申请摆到自己面前，
+    真正换凭证要 device_code，那是 32 字节随机数。十分钟过期，换过一次就作废。
+    """
+
+    __tablename__ = "device_authorizations"
+
+    id: Mapped[str] = mapped_column(String(HASH_LEN), primary_key=True)
+    user_code: Mapped[str] = mapped_column(String(16), unique=True)
+    # 电脑自己报的名字，比如「MotionControl · DESKTOP-ABC」，给人在允许前看一眼。
+    name: Mapped[str] = mapped_column(String(NAME_LEN), default="")
+    scopes: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    approved_by: Mapped[str | None] = mapped_column(String(ID_LEN), ForeignKey("users.id"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeviceToken(Base):
+    """电脑同步用的凭证。和网页登录的会话分开放：
+
+    - 能单独收回，退出电脑上的账号不影响网页；
+    - 只能做申请时写明的那几样（scopes），比如只同步运动记录，不能改密码、不能发配置；
+    - 和会话一样只存摘要，数据库泄漏了也拿不去用。
+    """
+
+    __tablename__ = "device_tokens"
+
+    id: Mapped[str] = mapped_column(String(HASH_LEN), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(ID_LEN), ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(NAME_LEN), default="")
+    scopes: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FitnessProfile(Base):
+    """身体数据和每日目标，一个人一份。存规范化后的字节，和配置一样。"""
+
+    __tablename__ = "fitness_profiles"
+
+    user_id: Mapped[str] = mapped_column(String(ID_LEN), ForeignKey("users.id"), primary_key=True)
+    payload: Mapped[bytes] = mapped_column(LargeBinary)
+    # 客户端说的修改时刻。两台设备各改一次，后改的留下。
+    updated_at_ms: Mapped[int] = mapped_column(BigInteger)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FitnessSession(Base):
+    """一次锻炼的摘要。同一次锻炼可以传很多遍，按 motioncontrol_shared.fitness_schema 合并。
+
+    changed_at 是服务器自己的时间，拉取时按它找"上次以后变过的"——不用客户端的时钟，
+    两台电脑的表不准也不会漏。
+    """
+
+    __tablename__ = "fitness_sessions"
+
+    user_id: Mapped[str] = mapped_column(String(ID_LEN), ForeignKey("users.id"), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    payload: Mapped[bytes] = mapped_column(LargeBinary)
+    started_at_ms: Mapped[int] = mapped_column(BigInteger)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("ix_fitness_sessions_changed", "user_id", "changed_at"),
+    )
+
+
+class FitnessCheckin(Base):
+    """打卡的日子。只加不删：提高了目标，以前打过的卡不撤。"""
+
+    __tablename__ = "fitness_checkins"
+
+    user_id: Mapped[str] = mapped_column(String(ID_LEN), ForeignKey("users.id"), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 def search_key(name: str) -> str:

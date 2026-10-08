@@ -56,6 +56,8 @@ python -m uvicorn cloud.app.main:app --host 127.0.0.1 --port 8000
 
 **会话是服务端不透明会话，不是 JWT。** 需要能即时注销，而 JWT 要做到这点本来就得维护一张同样的表；这里也没有互不信任的服务需要联邦。Cookie 的值从不入库，入库的是它的 SHA-256。
 
+**电脑登录用设备码，凭证单独一张表。** 电脑向 `/api/v1/device/authorize` 要码、打开网站的 `/device` 页，人登录后点允许，电脑轮询 `/device/token` 拿凭证（只存摘要、带权限范围，现在只有 `fitness`）。和网页会话分开：能单独收回，也做不了网页能做的事。运动记录同步（`/api/v1/fitness`）只收摘要，规则和合并在 `motioncontrol_shared/fitness_schema.py`，桌面端同一份。上线这部分要先跑一次 `alembic upgrade head`（迁移 `c4e81f2a9d10`），再重新构建网站。
+
 **启动时不自动迁移。** 两个 worker 同时启动会互相竞争，而且自动跑的迁移是没人审过的迁移。`alembic upgrade head` 是独立的、明确的一步。
 
 ## 环境变量

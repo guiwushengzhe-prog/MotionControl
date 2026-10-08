@@ -49,6 +49,14 @@ export interface User {
   created_at: string;
 }
 
+/** 一台电脑在申请登录这个账号（见 cloud/app/routers/device.py）。 */
+export interface DevicePending {
+  user_code: string;
+  name: string;
+  scopes: string[];
+  approved: boolean;
+}
+
 export interface InviteStatus {
   can_create: boolean;
   next_available_at: string;
@@ -179,6 +187,8 @@ export const api = {
   }) => post<User>("/auth/register", body),
   inviteStatus: () => request<InviteStatus>("/auth/invites/status"),
   createInvite: () => post<Invite>("/auth/invites"),
+  devicePending: (code: string) => request<DevicePending>(`/device/pending?code=${encodeURIComponent(code)}`),
+  approveDevice: (userCode: string) => post<{ ok: boolean }>("/device/approve", { user_code: userCode }),
 
   games: (q?: string) =>
     request<Game[]>(`/games${q ? `?q=${encodeURIComponent(q)}` : ""}`),

@@ -51,12 +51,12 @@ def official(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_only_signed_actions_are_published(client, official):
-    sign(official, ["jumping_jack", "squat"])
+    sign(official, ["hands_up", "squat"])
     data = (await client.get("/api/v1/pose-library")).json()
-    assert {item["id"] for item in data["actions"]} == {"jumping_jack", "squat"}
+    assert {item["id"] for item in data["actions"]} == {"hands_up", "squat"}
     assert data["rating_names"]["intensity"] == "运动强度"
-    item = next(item for item in data["actions"] if item["id"] == "jumping_jack")
-    assert item["name"] == "开合跳" and item["ratings"]["intensity"] >= 1
+    item = next(item for item in data["actions"] if item["id"] == "hands_up")
+    assert item["name"] == "双手举过头" and item["ratings"]["intensity"] >= 1
     assert item["demo"]["frames"], "列表要能直接画出火柴人"
     assert "rule" not in item, "浏览用的列表不带识别规则"
 

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import SessionLocal, as_utc, get_session, utcnow
-from .models import RateLimit, User, WebSession
+from .models import DeviceToken, RateLimit, User, WebSession
 from .security import keyed_digest, token_digest
 from .settings import get_settings
 
@@ -85,6 +85,35 @@ async def current_user(
 
 CurrentUser = Annotated[User, Depends(current_user)]
 MaybeUser = Annotated[User | None, Depends(current_user_optional)]
+
+
+async def device_token(request: Request, db: DbSession) -> DeviceToken:
+    """电脑带来的同步凭证（Authorization: Bearer）。和网页的 Cookie 会话是两条路。"""
+    scheme, _, raw = request.headers.get("authorization", "").partition(" ")
+    raw = raw.strip()
+    if scheme.lower() != "bearer" or not raw:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "这台电脑还没登录")
+    row = await db.get(DeviceToken, token_digest(raw))
+    user = await db.get(User, row.user_id) if row is not None and row.revoked_at is None else None
+    if row is None or user is None or user.status != "active":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "这台电脑的登录已失效，请重新登录")
+    now = utcnow()
+    last_used = as_utc(row.last_used_at)
+    if last_used is None or now - last_used > _TOUCH_AFTER:
+        row.last_used_at = now
+    request.state.device_user = user
+    return row
+
+
+async def fitness_device(row: Annotated[DeviceToken, Depends(device_token)], request: Request) -> User:
+    """能同步运动记录的那台电脑。凭证要申请时写了 fitness 才行。"""
+    if "fitness" not in row.scopes.split():
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "这台电脑的登录不能同步运动记录")
+    return request.state.device_user
+
+
+CurrentDevice = Annotated[DeviceToken, Depends(device_token)]
+FitnessDevice = Annotated[User, Depends(fitness_device)]
 
 
 async def enforce_rate_limit(bucket: str, *, limit: int, window_seconds: int) -> None:

@@ -63,6 +63,8 @@ USER_DATA_FILES = {
     # 踏步和小腿向后抬起，别的动作在这里有才认得出来。
     "pose_actions": "pose_actions.json",
     "fitness": "fitness.json",
+    # 这台电脑登录的云端账号：同步凭证和显示的名字。退出登录就删掉。
+    "cloud_account": "cloud_account.json",
     "studio": "studio.json",
 }
 
