@@ -514,6 +514,7 @@ export async function refreshPoseLibrary({rebuild=true}={}) {
   ratingNames = data.rating_names || ratingNames;
   bodyPartNames = data.body_part_names || bodyPartNames;
   poseLibraryNames.cloud = {...poseLibraryNames.cloud, ...(data.cloud_names || {})};
+  poseLibraryNames.retired = data.retired || {};
   if (data.error) poseCloudSay(data.error, 'error');
   renderPoseLibrary();
   // 映射表可能在动作库读回来之前就画好了，那时下载的动作还不在触发器里。
@@ -814,7 +815,7 @@ export function paintPoseMissingNotice() {
     const items = gameProfile.selected?.bindings?.[group] || {};
     for (const [id, binding] of Object.entries(items)) {
       if (!binding || binding.disabled || !binding.action?.target) continue;
-      if (id.startsWith('custom') || known.has(`${prefix}.${id}`)) continue;
+      if (id.startsWith('custom') || known.has(`${prefix}.${id}`) || id in poseLibraryNames.retired) continue;
       missing.push(poseLibraryNames.cloud[id] || MOTION_CONFLICT_NAMES[id] || id);
     }
   }

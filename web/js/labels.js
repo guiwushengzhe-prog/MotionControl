@@ -90,18 +90,19 @@ export const BASE_PROFILE_TRIGGERS=[
   {key:'zone.headJump',group:'zones',id:'headJump',name:'头顶区'},
   {key:'motion.march',group:'motions',id:'march',name:'原地踏步'},
   {key:'motion.calf_back',group:'motions',id:'calf_back',name:'小腿向后抬起'},
+  {key:'motion.jump',group:'motions',id:'jump',name:'跳跃'},
 ];
 
-// 本机的动作库：自带的原地踏步、小腿向后抬起，加上从官方动作库下载的。下载的那些
+// 本机的动作库：自带的原地踏步、小腿向后抬起、跳跃，加上从官方动作库下载的。下载的那些
 // 也是能绑键的触发器，由 profileTriggers 并进来；没下载的在映射表里没有这一行。
 
-export let poseLibraryNames={cloud:{}};
+// retired：下架的动作（编号 → 名字）。配置里绑了它的不再提示去下载。
+export let poseLibraryNames={cloud:{},retired:{}};
 
-export const MOTION_CONFLICT_GROUPS=[
-  {ids:['jumping_jack','hands_up'],label:'开合跳与双手举过头'},
-];
+// 不能同时绑的动作。现在没有（开合跳下架了），规则和电脑端 motion_conflicts 同一份。
+export const MOTION_CONFLICT_GROUPS=[];
 
-export const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',squat:'下蹲',hands_up:'双手举过头',jumping_jack:'开合跳',side_step_jack:'侧步开合'};
+export const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',jump:'跳跃',squat:'下蹲',hands_up:'双手举过头',side_step_jack:'侧步开合'};
 
 export const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'手柄按键',gamepad_trigger:'手柄扳机',gamepad_axis:'左摇杆',macro:'键盘宏',voice_release:'松开口令按住的键',system:'系统功能'};
 
