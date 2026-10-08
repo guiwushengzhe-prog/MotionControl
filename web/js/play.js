@@ -608,7 +608,7 @@ const RANGE_HIT_HOLD_S = 2.0;
 const RANGE_FLASH_S = 0.8;
 
 /** 名字太长的几个用短一点的叫法，一排放得下。 */
-const TRIGGER_CHIP_NAMES = {march: '踏步', calf_back: '小腿后抬', hands_up: '双手过头'};
+const TRIGGER_CHIP_NAMES = {march: '踏步', calf_back: '小腿后抬', jump: '跳跃', hands_up: '双手过头'};
 
 let rangeTargetKeys = '';
 

@@ -13,12 +13,9 @@ from collections.abc import Mapping
 from . import pose_library
 
 
-# Only keep the one configuration conflict requested by the product semantics:
-# a jumping jack contains the hands-overhead pose, so mapping both would make
-# one exercise emit two outputs. Other motions remain freely configurable.
-MOTION_CONFLICT_GROUPS: tuple[tuple[str, ...], ...] = (
-    ("jumping_jack", "hands_up"),
-)
+# 现在没有不能同时绑的动作。唯一的一组是「开合跳 / 双手举过头」（开合跳里含着举过
+# 头），开合跳下架后就没了。规则留着：以后再有一个动作包含另一个，加在这里。
+MOTION_CONFLICT_GROUPS: tuple[tuple[str, ...], ...] = ()
 
 # 名字只在动作库里写一份。以前这里把 hands_up 叫「双手过头」，界面叫「双手举过头」。
 # 跟着动作库的登记走：下载的动作是运行时才有的。

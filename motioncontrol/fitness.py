@@ -13,10 +13,31 @@ from pathlib import Path
 from motioncontrol.config_transaction import atomic_bytes
 
 DEFAULT_PROFILE = {"weight_kg": 70.0, "goal_active_minutes": 20,
-                   "goal_steps": 2000, "goal_kcal": 100, "primary_goal": "minutes"}
+                   "goal_steps": 2000, "goal_kcal": 100, "primary_goal": "minutes",
+                   # 按心率算热量要用。可以不填：没填按平均成年人算。
+                   "age": None, "sex": None}
 # 2024 成人活动强度汇编，02140/02064/02056。根据动作作近似分类，并非个体测量。
 # https://pacompendium.com/conditioning-exercise/
 ESTIMATION_REFERENCE = "https://pacompendium.com/conditioning-exercise/"
+
+# 手环心率（手机读「心率广播」发过来）。超过这么久没有新读数就当没有。
+HR_FRESH_S = 5.0
+# 心率曲线每段多长：给人看走势，也是同步到云端的粒度——不存每秒的读数。
+HR_BUCKET_S = 30
+# 按心率算热量：Keytel 等 2005（J Sports Sci 23:289），按心率、体重、年龄、性别估总消耗，
+# 再扣掉 1 梅脱静息消耗，只留活动热量。这条公式在心率低的时候偏高，90 以下仍按动作估。
+HR_KCAL_MIN_BPM = 90
+HR_DEFAULT_AGE = 35
+
+
+def heart_rate_active_kcal_per_min(bpm: float, weight_kg: float, age=None, sex=None) -> float:
+    """心率估的活动热量（千卡/分钟）。性别没填取男女两条公式的平均。"""
+    age = HR_DEFAULT_AGE if age is None else age
+    male = -55.0969 + 0.6309 * bpm + 0.1988 * weight_kg + 0.2017 * age
+    female = -20.4022 + 0.4472 * bpm - 0.1263 * weight_kg + 0.074 * age
+    kilojoules = male if sex == "male" else female if sex == "female" else (male + female) / 2
+    resting = 3.5 * weight_kg / 200.
+    return max(0., kilojoules / 4.184 - resting)
 
 
 def _point(pose, name):
@@ -45,6 +66,7 @@ class FitnessStore:
         self._previous = {}
         self._held = set()
         self._step_at = {"left": -math.inf, "right": -math.inf}
+        self._hr = None  # (心率, 收到的时刻)
         self._stop = threading.Event()
         self._load()
         self._thread = None
@@ -80,6 +102,15 @@ class FitnessStore:
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
                     raise ValueError("体重或目标数值超出有效范围")
                 result[key] = float(value) if key == "weight_kg" else int(value)
+        if "age" in patch:
+            age = patch["age"]
+            if age is not None and (isinstance(age, bool) or not isinstance(age, int) or not 10 <= age <= 100):
+                raise ValueError("年龄要在 10 到 100 岁之间")
+            result["age"] = age
+        if "sex" in patch:
+            if patch["sex"] not in {None, "male", "female"}:
+                raise ValueError("性别只能是男、女或不填")
+            result["sex"] = patch["sex"]
         if "primary_goal" in patch:
             if patch["primary_goal"] not in {"minutes", "steps", "kcal"}:
                 raise ValueError("每日主目标必须是运动分钟、步数或热量")
@@ -142,6 +173,38 @@ class FitnessStore:
             self.current["updated_at_ms"] = round(self.wall() * 1000)
             self._dirty = True
 
+    def heart_rate(self, message):
+        """手机发来的一次心率。只在记录中才用：并进本次的平均、最高和曲线。"""
+        bpm = message.get("bpm")
+        if isinstance(bpm, bool) or not isinstance(bpm, int) or not 25 <= bpm <= 250:
+            raise ValueError("心率读数无效")
+        with self.lock:
+            if not self.current or self.current["status"] != "active":
+                self._hr = None
+                return
+            self._hr = (bpm, self.clock())
+            session = self.current
+            count = session.get("hr_samples", 0)
+            session["hr_avg"] = round((session.get("hr_avg", 0.) * count + bpm) / (count + 1), 1)
+            session["hr_max"] = max(session.get("hr_max", 0), bpm)
+            session["hr_samples"] = count + 1
+            curve = session.setdefault("hr_curve", [])
+            offset = int(session["elapsed_seconds"] // HR_BUCKET_S * HR_BUCKET_S)
+            if curve and curve[-1][0] == offset:
+                n = session.get("hr_bucket_n", 1)
+                curve[-1][1] = round((curve[-1][1] * n + bpm) / (n + 1), 1)
+                session["hr_bucket_n"] = n + 1
+            else:
+                curve.append([offset, float(bpm)])
+                session["hr_bucket_n"] = 1
+            session["updated_at_ms"] = round(self.wall() * 1000)
+            self._dirty = True
+
+    def _fresh_hr(self, now):
+        if self._hr is None or not 0 <= now - self._hr[1] <= HR_FRESH_S:
+            return None
+        return self._hr[0]
+
     def observe_pose(self, pose, now, *, actions=()):
         with self.lock:
             if not self.current or self.current["status"] != "active":
@@ -166,13 +229,25 @@ class FitnessStore:
                 moving = speed >= .18 or bool(held) or "motion.march" in actions
                 day = self._day()
                 self.current["elapsed_seconds"] += dt
-                if moving:
+                bpm = self._fresh_hr(self.clock())
+                if bpm is not None:
+                    self.current["hr_seconds"] = self.current.get("hr_seconds", 0.) + dt
+                kcal = 0.
+                if bpm is not None and bpm >= HR_KCAL_MIN_BPM:
+                    # 读到手环心率就按心率算：停下来喘气时心跳还高，也是这次锻炼消耗的。
+                    kcal = heart_rate_active_kcal_per_min(bpm, self.profile["weight_kg"], self.profile.get("age"),
+                                                          self.profile.get("sex")) * dt / 60.
+                elif moving:
                     met = 3.8 if "motion.march" in actions else 3.0 if held else 2.5
                     # 只估计活动热量：去掉1倍静息消耗，不把坐着等待算成锻炼。
                     kcal = (met - 1.) * 3.5 * self.profile["weight_kg"] / 200. * dt / 60.
-                    for record in (self.current, day):
+                for record in (self.current, day):
+                    if moving:
                         record["active_seconds"] += dt
-                        record["estimated_kcal"] += kcal
+                    record["estimated_kcal"] += kcal
+                # 一半以上的时间读到了心率，这次的热量就算「按心率估算」。
+                self.current["kcal_source"] = ("heart_rate" if self.current.get("hr_seconds", 0.)
+                                               >= .5 * self.current["elapsed_seconds"] else "motion")
                 count = len(held - self._held)
                 self.current["action_count"] += count
                 day["action_count"] += count

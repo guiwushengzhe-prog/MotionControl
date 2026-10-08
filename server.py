@@ -857,9 +857,9 @@ MOTION_CONFIG_FILE = user_path("motion_mappings")
 DEFAULT_MOTIONS = [
     {"id": "march", "name": "原地踏步", "enabled": False, "type": "gamepad_axis", "target": "LS_UP"},
     {"id": "calf_back", "name": "小腿向后抬起", "enabled": False, "type": "gamepad", "target": "B"},
+    {"id": "jump", "name": "跳跃", "enabled": False, "type": "gamepad", "target": "A"},
     {"id": "squat", "name": "下蹲", "enabled": False, "type": "gamepad", "target": "X"},
     {"id": "hands_up", "name": "双手举过头顶", "enabled": False, "type": "gamepad", "target": "Y"},
-    {"id": "jumping_jack", "name": "开合跳", "enabled": False, "type": "gamepad", "target": "A"},
     {"id": "side_step_jack", "name": "侧步开合", "enabled": False, "type": "gamepad", "target": "B"},
     {"id": "cross_knee_elbow", "name": "提膝碰对侧肘", "enabled": False, "type": "gamepad", "target": "X"},
 ]
@@ -1651,6 +1651,7 @@ class AdminHandler(_BaseHandler):
                 "library": pose_library.library_payload(),
                 "rating_names": pose_library.RATING_NAMES,
                 "body_part_names": pose_library.BODY_PART_NAMES,
+                "retired": pose_library.RETIRED,
                 "cloud_names": {item["id"]: item["name"] for item in CLOUD_POSE_LIBRARY.get("actions", [])}
                                if CLOUD_POSE_LIBRARY_ENDPOINT == cloud_endpoint().rstrip("/") else {},
                 "error": POSE_ACTIONS.last_error,

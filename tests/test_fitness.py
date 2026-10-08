@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from motioncontrol.fitness import FitnessStore
+from motioncontrol.fitness import HR_BUCKET_S, FitnessStore, heart_rate_active_kcal_per_min
 
 
 class Clock:
@@ -236,3 +236,79 @@ def test_raising_daily_goal_preserves_earned_checkins_and_levels_after_restart(f
     assert state["checkins"] == dates
     assert state["level"] == earned["level"]
     assert state["experience"] == earned["experience"]
+
+
+# ---------- 手环心率 ----------
+
+def beat_for(store, clock, seconds, bpm, *, actions=("motion.march",)):
+    """每 0.5 秒一帧骨架，每秒一次心率，和手机发的频率一样。"""
+    store.observe_pose(pose(), clock.now, actions=actions)
+    for index in range(round(seconds * 2)):
+        if index % 2 == 0:
+            store.heart_rate({"bpm": bpm})
+        clock.advance(.5)
+        store.observe_pose(pose(), clock.now, actions=actions)
+
+
+def test_heart_rate_is_summarised_per_session_with_a_coarse_curve(factory):
+    clock = Clock()
+    store = factory(clock)
+    store.heart_rate({"bpm": 150})  # 没在记录：丢掉
+    store.control({"action": "start"})
+    beat_for(store, clock, HR_BUCKET_S, 110)
+    beat_for(store, clock, HR_BUCKET_S, 140)
+    state = store.state()
+    assert state["hr_max"] == 140
+    assert state["hr_avg"] == pytest.approx(125, abs=1)
+    assert [point[0] for point in state["hr_curve"]] == [0, HR_BUCKET_S, 2 * HR_BUCKET_S][:len(state["hr_curve"])]
+    assert len(state["hr_curve"]) <= 3, "每 30 秒一个点，不存每秒的读数"
+    assert state["kcal_source"] == "heart_rate"
+
+
+def test_heart_rate_kcal_replaces_the_motion_estimate_and_uses_age_and_sex(factory):
+    clock = Clock()
+    store = factory(clock)
+    store.control({"action": "profile", "profile": {"weight_kg": 70, "age": 30, "sex": "male"}})
+    store.control({"action": "start"})
+    beat_for(store, clock, 60, 130)
+    per_minute = heart_rate_active_kcal_per_min(130, 70, 30, "male")
+    assert store.state()["estimated_kcal"] == pytest.approx(per_minute, rel=.05)
+    assert per_minute > (3.8 - 1) * 3.5 * 70 / 200, "130 次/分比踏步的估算累"
+    assert heart_rate_active_kcal_per_min(130, 70, 30, "female") < per_minute
+
+
+def test_low_heart_rate_and_stale_readings_fall_back_to_the_motion_estimate(factory):
+    clock = Clock()
+    store = factory(clock)
+    store.control({"action": "start"})
+    beat_for(store, clock, 30, 75)
+    low = store.state()["estimated_kcal"]
+    assert low == pytest.approx((3.8 - 1) * 3.5 * 70 / 200 * .5, rel=.05)
+    clock.advance(.5)
+    march_for(store, clock, 30)  # 手环停止广播：心率过期
+    assert store.state()["estimated_kcal"] == pytest.approx(2 * low, rel=.05)
+
+
+@pytest.mark.parametrize("profile", [{"age": 5}, {"age": 30.5}, {"sex": "x"}])
+def test_body_data_must_be_sensible(factory, profile):
+    store = factory(Clock())
+    with pytest.raises(ValueError):
+        store.control({"action": "profile", "profile": profile})
+
+
+def test_body_data_can_be_cleared_and_survives_a_restart(factory):
+    clock = Clock()
+    store = factory(clock, "body.json")
+    store.control({"action": "profile", "profile": {"age": 41, "sex": "female"}})
+    store.flush()
+    again = factory(clock, "body.json")
+    assert again.profile["age"] == 41 and again.profile["sex"] == "female"
+    again.control({"action": "profile", "profile": {"age": None, "sex": None}})
+    assert again.profile["age"] is None and again.profile["sex"] is None
+
+
+@pytest.mark.parametrize("bpm", [0, 300, 99.5, True, "120"])
+def test_a_bad_heart_rate_reading_is_refused(factory, bpm):
+    store = factory(Clock())
+    with pytest.raises(ValueError):
+        store.heart_rate({"bpm": bpm})

@@ -27,7 +27,7 @@ import json
 import os
 from pathlib import Path
 
-from motioncontrol_shared.pose_library import canonical_bytes, normalize_action
+from motioncontrol_shared.pose_library import RETIRED, canonical_bytes, normalize_action
 
 SCHEMA = "motioncontrol.installed_pose_actions.v1"
 # 一个动作文件实测 3 KB 上下。远大于这个的不会是动作文件。
@@ -125,7 +125,8 @@ class PoseActionStore:
         os.replace(temp, self.path)
 
     def docs(self) -> list[dict]:
-        return [item["doc"] for item in self.items.values()]
+        # 下架的动作还留在文件里（是用户下载的东西，不替他删），只是不再加载。
+        return [item["doc"] for item in self.items.values() if item["doc"]["id"] not in RETIRED]
 
     def revision(self, ident: str) -> int:
         item = self.items.get(ident)
@@ -136,6 +137,8 @@ class PoseActionStore:
         doc = verify(document_b64, signature_b64, self.public_key)
         if expected_id and doc["id"] != expected_id:
             raise PoseDownloadError("下载到的动作和要的不是同一个，已拒绝")
+        if doc["id"] in RETIRED:
+            raise PoseDownloadError(f"「{RETIRED[doc['id']]}」已经下架")
         self.items[doc["id"]] = {"doc": doc, "document": str(document_b64), "signature": str(signature_b64)}
         self._save()
         self.last_error = ""

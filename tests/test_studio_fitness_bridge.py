@@ -92,3 +92,21 @@ def test_request_change_during_decode_cannot_restore_an_old_video_frame(bridge, 
     monkeypatch.setattr(cv2, "imdecode", switch_request)
     instance.handle_message(peer, video())
     assert instance.latest_studio_frame() is None
+
+
+def test_heart_rate_from_the_phone_joins_the_active_record(bridge):
+    instance, store = bridge
+    peer = FakePeer()
+    instance.handle_message(peer, {"type": "hello_v1", "role": "camera"})
+    instance.handle_message(peer, {"type": "heart_rate_v1", "bpm": 120, "at_ms": 1})
+    assert "hr_avg" not in store.state(), "没在记录时的心率不算"
+    instance.handle_message(peer, {"type": "fitness_control_v1", "action": "start"})
+    instance.handle_message(peer, {"type": "heart_rate_v1", "bpm": 120, "at_ms": 2})
+    assert store.state()["hr_avg"] == 120
+    denied = FakePeer()
+    denied.paired = False
+    instance.handle_message(denied, {"type": "heart_rate_v1", "bpm": 200, "at_ms": 3})
+    assert store.state()["hr_max"] == 120, "没配对的手机发的不收"
+    instance.handle_message(peer, {"type": "heart_rate_v1", "bpm": 999, "at_ms": 4})
+    assert store.state()["hr_max"] == 120
+    assert peer.messages[-1]["type"] == "error"

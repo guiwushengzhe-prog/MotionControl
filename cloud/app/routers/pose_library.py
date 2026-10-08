@@ -59,7 +59,7 @@ def catalog() -> dict:
             continue
         published[doc["id"]] = {"doc": doc, "payload": payload, "sha256": digest,
                                 "signature": str(entry["signature"])}
-    # 云端要把别人配置里的「开合跳」说成开合跳：名字按全部官方动作登记，不只发布了的。
+    # 云端要把别人配置里的「下蹲」说成下蹲：名字按全部官方动作登记，不只发布了的。
     pose_library.register(everything)
     return {"published": published, "all": everything}
 
@@ -95,6 +95,6 @@ async def download(action_id: str) -> dict:
     }
 
 
-# 启动时就读一次：配置详情页要把别人配置里的 motion.jumping_jack 说成「开合跳」，
+# 启动时就读一次：配置详情页要把别人配置里的 motion.squat 说成「下蹲」，
 # 不能等到有人先打开官方动作库。
 catalog()
