@@ -1,4 +1,5 @@
 """通过真实网页交互验证选择即识别、暂停、停止及迟到请求；不连接真实摄像头。"""
+import pytest
 from playwright.sync_api import expect
 from test_web_optimization import desktop
 from test_web_ui import browser as mock_browser
@@ -71,10 +72,12 @@ def test_f9_prevents_resume_when_camera_selection_response_arrives_late(desktop)
     assert len(starts) == 1
 
 
-def test_first_control_click_connects_and_enables_and_source_choice_applies(desktop):
+@pytest.mark.parametrize('ready_input', ['voice', 'handheld', 'none'])
+def test_first_control_click_connects_and_enables_and_source_choice_applies(desktop, ready_input):
     page, api = desktop.page, desktop.api
-    api.voice.update(connected=False, audio_ready=False)
-    api.input["voice"] = {"connected": False}
+    api.voice.update(connected=ready_input=='voice', audio_ready=ready_input=='voice')
+    api.input["voice"] = {"connected": ready_input=='voice'}
+    api.input["handheld_connected"] = ready_input=='handheld'
     page.evaluate("""async()=>{await (await import('/js/voice.js')).refreshVoice();
       await (await import('/js/devices.js')).refreshInput()}""")
     page.click("#mainActionBtn")
@@ -90,3 +93,28 @@ def test_first_control_click_connects_and_enables_and_source_choice_applies(desk
     assert api.input["body_enabled"]
     assert not api.runtime["camera"]["running"]
     assert api.output["enabled"] is False
+
+
+def test_camera_start_failure_does_not_enable_output(desktop):
+    page, api = desktop.page, desktop.api
+    page.route('**/api/input/source', lambda route: api.fulfill(route, {'error': '选中的摄像头无法启动'}, status=400))
+    page.click('#mainActionBtn')
+    expect(page.locator('#notice')).to_contain_text('选中的摄像头无法启动')
+    expect(page.locator('#mainActionBtn')).to_have_text('开始控制')
+    assert not api.output['enabled']
+    assert not any(path=='/api/output/config' and body.get('enabled') for path, body in api.requests)
+
+
+def test_stop_while_first_camera_start_is_pending_never_enables_output(desktop):
+    page, api = desktop.page, desktop.api
+    held=[]
+    page.route('**/api/input/source', lambda route: held.append(route))
+    page.click('#mainActionBtn')
+    page.wait_for_function("document.getElementById('serviceStatus').textContent.includes('正在准备识别')")
+    assert held
+    page.keyboard.press('F9')
+    api.fulfill(held[0], {'body_mode':'computer','camera':{'running':True},'kernel':api.runtime['kernel']})
+    page.wait_for_function("!document.getElementById('mainActionBtn').disabled")
+    expect(page.locator('#mainActionBtn')).to_have_text('开始控制')
+    assert not api.output['enabled']
+    assert not any(path=='/api/output/config' and body.get('enabled') for path, body in api.requests)

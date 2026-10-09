@@ -101,7 +101,8 @@ function tutorialState(){
 
 async function handleMainAction(){
   if(output.enabled){await setOutput(false);return}
-  if(!sessionStarted&&!inputStatus.handheld_connected&&!voiceInputReady){
+  // 麦克风或手持端就绪不代表已选摄像头正在识别。
+  if(!sessionStarted){
     await setSource($('#poseSource').value,true);
   }
   await setOutput(true);
