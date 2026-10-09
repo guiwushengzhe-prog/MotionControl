@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
@@ -13,6 +14,7 @@ internal static class KinectCamera
     const int Width = 640, Height = 360;
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     static double Qpc() { return (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency; }
+    [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint milliseconds);
     static bool Finite(float v) { return !Single.IsNaN(v) && !Single.IsInfinity(v); }
     static Dictionary<string, object> Fields(params object[] pairs)
     {
@@ -80,11 +82,16 @@ internal static class KinectCamera
             }
             if (sensor == null) throw new InvalidOperationException("未找到微软 Kinect；请检查电源、USB 接口和原厂驱动。");
             bool depthEnabled = Array.IndexOf(args, "--no-depth") < 0;
+            // 默认计时精度下 Sleep(1) 约 15.6 毫秒，会给每帧白白加上等待。
+            timeBeginPeriod(1);
             try
             {
+            // 原厂深度与骨骼在显卡上计算；分开读取，游戏占满显卡时彩色画面不必等它们同步。
+            // 深度、骨骼仍按时间戳判断是否与当前画面相符，过旧即不附带。
             using (var writer = new BinaryWriter(Console.OpenStandardOutput()))
-            using (var reader = sensor.OpenMultiSourceFrameReader(FrameSourceTypes.Color |
-                (depthEnabled ? FrameSourceTypes.Depth | FrameSourceTypes.Body : FrameSourceTypes.None)))
+            using (ColorFrameReader colorReader = sensor.ColorFrameSource.OpenReader())
+            using (DepthFrameReader depthReader = depthEnabled ? sensor.DepthFrameSource.OpenReader() : null)
+            using (BodyFrameReader bodyReader = depthEnabled ? sensor.BodyFrameSource.OpenReader() : null)
             {
                 byte[] full = new byte[1920 * 1080 * 4], pixels = new byte[Width * Height * 3];
                 ushort[] depths = new ushort[512 * 424];
@@ -96,68 +103,64 @@ internal static class KinectCamera
                 sensor.Open();
                 while (true)
                 {
-                    var multi = reader.AcquireLatestFrame();
-                    if (multi != null)
+                    if (depthEnabled)
                     {
-                        if (depthEnabled)
+                        using (DepthFrame depth = depthReader.AcquireLatestFrame())
                         {
-                            using (DepthFrame depth = multi.DepthFrameReference.AcquireFrame())
+                            if (depth != null && depth.RelativeTime.TotalSeconds != lastDepth)
                             {
-                                if (depth != null && depth.RelativeTime.TotalSeconds != lastDepth)
-                                {
-                                    lastDepth = depth.RelativeTime.TotalSeconds;
-                                    depth.CopyFrameDataToArray(depths);
-                                    int valid = 0;
-                                    foreach (ushort value in depths)
-                                        if (value >= depth.DepthMinReliableDistance && value <= depth.DepthMaxReliableDistance) valid++;
-                                    validRatio = (double)valid / depths.Length;
-                                    depthCount++;
-                                }
-                            }
-                            using (BodyFrame body = multi.BodyFrameReference.AcquireFrame())
-                            {
-                                if (body != null && body.RelativeTime.TotalSeconds != lastBody)
-                                {
-                                    lastBody = body.RelativeTime.TotalSeconds;
-                                    body.GetAndRefreshBodyData(bodies);
-                                    tracked = Bodies(bodies, sensor.CoordinateMapper);
-                                    Vector4 plane = body.FloorClipPlane;
-                                    floor = Finite(plane.X) && Finite(plane.Y) && Finite(plane.Z)
-                                        ? (object)new float[] {plane.X, plane.Y, plane.Z, plane.W} : null;
-                                    bodyCount++;
-                                }
+                                lastDepth = depth.RelativeTime.TotalSeconds;
+                                depth.CopyFrameDataToArray(depths);
+                                int valid = 0;
+                                foreach (ushort value in depths)
+                                    if (value >= depth.DepthMinReliableDistance && value <= depth.DepthMaxReliableDistance) valid++;
+                                validRatio = (double)valid / depths.Length;
+                                depthCount++;
                             }
                         }
-                        using (ColorFrame color = multi.ColorFrameReference.AcquireFrame())
+                        using (BodyFrame body = bodyReader.AcquireLatestFrame())
                         {
-                            if (color != null && color.RelativeTime.TotalSeconds != lastColor)
+                            if (body != null && body.RelativeTime.TotalSeconds != lastBody)
                             {
-                                double arrived = Qpc();
-                                lastColor = color.RelativeTime.TotalSeconds;
-                                color.CopyConvertedFrameDataToArray(full, ColorImageFormat.Bgra);
-                                for (int y = 0; y < Height; y++)
-                                    for (int x = 0; x < Width; x++)
-                                    {
-                                        int source = ((y * 3 + 1) * 1920 + x * 3 + 1) * 4;
-                                        int target = (y * Width + x) * 3;
-                                        pixels[target] = full[source]; pixels[target+1] = full[source+1]; pixels[target+2] = full[source+2];
-                                    }
-                                colorCount++;
-                                bool fresh = depthEnabled && validRatio > .05 &&
-                                    Math.Abs(lastColor - lastDepth) <= .08;
-                                bool bodyFresh = fresh && Math.Abs(lastColor - lastBody) <= .08;
-                                ColorCameraSettings cameraSettings = color.ColorCameraSettings;
-                                Send(writer, Fields("width",Width,"height",Height,"qpc",arrived,
-                                    "color_frame_interval_ms",cameraSettings.FrameInterval.TotalMilliseconds,
-                                    "color_exposure_ms",cameraSettings.ExposureTime.TotalMilliseconds,
-                                    "color_gain",cameraSettings.Gain,
-                                    "sensor_seconds",lastColor,"device_id","kinect2:"+sensor.UniqueKinectId,
-                                    "depth_valid",fresh,"depth_ratio",validRatio,"bodies",bodyFresh ? tracked : new object[0],
-                                    "floor",bodyFresh ? floor : null,"color_frames",colorCount,
-                                    "depth_frames",depthCount,"body_frames",bodyCount), pixels);
-                                lastArrival = arrived;
-                                lastHeartbeat = arrived;
+                                lastBody = body.RelativeTime.TotalSeconds;
+                                body.GetAndRefreshBodyData(bodies);
+                                tracked = Bodies(bodies, sensor.CoordinateMapper);
+                                Vector4 plane = body.FloorClipPlane;
+                                floor = Finite(plane.X) && Finite(plane.Y) && Finite(plane.Z)
+                                    ? (object)new float[] {plane.X, plane.Y, plane.Z, plane.W} : null;
+                                bodyCount++;
                             }
+                        }
+                    }
+                    using (ColorFrame color = colorReader.AcquireLatestFrame())
+                    {
+                        if (color != null && color.RelativeTime.TotalSeconds != lastColor)
+                        {
+                            double arrived = Qpc();
+                            lastColor = color.RelativeTime.TotalSeconds;
+                            color.CopyConvertedFrameDataToArray(full, ColorImageFormat.Bgra);
+                            for (int y = 0; y < Height; y++)
+                                for (int x = 0; x < Width; x++)
+                                {
+                                    int source = ((y * 3 + 1) * 1920 + x * 3 + 1) * 4;
+                                    int target = (y * Width + x) * 3;
+                                    pixels[target] = full[source]; pixels[target+1] = full[source+1]; pixels[target+2] = full[source+2];
+                                }
+                            colorCount++;
+                            bool fresh = depthEnabled && validRatio > .05 &&
+                                Math.Abs(lastColor - lastDepth) <= .08;
+                            bool bodyFresh = fresh && Math.Abs(lastColor - lastBody) <= .08;
+                            ColorCameraSettings cameraSettings = color.ColorCameraSettings;
+                            Send(writer, Fields("width",Width,"height",Height,"qpc",arrived,
+                                "color_frame_interval_ms",cameraSettings.FrameInterval.TotalMilliseconds,
+                                "color_exposure_ms",cameraSettings.ExposureTime.TotalMilliseconds,
+                                "color_gain",cameraSettings.Gain,
+                                "sensor_seconds",lastColor,"device_id","kinect2:"+sensor.UniqueKinectId,
+                                "depth_valid",fresh,"depth_ratio",validRatio,"bodies",bodyFresh ? tracked : new object[0],
+                                "floor",bodyFresh ? floor : null,"color_frames",colorCount,
+                                "depth_frames",depthCount,"body_frames",bodyCount), pixels);
+                            lastArrival = arrived;
+                            lastHeartbeat = arrived;
                         }
                     }
                     double now = Qpc();
