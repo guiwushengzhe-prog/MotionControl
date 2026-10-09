@@ -65,6 +65,9 @@ def test_allocation_follows_whole_frame_budget(fps, body, hands, counts, expecte
     budget = FrameThreadBudget()
     stages = dict(pose=body, hands=hands, prepare=1, control=2)
     results = [budget.observe(stages, fps, *counts, visible=True, now=n/fps) for n in range(30)]
+    if expected and sum(expected) < sum(counts):
+        assert results[-1] is None  # 减少线程需要持续余量，不能只凭这一小段。
+        results += [budget.observe(stages, fps, *counts, visible=True, now=30+n/fps) for n in range(24)]
     assert results[-1] == expected
     assert all(plan is None for plan in results[:-1])
     assert budget.interval_ms == pytest.approx(1000/fps)
@@ -86,22 +89,43 @@ def test_supply_change_increases_budget_and_failed_reduction_is_not_repeated():
     stages = dict(pose=18, hands=12, prepare=1, control=2)
     for n in range(30):
         plan = budget.observe(stages, 15, 6, 2, visible=True, now=n/15)
+    assert plan is None
+    for n in range(24):
+        plan = budget.observe(stages, 15, 6, 2, visible=True, now=30+n/15)
     assert plan == (3, 2)
     slow = dict(stages, pose=58)
     for n in range(60):
-        plan = budget.observe(slow, 15, 3, 2, visible=True, now=4+n/15)
+        plan = budget.observe(slow, 15, 3, 2, visible=True, now=34+n/15)
         if plan:
             break
     assert plan and (3, 2) in budget.slow_plans
     faster = dict(stages, pose=10, hands=5)
     for n in range(60):
-        assert budget.observe(faster, 15, *plan, visible=True, now=8+n/15) is None
+        assert budget.observe(faster, 15, *plan, visible=True, now=40+n/15) is None
+    # 不按固定分钟过期，避免对同一个已失败配置反复减线程、加线程。
+    budget.observe(faster, 15, *plan, visible=True, now=120)
+    assert (3, 2) in budget.slow_plans
     # 相机供帧变快后重新观察，不沿用旧供帧的判断与冷却。
     for n in range(30):
         result = budget.observe(dict(pose=35, hands=15, prepare=1, control=2), 30, 1, 1,
-                                visible=True, now=12+n/30)
+                                visible=True, now=130+n/30)
     assert result == (3, 1)
     assert budget.interval_ms == pytest.approx(1000/30)
+
+
+def test_short_lived_headroom_does_not_reload_and_hand_demand_restarts_learning():
+    budget = FrameThreadBudget()
+    fast = dict(pose=18, hands=12, prepare=1, control=2)
+    for n in range(30):
+        assert budget.observe(fast, 15, 6, 2, visible=True, now=n/15) is None
+    assert budget.down_plan == (3, 2)
+    # 余量消失时撤销降线程计划；此前的快速片段不能累积凑足二十秒。
+    for n in range(24):
+        assert budget.observe(dict(fast, pose=50), 15, 6, 2, visible=True, now=5+n/15) is None
+    assert budget.down_plan is None
+    budget.slow_plans.add((2, 1))
+    assert budget.observe(fast, 15, 6, None, visible=True, now=10) is None
+    assert not budget.slow_plans and not budget.ready
 
 
 @pytest.mark.parametrize("hands,requested,capacity,expected", [

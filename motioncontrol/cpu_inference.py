@@ -15,7 +15,9 @@ class FrameThreadBudget:
         self.samples = []
         self.warmup = 0
         self.next_change_at = self.next_down_at = 0.0
-        self.slow_plans = {}
+        self.down_plan, self.down_since = None, 0.0
+        self.slow_plans = set()
+        self.hand_active = None
         self.ready = False
         self.reason = "以跟上相机供帧为目标"
 
@@ -23,6 +25,7 @@ class FrameThreadBudget:
         self.samples.clear()
         self.warmup = 0
         self.ready = False
+        self.down_plan = None
 
     def defer(self, now, reason):
         self.reset_samples()
@@ -34,11 +37,14 @@ class FrameThreadBudget:
         if not fps or not math.isfinite(fps) or fps < 2 or body_threads is None:
             return None
         interval = 1000 / fps
-        if self.interval_ms is not None and abs(interval / self.interval_ms - 1) > .15:
+        hand_active = hand_threads is not None
+        if ((self.interval_ms is not None and abs(interval / self.interval_ms - 1) > .15)
+                or (self.hand_active is not None and hand_active != self.hand_active)):
             self.reset_samples()
             self.slow_plans.clear()
             self.next_change_at = self.next_down_at = 0.0
         self.interval_ms = interval
+        self.hand_active = hand_active
         if not visible:
             self.reset_samples()
             return None
@@ -53,10 +59,9 @@ class FrameThreadBudget:
         self.samples.clear()
         self.ready = True
         current = (body_threads, hand_threads or 1)
-        self.slow_plans = {plan: at for plan, at in self.slow_plans.items() if now - at < 60}
         target = interval * .9
         if pose + hands + other > target:
-            self.slow_plans[current] = now
+            self.slow_plans.add(current)
         down = pose + hands + other <= target
         if down and now < self.next_down_at:
             return None
@@ -70,8 +75,15 @@ class FrameThreadBudget:
                     candidates.append(plan)
         plan = min(candidates, key=lambda p: (sum(p), p[1], p[0])) if candidates else ((6, 2) if not down else current)
         if plan == current or (down and sum(plan) >= sum(current)):
+            self.down_plan = None
             self.reason = "已跟上相机供帧，保留当前线程" if down else "已使用当前可用线程"
             return None
+        if down:
+            if self.down_plan != plan:
+                self.down_plan, self.down_since = plan, now
+            if now - self.down_since < 20:
+                self.reason = "已跟上相机，继续观察减少线程的余量"
+                return None
         self.reset_samples()
         self.next_change_at, self.next_down_at = now + 2, now + 20
         self.reason = "按整帧耗时增加线程" if not down else "够用后减少计算线程"
