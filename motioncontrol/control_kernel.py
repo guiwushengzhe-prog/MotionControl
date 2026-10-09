@@ -3575,6 +3575,17 @@ class NativeCameraService:
             self.model_preference = "auto"
         self.actual_model = "full"
         self.pose_model_optimization = None
+        # 普通摄像头默认由处理器解码；显卡解码仅在运行库提供时可选。
+        self.decoder_preference = self._remembered("camera_decoder", "cpu")
+        if self.decoder_preference not in {"cpu", "gpu"}:
+            self.decoder_preference = "cpu"
+        self.capture_decoder = None
+        # 上次在这些游戏里 Kinect 采集被显卡拖慢过：再开这些游戏时先申请提高原厂服务优先级。
+        self.boost_games = {str(game) for game in (self._remembered("kinect_boost_games", []) or [])}
+        self.current_game = None  # 由服务器提供，返回当前游戏编号
+        self.kinect_boost_state = None
+        self._boost_declined = set()
+        self._boost_lock = threading.Lock()
         self.pose_cpu_threads, self.pose_thread_error = None, None
         self._cpu_budget = FrameThreadBudget()
         self._shortage = ResourceShortage()
@@ -4058,6 +4069,8 @@ class NativeCameraService:
                 "actual_capture_fps": self._round_or_none(self.actual_capture_fps, 2),
                 "cache_path": str(self._backend_cache_path()),
                 "cached": bool(cache),
+                "decoder": self.decoder_preference,
+                "gpu_decode_supported": self.gpu_decode_supported(),
                 "probe_results": list(self._last_probe_results),
             }
 
@@ -4181,23 +4194,45 @@ class NativeCameraService:
         return 0
 
     @staticmethod
-    def _video_capture(cv2, index: int, api: int):
-        """普通摄像头一律由处理器解码：游戏常把显卡吃满，显卡解码会让采集跟着掉帧。
+    def _video_capture(cv2, index: int, api: int, *, gpu: bool = False):
+        """普通摄像头默认由处理器解码：游戏常把显卡吃满，显卡解码会让采集跟着掉帧。
 
-        OpenCV 的 MSMF 默认建显卡设备并允许硬件解码，两处都要关；DirectShow 本来就在
-        处理器上解码，不接受这个参数，传了反而打不开。
+        OpenCV 的 MSMF 默认建显卡设备并允许硬件解码，选处理器时两处都要关；DirectShow
+        本来就在处理器上解码，不接受这个参数，传了反而打不开。
         """
         if api and api == getattr(cv2, "CAP_MSMF", None) and hasattr(cv2, "CAP_PROP_HW_ACCELERATION"):
-            os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
-            return cv2.VideoCapture(index, api, [cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_NONE])
+            os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "1" if gpu else "0"
+            mode = cv2.VIDEO_ACCELERATION_ANY if gpu else cv2.VIDEO_ACCELERATION_NONE
+            return cv2.VideoCapture(index, api, [cv2.CAP_PROP_HW_ACCELERATION, mode])
         return cv2.VideoCapture(index, api)
+
+    @staticmethod
+    def gpu_decode_supported(cv2=None) -> bool:
+        """显卡解码只有 Windows 媒体接口（MSMF）提供；精简版 OpenCV 不含它。"""
+        try:
+            if cv2 is None:
+                import cv2
+            return bool(cv2.videoio_registry.hasBackend(cv2.CAP_MSMF))
+        except Exception:
+            return False
+
+    def configure_decoder(self, preference) -> dict:
+        preference = str(preference or "").strip().lower()
+        if preference not in {"cpu", "gpu"}:
+            raise CameraUnavailable("画面解码只能选处理器或显卡")
+        if preference == "gpu" and not self.gpu_decode_supported():
+            raise CameraUnavailable("当前识别运行库不含显卡解码，普通摄像头继续使用处理器")
+        with self._lock:
+            self.decoder_preference = preference
+            self._remember("camera_decoder", preference)
+            return self.backend_config()
 
     def _open_capture(self, cv2, backend: str, fourcc: str | None = None):
         """Open one camera candidate, configure it, and validate its first frame."""
         if backend == self.BACKEND_DSHOW and not fourcc:
             fourcc = "MJPG"
         api = self._backend_api(cv2, backend)
-        capture = self._video_capture(cv2, self.camera_index, api)
+        capture = self._video_capture(cv2, self.camera_index, api, gpu=self.decoder_preference == "gpu")
         if not capture.isOpened():
             try:
                 capture.release()
@@ -4219,6 +4254,10 @@ class NativeCameraService:
                 capture.release()
                 return None
             actual_fourcc = self._decode_fourcc(capture.get(cv2.CAP_PROP_FOURCC)) or fourcc
+            # 如实记录实际解码方式：选了显卡但设备或驱动不支持时，运行库会退回处理器。
+            accelerated = (backend == self.BACKEND_MSMF and hasattr(cv2, "CAP_PROP_HW_ACCELERATION")
+                           and capture.get(cv2.CAP_PROP_HW_ACCELERATION) == getattr(cv2, "VIDEO_ACCELERATION_D3D11", -1))
+            self.capture_decoder = "gpu" if accelerated else "cpu"
             return capture, frame, actual_fourcc
         except Exception:
             try:
@@ -4330,6 +4369,14 @@ class NativeCameraService:
                 if capture is not None:
                     capture.release()
                 raise CameraUnavailable(str(exc)) from exc
+        if self.decoder_preference == "gpu" and self.gpu_decode_supported(cv2):
+            opened = self._open_capture(cv2, self.BACKEND_MSMF)
+            if opened is not None:
+                capture, first_frame, actual_fourcc = opened
+                self.selected_backend = self.selected_backend_name = self.BACKEND_MSMF
+                self.selected_fourcc = actual_fourcc
+                self.actual_capture_fps = None
+                return capture, first_frame
         preference = self.backend_preference
         cache = self._load_backend_cache() if preference == self.BACKEND_AUTO else {}
         if cache:
@@ -4484,7 +4531,49 @@ class NativeCameraService:
                 for _ in session.threads[started:]:
                     self._worker_finished(session)
                 raise CameraUnavailable(f"摄像头工作线程启动失败：{exc}") from exc
+            if self.selected_backend == "kinect" and self.boost_games:
+                self.request_boost_for_game_async()
             return self.status()
+
+    def _current_game(self):
+        try:
+            return self.current_game() if self.current_game else None
+        except Exception:
+            return None
+
+    def _note_starved_game(self) -> None:
+        """这一次 Kinect 被显卡拖慢了：记住当前游戏，下次开这个游戏时先申请提高优先级。"""
+        game = self._current_game()
+        if game and game not in self.boost_games:
+            self.boost_games.add(game)
+            self._remember("kinect_boost_games", sorted(self.boost_games))
+
+    def request_boost_for_game(self) -> None:
+        """当前游戏上次拖慢过、原厂服务又未调高时申请提高；管理员确认由用户决定。"""
+        if not self.running or self.selected_backend != "kinect" or self._current_game() not in self.boost_games:
+            return
+        if not self._boost_lock.acquire(blocking=False):
+            return
+        try:
+            pid = kinect_camera.service_pid()
+            if pid is None or pid in self._boost_declined or kinect_camera.service_boosted() is not False:
+                return
+            self.kinect_boost_state = "pending"
+            try:
+                kinect_camera.boost_service()
+                self.kinect_boost_state = None
+            except PermissionError:
+                # 这次没同意：同一次服务运行期间不再反复弹出，资源提醒里仍可手动申请。
+                self._boost_declined.add(pid)
+                self.kinect_boost_state = "declined"
+            except Exception as exc:
+                self._boost_declined.add(pid)
+                self.kinect_boost_state = str(exc)
+        finally:
+            self._boost_lock.release()
+
+    def request_boost_for_game_async(self) -> None:
+        threading.Thread(target=self.request_boost_for_game, name="kinect-service-boost", daemon=True).start()
 
     def _fail_session(self, session: _CameraSession, error: str) -> None:
         failed = False
@@ -4814,10 +4903,13 @@ class NativeCameraService:
                             self._inference_times.clear()
                         previous.close()
                         self._cpu_budget.reset_samples()
+                previous_shortage = self._shortage.kind
                 self._shortage.observe(finished, camera_fps=1000 / interval if interval and interval > 0 else None,
                     capture_fps=self.actual_capture_fps, inference_fps=self._rate(self._inference_times),
                     visible=bool(landmarks),
                     threads_maxed=self.pose_cpu_threads is None or self.pose_cpu_threads >= (self._thread_ceiling or 1))
+                if self._shortage.kind == "capture" and previous_shortage != "capture" and self.selected_backend == "kinect":
+                    self._note_starved_game()
                 # 控制先提交，人像缓存随后更新；帧、点和遮罩来自同次识别。
                 if self._studio_enabled:
                     masks = getattr(result, "segmentation_masks", None)
@@ -4996,10 +5088,11 @@ class NativeCameraService:
                 "thread_allocation_reason": self._cpu_budget.reason,
                 "process_priority": self.process_priority,
                 "resource_hint": self._resource_hint(),
-                # 普通摄像头已强制处理器解码；Kinect 画面由原厂服务处理，离不开显卡。
-                "capture_decoder": ("kinect_service" if self.selected_backend == "kinect" else
-                                    "cpu" if self.selected_backend in (self.BACKEND_MSMF, self.BACKEND_DSHOW) else None),
+                # Kinect 画面由原厂服务处理，离不开显卡；普通摄像头报告实际解码方式。
+                "capture_decoder": "kinect_service" if self.selected_backend == "kinect" else self.capture_decoder,
                 "kinect_service_boosted": kinect_camera.service_boosted() if self.selected_backend == "kinect" else None,
+                "kinect_boost_game": (self._current_game() in self.boost_games) if self.selected_backend == "kinect" else None,
+                "kinect_boost_state": self.kinect_boost_state,
                 "auto_model_reason": self._auto_pose.reason,
                 "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "camera_resolution": resolution,
@@ -5146,6 +5239,17 @@ class LocalControlRuntime:
 
     def camera_backend_config(self) -> dict:
         return self.camera.backend_config()
+
+    def configure_camera_decoder(self, preference) -> dict:
+        with self._lock:
+            running = self.camera.running and not self.camera.depth_supported
+            if running:
+                self.camera.stop_and_wait()
+            data = self.camera.configure_decoder(preference)
+            if running:
+                self.camera.start()
+                data = self.camera.backend_config()
+            return data
 
     def configure_camera_depth(self, enabled) -> dict:
         if not isinstance(enabled, bool):

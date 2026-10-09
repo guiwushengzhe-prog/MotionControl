@@ -173,3 +173,36 @@ def test_starved_kinect_service_offers_admin_boost(desktop):
     assert boosts == ["POST"]
     expect(banner).to_be_hidden(timeout=6000)
     assert desktop.errors == []
+
+
+def test_regular_camera_decoder_choice_follows_runtime_support(desktop):
+    page, api = desktop.page, desktop.api
+    state = {"camera_index": 0, "camera_device": "0", "depth_supported": False, "depth_enabled": False,
+             "preference": "auto", "rotation": "none", "decoder": "cpu", "gpu_decode_supported": False}
+    posts = []
+    def camera(route):
+        if route.request.method == "POST":
+            body = route.request.post_data_json
+            posts.append(body)
+            state.update(body)
+        api.fulfill(route, {**state, **api.runtime})
+    page.route("**/api/camera/config", camera)
+    page.goto("http://motioncontrol.test")
+    page.click('nav [data-view="devices"]')
+    page.click('#settingsNav [data-pane="devices"]')
+    page.evaluate("async()=>{await (await import('/js/devices.js')).refreshCameraConfig()}")
+    expect(page.locator("#cameraDecoderRow")).to_be_visible()
+    expect(page.locator("#cameraDecoder")).to_have_value("cpu")
+    expect(page.locator('#cameraDecoder option[value="gpu"]')).to_be_disabled()
+    expect(page.locator("#cameraDecoderStatus")).to_contain_text("不含显卡解码")
+    state["gpu_decode_supported"] = True
+    page.evaluate("async()=>{await (await import('/js/devices.js')).refreshCameraConfig()}")
+    expect(page.locator('#cameraDecoder option[value="gpu"]')).to_be_enabled()
+    page.select_option("#cameraDecoder", "gpu")
+    expect(page.locator("#cameraDecoderStatus")).to_contain_text("显卡加速")
+    assert {"decoder": "gpu"} in posts
+    # Kinect 画面由原厂服务处理，不显示这个选项。
+    state.update(camera_device="kinect2:one", depth_supported=True)
+    page.evaluate("async()=>{await (await import('/js/devices.js')).refreshCameraConfig()}")
+    expect(page.locator("#cameraDecoderRow")).to_be_hidden()
+    assert desktop.errors == []

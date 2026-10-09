@@ -371,6 +371,14 @@ async function scanCameras(){
 
 bind('cameraScanBtn',scanCameras);
 
+$('#cameraDecoder').addEventListener('change',e=>runAction(async()=>{
+  try{
+    const data=await post('/api/camera/config',{decoder:e.target.value},CAMERA_REQUEST_TIMEOUT);
+    renderCameraDepth(data);
+    notice(data.decoder==='gpu'?'普通摄像头改用显卡加速解码':'普通摄像头改用处理器解码，不占显卡');
+  }finally{await refreshCameraConfig()}
+}));
+
 $('#cameraDepth').addEventListener('change',e=>runAction(async()=>{
   try{
     const data=await post('/api/camera/config',{depth_enabled:!!e.target.checked},CAMERA_REQUEST_TIMEOUT);

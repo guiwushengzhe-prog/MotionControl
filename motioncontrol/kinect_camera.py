@@ -85,6 +85,14 @@ def _service_process():
     return None
 
 
+def service_pid():
+    try:
+        process = _service_process()
+    except Exception:
+        return None
+    return None if process is None else process.pid
+
+
 def service_boosted():
     """原厂服务是否已按授权调高；服务或电脑重启后系统恢复默认。读取不需要管理员权限。"""
     try:

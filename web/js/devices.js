@@ -1,6 +1,6 @@
 import {renderRecognitionPerformance,renderPhoneModelState} from './recognition-models.js';
 // 设置 → 设备：摄像头、手机、麦克风、游戏输出。
-import {$,api,formatPerf,notice,post} from './core.js';
+import {$,api,formatPerf,notice,post,setProperty} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
 import {cameraRunning,renderKernelState,renderMainStatus,setPreviewMirror,sourceMode,zoneEditMode} from './play.js';
 import {runAction} from './shell.js';
@@ -115,7 +115,7 @@ function renderResourceHint(data){
   const hint=sourceMode==='computer'&&cameraRunning?data.resource_hint:null;
   if(!hint)resourceHintDismissed=null;
   const show=!!hint&&resourceHintDismissed!==hint.kind;
-  box.hidden=!show;if(!show)return;
+  setProperty(box,'hidden',!show);if(!show)return;
   const actions=hint.actions||[],fps=value=>Math.round(Number(value)||0),interval=data.camera_timing?.color_frame_interval_ms;
   const advice=[actions.includes('boost_kinect_service')&&'提高 Kinect 服务优先级（需要管理员权限）',actions.includes('standard_model')&&'识别精度改用标准',actions.includes('disable_depth')&&'关闭深度'].filter(Boolean);
   const [head,tail]=hint.kind==='capture'
@@ -124,9 +124,9 @@ function renderResourceHint(data){
   const text=`${head}建议${advice.length?advice.join('、')+'，或':''}${tail}。`;
   const span=box.querySelector('span');if(span.textContent!==text)span.textContent=text;
   box.dataset.kind=hint.kind;
-  $('#resourceHintBoost').hidden=!actions.includes('boost_kinect_service');
-  $('#resourceHintModel').hidden=!actions.includes('standard_model');
-  $('#resourceHintDepth').hidden=!actions.includes('disable_depth');
+  setProperty($('#resourceHintBoost'),'hidden',!actions.includes('boost_kinect_service'));
+  setProperty($('#resourceHintModel'),'hidden',!actions.includes('standard_model'));
+  setProperty($('#resourceHintDepth'),'hidden',!actions.includes('disable_depth'));
 }
 
 // 直接走设置页同一个开关，保存和重启摄像头的流程只有一份。
@@ -148,9 +148,14 @@ $('#resourceHintBoost')?.addEventListener('click',e=>{
     .finally(()=>{button.disabled=false});
 });
 
+// 这个游戏上次 Kinect 被拖慢过，后台在开始识别或切换游戏时自动申请；提示一次去点 Windows 的确认。
+let boostPendingNoticed=false;
+
 function renderPerformance(data){
   renderRecognitionPerformance(data);
   renderResourceHint(data);
+  if(data.kinect_boost_state==='pending'&&!boostPendingNoticed)notice('这个游戏上次 Kinect 被拖慢过，正在申请提高 Kinect 服务优先级：请在 Windows 的管理员确认中选择“是”，没看到窗口时点任务栏里闪烁的图标。');
+  boostPendingNoticed=data.kinect_boost_state==='pending';
   // 画面左上角只写一个数：每秒认几帧。毫秒、丢帧、CPU 这些排查问题才看，放在「实验与诊断」。
   // 手机那边不报推理帧率，用每秒收到几帧代替——人看到的就是这个。
   const fps=Number(data.inference_fps??data.network_fps);
@@ -191,7 +196,11 @@ function performanceBreakdown(data){
     lines.push('身体识别调用包含识别库内部处理；以上均非单独的神经网络耗时。');
   }
   if(data.capture_decoder==='cpu')lines.push('画面解码：处理器（普通摄像头，不占显卡）');
+  else if(data.capture_decoder==='gpu')lines.push('画面解码：显卡加速（普通摄像头；显卡被游戏占满时可能掉帧）');
   else if(data.capture_decoder==='kinect_service')lines.push(`画面解码：Kinect 原厂服务（需要显卡） · 服务优先级：${data.kinect_service_boosted?'已提高':'默认'}`);
+  if(data.kinect_boost_game)lines.push('这个游戏上次 Kinect 被拖慢过：开始识别或切到这个游戏时会先申请提高服务优先级（需要管理员确认）');
+  if(data.kinect_boost_state==='declined')lines.push('本次没有同意管理员确认：服务重启前不再自动申请，资源提醒里仍可手动申请');
+  else if(data.kinect_boost_state&&data.kinect_boost_state!=='pending')lines.push('自动申请未完成：'+data.kinect_boost_state);
   const interval=timing.color_frame_interval_ms;
   if(interval>0)lines.push(`相机供帧间隔：${formatPerf(interval,' 毫秒')}（约 ${Math.round(1000/interval)} 帧/秒） · 曝光：${formatPerf(timing.color_exposure_ms,' 毫秒')}`);
   if(data.running&&interval>=60&&timing.color_exposure_ms>1000/30)lines.push('相机报告约 15 帧/秒，曝光超过 33 毫秒；可能与自动曝光有关，可增加镜头前的光照观察是否恢复 30 帧/秒。');
@@ -292,14 +301,25 @@ export function renderCameraDevices(devices,current,data={}){
 export function renderCameraDepth(data){
   if(data?.depth_supported!==undefined)S.cameraDepthSupported=!!data.depth_supported;
   if(data?.depth_enabled!==undefined)S.cameraDepthEnabled=!!data.depth_enabled;
-  const box=$('#cameraDepth');if(box)box.checked=S.cameraDepthEnabled!==false;
+  if(data?.decoder!==undefined)S.cameraDecoder=data.decoder;
+  if(data?.gpu_decode_supported!==undefined)S.gpuDecodeSupported=!!data.gpu_decode_supported;
+  setProperty($('#cameraDepth'),'checked',S.cameraDepthEnabled!==false);
   syncCameraDeviceRow();
 }
 
+// 刷新时只写有变化的属性：轮询每秒都会走到这里，原样重写也会让浏览器重新排版。
 export function syncCameraDeviceRow(){
   const computer=($('#poseSource')?.value||'computer')==='computer';
-  for(const id of ['cameraDeviceRow','cameraScanRow','cameraRotationRow']){const el=$('#'+id);if(el)el.hidden=!computer}
-  const row=$('#cameraDepthRow');if(row)row.hidden=!(computer&&S.cameraDepthSupported);
+  for(const id of ['cameraDeviceRow','cameraScanRow','cameraRotationRow'])setProperty($('#'+id),'hidden',!computer);
+  setProperty($('#cameraDepthRow'),'hidden',!(computer&&S.cameraDepthSupported));
+  // 画面解码只对普通摄像头有意义；Kinect 画面由原厂服务处理。
+  setProperty($('#cameraDecoderRow'),'hidden',!(computer&&!S.cameraDepthSupported));
+  const select=$('#cameraDecoder');if(!select)return;
+  setProperty(select.querySelector('option[value="gpu"]'),'disabled',!S.gpuDecodeSupported);
+  if(document.activeElement!==select)setProperty(select,'value',S.cameraDecoder==='gpu'&&S.gpuDecodeSupported?'gpu':'cpu');
+  const text=!S.gpuDecodeSupported?'当前识别运行库不含显卡解码，只能用处理器（不占显卡）'
+    :S.cameraDecoder==='gpu'?'显卡加速：显卡被游戏占满时可能掉帧':'处理器解码不占显卡，游戏时推荐';
+  setProperty($('#cameraDecoderStatus'),'textContent',text);
 }
 
 function setCameraConnecting(connecting){
