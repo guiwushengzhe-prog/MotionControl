@@ -19,6 +19,24 @@ internal static class KinectCamera
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll")] static extern bool SetProcessInformation(IntPtr process, int infoClass, ref PowerThrottling info, int size);
     [DllImport("gdi32.dll")] static extern int D3DKMTSetProcessSchedulingPriorityClass(IntPtr process, int priority);
+    [DllImport("gdi32.dll")] static extern int D3DKMTGetProcessSchedulingPriorityClass(IntPtr process, out int priority);
+    [StructLayout(LayoutKind.Sequential, Pack = 4)] struct TokenPrivilege { public int Count; public long Luid; public int Attributes; }
+    [DllImport("advapi32.dll")] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)] static extern bool LookupPrivilegeValue(string system, string name, out long luid);
+    [DllImport("advapi32.dll")] static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TokenPrivilege state, int length, IntPtr previous, IntPtr returnLength);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    static void EnablePrivilege(string name)
+    {
+        IntPtr token;
+        if (!OpenProcessToken(GetCurrentProcess(), 0x20 | 0x8, out token)) return; // 调整特权 | 查询
+        try
+        {
+            var state = new TokenPrivilege { Count = 1, Attributes = 2 }; // 启用
+            if (LookupPrivilegeValue(null, name, out state.Luid))
+                AdjustTokenPrivileges(token, false, ref state, 0, IntPtr.Zero, IntPtr.Zero);
+        }
+        finally { CloseHandle(token); }
+    }
     static bool Finite(float v) { return !Single.IsNaN(v) && !Single.IsInfinity(v); }
     static Dictionary<string, object> Fields(params object[] pairs)
     {
@@ -75,13 +93,21 @@ internal static class KinectCamera
         try
         {
             Process.EnterDebugMode(); // 原厂服务以系统账户运行，需要调试特权才能打开。
+            EnablePrivilege("SeIncreaseBasePriorityPrivilege"); // 实时级显卡调度需要这项特权。
             Process service = found[0];
-            service.PriorityClass = raise ? ProcessPriorityClass.AboveNormal : ProcessPriorityClass.Normal;
-            // 4 = D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH，2 = NORMAL。它的显卡工作量很小，排在游戏前面对游戏影响有限；
-            // 实时级需要额外特权，也会压过系统画面合成，不用。
-            int status = D3DKMTSetProcessSchedulingPriorityClass(service.Handle, raise ? 4 : 2);
-            if (status != 0) { Console.Error.WriteLine("显卡调度优先级未被接受：0x" + status.ToString("X8")); return 4; }
-            return 0;
+            service.PriorityClass = raise ? ProcessPriorityClass.High : ProcessPriorityClass.Normal;
+            if (!raise) return D3DKMTSetProcessSchedulingPriorityClass(service.Handle, 2) == 0 ? 0 : 4;
+            // 实测“高”(4) 在游戏占满显卡时原厂服务只剩约 0.3%，采集掉到 6 帧，所以先用“实时”(5)。
+            // 它只占约 2% 显卡，对游戏影响有限；实时不被接受时退回“高”。读回确认实际生效的级别。
+            foreach (int level in new[] { 5, 4 })
+            {
+                int applied;
+                if (D3DKMTSetProcessSchedulingPriorityClass(service.Handle, level) == 0
+                    && D3DKMTGetProcessSchedulingPriorityClass(service.Handle, out applied) == 0 && applied == level)
+                    return level == 5 ? 0 : 10;
+            }
+            Console.Error.WriteLine("显卡调度优先级未被系统接受");
+            return 4;
         }
         catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 3; }
     }
