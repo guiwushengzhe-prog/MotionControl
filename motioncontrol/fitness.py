@@ -23,7 +23,7 @@ DEFAULT_PROFILE = {"weight_kg": 70.0, "goal_active_minutes": 20,
 # https://pacompendium.com/conditioning-exercise/
 ESTIMATION_REFERENCE = "https://pacompendium.com/conditioning-exercise/"
 
-# 手环心率（手机读「心率广播」发过来）。超过这么久没有新读数就当没有。
+# 手环心率（电脑蓝牙或手机读取）。超过这么久没有新读数就当没有。
 HR_FRESH_S = 5.0
 # 心率曲线每段多长：给人看走势，也是同步到云端的粒度——不存每秒的读数。
 HR_BUCKET_S = 30
@@ -71,6 +71,10 @@ class FitnessStore:
         self._held = set()
         self._step_at = {"left": -math.inf, "right": -math.inf}
         self._hr = None  # (心率, 收到的时刻)
+        self.heart_rate_source = "phone"
+        self._heart_reader = ""
+        self._heart_revision = 0
+        self._heart_instance = uuid.uuid4().hex
         # 云端同步记的账：每次锻炼传到了哪一版、拉到了哪里、身体数据传到了哪一版。
         self.cloud = {"uploaded": {}, "cursor": "", "profile_pushed_ms": 0}
         self._stop = threading.Event()
@@ -86,6 +90,8 @@ class FitnessStore:
             if not isinstance(data, dict) or data.get("schema") != 1 or not isinstance(data.get("sessions"), list):
                 raise ValueError("运动记录格式无法识别")
             self._profile(data.get("profile", {}))
+            if data.get("heart_rate_source") in {"computer", "phone"}:
+                self.heart_rate_source = data["heart_rate_source"]
             self.sessions = [s for s in data["sessions"] if isinstance(s, dict) and s.get("session_id")]
             self.checkins = {date for date in data.get("checkins", []) if isinstance(date, str)}
             cloud = data.get("cloud")
@@ -200,16 +206,43 @@ class FitnessStore:
             self.current["updated_at_ms"] = round(self.wall() * 1000)
             self._dirty = True
 
-    def heart_rate(self, message):
-        """手机发来的一次心率。只在记录中才用：并进本次的平均、最高和曲线。"""
+    def set_heart_rate_input(self, source, reader_id=""):
+        """明确选择读取来源；电脑连接只属于发起它的页面。"""
+        if source not in {"computer", "phone"}:
+            raise ValueError("心率来源无效")
+        if source == "computer" and (not isinstance(reader_id, str) or not 1 <= len(reader_id) <= 100):
+            raise ValueError("心率连接标识无效")
+        with self.lock:
+            self.heart_rate_source = source
+            self._heart_reader = reader_id if source == "computer" else ""
+            self._heart_revision += 1
+            self._hr = None
+            self._dirty = True
+            return self.state()
+
+    def clear_computer_heart_rate(self, reader_id, *, release=False):
+        with self.lock:
+            if self.heart_rate_source != "computer" or not reader_id or reader_id != self._heart_reader:
+                return False
+            self._hr = None
+            if release:
+                self._heart_reader = ""
+                self._heart_revision += 1
+            return True
+
+    def heart_rate(self, message, *, source="phone", reader_id=""):
+        """有效读数可预览，只有记录中才计入本次平均、最高和曲线。"""
         bpm = message.get("bpm")
         if isinstance(bpm, bool) or not isinstance(bpm, int) or not 25 <= bpm <= 250:
             raise ValueError("心率读数无效")
         with self.lock:
-            if not self.current or self.current["status"] != "active":
-                self._hr = None
-                return
+            if source != self.heart_rate_source or (source == "computer" and reader_id != self._heart_reader):
+                return False
+            if source == "computer" and not self._heart_reader:
+                return False
             self._hr = (bpm, self.clock())
+            if not self.current or self.current["status"] != "active":
+                return True
             session = self.current
             count = session.get("hr_samples", 0)
             session["hr_avg"] = round((session.get("hr_avg", 0.) * count + bpm) / (count + 1), 1)
@@ -226,6 +259,7 @@ class FitnessStore:
                 session["hr_bucket_n"] = 1
             session["updated_at_ms"] = round(self.wall() * 1000)
             self._dirty = True
+            return True
 
     def _fresh_hr(self, now):
         if self._hr is None or not 0 <= now - self._hr[1] <= HR_FRESH_S:
@@ -385,6 +419,10 @@ class FitnessStore:
                           error=self.error, estimation_reference=ESTIMATION_REFERENCE)
             result["control_enabled"] = self._control_enabled
             result["heart_rate"] = self._fresh_hr(self.clock())
+            result["heart_rate_source"] = self.heart_rate_source
+            result["heart_rate_reader"] = self._heart_reader
+            result["heart_rate_revision"] = self._heart_revision
+            result["heart_rate_instance"] = self._heart_instance
             return result
 
     def flush(self):
@@ -393,7 +431,8 @@ class FitnessStore:
             if not self._dirty or self.error.startswith("历史记录读取失败"):
                 return
             data = json.dumps({"schema": 1, "profile": self.profile, "sessions": self.sessions,
-                               "checkins": sorted(self.checkins), "cloud": self.cloud},
+                               "checkins": sorted(self.checkins), "cloud": self.cloud,
+                               "heart_rate_source": self.heart_rate_source},
                               ensure_ascii=False).encode("utf-8")
             self._dirty = False
         try:

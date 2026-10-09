@@ -288,7 +288,7 @@ def beat_for(store, clock, seconds, bpm, *, actions=("motion.march",)):
 def test_heart_rate_is_summarised_per_session_with_a_coarse_curve(factory):
     clock = Clock()
     store = factory(clock)
-    store.heart_rate({"bpm": 150})  # 没在记录：丢掉
+    store.heart_rate({"bpm": 150})  # 没在记录：仅预览，不计入运动摘要。
     store.control({"action": "start"})
     beat_for(store, clock, HR_BUCKET_S, 110)
     beat_for(store, clock, HR_BUCKET_S, 140)

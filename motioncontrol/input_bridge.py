@@ -1757,7 +1757,7 @@ class InputBridge:
                     self._fitness.control(message)
                     self._send_fitness(peer)
             elif message_type == "heart_rate_v1":
-                # 手机从手环「心率广播」读到的心率，每秒最多一条。没在记录就丢掉。
+                # 手机读取手环心率，每秒最多一条；可预览，记录中才计入运动摘要。
                 if self._fitness is not None:
                     self._fitness.heart_rate(message)
             elif message_type == "studio_video_frame_v1":
