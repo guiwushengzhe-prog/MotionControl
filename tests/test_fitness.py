@@ -38,8 +38,10 @@ def pose():
 def factory(tmp_path):
     stores = []
 
-    def make(clock, name="fitness.json"):
-        store = FitnessStore(tmp_path / name, clock=clock.monotonic, wall=clock.wall, background=False)
+    def make(clock, name="fitness.json", *, minimum_activity_s=0):
+        # 多数采样计算检查使用短的合成片段；实际默认的三分钟门槛另有专门检查。
+        store = FitnessStore(tmp_path / name, clock=clock.monotonic, wall=clock.wall, background=False,
+                             minimum_activity_s=minimum_activity_s)
         stores.append(store)
         return store
 
@@ -76,7 +78,7 @@ def test_pause_resume_lost_pose_and_stream_gap_do_not_backfill(factory):
     assert state["elapsed_seconds"] == pytest.approx(2)
 
 
-def test_recording_follows_actual_output_including_error_and_resumes_same_session(factory, tmp_path, monkeypatch):
+def test_recording_follows_actual_output_including_error_and_starts_new_session(factory, tmp_path, monkeypatch):
     from test_output_actions_v097 import manager
 
     clock = Clock()
@@ -94,11 +96,13 @@ def test_recording_follows_actual_output_including_error_and_resumes_same_sessio
         store.observe_pose(pose(), clock.now, actions=("motion.march",))
         assert store.state()["active_seconds"] == pytest.approx(1)
         output.emergency_stop()
-        assert store.state()["status"] == "paused"
+        assert store.state()["status"] == "finished"
         store.control({"action": "resume"})  # 独立的旧入口不能在控制暂停时偷开记录。
-        assert store.state()["status"] == "paused"
+        assert store.state()["status"] == "finished"
         output.set_config(enabled=True)
-        assert store.state()["session_id"] == session_id
+        assert store.state()["session_id"] != session_id
+        assert store.state()["status"] == "active"
+        store.control({"action": "finish"})  # 旧入口不能拆开正在控制的一次运动。
         assert store.state()["status"] == "active"
 
         def failure(*args):
@@ -106,9 +110,82 @@ def test_recording_follows_actual_output_including_error_and_resumes_same_sessio
         monkeypatch.setattr(mouse, "move", failure)
         output.apply(1)
         assert not output.enabled
-        assert store.state()["status"] == "paused"
+        assert store.state()["status"] == "finished"
     finally:
         output.close()
+
+
+def test_three_minutes_of_effective_activity_is_the_exact_counting_boundary(factory):
+    clock = Clock()
+    store = factory(clock, minimum_activity_s=180)
+    store.output_changed(True)
+    short_id = store.state()["session_id"]
+    march_for(store, clock, 179.5)
+    store.step_event("left", clock.now)
+    state = store.state()
+    assert state["active_seconds"] == pytest.approx(179.5)  # 本次仍可实时预览。
+    assert state["session_counted"] is False
+    assert state["today"]["active_seconds"] == 0
+    assert state["today"]["steps"] == 0
+    assert store.history() == []
+    assert store.cloud_pending()["sessions"] == []
+    store.output_changed(False)
+    assert store.state()["status"] == "finished"
+    assert store.sessions[0]["session_id"] == short_id  # 原数据保留。
+
+    store.output_changed(True)
+    counted_id = store.state()["session_id"]
+    assert counted_id != short_id
+    march_for(store, clock, 180)
+    store.step_event("right", clock.now)
+    state = store.state()
+    assert state["session_counted"] is True
+    assert state["today"]["active_seconds"] == pytest.approx(180)
+    assert state["today"]["steps"] == 1
+    store.output_changed(False)
+    assert [session["session_id"] for session in store.history()] == [counted_id]
+    assert [session["session_id"] for session in store.cloud_pending()["sessions"]] == [counted_id]
+
+
+def test_default_threshold_preserves_short_raw_records_across_restart(tmp_path):
+    clock = Clock()
+    path = tmp_path / "fitness.json"
+    store = FitnessStore(path, clock=clock.monotonic, wall=clock.wall, background=False)
+    try:
+        assert store.minimum_activity_s == 180
+        store.output_changed(True)
+        march_for(store, clock, 10)
+        clock.advance(600)  # 等待或没有骨骼不能凑够有效活动。
+        store.output_changed(False)
+        session_id = store.state()["session_id"]
+        assert store.history() == []
+    finally:
+        store.close()
+    restored = FitnessStore(path, clock=clock.monotonic, wall=clock.wall, background=False)
+    try:
+        assert restored.sessions[0]["session_id"] == session_id
+        assert restored.sessions[0]["active_seconds"] == pytest.approx(10)
+        assert restored.history() == []
+        assert restored.state()["today"]["active_seconds"] == 0
+        assert restored.cloud_pending()["sessions"] == []
+    finally:
+        restored.close()
+
+
+def test_imported_older_short_records_are_kept_but_not_counted(factory):
+    clock = Clock()
+    old = factory(clock, "old.json")
+    old.control({"action": "start"})
+    march_for(old, clock, 30)
+    old.control({"action": "finish"})
+    sessions = old.cloud_pending()["sessions"]
+    current = factory(clock, "current.json", minimum_activity_s=180)
+    current.merge_remote({"sessions": sessions})
+    assert len(current.sessions) == 1
+    assert current.sessions[0]["origin"] == "remote"
+    assert current.history() == []
+    assert current.state()["today"]["active_seconds"] == 0
+    assert current.cloud_pending()["sessions"] == []
 
 
 def test_duplicate_backwards_steps_and_steps_while_paused_are_ignored(factory):

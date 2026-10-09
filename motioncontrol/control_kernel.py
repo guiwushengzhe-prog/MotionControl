@@ -3571,6 +3571,7 @@ class NativeCameraService:
         if self.model_preference not in {"auto", "full", "heavy"}:
             self.model_preference = "auto"
         self.actual_model = "full"
+        self.pose_model_optimization = None
         self._auto_pose = AutoPoseChoice()
         self.hand_model_state, self.hand_model_error = "idle", None
         # 不写死 0。一台电脑上可以有好几个摄像头（内置的、外接的、虚拟的），
@@ -4130,8 +4131,11 @@ class NativeCameraService:
         except Exception as exc:
             raise CameraUnavailable("本地 Python 未安装 mediapipe；电脑摄像头内核无法启动") from exc
         segmentation_enabled = self._studio_require_mask
+        from motioncontrol.pose_model_optimization import pose_model_without_mask
+        optimized = pose_model_without_mask(self.model_path) if choice == "heavy" and not segmentation_enabled else None
         options = vision.PoseLandmarkerOptions(
-            base_options=python.BaseOptions(model_asset_path=str(self.model_path)),
+            base_options=(python.BaseOptions(model_asset_buffer=optimized) if optimized else
+                          python.BaseOptions(model_asset_path=str(self.model_path))),
             running_mode=vision.RunningMode.VIDEO,
             num_poses=1,
             min_pose_detection_confidence=0.35,
@@ -4139,7 +4143,16 @@ class NativeCameraService:
             min_tracking_confidence=0.35,
             output_segmentation_masks=segmentation_enabled,
         )
-        detector = vision.PoseLandmarker.create_from_options(options)
+        try:
+            detector = vision.PoseLandmarker.create_from_options(options)
+        except Exception:
+            if not optimized:
+                raise
+            # 不支持这种输出布局的运行库直接回退，不影响摄像头连接。
+            options.base_options = python.BaseOptions(model_asset_path=str(self.model_path))
+            detector = vision.PoseLandmarker.create_from_options(options)
+            optimized = None
+        self.pose_model_optimization = "skip_unused_mask" if optimized else None
         self._detector_masks_enabled = segmentation_enabled
         return mp, detector
 
@@ -4841,6 +4854,7 @@ class NativeCameraService:
                 "model": "MediaPipe Pose " + self.actual_model.title(),
                 "model_preference": self.model_preference,
                 "actual_model": self.actual_model,
+                "pose_model_optimization": self.pose_model_optimization,
                 "auto_model_reason": self._auto_pose.reason,
                 "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "camera_resolution": resolution,
