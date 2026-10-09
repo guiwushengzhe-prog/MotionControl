@@ -49,6 +49,7 @@ from motioncontrol.studio_portrait import StudioPortrait
 from motioncontrol.intent_library import ZoneLearner
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
 from motioncontrol.game_launch import is_administrator, launch_as_administrator, wait_for_previous_process
+from motioncontrol import kinect_camera
 from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
 from motioncontrol_shared.profile_schema import action_catalog
@@ -2291,6 +2292,18 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": True, **data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **RUNTIME.camera_backend_config()}, 400)
+            return
+        if route == "/api/camera/kinect-service-priority":
+            # 会弹出管理员确认，只接受本机控制页面发起。
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or (origin and origin not in {
+                    f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
+                self._send_json({"ok": False, "error": "请从本机控制页面操作"}, 403)
+                return
+            try:
+                self._send_json({"ok": True, **kinect_camera.boost_service()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc), "boosted": bool(kinect_camera.service_boosted())}, 400)
             return
         if route == "/api/head/calibration/start":
             if not self._is_loopback():

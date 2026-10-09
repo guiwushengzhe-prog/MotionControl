@@ -117,13 +117,14 @@ function renderResourceHint(data){
   const show=!!hint&&resourceHintDismissed!==hint.kind;
   box.hidden=!show;if(!show)return;
   const actions=hint.actions||[],fps=value=>Math.round(Number(value)||0),interval=data.camera_timing?.color_frame_interval_ms;
-  const advice=[actions.includes('standard_model')&&'识别精度改用标准',actions.includes('disable_depth')&&'关闭深度'].filter(Boolean);
+  const advice=[actions.includes('boost_kinect_service')&&'提高 Kinect 服务优先级（需要管理员权限）',actions.includes('standard_model')&&'识别精度改用标准',actions.includes('disable_depth')&&'关闭深度'].filter(Boolean);
   const [head,tail]=hint.kind==='capture'
-    ?[`摄像头只收到 ${fps(data.capture_fps)} 帧/秒${interval>0?`（相机可出 ${fps(1000/interval)} 帧）`:''}，多半是显卡被游戏占满。`,'在游戏里限制帧率，给摄像头服务留出显卡']
+    ?[`摄像头只收到 ${fps(data.capture_fps)} 帧/秒${interval>0?`（相机可出 ${fps(1000/interval)} 帧）`:''}，多半是显卡被游戏占满。`,'在游戏里限制帧率，或改用只占处理器的普通摄像头']
     :[`电脑计算资源紧张：识别 ${fps(data.inference_fps)} 帧/秒，跟不上摄像头的 ${fps(data.capture_fps)} 帧/秒。`,'关闭其他占用处理器的程序'];
   const text=`${head}建议${advice.length?advice.join('、')+'，或':''}${tail}。`;
   const span=box.querySelector('span');if(span.textContent!==text)span.textContent=text;
   box.dataset.kind=hint.kind;
+  $('#resourceHintBoost').hidden=!actions.includes('boost_kinect_service');
   $('#resourceHintModel').hidden=!actions.includes('standard_model');
   $('#resourceHintDepth').hidden=!actions.includes('disable_depth');
 }
@@ -137,6 +138,15 @@ function applyResourceHint(id,value){
 $('#resourceHintModel')?.addEventListener('click',()=>applyResourceHint('#poseModelSelect','full'));
 $('#resourceHintDepth')?.addEventListener('click',()=>applyResourceHint('#cameraDepth',false));
 $('#resourceHintDismiss')?.addEventListener('click',()=>{resourceHintDismissed=$('#resourceHint').dataset.kind;$('#resourceHint').hidden=true});
+// 需要管理员权限：由 Windows 弹出确认，用户同意才调整；后台发起时确认窗口可能在任务栏闪烁。
+$('#resourceHintBoost')?.addEventListener('click',e=>{
+  const button=e.currentTarget;button.disabled=true;
+  notice('请在 Windows 弹出的管理员确认中选择“是”；没看到窗口时，点任务栏里闪烁的图标。');
+  post('/api/camera/kinect-service-priority',{},130000)
+    .then(data=>{notice(data.boosted?'已提高 Kinect 服务优先级，服务或电脑重启后需要再次授权':'调整已完成，但未读到优先级变化');refreshPerformance()})
+    .catch(error=>notice(String(error?.message||error)))
+    .finally(()=>{button.disabled=false});
+});
 
 function renderPerformance(data){
   renderRecognitionPerformance(data);
@@ -180,6 +190,8 @@ function performanceBreakdown(data){
     if(parallel&&data.hand_processing_avg_ms!=null)lines.push(`手部独立处理：${formatPerf(data.hand_processing_avg_ms,' 毫秒')} · 与身体并行：${data.hand_parallel_percent??0}% · 已与身体识别重叠的时间不重复计入单帧耗时。`);
     lines.push('身体识别调用包含识别库内部处理；以上均非单独的神经网络耗时。');
   }
+  if(data.capture_decoder==='cpu')lines.push('画面解码：处理器（普通摄像头，不占显卡）');
+  else if(data.capture_decoder==='kinect_service')lines.push(`画面解码：Kinect 原厂服务（需要显卡） · 服务优先级：${data.kinect_service_boosted?'已提高':'默认'}`);
   const interval=timing.color_frame_interval_ms;
   if(interval>0)lines.push(`相机供帧间隔：${formatPerf(interval,' 毫秒')}（约 ${Math.round(1000/interval)} 帧/秒） · 曝光：${formatPerf(timing.color_exposure_ms,' 毫秒')}`);
   if(data.running&&interval>=60&&timing.color_exposure_ms>1000/30)lines.push('相机报告约 15 帧/秒，曝光超过 33 毫秒；可能与自动曝光有关，可增加镜头前的光照观察是否恢复 30 帧/秒。');

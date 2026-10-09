@@ -18,6 +18,7 @@ internal static class KinectCamera
     [StructLayout(LayoutKind.Sequential)] struct PowerThrottling { public uint Version, ControlMask, StateMask; }
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll")] static extern bool SetProcessInformation(IntPtr process, int infoClass, ref PowerThrottling info, int size);
+    [DllImport("gdi32.dll")] static extern int D3DKMTSetProcessSchedulingPriorityClass(IntPtr process, int priority);
     static bool Finite(float v) { return !Single.IsNaN(v) && !Single.IsInfinity(v); }
     static Dictionary<string, object> Fields(params object[] pairs)
     {
@@ -65,8 +66,28 @@ internal static class KinectCamera
         if (pixels != null) writer.Write(pixels);
         writer.Flush();
     }
+    // 管理员授权后单次运行：调高原厂服务的处理器与显卡调度，游戏占满显卡时它仍能按时出帧。
+    // 只针对 KinectService；服务或电脑重启后系统恢复默认，需要再次授权。
+    static int BoostService()
+    {
+        Process[] found = Process.GetProcessesByName("KinectService");
+        if (found.Length == 0) { Console.Error.WriteLine("未找到 Kinect 原厂服务"); return 2; }
+        try
+        {
+            Process.EnterDebugMode(); // 原厂服务以系统账户运行，需要调试特权才能打开。
+            Process service = found[0];
+            service.PriorityClass = ProcessPriorityClass.AboveNormal;
+            // 4 = D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH。它的显卡工作量很小，排在游戏前面对游戏影响有限；
+            // 实时级需要额外特权，也会压过系统画面合成，不用。
+            int status = D3DKMTSetProcessSchedulingPriorityClass(service.Handle, 4);
+            if (status != 0) { Console.Error.WriteLine("显卡调度优先级未被接受：0x" + status.ToString("X8")); return 4; }
+            return 0;
+        }
+        catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 3; }
+    }
     public static int Main(string[] args)
     {
+        if (Array.IndexOf(args, "--boost-service") >= 0) return BoostService();
         try
         {
             Console.OutputEncoding = new UTF8Encoding(false);

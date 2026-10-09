@@ -4015,7 +4015,7 @@ class NativeCameraService:
             capture = None
             entry = {"index": index, **identity, "in_use": False, "picture_state": "unavailable"}
             try:
-                capture = cv2.VideoCapture(index, api)
+                capture = self._video_capture(cv2, index, api)
                 if capture.isOpened():
                     entry.update(self._scan_picture(capture))
             except Exception:
@@ -4180,12 +4180,24 @@ class NativeCameraService:
             return getattr(cv2, "CAP_DSHOW", 0)
         return 0
 
+    @staticmethod
+    def _video_capture(cv2, index: int, api: int):
+        """普通摄像头一律由处理器解码：游戏常把显卡吃满，显卡解码会让采集跟着掉帧。
+
+        OpenCV 的 MSMF 默认建显卡设备并允许硬件解码，两处都要关；DirectShow 本来就在
+        处理器上解码，不接受这个参数，传了反而打不开。
+        """
+        if api and api == getattr(cv2, "CAP_MSMF", None) and hasattr(cv2, "CAP_PROP_HW_ACCELERATION"):
+            os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
+            return cv2.VideoCapture(index, api, [cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_NONE])
+        return cv2.VideoCapture(index, api)
+
     def _open_capture(self, cv2, backend: str, fourcc: str | None = None):
         """Open one camera candidate, configure it, and validate its first frame."""
         if backend == self.BACKEND_DSHOW and not fourcc:
             fourcc = "MJPG"
         api = self._backend_api(cv2, backend)
-        capture = cv2.VideoCapture(self.camera_index, api)
+        capture = self._video_capture(cv2, self.camera_index, api)
         if not capture.isOpened():
             try:
                 capture.release()
@@ -4961,6 +4973,8 @@ class NativeCameraService:
         if not kind:
             return None
         actions = ["standard_model"] if kind == "inference" and self.actual_model == "heavy" else []
+        if kind == "capture" and self.selected_backend == "kinect" and kinect_camera.service_boosted() is False:
+            actions.append("boost_kinect_service")
         if self.depth_supported and self.depth_enabled:
             actions.append("disable_depth")
         return {"kind": kind, "actions": actions}
@@ -4982,6 +4996,10 @@ class NativeCameraService:
                 "thread_allocation_reason": self._cpu_budget.reason,
                 "process_priority": self.process_priority,
                 "resource_hint": self._resource_hint(),
+                # 普通摄像头已强制处理器解码；Kinect 画面由原厂服务处理，离不开显卡。
+                "capture_decoder": ("kinect_service" if self.selected_backend == "kinect" else
+                                    "cpu" if self.selected_backend in (self.BACKEND_MSMF, self.BACKEND_DSHOW) else None),
+                "kinect_service_boosted": kinect_camera.service_boosted() if self.selected_backend == "kinect" else None,
                 "auto_model_reason": self._auto_pose.reason,
                 "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "camera_resolution": resolution,

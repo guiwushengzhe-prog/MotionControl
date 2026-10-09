@@ -146,3 +146,30 @@ def test_resource_shortage_banner_names_the_cause_and_reuses_settings(desktop):
     expect(page.locator("#cameraDepth")).not_to_be_checked()
     assert {"depth_enabled": False} in requests
     assert desktop.errors == []
+
+
+def test_starved_kinect_service_offers_admin_boost(desktop):
+    page, api = desktop.page, desktop.api
+    api.runtime["camera"] = {"running": True, "depth_supported": True, "depth_enabled": False}
+    perf = {"running": True, "capture_fps": 2, "inference_fps": 2, "actual_model": "full",
+            "capture_decoder": "kinect_service", "kinect_service_boosted": False,
+            "camera_timing": {"color_frame_interval_ms": 66.67},
+            "resource_hint": {"kind": "capture", "actions": ["boost_kinect_service"]}}
+    page.route("**/api/performance", lambda route: api.fulfill(route, perf))
+    boosts = []
+    def boost(route):
+        boosts.append(route.request.method)
+        perf.update(kinect_service_boosted=True, resource_hint=None)
+        api.fulfill(route, {"boosted": True})
+    page.route("**/api/camera/kinect-service-priority", boost)
+    banner = page.locator("#resourceHint")
+    expect(banner).to_be_visible(timeout=6000)
+    expect(banner).to_contain_text("摄像头只收到 2 帧/秒（相机可出 15 帧）")
+    expect(banner).to_contain_text("建议提高 Kinect 服务优先级（需要管理员权限），或在游戏里限制帧率，或改用只占处理器的普通摄像头")
+    expect(page.locator("#resourceHintModel")).to_be_hidden()
+    expect(page.locator("#resourceHintDepth")).to_be_hidden()
+    page.click("#resourceHintBoost")
+    expect(page.locator("#notice")).to_contain_text("已提高 Kinect 服务优先级", timeout=6000)
+    assert boosts == ["POST"]
+    expect(banner).to_be_hidden(timeout=6000)
+    assert desktop.errors == []
