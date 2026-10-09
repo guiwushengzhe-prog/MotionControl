@@ -168,6 +168,8 @@ def runtime_status() -> dict:
         return {**RUNTIME.status(), "config_revision": CONFIG_REVISION,
                 "preview_mirror": STUDIO.config["mirror"]}
 PROFILES = GameProfileStore(ROOT)
+# Kinect 是否被拖慢按游戏记住，下次开这个游戏时先申请提高原厂服务优先级。
+RUNTIME.camera.current_game = PROFILES.selected_id
 KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
 
 
@@ -2169,6 +2171,7 @@ class AdminHandler(_BaseHandler):
                 response = {"ok": True, "profile": profile, "config_revision": CONFIG_REVISION}
                 if route.endswith("/select"):
                     response["launch"] = _game_launch_status(profile)
+                    RUNTIME.camera.request_boost_for_game_async()
                 self._send_json(response)
             except ProfileSelectionChanged as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 409)
@@ -2283,6 +2286,8 @@ class AdminHandler(_BaseHandler):
                     data = _select_camera_input(body["device"])
                 elif "depth_enabled" in body:
                     data = RUNTIME.configure_camera_depth(body["depth_enabled"])
+                elif "decoder" in body:
+                    data = RUNTIME.configure_camera_decoder(body["decoder"])
                 elif "index" in body or "camera_index" in body:
                     data = _select_camera_input(str(body.get("index", body.get("camera_index"))))
                 elif "rotation" in body:

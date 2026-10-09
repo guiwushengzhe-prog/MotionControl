@@ -47,7 +47,10 @@ def sources():
     for path in ROOT.rglob("*"):
         if not path.is_file() or path.suffix not in {".py", ".sh", ".txt", ".json"}:
             continue
-        if any(part in SKIP_DIRS for part in path.relative_to(ROOT).parts):
+        # 运行环境不止 venv/.venv 两个名字：独立多核环境就叫 .venv-multicore，
+        # 里面第三方包碰巧写着同一个数字，和我们发版无关。
+        if any(part in SKIP_DIRS or part.startswith((".venv", "venv"))
+               for part in path.relative_to(ROOT).parts):
             continue
         relative = path.relative_to(ROOT).as_posix()
         if relative in ALLOWED or relative.endswith("-lock.json"):

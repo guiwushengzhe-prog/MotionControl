@@ -330,6 +330,10 @@ class GameProfileStore:
             profile["appid"] = entry.get("appid", "")
             return profile
 
+    def selected_id(self) -> str:
+        with self._lock:
+            return self._selection["selected_id"]
+
     def effective_profile(self) -> dict:
         with self._lock:
             selected_id = self._selection["selected_id"]

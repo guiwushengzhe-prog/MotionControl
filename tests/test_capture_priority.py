@@ -9,7 +9,7 @@ from motioncontrol.control_kernel import NativeCameraService
 
 class FakeCv2:
     CAP_MSMF, CAP_DSHOW = 1400, 700
-    CAP_PROP_HW_ACCELERATION, VIDEO_ACCELERATION_NONE = 50, 0
+    CAP_PROP_HW_ACCELERATION, VIDEO_ACCELERATION_NONE, VIDEO_ACCELERATION_ANY = 50, 0, 1
 
     def __init__(self):
         self.calls = []
@@ -27,6 +27,41 @@ def test_msmf_is_opened_without_gpu_decoding_and_dshow_unchanged(monkeypatch):
     assert cv2.calls == [(2, 1400, [50, 0]), (2, 700)]
     import os
     assert os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] == "0"
+    # 用户选了显卡加速才交给运行库自行选择硬件解码。
+    NativeCameraService._video_capture(cv2, 2, cv2.CAP_MSMF, gpu=True)
+    assert cv2.calls[-1] == (2, 1400, [50, 1])
+    assert os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] == "1"
+    NativeCameraService._video_capture(cv2, 2, cv2.CAP_DSHOW, gpu=True)
+    assert cv2.calls[-1] == (2, 700)
+
+
+@pytest.mark.parametrize("available,expected", [(True, True), (False, False)])
+def test_gpu_decoding_is_offered_only_when_the_runtime_has_media_foundation(available, expected):
+    cv2 = SimpleNamespace(CAP_MSMF=1400, videoio_registry=SimpleNamespace(hasBackend=lambda api: available and api == 1400))
+    assert NativeCameraService.gpu_decode_supported(cv2) is expected
+    assert NativeCameraService.gpu_decode_supported(SimpleNamespace()) is False
+
+
+def _decoder_camera(monkeypatch, supported):
+    remembered = {}
+    camera = SimpleNamespace(_lock=__import__("threading").Lock(), decoder_preference="cpu",
+                             _remember=lambda key, value: remembered.update({key: value}),
+                             backend_config=lambda: {"decoder": camera.decoder_preference},
+                             gpu_decode_supported=lambda cv2=None: supported)
+    return camera, remembered
+
+
+def test_decoder_choice_is_saved_and_unsupported_gpu_is_refused(monkeypatch):
+    from motioncontrol.control_kernel import CameraUnavailable
+    camera, remembered = _decoder_camera(monkeypatch, supported=True)
+    assert NativeCameraService.configure_decoder(camera, "gpu") == {"decoder": "gpu"}
+    assert remembered == {"camera_decoder": "gpu"}
+    camera, remembered = _decoder_camera(monkeypatch, supported=False)
+    with pytest.raises(CameraUnavailable, match="不含显卡解码"):
+        NativeCameraService.configure_decoder(camera, "gpu")
+    with pytest.raises(CameraUnavailable):
+        NativeCameraService.configure_decoder(camera, "fast")
+    assert camera.decoder_preference == "cpu" and remembered == {}
 
 
 def test_old_runtime_without_acceleration_property_still_opens():
@@ -85,3 +120,59 @@ def test_boost_is_offered_only_when_the_kinect_service_is_starved(monkeypatch, k
                              selected_backend=backend, depth_supported=backend == "kinect",
                              depth_enabled=backend == "kinect")
     assert NativeCameraService._resource_hint(camera) == {"kind": kind, "actions": expected}
+
+
+def _boost_camera(game="forza", games=("forza",), backend="kinect", running=True):
+    import threading
+    remembered = {}
+    camera = SimpleNamespace(running=running, selected_backend=backend, boost_games=set(games),
+                             current_game=lambda: game, kinect_boost_state=None, _boost_declined=set(),
+                             _boost_lock=threading.Lock(),
+                             _remember=lambda key, value: remembered.update({key: value}))
+    camera._current_game = lambda: NativeCameraService._current_game(camera)
+    return camera, remembered
+
+
+def test_a_starved_game_is_remembered_once(monkeypatch):
+    camera, remembered = _boost_camera(game="rdr2", games=())
+    NativeCameraService._note_starved_game(camera)
+    NativeCameraService._note_starved_game(camera)
+    assert camera.boost_games == {"rdr2"} and remembered == {"kinect_boost_games": ["rdr2"]}
+
+
+@pytest.fixture
+def service(monkeypatch):
+    state = {"boosted": False, "calls": 0, "result": None}
+    monkeypatch.setattr(kinect_camera, "service_pid", lambda: 4242)
+    monkeypatch.setattr(kinect_camera, "service_boosted", lambda: state["boosted"])
+    def boost():
+        state["calls"] += 1
+        if isinstance(state["result"], Exception):
+            raise state["result"]
+        state["boosted"] = True
+        return {"boosted": True}
+    monkeypatch.setattr(kinect_camera, "boost_service", boost)
+    return state
+
+
+def test_remembered_game_asks_for_permission_at_start(service):
+    camera, _ = _boost_camera()
+    NativeCameraService.request_boost_for_game(camera)
+    assert service["calls"] == 1 and camera.kinect_boost_state is None
+    NativeCameraService.request_boost_for_game(camera)
+    assert service["calls"] == 1, "已经调高就不再申请"
+
+
+@pytest.mark.parametrize("kwargs", [dict(game="other"), dict(backend="dshow"), dict(running=False)])
+def test_other_games_cameras_or_stopped_recognition_do_not_ask(service, kwargs):
+    camera, _ = _boost_camera(**kwargs)
+    NativeCameraService.request_boost_for_game(camera)
+    assert service["calls"] == 0
+
+
+def test_declined_permission_is_not_asked_again_for_the_same_service(service):
+    service["result"] = PermissionError("已取消管理员授权")
+    camera, _ = _boost_camera()
+    NativeCameraService.request_boost_for_game(camera)
+    NativeCameraService.request_boost_for_game(camera)
+    assert service["calls"] == 1 and camera.kinect_boost_state == "declined"
