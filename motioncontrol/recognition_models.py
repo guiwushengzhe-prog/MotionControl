@@ -87,6 +87,7 @@ class LazyGestureRecognizer:
         self.path, self.detector = path, None
         self.state, self.error = "idle", None
         self.cpu_threads = None
+        self.requested_cpu_threads = None
 
     def close(self):
         if self.detector:
@@ -109,10 +110,33 @@ class LazyGestureRecognizer:
                 self.detector, self.cpu_threads, _ = create_cpu_task(
                     vision.GestureRecognizer, vision.GestureRecognizerOptions(
                         base_options=python.BaseOptions(model_asset_path=str(self.path)),
-                        running_mode=vision.RunningMode.IMAGE, num_hands=1), hands=True)
+                        running_mode=vision.RunningMode.IMAGE, num_hands=1), hands=True, threads=self.requested_cpu_threads)
                 self.state = "ready"
             except Exception as exc:
                 self.state, self.error = "error", str(exc)
+
+    def change_threads(self, count):
+        if self.cpu_threads == count:
+            return True
+        if self.detector is None:
+            self.requested_cpu_threads = count
+            return True  # 没有手势需求时仍不加载模型。
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
+        from motioncontrol.cpu_inference import create_cpu_task
+        try:
+            detector, threads, _ = create_cpu_task(vision.GestureRecognizer,
+                vision.GestureRecognizerOptions(base_options=python.BaseOptions(model_asset_path=str(self.path)),
+                    running_mode=vision.RunningMode.IMAGE, num_hands=1), hands=True, threads=count)
+        except Exception:
+            return False
+        if threads != count:
+            detector.close()
+            return False
+        previous = self.detector
+        self.detector, self.cpu_threads, self.requested_cpu_threads = detector, threads, count
+        previous.close()
+        return True
 
     def recognize(self, rgb, pose_map: dict | None, sides: list[str], mp) -> dict:
         self.configure(bool(sides))
@@ -192,6 +216,11 @@ class ScheduledGestureRecognizer:
         started = time.perf_counter()
         hands = self.gesture.recognize(rgb, pose_map, sides, mp)
         return hands, (time.perf_counter()-started)*1000
+
+    def change_threads(self, count):
+        if self.executor is None:
+            return self.gesture.change_threads(count)
+        return self.executor.submit(self.gesture.change_threads, count).result()
 
     def close(self):
         if self.executor is not None:
