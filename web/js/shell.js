@@ -396,10 +396,6 @@ $('#cameraRotation').addEventListener('change',e=>runAction(async()=>{
   notice(e.target.value==='auto'?'已改为自动转正：看到人以后会自己判断方向':'画面方向已保存，立即生效');
 }));
 
-$('#cameraBackend').addEventListener('change',e=>runAction(async()=>{
-  await post('/api/camera/config',{backend:e.target.value});notice('采集方式已保存，下次连接时生效');
-}));
-
 $('#outputMode').addEventListener('change',e=>runAction(async()=>{
   await updateOutputConfig({mode:e.target.value});await refreshXinput();
   noteOutputMix();
@@ -416,7 +412,7 @@ $('#strength').addEventListener('change',()=>runAction(async()=>{
   await updateOutputConfig({mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain});
 }));
 
-for(const id of ['headAlgorithm','verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','invertY']){
+for(const id of ['verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','invertY']){
   $('#'+id).addEventListener('input',()=>{headSaver.dirty();syncControlLabels()});
   $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels()});
 }
@@ -502,6 +498,7 @@ applyTheme(document.documentElement.dataset.theme||'auto');
 // 设置页左边的分类，一次只看一类。
 export let currentSettingsPane='devices';
 export function showSettingsPane(name){
+  if(name==='macro')name='voice';
   const known=[...document.querySelectorAll('.settings-pane')].some(pane=>pane.dataset.pane===name);
   const pane=known?name:'devices';
   currentSettingsPane=pane;

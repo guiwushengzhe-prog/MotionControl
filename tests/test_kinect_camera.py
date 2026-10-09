@@ -75,6 +75,18 @@ def test_no_depth_setting_for_regular_camera():
         camera.configure_depth(True)
 
 
+def test_sensor_timing_is_reported_separately_from_host_capture_rate():
+    camera = NativeCameraService(SimpleNamespace())
+    camera.selected_backend = "kinect"
+    camera._latest_depth = {"color_frame_interval_ms": 1000 / 15,
+                            "color_exposure_ms": 65, "color_gain": 2}
+    assert camera.performance()["camera_timing"] == {
+        "color_frame_interval_ms": 66.67, "color_exposure_ms": 65, "color_gain": 2,
+    }
+    camera.selected_backend = "dshow"
+    assert camera.performance()["camera_timing"] == {}
+
+
 def test_no_depth_is_exactly_the_current_image_lifts():
     adapter = DepthMarchLifts()
     for i, lift in enumerate((0, .08, 0, -.09, 0, .025, 0)):

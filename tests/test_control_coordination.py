@@ -339,6 +339,11 @@ def test_camera_submits_capture_time_without_building_full_status(monkeypatch):
         assert kwargs["return_status"] is False
         assert kwargs["sample_at"] == camera._latest_capture_at
         assert kwargs["sample_at"] <= time.monotonic()
+        _wait_until(lambda: camera.frames == 1)
+        metrics = camera.performance()
+        stages = metrics["inference_stages_ms"]
+        assert all(value is not None and value >= 0 for value in stages.values())
+        assert sum(stages.values()) == pytest.approx(metrics["inference_avg_ms"], abs=.2)
     finally:
         capture.finish.set()
         camera.stop()

@@ -1,10 +1,23 @@
 import {$,api,notice,post} from './core.js';
 
+let heavyModel,phoneConnected=false,sending=false;
+function renderPhoneModel(){
+  const button=$('#sendHeavyModelBtn'),status=$('#phoneModelStatus');
+  if(!button||!status)return;
+  button.disabled=sending||!phoneConnected||!heavyModel?.available;
+  const size=heavyModel?.size_bytes?` · ${(heavyModel.size_bytes/1024/1024).toFixed(1)} MB`:'';
+  status.textContent=sending?'正在通知手机下载…':heavyModel===undefined?'正在读取模型信息…':!heavyModel?.available?'电脑尚未安装高精度模型':
+    phoneConnected?'按需下载，完成后在手机选择'+size:'连接手机后可添加'+size;
+}
+export function renderPhoneModelState(status){
+  phoneConnected=!!(status.mobile_pose_connected||status.handheld_connected);renderPhoneModel();
+}
+
 export function renderRecognitionPerformance(data){
   if(data.source&&data.source!=='computer')return;
   const status=$('#poseModelStatus'),gesture=$('#gestureModelStatus');
   if(status&&data.actual_model){
-    const name=data.actual_model==='heavy'?'高精度模型':'完整模型';
+    const name=data.actual_model==='heavy'?'高精度模型':'标准模型';
     status.textContent=data.running===false?'下次识别按所选模型运行':data.model_preference==='auto'?`${name} · ${data.auto_model_reason}`:`使用${name}`;
   }
   if(gesture&&data.hand_model_state){
@@ -22,7 +35,7 @@ export async function refreshRecognitionModels(){
       const option=select.querySelector(`option[value="${key}"]`);
       option.disabled=!data.models?.find(model=>model.id==='mp-'+key)?.available;
     }
-    $('#sendHeavyModelBtn').disabled=!data.models?.find(model=>model.id==='mp-heavy')?.available;
+    heavyModel=data.models?.find(model=>model.id==='mp-heavy')||null;renderPhoneModel();
     renderRecognitionPerformance(data);return true;
   }catch{return false}
 }
@@ -34,7 +47,7 @@ export async function selectPoseModel(preference){
 }
 
 export async function sendHeavyModel(){
-  const button=$('#sendHeavyModelBtn');button.disabled=true;
-  try{await post('/api/recognition/models/send',{});notice('已通知手机接收高精度模型；接收完成后，手机会显示模型选择。');}
-  finally{button.disabled=false}
+  if(sending)return;sending=true;renderPhoneModel();
+  try{await post('/api/recognition/models/send',{});notice('已通知手机下载高精度模型；完成后可在手机选择，默认模型不变。');}
+  finally{sending=false;renderPhoneModel()}
 }

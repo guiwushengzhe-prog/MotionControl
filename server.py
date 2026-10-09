@@ -1292,7 +1292,7 @@ _PROCESS_CPU = None
 def process_cpu_percent() -> float | None:
     """本进程自上次调用以来占整机 CPU 的百分比（所有线程合计，已按核数折算）。
 
-    识别在 CPU 上跑（Windows 版 MediaPipe 没有 GPU 推理），所以这就是识别的真实开销。
+    包含后台的所有线程，不能当作单个模型的占用；不包含独立采集子进程。
     第一次调用只是起算点，返回 None。
     """
     global _PROCESS_CPU
@@ -1331,6 +1331,7 @@ def performance_snapshot() -> dict:
     else:
         data = RUNTIME.performance()
     data["process_cpu_percent"] = process_cpu_percent()
+    data["cpu_logical_processors"] = os.cpu_count()
     return data
 
 
