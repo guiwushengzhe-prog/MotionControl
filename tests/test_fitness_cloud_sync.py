@@ -112,7 +112,7 @@ def test_two_pcs_on_one_account_share_the_record_and_logout_revokes(cloud, tmp_p
     assert _wait(lambda: account.signed_in), account.status()
     assert account.status()["display_name"] == "跑步的人"
 
-    first = FitnessStore(tmp_path / "a" / "fitness.json", background=False)
+    first = FitnessStore(tmp_path / "a" / "fitness.json", background=False, minimum_activity_s=0)
     session_id = _workout(first)
     sync = FitnessSync(first, account, background=False)
     assert sync.sync_once(), sync.error
@@ -122,7 +122,7 @@ def test_two_pcs_on_one_account_share_the_record_and_logout_revokes(cloud, tmp_p
     other_dir = tmp_path / "b"
     other_dir.mkdir()
     (other_dir / "cloud_account.json").write_bytes((tmp_path / "a" / "cloud_account.json").read_bytes())
-    second = FitnessStore(other_dir / "fitness.json", background=False)
+    second = FitnessStore(other_dir / "fitness.json", background=False, minimum_activity_s=0)
     assert FitnessSync(second, CloudAccount(other_dir / "cloud_account.json", lambda: base),
                        background=False).sync_once()
     [session] = [item for item in second.history() if item["session_id"] == session_id]

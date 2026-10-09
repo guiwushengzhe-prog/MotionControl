@@ -31,6 +31,7 @@ HR_BUCKET_S = 30
 # 再扣掉 1 梅脱静息消耗，只留活动热量。这条公式在心率低的时候偏高，90 以下仍按动作估。
 HR_KCAL_MIN_BPM = 90
 HR_DEFAULT_AGE = 35
+MINIMUM_ACTIVITY_S = 180.0
 
 
 def heart_rate_active_kcal_per_min(bpm: float, weight_kg: float, age=None, sex=None) -> float:
@@ -56,8 +57,12 @@ def _point(pose, name):
 
 
 class FitnessStore:
-    def __init__(self, path: Path, *, clock=time.monotonic, wall=time.time, background=True):
+    def __init__(self, path: Path, *, clock=time.monotonic, wall=time.time, background=True,
+                 minimum_activity_s=MINIMUM_ACTIVITY_S):
         self.path, self.clock, self.wall = Path(path), clock, wall
+        self.minimum_activity_s = float(minimum_activity_s)
+        if not math.isfinite(self.minimum_activity_s) or self.minimum_activity_s < 0:
+            raise ValueError("最短活动时长无效")
         self.lock = threading.RLock()
         self.profile = dict(DEFAULT_PROFILE)
         self.sessions = []
@@ -141,8 +146,8 @@ class FitnessStore:
         with self.lock:
             action = message.get("action")
             # 接到体感控制后，开始/暂停只有一个来源；独立运动记录仍支持原有入口。
-            if self._control_enabled is not None and action in {"start", "resume", "pause"}:
-                action = "start" if self._control_enabled else "pause"
+            if self._control_enabled is not None and action in {"start", "resume", "pause", "finish"}:
+                action = "start" if self._control_enabled else "finish"
             if action == "profile":
                 self.state()  # 已经达标的日子保留，不因提高目标而撤销打卡。
                 before = dict(self.profile)
@@ -177,8 +182,6 @@ class FitnessStore:
             if self.current:
                 self.current["updated_at_ms"] = round(self.wall() * 1000)
             self._dirty = True
-            if action == "finish" and self._control_enabled:
-                return self.control({"action": "start"})
             return self.state()
 
     def output_changed(self, enabled):
@@ -187,7 +190,12 @@ class FitnessStore:
             if enabled == self._control_enabled:
                 return
             self._control_enabled = enabled
-            self.control({"action": "start" if enabled else "pause"})
+            self.control({"action": "start" if enabled else "finish"})
+
+    def _counted(self, session):
+        seconds = session.get("active_seconds", 0)
+        return (isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
+                and math.isfinite(seconds) and seconds >= self.minimum_activity_s)
 
     def _day(self):
         key = datetime.fromtimestamp(self.wall()).astimezone().date().isoformat()
@@ -324,6 +332,8 @@ class FitnessStore:
             uploaded = self.cloud["uploaded"]
             sessions, bad = [], 0
             for session in self.sessions:
+                if not self._counted(session):
+                    continue
                 if session.get("updated_at_ms", 0) <= uploaded.get(session["session_id"], -1):
                     continue
                 try:
@@ -388,13 +398,15 @@ class FitnessStore:
 
     def history(self):
         with self.lock:
-            return copy.deepcopy(self.sessions)
+            return copy.deepcopy([session for session in self.sessions if self._counted(session)])
 
     def state(self):
         with self.lock:
             result = copy.deepcopy(self.current) if self.current else {"session_id": "", "status": "idle"}
             days = {}
             for session in self.sessions:
+                if not self._counted(session):
+                    continue
                 for date, values in session.get("days", {}).items():
                     row = days.setdefault(date, {"active_seconds": 0., "steps": 0, "estimated_kcal": 0., "action_count": 0})
                     for key in row:
@@ -418,6 +430,8 @@ class FitnessStore:
                           checkins=checkins, streak=streak, experience=experience, level=1 + experience // 100,
                           error=self.error, estimation_reference=ESTIMATION_REFERENCE)
             result["control_enabled"] = self._control_enabled
+            result["minimum_activity_seconds"] = self.minimum_activity_s
+            result["session_counted"] = bool(self.current and self._counted(self.current))
             result["heart_rate"] = self._fresh_hr(self.clock())
             result["heart_rate_source"] = self.heart_rate_source
             result["heart_rate_reader"] = self._heart_reader

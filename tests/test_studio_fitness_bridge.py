@@ -13,7 +13,7 @@ from test_mobile_input_bridge import FakeOutput, FakePeer
 @pytest.fixture
 def bridge(tmp_path):
     instance = InputBridge(FakeOutput())
-    store = FitnessStore(tmp_path / "fitness.json", background=False)
+    store = FitnessStore(tmp_path / "fitness.json", background=False, minimum_activity_s=0)
     instance.configure_fitness(store)
     yield instance, store
     instance.close()

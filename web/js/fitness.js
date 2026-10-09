@@ -8,8 +8,7 @@ if(pane){
     <p class="muted">体感游戏中的身体活动自动记录。热量按动作和体重估算，原地踏步记为步数。</p>
     <div class="fitness-card"><div class="fitness-heading"><h3>这次运动</h3><span id="fitnessStatus">未开始</span></div>
       <div class="fitness-metrics"><div><strong id="fitnessMinutes">0.0</strong><span>活动分钟</span></div><div><strong id="fitnessSteps">0</strong><span>步数</span></div><div><strong id="fitnessKcal">0.0</strong><span>估算活动千卡</span></div></div>
-      <p class="muted">开始控制时自动记录，暂停控制或停止识别时暂停；再次开始控制会继续这次运动。</p>
-      <div class="fitness-actions"><button id="fitnessFinish" hidden>结束这次</button></div>
+      <p class="muted">开始控制时自动记录，暂停控制或停止识别时自动保存本次。有效活动满 3 分钟才计入历史记录和每日累计。</p>
       <p id="fitnessError" class="muted" role="status"></p>
     </div>
     <div class="fitness-card"><div class="fitness-heading"><h3>手环心率</h3><span id="fitnessHeartStatus">未收到心率</span></div>
@@ -50,13 +49,14 @@ if(pane){
   }
   renderHeartConnection();
   const number=n=>Number.isFinite(Number(n))?Number(n):0;
-  const minutes=n=>(number(n)/60).toFixed(1);
+  // 向下显示，避免尚不足三分钟的活动提前显示为 3.0 分钟。
+  const minutes=n=>(Math.floor(Math.max(0,number(n))/6)/10).toFixed(1);
   function render(data){
+    if(state.session_id!==data.session_id||state.status!==data.status)lastHistoryAt=0;
     state=data;
     const running=data.status==='active',paused=data.status==='paused';
-    setText(el('fitnessStatus'),running?'记录中':paused?'已暂停':data.status==='finished'?'已结束':'未开始');
+    setText(el('fitnessStatus'),running?'记录中':paused?'已暂停':data.status==='finished'?(data.session_counted?'已保存':'不足 3 分钟，未计入'):'未开始');
     setText(el('fitnessMinutes'),minutes(data.active_seconds));setText(el('fitnessSteps'),number(data.steps).toLocaleString());setText(el('fitnessKcal'),number(data.estimated_kcal).toFixed(1));
-    el('fitnessFinish').hidden=!paused;
     const profile=data.profile||{},today=data.today||{},goal=profile.primary_goal||'minutes';
     const actual=goal==='steps'?number(today.steps):goal==='kcal'?number(today.estimated_kcal):number(today.active_seconds)/60;
     const target=number(profile[{minutes:'goal_active_minutes',steps:'goal_steps',kcal:'goal_kcal'}[goal]])||1;
@@ -74,10 +74,9 @@ if(pane){
   }
   async function control(action,extra={}){
     if(busy)return;busy=true;
-    try{render(await api('/api/fitness/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,session_id:state.session_id,...extra})}));if(action==='finish')lastHistoryAt=0;}
+    try{render(await api('/api/fitness/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,session_id:state.session_id,...extra})}));}
     catch(error){notice(error.message)}finally{busy=false}
   }
-  el('fitnessFinish').onclick=()=>control('finish');
   el('fitnessHeartConnect').onclick=()=>{void heart.connect()};
   el('fitnessHeartDisconnect').onclick=()=>heart.disconnect('手环已断开');
   el('fitnessPhoneConnect').onclick=async()=>{
@@ -99,7 +98,7 @@ if(pane){
   });
   function renderHome(data){
     const active=data.control_enabled===true;
-    const today=data.today||{},session=data.status==='active'||data.status==='paused';
+    const today=data.today||{};
     const values=active?data:today;
     setText(el('homeFitnessTitle'),active?'这次运动':'今日运动');
     setText(el('homeFitnessMinutes'),minutes(values.active_seconds));
@@ -110,7 +109,7 @@ if(pane){
     const actual=goal==='steps'?number(today.steps):goal==='kcal'?number(today.estimated_kcal):number(today.active_seconds)/60;
     const target=number(profile[{minutes:'goal_active_minutes',steps:'goal_steps',kcal:'goal_kcal'}[goal]])||1;
     setText(el('homeFitnessHint'),data.error||(active?'自动记录中'+hr:
-      `今日目标 ${Math.min(100,Math.floor(actual/target*100))}% · ${session?'开始控制后继续记录':'开始控制后自动记录'}`));
+      `今日目标 ${Math.min(100,Math.floor(actual/target*100))}% · 开始控制后自动记录`));
   }
   form.addEventListener('input',()=>{editing=true});
   // 年龄、性别不填就是 null；别的都是数（主目标是字）。

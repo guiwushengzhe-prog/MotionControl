@@ -78,6 +78,7 @@ def app_http(isolated_user_data, monkeypatch):
     spec = importlib.util.spec_from_file_location("fitness_studio_http_test_server", ROOT / "server.py")
     app = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(app)
+    app.FITNESS.minimum_activity_s = 0  # 页面流程使用短片段，三分钟门槛由专门检查覆盖。
     app.OUTPUT.mouse, app.OUTPUT.keyboard, app.OUTPUT._pad = Mouse(), Keyboard(), Pad()
     # 选择未连接的手机模式；网页启停控制绝不能顺带打开真实摄像头。
     app.RUNTIME.body_mode = "phone"
@@ -161,27 +162,26 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     assert page.locator("#fitnessHeartMax").inner_text() == "112"
     assert page.locator("#fitnessStart").count() == 0
     assert page.locator("#fitnessPause").count() == 0
+    assert page.locator("#fitnessFinish").count() == 0
     session_id = app.FITNESS.state()["session_id"]
     # 可重复的踏步事件，只注入运动计数，不向电脑输出游戏按键。
     app.FITNESS.step_event("left", 10.)
     app.FITNESS.step_event("right", 10.4)
     page.wait_for_function("document.getElementById('fitnessSteps').textContent==='2'")
     page.click("#mainActionBtn")
-    page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已暂停'")
+    page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已保存'")
     app.FITNESS.heart_rate({"bpm": 120})  # 暂停时可以预览，不累计平均值。
     page.wait_for_function("fitnessHeartNow.textContent==='120'")
     assert page.locator("#fitnessHeartAvg").inner_text() == "112"
     page.click("#mainActionBtn")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='记录中'")
-    assert app.FITNESS.state()["session_id"] == session_id
+    assert app.FITNESS.state()["session_id"] != session_id
     page.click("#mainActionBtn")
-    page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已暂停'")
-    page.click("#fitnessFinish")
-    page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已结束'")
+    page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已保存'")
     page.wait_for_function("document.getElementById('fitnessHistory').textContent.includes('2 步')", timeout=8000)
     assert "2 步" in page.locator("#fitnessHistory").inner_text()
-    assert app.FITNESS.history()[-1]["session_id"] == session_id
-    assert app.FITNESS.history()[-1]["steps"] == 2
+    assert app.FITNESS.history()[0]["session_id"] == session_id
+    assert app.FITNESS.history()[0]["steps"] == 2
     page.locator('#fitnessProfile [name="weight_kg"]').fill("63")
     page.click('#fitnessProfile button[type="submit"]')
     page.wait_for_function("document.querySelector('#fitnessProfile [name=weight_kg]').value==='63'")
@@ -199,6 +199,36 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     assert all(any(endpoint in url for _, url in fitness_calls) for endpoint in ("/api/fitness/state", "/api/fitness/control", "/api/fitness/history"))
     assert errors == []
     assert missing == []
+    page.close()
+
+
+def test_main_page_excludes_short_workouts_and_counts_at_three_minutes(browser, app_http):
+    from test_fitness import Clock, march_for
+    app, base, _ = app_http
+    clock = Clock()
+    app.FITNESS.clock, app.FITNESS.wall = clock.monotonic, clock.wall
+    app.FITNESS.minimum_activity_s = 180
+    page = browser.new_page()
+    page.add_init_script("localStorage.setItem('motioncontrol_tutorial_v2',JSON.stringify({seen:1,offered:true}));")
+    page.goto(base + "/")
+    page.wait_for_function("!mainActionBtn.disabled")
+    page.click("#mainActionBtn")
+    march_for(app.FITNESS, clock, 179.5)
+    page.click('nav [data-view="devices"]')
+    page.click('#settingsNav [data-pane="fitness"]')
+    page.wait_for_function("fitnessMinutes.textContent==='2.9'")
+    assert "0.0 分钟" in page.locator("#fitnessToday").inner_text()
+    page.click("#mainActionBtn")
+    page.wait_for_function("fitnessStatus.textContent==='不足 3 分钟，未计入'")
+    assert page.locator("#fitnessHistory").inner_text() == "还没有运动记录"
+    page.click("#mainActionBtn")
+    page.wait_for_function("fitnessStatus.textContent==='记录中'")
+    march_for(app.FITNESS, clock, 180)
+    page.click("#mainActionBtn")
+    page.wait_for_function("fitnessStatus.textContent==='已保存'")
+    page.wait_for_function("fitnessHistory.textContent.includes('3.0 分钟')")
+    assert "3.0 分钟" in page.locator("#fitnessToday").inner_text()
+    assert len(app.FITNESS.history()) == 1
     page.close()
 
 
