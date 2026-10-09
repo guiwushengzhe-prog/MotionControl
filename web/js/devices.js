@@ -303,6 +303,8 @@ export function renderCameraDepth(data){
   if(data?.depth_enabled!==undefined)S.cameraDepthEnabled=!!data.depth_enabled;
   if(data?.decoder!==undefined)S.cameraDecoder=data.decoder;
   if(data?.gpu_decode_supported!==undefined)S.gpuDecodeSupported=!!data.gpu_decode_supported;
+  if(data?.kinect_boost_always!==undefined)S.kinectBoostAlways=!!data.kinect_boost_always;
+  if(data?.kinect_service_boosted!==undefined)S.kinectServiceBoosted=data.kinect_service_boosted;
   setProperty($('#cameraDepth'),'checked',S.cameraDepthEnabled!==false);
   syncCameraDeviceRow();
 }
@@ -312,6 +314,14 @@ export function syncCameraDeviceRow(){
   const computer=($('#poseSource')?.value||'computer')==='computer';
   for(const id of ['cameraDeviceRow','cameraScanRow','cameraRotationRow'])setProperty($('#'+id),'hidden',!computer);
   setProperty($('#cameraDepthRow'),'hidden',!(computer&&S.cameraDepthSupported));
+  // 采集提权只对 Kinect 有意义：它的画面由需要显卡的原厂服务处理。
+  setProperty($('#cameraBoostRow'),'hidden',!(computer&&S.cameraDepthSupported));
+  const boost=$('#cameraBoost');
+  if(boost&&!boost.disabled)setProperty(boost,'checked',!!S.kinectBoostAlways);
+  setProperty($('#cameraBoostStatus'),'textContent',
+    S.kinectServiceBoosted?'已提高：Kinect 原厂服务优先于游戏；服务或电脑重启后会恢复默认'
+    :S.kinectBoostAlways?'已开启：启动 Kinect 时申请，需要管理员确认'
+    :'关闭时只在被拖慢过的游戏里申请；需要管理员确认');
   // 画面解码只对普通摄像头有意义；Kinect 画面由原厂服务处理。
   setProperty($('#cameraDecoderRow'),'hidden',!(computer&&!S.cameraDepthSupported));
   const select=$('#cameraDecoder');if(!select)return;

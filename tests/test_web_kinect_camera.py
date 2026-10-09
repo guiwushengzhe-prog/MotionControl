@@ -206,3 +206,38 @@ def test_regular_camera_decoder_choice_follows_runtime_support(desktop):
     page.evaluate("async()=>{await (await import('/js/devices.js')).refreshCameraConfig()}")
     expect(page.locator("#cameraDecoderRow")).to_be_hidden()
     assert desktop.errors == []
+
+
+def test_kinect_capture_boost_switch(desktop):
+    page, api = desktop.page, desktop.api
+    state = {"camera_index": 0, "camera_device": "kinect2:one", "depth_supported": True, "depth_enabled": False,
+             "preference": "auto", "rotation": "none", "decoder": "cpu", "gpu_decode_supported": False,
+             "kinect_boost_always": False, "kinect_service_boosted": False}
+    posts = []
+    page.route("**/api/camera/config", lambda route: api.fulfill(route, {**state, **api.runtime}))
+    def boost(route):
+        posts.append(route.request.post_data_json)
+        state.update(kinect_boost_always=posts[-1]["always"], kinect_service_boosted=posts[-1]["always"])
+        api.fulfill(route, state)
+    page.route("**/api/camera/kinect-service-priority", boost)
+    page.goto("http://motioncontrol.test")
+    page.click('nav [data-view="devices"]')
+    page.click('#settingsNav [data-pane="devices"]')
+    page.evaluate("async()=>{await (await import('/js/devices.js')).refreshCameraConfig()}")
+    expect(page.locator("#cameraBoostRow")).to_be_visible()
+    expect(page.locator("#cameraDecoderRow")).to_be_hidden()
+    expect(page.locator("#cameraBoost")).not_to_be_checked()
+    expect(page.locator("#cameraBoostStatus")).to_contain_text("只在被拖慢过的游戏里申请")
+    page.locator("#cameraBoost").check()
+    expect(page.locator("#notice")).to_contain_text("已提高 Kinect 采集优先级", timeout=6000)
+    expect(page.locator("#cameraBoostStatus")).to_contain_text("已提高")
+    expect(page.locator("#cameraBoost")).to_be_checked()
+    expect(page.locator("#cameraBoost")).to_be_enabled()
+    page.locator("#cameraBoost").uncheck()
+    expect(page.locator("#notice")).to_contain_text("已关闭并恢复 Kinect 默认优先级", timeout=6000)
+    assert posts == [{"always": True}, {"always": False}]
+    # 普通摄像头不显示采集提权。
+    state.update(camera_device="0", depth_supported=False)
+    page.evaluate("async()=>{await (await import('/js/devices.js')).refreshCameraConfig()}")
+    expect(page.locator("#cameraBoostRow")).to_be_hidden()
+    assert desktop.errors == []

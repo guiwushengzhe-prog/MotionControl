@@ -122,10 +122,11 @@ def test_boost_is_offered_only_when_the_kinect_service_is_starved(monkeypatch, k
     assert NativeCameraService._resource_hint(camera) == {"kind": kind, "actions": expected}
 
 
-def _boost_camera(game="forza", games=("forza",), backend="kinect", running=True):
+def _boost_camera(game="forza", games=("forza",), backend="kinect", running=True, always=False):
     import threading
     remembered = {}
-    camera = SimpleNamespace(running=running, selected_backend=backend, boost_games=set(games),
+    camera = SimpleNamespace(running=running, selected_backend=backend, boost_games=set(games), boost_always=always,
+                             backend_config=lambda: {"kinect_boost_always": camera.boost_always},
                              current_game=lambda: game, kinect_boost_state=None, _boost_declined=set(),
                              _boost_lock=threading.Lock(),
                              _remember=lambda key, value: remembered.update({key: value}))
@@ -152,6 +153,13 @@ def service(monkeypatch):
         state["boosted"] = True
         return {"boosted": True}
     monkeypatch.setattr(kinect_camera, "boost_service", boost)
+    def restore():
+        state["restores"] = state.get("restores", 0) + 1
+        if isinstance(state.get("restore_result"), Exception):
+            raise state["restore_result"]
+        state["boosted"] = False
+        return {"boosted": False}
+    monkeypatch.setattr(kinect_camera, "restore_service", restore)
     return state
 
 
@@ -176,3 +184,58 @@ def test_declined_permission_is_not_asked_again_for_the_same_service(service):
     NativeCameraService.request_boost_for_game(camera)
     NativeCameraService.request_boost_for_game(camera)
     assert service["calls"] == 1 and camera.kinect_boost_state == "declined"
+
+
+def test_restore_runs_the_helper_in_restore_mode(monkeypatch, helper):
+    monkeypatch.setattr("motioncontrol.game_launch.is_administrator", lambda: False)
+    monkeypatch.setattr(kinect_camera, "service_boosted", lambda: False)
+    assert kinect_camera.restore_service() == {"boosted": False}
+    assert helper == [("KinectCamera.exe", "--restore-service")]
+
+
+def test_switch_on_asks_any_game_at_start(service):
+    camera, _ = _boost_camera(game="new-game", games=(), always=True)
+    NativeCameraService.request_boost_for_game(camera)
+    assert service["calls"] == 1
+
+
+def test_switch_on_boosts_now_and_is_remembered(service):
+    camera, remembered = _boost_camera(games=())
+    assert NativeCameraService.configure_boost(camera, True) == {"kinect_boost_always": True}
+    assert service["calls"] == 1 and remembered == {"kinect_boost_always": True}
+
+
+def test_declined_switch_stays_off(service):
+    service["result"] = PermissionError("已取消管理员授权")
+    camera, remembered = _boost_camera(games=())
+    with pytest.raises(PermissionError):
+        NativeCameraService.configure_boost(camera, True)
+    assert camera.boost_always is False and remembered == {}
+    assert not camera._boost_lock.locked()
+
+
+def test_switch_off_restores_and_a_declined_restore_is_reported(service):
+    service["boosted"] = True
+    camera, remembered = _boost_camera(always=True)
+    assert NativeCameraService.configure_boost(camera, False) == {"kinect_boost_always": False}
+    assert service["restores"] == 1 and remembered == {"kinect_boost_always": False}
+    service.update(boosted=True, restore_result=PermissionError("已取消"))
+    camera, _ = _boost_camera(always=True)
+    assert NativeCameraService.configure_boost(camera, False) == {"kinect_boost_always": False, "restore_declined": True}
+    assert camera.boost_always is False
+
+
+def test_switch_without_kinect_only_saves_the_choice(service, monkeypatch):
+    monkeypatch.setattr(kinect_camera, "service_boosted", lambda: None)
+    camera, remembered = _boost_camera(games=())
+    NativeCameraService.configure_boost(camera, True)
+    assert service["calls"] == 0 and remembered == {"kinect_boost_always": True}
+
+
+def test_switch_waits_for_a_pending_confirmation(service):
+    from motioncontrol.control_kernel import CameraUnavailable
+    camera, _ = _boost_camera()
+    camera._boost_lock.acquire()
+    with pytest.raises(CameraUnavailable, match="正在等待管理员确认"):
+        NativeCameraService.configure_boost(camera, True)
+    assert service["calls"] == 0
