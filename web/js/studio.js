@@ -3,7 +3,7 @@ import {readStudioFrame} from './studio-frame.js';
 import {compose,FULL_CROP} from './studio-compose.js';
 import {cropEditor} from './studio-crop.js';
 const root=document.querySelector('#studioRoot');
-const defaults={source:'computer',background:'original',face:'original',layout:'landscape',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false,mirror:true,avatar_preset:'',screen_crop:FULL_CROP,portrait_crop:FULL_CROP};
+const defaults={source:'computer',background:'original',face:'original',layout:'landscape',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false,mirror:true,avatar_preset:'',portrait_zoom:100,screen_crop:FULL_CROP,portrait_crop:FULL_CROP};
 const $=id=>document.getElementById(id);
 const clientId=globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random();
 let config={...defaults},loaded=false,preview=false,starting=false,recording=false,saving=false;
@@ -35,11 +35,12 @@ function errorText(error){
 
 function forgetFrame(){frameEpoch++;frame?.close();frame=null;frameAt=0;draw()}
 function renderControls(){
-  const fields={studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size'};
+  const fields={studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size',studioZoom:'portrait_zoom'};
   for(const [id,key] of Object.entries(fields))$(id).value=String(config[key]??defaults[key]);
   $('studioSystemAudio').checked=!!config.system_audio;
   $('studioMicrophone').checked=!!config.microphone;
   $('studioSizeValue').textContent=config.size+'%';
+  $('studioZoomValue').textContent=config.portrait_zoom+'%';
   $('studioAvatarRow').hidden=config.face!=='avatar';
   $('studioAvatarStatus').textContent=config.avatar_data_url?'已保存头像':'尚未选择头像；暂用遮盖保护人脸';
   for(const button of root.querySelectorAll('[data-avatar-preset]'))button.setAttribute('aria-pressed',String(button.dataset.avatarPreset===config.avatar_preset));
@@ -66,7 +67,7 @@ function renderButtons(){
   $('studioRecordingBadge').hidden=!recording;
   for(const id of ['studioLayout','studioCapture','studioSystemAudio','studioMicrophone'])$(id).disabled=!loaded||busy;
   $('studioSystemAudio').disabled=!loaded||busy||!!screenStream;
-  for(const id of ['studioSource','studioBackground','studioFace','studioPosition','studioSize','studioAvatar'])$(id).disabled=!loaded||starting||saving;
+  for(const id of ['studioSource','studioBackground','studioFace','studioPosition','studioSize','studioZoom','studioAvatar'])$(id).disabled=!loaded||starting||saving;
   for(const button of root.querySelectorAll('[data-avatar-preset]'))button.disabled=!loaded||starting||saving;
 }
 
@@ -318,10 +319,11 @@ async function mount(){
     $('studioReleaseScreenBtn').addEventListener('click',()=>{releaseRecordingSources();renderButtons();status('画面预览已结束')});
     $('studioStartBtn').addEventListener('click',()=>void startRecording());
     $('studioStopBtn').addEventListener('click',stopRecording);
-    for(const [id,key] of Object.entries({studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size'})){
-      $(id).addEventListener('change',event=>void persist({[key]:key==='size'?Number(event.target.value):event.target.value}).catch(()=>{}));
+    for(const [id,key] of Object.entries({studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size',studioZoom:'portrait_zoom'})){
+      $(id).addEventListener('change',event=>void persist({[key]:['size','portrait_zoom'].includes(key)?Number(event.target.value):event.target.value}).catch(()=>{}));
     }
     $('studioSize').addEventListener('input',event=>{$('studioSizeValue').textContent=event.target.value+'%';config.size=Number(event.target.value);draw()});
+    $('studioZoom').addEventListener('input',event=>{$('studioZoomValue').textContent=event.target.value+'%';config.portrait_zoom=Number(event.target.value);draw()});
     for(const [id,key] of [['studioSystemAudio','system_audio'],['studioMicrophone','microphone']])$(id).addEventListener('change',event=>void persist({[key]:event.target.checked}).catch(()=>{}));
     $('studioAvatar').addEventListener('change',event=>void chooseAvatar(event));
     for(const button of root.querySelectorAll('[data-avatar-preset]'))button.addEventListener('click',()=>void choosePreset(button.dataset.avatarPreset));

@@ -52,10 +52,11 @@ def studio_server():
                 self.send_response(200 if original else 204)
                 self.send_header("Content-Type", "image/png")
                 self.send_header("X-Studio-Revision", str(revision))
-                self.send_header("Content-Length", str(len(PNG) if original else 0))
+                picture = state.get("picture", PNG)
+                self.send_header("Content-Length", str(len(picture) if original else 0))
                 self.end_headers()
                 if original:
-                    self.wfile.write(PNG)
+                    self.wfile.write(picture)
             else:
                 super().do_GET()
 
@@ -276,4 +277,45 @@ def test_config_failure_does_not_reveal_or_resume_portrait(browser, studio_serve
     page.click("#studioPreviewBtn")
     page.wait_for_function("document.getElementById('studioStatus').textContent.includes('重新保存')")
     assert page.evaluate("document.getElementById('studioPlaceholder').hidden") is False
+    page.close()
+
+
+def test_camera_zoom_keeps_viewport_clips_overflow_and_is_saved_for_overlay(browser, studio_server):
+    base, state = studio_server
+    # 横向红绿蓝三段，放大后固定竖屏框只留下中间的绿色。
+    row = b"\0" + b"\xff\0\0\xff" * 60 + b"\0\xff\0\xff" * 60 + b"\0\0\xff\xff" * 60
+    state["picture"] = (b"\x89PNG\r\n\x1a\n"
+                        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", 180, 100, 8, 6, 0, 0, 0))
+                        + _png_chunk(b"IDAT", zlib.compress(row * 100)) + _png_chunk(b"IEND", b""))
+    page = browser.new_page()
+    ready(page, base)
+    page.select_option("#studioLayout", "portrait")
+    page.click("#studioPreviewBtn")
+    page.wait_for_function("document.getElementById('studioPlaceholder').hidden")
+    assert page.evaluate("Array.from(document.getElementById('studioCanvas').getContext('2d').getImageData(20,100,1,1).data)") == [16, 16, 20, 255]
+    page.locator("#studioZoom").evaluate("el=>{el.value='325';el.dispatchEvent(new Event('input',{bubbles:true}))}")
+    assert page.locator("#studioZoomValue").text_content() == "325%"
+    assert page.evaluate("[document.getElementById('studioCanvas').width,document.getElementById('studioCanvas').height]") == [720, 1280]
+    assert page.evaluate("Array.from(document.getElementById('studioCanvas').getContext('2d').getImageData(20,100,1,1).data)") == [0, 255, 0, 255]
+    page.locator("#studioZoom").dispatch_event("change")
+    page.wait_for_function("document.getElementById('studioPlaceholder').hidden")
+    assert state["config"]["portrait_zoom"] == 325
+    page.reload()
+    page.wait_for_function("!document.getElementById('studioZoom').disabled")
+    assert page.locator("#studioZoom").input_value() == "325"
+    # 合成时放大只发生在人物框内，不能覆盖人物框以外的游戏像素。
+    result = page.evaluate("""async()=>{
+      const {compose}=await import('/js/studio-compose.js');
+      const screen=document.createElement('canvas'),person=document.createElement('canvas'),out=document.createElement('canvas');
+      screen.width=out.width=1280;screen.height=out.height=720;person.width=180;person.height=100;
+      const s=screen.getContext('2d'),p=person.getContext('2d'),o=out.getContext('2d');
+      s.fillStyle='#123456';s.fillRect(0,0,1280,720);
+      for(const [x,color] of [[0,'red'],[60,'lime'],[120,'blue']]){p.fillStyle=color;p.fillRect(x,0,60,100)}
+      compose(o,screen,person,1280,720,{size:30,position:'bottom-right',portrait_zoom:325});
+      return [[870,600],[1000,600],[1265,600]].map(([x,y])=>Array.from(o.getImageData(x,y,1,1).data));
+    }""")
+    assert result == [[18, 52, 86, 255], [0, 255, 0, 255], [18, 52, 86, 255]]
+    page.goto(base + "/studio-overlay.html")
+    page.wait_for_function("document.getElementById('portrait').width===180 && document.getElementById('portrait').getContext('2d').getImageData(0,0,1,1).data[1]===255")
+    assert page.evaluate("document.getElementById('portrait').height") == 100
     page.close()

@@ -140,7 +140,8 @@ def test_saved_configuration_survives_restart_without_starting_video(factory):
     service, _, _ = factory(clock)
     expected = {"source": "phone", "background": "transparent", "face": "mask",
                 "layout": "portrait", "size": 45, "system_audio": False, "microphone": True,
-                "mirror": False, "portrait_crop": {"x": .1, "y": .1, "width": .8, "height": .8}}
+                "mirror": False, "portrait_zoom": 320,
+                "portrait_crop": {"x": .1, "y": .1, "width": .8, "height": .8}}
     service.update(expected)
     service.demand(True, "preview")
     service.close()
@@ -162,4 +163,13 @@ def test_invalid_crop_keeps_previous_configuration(factory, crop):
     before = service.state()["config"]
     with pytest.raises(ValueError, match="裁切"):
         service.update({"screen_crop": crop})
+    assert service.state()["config"] == before
+
+
+@pytest.mark.parametrize("zoom", [True, "200", 99, 401, float("nan"), float("inf")])
+def test_invalid_zoom_keeps_previous_configuration(factory, zoom):
+    service, _, _ = factory(Clock())
+    before = service.state()["config"]
+    with pytest.raises(ValueError, match="放大"):
+        service.update({"portrait_zoom": zoom})
     assert service.state()["config"] == before
