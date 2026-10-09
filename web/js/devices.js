@@ -125,7 +125,7 @@ function renderPerformance(data){
   $('#perfSummary').textContent='识别';
   $('#perfDetails').textContent=[
     `采集帧率：${formatPerf(data.capture_fps)} · 识别帧率：${formatPerf(data.inference_fps)}${data.network_fps!=null?` · 手机传来：${formatPerf(data.network_fps)}`:''}`,
-    `总延迟：${formatPerf(data.total_latency_ms,' 毫秒')} · 识别处理平均：${formatPerf(data.inference_avg_ms,' 毫秒')}`,
+    `总延迟：${formatPerf(data.total_latency_ms,' 毫秒')} · 单帧处理平均：${formatPerf(data.inference_avg_ms,' 毫秒')}`,
     `预览：${data.preview_ready?'已就绪':'未就绪'} · 跳过旧帧：${data.dropped_frames??0} · 后台占整机处理器：${formatPerf(data.process_cpu_percent,'%')}`,
     ...performanceBreakdown(data),
   ].join('\n');
@@ -133,10 +133,17 @@ function renderPerformance(data){
 
 function performanceBreakdown(data){
   const lines=[],stages=data.inference_stages_ms||{},timing=data.camera_timing||{};
-  if(stages.pose!=null)lines.push(`身体模型：${formatPerf(stages.pose,' 毫秒')} · 手势模型：${formatPerf(stages.hands,' 毫秒')} · 预处理：${formatPerf(stages.prepare,' 毫秒')} · 控制处理：${formatPerf(stages.control,' 毫秒')}`);
+  const duration=Number(data.inference_avg_ms);
+  const stage=(name,value)=>`${name}：${formatPerf(value,' 毫秒')}${duration>0&&Number.isFinite(value)?`（${Math.min(100,Math.round(value/duration*100))}%）`:''}`;
+  if(stages.pose!=null){
+    const model={full:'标准',heavy:'高精度'}[data.actual_model];
+    if(model)lines.push(`当前身体模型：${model}`);
+    lines.push([stage('身体识别调用',stages.pose),stage('手部识别流程',stages.hands),stage('画面准备与点整理',stages.prepare),stage('控制处理',stages.control)].join(' · '));
+    lines.push('身体识别调用包含识别库内部处理；以上均非单独的神经网络耗时。');
+  }
   const interval=timing.color_frame_interval_ms;
   if(interval>0)lines.push(`相机供帧间隔：${formatPerf(interval,' 毫秒')}（约 ${Math.round(1000/interval)} 帧/秒） · 曝光：${formatPerf(timing.color_exposure_ms,' 毫秒')}`);
-  const capture=Number(data.capture_fps),inference=Number(data.inference_fps),duration=Number(data.inference_avg_ms);
+  const capture=Number(data.capture_fps),inference=Number(data.inference_fps);
   if(data.running&&capture>=2&&inference>0&&duration>0){
     if(inference<capture*.9&&duration>1000/capture*.95)lines.push('识别处理未跟上相机；标准或自动模型可减少等待。');
     else if(capture<20&&inference>=capture*.9&&duration<1000/capture*.85)lines.push('识别已跟上相机，当前帧率取决于相机供帧。');
