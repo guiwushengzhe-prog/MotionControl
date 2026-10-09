@@ -219,10 +219,17 @@ def test_changing_game_is_one_searchable_list(ui):
 def test_settings_sections_and_contextual_groups(ui):
     page = ui.page
     _go(page, "devices")
-    for pane in ("view", "body", "voice", "macro", "lab", "devices"):
+    for pane in ("view", "body", "voice", "lab", "devices"):
         page.click(f'#settingsNav [data-pane="{pane}"]')
         visible = page.eval_on_selector_all(".settings-pane", "els => els.filter(el => !el.hidden).map(el => el.dataset.pane)")
         assert visible == [pane]
+    page.click('#settingsNav [data-pane="voice"]')
+    assert page.locator("#commandsPanel .pane-title").inner_text() == "语音和宏"
+    assert page.locator("#personalVoicePanel").is_visible()
+    assert page.locator("#macroPanel").is_visible()
+    assert page.locator('#settingsNav [data-pane="macro"]').count() == 0
+    assert page.locator("#headAlgorithm, #cameraBackend").count() == 0
+    page.click('#settingsNav [data-pane="devices"]')
     # 小入口始终可用，二维码按需展开。
     assert page.locator("#phoneGroup").is_visible()
     assert page.locator("#phoneConnectPanel").is_hidden()

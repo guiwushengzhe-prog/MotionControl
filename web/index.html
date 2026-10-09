@@ -177,8 +177,7 @@
 <button aria-current="true" data-pane="devices"><span class="side-ico" style="--ico:#0a84ff"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="3"></rect><circle cx="12" cy="13.5" r="3.5"></circle><path d="M9 7l1.5-3h3L15 7"></path></svg></span>设备</button>
 <button data-pane="view"><span class="side-ico" style="--ico:#5e5ce6"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M15.5 8.5l-2 5-5 2 2-5z"></path></svg></span>视角</button>
 <button data-pane="body"><span class="side-ico" style="--ico:#28b04e"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.8" r="2"></circle><path d="M5 9h14M12 9v6M12 15l-4 6M12 15l4 6"></path></svg></span>身体识别</button>
-<button data-pane="voice"><span class="side-ico" style="--ico:#ff375f"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></span>语音</button>
-<button data-pane="macro"><span class="side-ico" style="--ico:#8e8e93"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"></rect><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"></path></svg></span>键盘宏</button>
+<button data-pane="voice"><span class="side-ico" style="--ico:#ff375f"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></span>语音和宏</button>
 <button data-pane="fitness"><span class="side-ico" style="--ico:#ff375f"><svg viewBox="0 0 24 24"><path d="M20.8 4.8a5.5 5.5 0 0 0-7.8 0L12 5.9l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.4a5.5 5.5 0 0 0 0-7.8z"></path></svg></span>运动记录</button>
 <button data-pane="studio"><span class="side-ico" style="--ico:#af52de"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="12" height="14" rx="3"></rect><path d="M15 10l6-4v12l-6-4"></path></svg></span>录制与直播</button>
 <button data-pane="lab"><span class="side-ico" style="--ico:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"></path></svg></span>实验与诊断</button>
@@ -210,6 +209,10 @@
 <p class="statusline" id="phoneConnectHint">扫码后记住这台电脑，下次自动连接。</p>
 </div>
 <div class="phone-permission" id="phoneFirewallRow" hidden><span class="statusline warn" id="phoneFirewallStatus"></span><button class="btn" id="phoneFirewallRetry" type="button" hidden>配置连接权限</button></div>
+<details class="row-details" id="phoneModelDetails"><summary>可选模型</summary>
+<p class="fineprint">手机默认使用完整模型。高精度模型按需添加，保存在手机上；不放进默认安装包，也不会自动切换模型。</p>
+<div class="row"><div class="row-main"><span class="name">高精度模型</span><span class="sub" id="phoneModelStatus">连接手机后可添加</span></div><button class="btn" id="sendHeavyModelBtn" disabled>添加到手机</button></div>
+</details>
 <details class="row-details" id="phoneGuide"><summary>连不上？</summary>
 <ol class="steps-text"><li>手机上打开 MotionControl，选「固定摄像头」，点「连接并开始」</li><li>手机和电脑连同一个 Wi-Fi；用数据线时要在手机上打开「USB 网络共享」</li></ol>
 <p class="statusline" id="usbTetherStatus"></p>
@@ -274,10 +277,10 @@
 <div class="group" id="recognitionModels">
 <h2 class="group-title">识别模型</h2>
 <div class="list">
-<div class="row"><div class="row-main"><span class="name">电脑身体模型</span><span class="sub" id="poseModelStatus">自动按识别性能选择</span></div><select class="sel" id="poseModelSelect" aria-label="电脑身体模型"><option value="auto">自动选择</option><option value="full">完整（Full）</option><option value="heavy">高精度（Heavy）</option></select></div>
-<div class="row"><div class="row-main"><span class="name">手势识别</span><span class="sub" id="gestureModelStatus">需要握拳等手势功能时自动加载</span></div><span class="tag">MediaPipe Gesture Recognizer</span></div>
-<div class="row"><div class="row-main"><span class="name">手机高精度模型</span><span class="sub">手机默认用完整模型，收到高精度模型后可自行选择</span></div><button class="btn" id="sendHeavyModelBtn">发送给手机</button></div>
+<div class="row"><label class="row-main" for="poseModelSelect"><span class="name">识别精度</span><span class="sub" id="poseModelStatus">自动按实际识别速度选择</span></label><span class="sel"><select id="poseModelSelect" aria-label="电脑识别精度"><option value="auto">自动（推荐）</option><option value="full">标准</option><option value="heavy">高精度</option></select></span></div>
+<div class="row"><div class="row-main"><span class="name">手势识别</span><span class="sub" id="gestureModelStatus">需要握拳等手势功能时自动加载</span></div><span class="tag plain">按需启用</span></div>
 </div>
+<p class="group-foot">标准适合优先保持帧率；高精度需要更多计算。自动模式会根据实际识别速度选择。</p>
 </div>
 <div class="group" id="zoneFitSettings">
 <h2 class="group-title">量身</h2>
@@ -305,8 +308,10 @@
 </div>
 </section>
 
-<section class="settings-pane" data-pane="voice" hidden="" id="personalVoicePanel">
-<h1 class="pane-title">语音</h1>
+<section class="settings-pane" data-pane="voice" hidden="" id="commandsPanel">
+<h1 class="pane-title">语音和宏</h1>
+<div id="personalVoicePanel">
+<h2 class="group-title">语音口令</h2>
 <div class="group">
 <div class="list">
 <div class="row voice-wake-row"><label class="row-main" for="wakeWord"><span class="name">唤醒词 <small class="row-value">可选</small></span><span class="sub" id="voiceWakeDescription">留空直接说通用口令和系统口令，例如「地图」「紧急停止」</span><span class="sub" id="voiceSystemWakeDescription">本游戏口令始终直接说，不受唤醒词影响。</span></label><input class="field voice-wake-field" id="wakeWord" maxlength="12" placeholder="不需要就留空" aria-describedby="voiceWakeDescription voiceSystemWakeDescription" title="最多 12 个字。只属于你，不分享，换游戏不会改变" type="text"/></div>
@@ -323,15 +328,16 @@
 </div>
 <div class="group-actions"><button class="btn link" id="addVoiceBtn">＋ 添加口令</button><span class="statusline" id="voiceSaveStatus" role="status"></span><button class="btn link" hidden="" id="retryVoiceBtn">重试保存</button></div>
 </div>
-</section>
+</div>
 
-<section class="settings-pane" data-pane="macro" hidden="" id="macroPanel">
-<h1 class="pane-title">键盘宏</h1>
+<div id="macroPanel">
+<h2 class="group-title">宏 · 连续操作</h2>
 <p class="pane-sub">一串按键存成一条，所有游戏的按键映射里都能选它。</p>
 <div class="inline-form"><input class="field" id="macroName" maxlength="20" placeholder="给这条宏起个名字" type="text"/><button class="btn primary" id="macroAddBtn">新建宏</button></div>
 <p class="statusline" id="macroStatus"></p>
 <div id="macroList"></div>
 <p class="fineprint" hidden="" id="macroHint">「按住」是这一步按多久，「然后等」是松开后等多久。最多 12 步、总长 10 秒。</p>
+</div>
 </section>
 
 <section class="settings-pane" data-pane="fitness" hidden="" id="pane-fitness"></section>
@@ -346,13 +352,6 @@
 <div class="row-note"><span class="fineprint" id="stereoQuality"></span><span class="statusline" id="stereoReadout"></span></div>
 <div class="stereo-views" hidden="" id="stereoViews"><figure><canvas id="stereoPcView"></canvas><figcaption>电脑摄像头</figcaption></figure><figure><canvas id="stereoPhoneView"></canvas><figcaption>手机</figcaption></figure></div>
 <p class="row-note fineprint" hidden="" id="stereoLegend">绿点：两台都看到，能算前后；橙点：只有这一台看到。</p>
-</div>
-</div>
-<div class="group">
-<h2 class="group-title">算法</h2>
-<div class="list">
-<div class="row"><label class="row-main" for="headAlgorithm">头部姿态</label><span class="sel"><select id="headAlgorithm"><option value="pnp">三维头姿</option><option value="ratio">脸部比例（实验）</option></select></span></div>
-<div class="row"><label class="row-main" for="cameraBackend"><span class="name">摄像头采集方式</span><span class="sub">下次连接时生效</span></label><span class="sel"><select id="cameraBackend"><option selected="" value="dshow">直接采集（默认）</option><option value="auto">自动</option><option value="msmf">系统媒体采集</option></select></span></div>
 </div>
 </div>
 <div class="group" id="triggerRecordSettings">

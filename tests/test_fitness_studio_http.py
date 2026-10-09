@@ -15,6 +15,40 @@ from test_output_actions_v097 import Mouse, Keyboard, Pad
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_combined_commands_and_optional_phone_model(browser, app_http, tmp_path, monkeypatch):
+    from motioncontrol.recognition_models import RecognitionModels
+    app, base, _ = app_http
+    (tmp_path / "pose_landmarker_heavy.task").write_bytes(b"synthetic model")
+    app.RECOGNITION_MODELS = RecognitionModels(tmp_path)
+    connected, sent = [False], []
+    original_status = app.INPUT_BRIDGE.status
+    monkeypatch.setattr(app.INPUT_BRIDGE, "status", lambda **kw: {
+        **original_status(**kw), "mobile_pose_connected": connected[0]})
+    monkeypatch.setattr(app.INPUT_BRIDGE, "broadcast_control_config", lambda config: sent.append(config))
+    page = browser.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.add_init_script("localStorage.setItem('motioncontrol_tutorial_v2',JSON.stringify({seen:1,offered:true}));")
+    page.goto(base + "/")
+    page.click('nav [data-view="devices"]')
+    page.locator("#phoneModelDetails summary").click()
+    page.wait_for_function("phoneModelStatus.textContent.includes('连接手机后可添加')")
+    assert page.locator("#sendHeavyModelBtn").is_disabled()
+    connected[0] = True
+    page.wait_for_function("!sendHeavyModelBtn.disabled")
+    page.click("#sendHeavyModelBtn")
+    page.wait_for_function("document.body.textContent.includes('默认模型不变')")
+    assert sent[-1]["pose_model_offer"]["id"] == "mp-heavy"
+    page.click('#settingsNav [data-pane="voice"]')
+    assert page.locator("#commandsPanel .pane-title").inner_text() == "语音和宏"
+    assert page.locator("#personalVoicePanel").is_visible() and page.locator("#macroPanel").is_visible()
+    page.locator("#macroName").fill("连续按键")
+    page.click("#macroAddBtn")
+    page.wait_for_function("[...macroList.querySelectorAll('.macro-name')].some(input=>input.value==='连续按键')")
+    assert errors == []
+    page.close()
+
+
 class SyntheticPortrait:
     """替换采集来源，保留真实StudioService和网页处理器。"""
     def __init__(self):
@@ -120,6 +154,11 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     page.click('#settingsNav [data-pane="fitness"]')
     page.wait_for_function("document.querySelector('#fitnessProfile [name=weight_kg]').value !== ''")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='记录中'")
+    assert page.locator("#fitnessHeartStatus").inner_text() == "未收到心率"
+    app.FITNESS.heart_rate({"bpm": 112})
+    page.wait_for_function("document.getElementById('fitnessHeartNow').textContent==='112'")
+    assert page.locator("#fitnessHeartAvg").inner_text() == "112"
+    assert page.locator("#fitnessHeartMax").inner_text() == "112"
     assert page.locator("#fitnessStart").count() == 0
     assert page.locator("#fitnessPause").count() == 0
     session_id = app.FITNESS.state()["session_id"]
@@ -129,6 +168,8 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     page.wait_for_function("document.getElementById('fitnessSteps').textContent==='2'")
     page.click("#mainActionBtn")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已暂停'")
+    assert page.locator("#fitnessHeartNow").inner_text() == "—"
+    assert page.locator("#fitnessHeartAvg").inner_text() == "112"
     page.click("#mainActionBtn")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='记录中'")
     assert app.FITNESS.state()["session_id"] == session_id
@@ -145,6 +186,12 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     page.wait_for_function("document.querySelector('#fitnessProfile [name=weight_kg]').value==='63'")
     assert app.FITNESS.state()["profile"]["weight_kg"] == 63
     assert (user_dir / "fitness.json").is_file()
+    page.click("#fitnessPhoneConnect")
+    page.wait_for_function("!document.getElementById('phoneConnectPanel').hidden")
+    assert page.locator('#phoneConnectPanel').is_visible()
+    assert page.locator('#phoneConnectPanel').evaluate("el=>el===document.activeElement")
+    assert app.RUNTIME.body_mode == "phone"
+    assert not app.RUNTIME.camera.running
     page.click('#settingsNav [data-pane="studio"]')
     page.wait_for_selector("#studioStartBtn")
     assert page.locator("#studioRoot").is_visible()

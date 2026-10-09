@@ -756,6 +756,7 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 
 /* 键盘宏：一条一个块。 */
 #macroList { display: grid; gap: .625rem; }
+#commandsPanel #macroPanel { border-top: 1px solid var(--line); padding-top: 1.5rem; margin-top: 2rem; }
 #macroStatus { margin-top: -10px; }
 .macro { padding: .75rem .875rem; border-radius: var(--radius-lg); background: var(--card); box-shadow: var(--shadow); }
 .macro-head { display: flex; flex-wrap: wrap; align-items: center; gap: .875rem; }

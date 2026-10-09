@@ -1,4 +1,4 @@
-import {renderRecognitionPerformance} from './recognition-models.js';
+import {renderRecognitionPerformance,renderPhoneModelState} from './recognition-models.js';
 // 设置 → 设备：摄像头、手机、麦克风、游戏输出。
 import {$,api,formatPerf,notice,post} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
@@ -44,6 +44,7 @@ export function renderInputStatus(status){
     audioStatus.textContent=ok?'':(S.audioSource==='phone'?'等手机连上，用手机的麦克风':'电脑麦克风还没打开');
   }
   const connected=!!(status.mobile_pose_connected||status.handheld_connected);
+  renderPhoneModelState(status);
   const mobile=$('#mobileStatus');
   mobile.textContent=connected?(status.mobile_pose_connected?'已连接':'手持端已连接'):'没连上';
   mobile.className='tag '+(connected?'ok':'warn');
@@ -123,10 +124,24 @@ function renderPerformance(data){
   if(line&&!S.sourceConnecting&&live&&sourceMode==='computer'){if(!black&&data.depth_active)line.textContent+=' · 深度已启用';else if(!black&&data.depth_error)line.textContent+=' · '+data.depth_error}
   $('#perfSummary').textContent='识别';
   $('#perfDetails').textContent=[
-    `采集帧率：${formatPerf(data.capture_fps)} · 推理帧率：${formatPerf(data.inference_fps)}${data.network_fps!=null?` · 手机传来：${formatPerf(data.network_fps)}`:''}`,
-    `总延迟：${formatPerf(data.total_latency_ms,' 毫秒')} · 推理平均：${formatPerf(data.inference_avg_ms,' 毫秒')}`,
-    `预览：${data.preview_ready?'已就绪':'未就绪'} · 丢帧：${data.dropped_frames??0} · 本程序占 CPU：${formatPerf(data.process_cpu_percent,'%')}`,
+    `采集帧率：${formatPerf(data.capture_fps)} · 识别帧率：${formatPerf(data.inference_fps)}${data.network_fps!=null?` · 手机传来：${formatPerf(data.network_fps)}`:''}`,
+    `总延迟：${formatPerf(data.total_latency_ms,' 毫秒')} · 识别处理平均：${formatPerf(data.inference_avg_ms,' 毫秒')}`,
+    `预览：${data.preview_ready?'已就绪':'未就绪'} · 跳过旧帧：${data.dropped_frames??0} · 后台占整机处理器：${formatPerf(data.process_cpu_percent,'%')}`,
+    ...performanceBreakdown(data),
   ].join('\n');
+}
+
+function performanceBreakdown(data){
+  const lines=[],stages=data.inference_stages_ms||{},timing=data.camera_timing||{};
+  if(stages.pose!=null)lines.push(`身体模型：${formatPerf(stages.pose,' 毫秒')} · 手势模型：${formatPerf(stages.hands,' 毫秒')} · 预处理：${formatPerf(stages.prepare,' 毫秒')} · 控制处理：${formatPerf(stages.control,' 毫秒')}`);
+  const interval=timing.color_frame_interval_ms;
+  if(interval>0)lines.push(`相机供帧间隔：${formatPerf(interval,' 毫秒')}（约 ${Math.round(1000/interval)} 帧/秒） · 曝光：${formatPerf(timing.color_exposure_ms,' 毫秒')}`);
+  const capture=Number(data.capture_fps),inference=Number(data.inference_fps),duration=Number(data.inference_avg_ms);
+  if(data.running&&capture>=2&&inference>0&&duration>0){
+    if(inference<capture*.9&&duration>1000/capture*.95)lines.push('识别处理未跟上相机；标准或自动模型可减少等待。');
+    else if(capture<20&&inference>=capture*.9&&duration<1000/capture*.85)lines.push('识别已跟上相机，当前帧率取决于相机供帧。');
+  }
+  return lines;
 }
 
 export async function refreshPerformance(){try{renderPerformance(await api('/api/performance'))}catch{}}
@@ -179,7 +194,7 @@ function drawStereoView(el,view,other,data){
 
 export async function refreshStereo(){try{renderStereo(await api('/api/stereo'))}catch{}}
 
-export async function refreshCameraConfig(){try{const data=await api('/api/camera/config');const select=$('#cameraBackend');if(select&&data.preference)select.value=data.preference;renderCameraRotation(data);renderCameraDevices(null,data.camera_index,data);renderCameraDepth(data);return true}catch{return false}}
+export async function refreshCameraConfig(){try{const data=await api('/api/camera/config');renderCameraRotation(data);renderCameraDevices(null,data.camera_index,data);renderCameraDepth(data);return true}catch{return false}}
 
 const ROTATION_LABELS={none:'不旋转',cw:'顺时针 90°',ccw:'逆时针 90°','180':'180°'};
 

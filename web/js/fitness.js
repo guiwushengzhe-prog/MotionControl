@@ -11,7 +11,12 @@ if(pane){
       <div class="fitness-actions"><button id="fitnessFinish" hidden>结束这次</button></div>
       <p id="fitnessError" class="muted" role="status"></p>
     </div>
-    <div class="fitness-card"><div class="fitness-heading"><h3>每日目标</h3><span id="fitnessLevel">等级 1</span></div>
+    <div class="fitness-card"><div class="fitness-heading"><h3>手环心率</h3><span id="fitnessHeartStatus">未收到心率</span></div>
+      <div class="fitness-metrics"><div><strong id="fitnessHeartNow">—</strong><span>当前 · 次/分</span></div><div><strong id="fitnessHeartAvg">—</strong><span>本次平均 · 次/分</span></div><div><strong id="fitnessHeartMax">—</strong><span>本次最高 · 次/分</span></div></div>
+      <p class="muted">在手机的运动记录里连接支持心率广播的手环。开始控制后，心率读数同步到这里；暂停时保留本次平均和最高心率。</p>
+      <div class="fitness-actions"><button id="fitnessPhoneConnect" type="button">连接手机</button></div>
+    </div>
+    <div class="fitness-card"><div class="fitness-heading"><h3>身体数据与目标</h3><span id="fitnessLevel">等级 1</span></div>
       <p id="fitnessToday"></p><progress id="fitnessProgress" max="1" value="0" aria-label="每日目标进度"></progress><p id="fitnessCheckins" class="muted"></p>
       <form id="fitnessProfile"><div class="fitness-fields">
         <label>体重（千克）<input name="weight_kg" type="number" min="20" max="300" step="0.1" required></label>
@@ -21,7 +26,7 @@ if(pane){
         <label>活动分钟目标<input name="goal_active_minutes" type="number" min="1" max="300" required></label>
         <label>步数目标<input name="goal_steps" type="number" min="1" max="100000" required></label>
         <label>活动千卡目标<input name="goal_kcal" type="number" min="1" max="5000" required></label>
-      </div><button type="submit">保存目标</button></form>
+      </div><button type="submit">保存身体数据与目标</button></form>
       <p class="muted">默认体重为70千克，请按实际体重修改。年龄、性别可以不填，读到手环心率时用来估热量。达到主目标自动打卡；已完成的打卡会保留。</p>
     </div>
     <div class="fitness-card"><div class="fitness-heading"><h3>云端同步</h3><span id="fitnessCloudState"></span></div>
@@ -47,8 +52,11 @@ if(pane){
     setText(el('fitnessToday'),`今天活动 ${minutes(today.active_seconds)} 分钟 · ${number(today.steps)} 步 · 估算 ${number(today.estimated_kcal).toFixed(1)} 千卡`);
     setText(el('fitnessLevel'),`等级 ${number(data.level)||1} · ${number(data.experience)} 经验`);
     setText(el('fitnessCheckins'),`目标进度 ${Math.min(100,Math.floor(actual/target*100))}% · 连续打卡 ${number(data.streak)} 天 · 累计 ${(data.checkins||[]).length} 天`);
-    const heart=data.hr_avg!=null?` · 平均心率 ${Math.round(data.hr_avg)}、最高 ${Math.round(data.hr_max)}`:'';
-    setText(el('fitnessError'),data.error|| (running?`请保持体感识别开启；暂停和无有效身体画面时不补算。${heart}`:heart.replace(/^ · /,'')));
+    const bpm=running?data.heart_rate:null,hasHeart=Number.isFinite(bpm)&&bpm>0;
+    setText(el('fitnessHeartStatus'),hasHeart?'正在接收':data.hr_avg!=null?(paused?'已暂停':'等待新读数'):'未收到心率');
+    for(const [id,value]of [['fitnessHeartNow',bpm],['fitnessHeartAvg',data.hr_avg],['fitnessHeartMax',data.hr_max]])
+      setText(el(id),Number.isFinite(value)&&value>0?Math.round(value):'—');
+    setText(el('fitnessError'),data.error||(running?'请保持体感识别开启；暂停和无有效身体画面时不补算。':''));
     if(!editing&&!form.contains(document.activeElement))for(const field of form.elements)if(field.name&&profile[field.name]!==undefined)field.value=profile[field.name]??'';
   }
   async function control(action,extra={}){
@@ -57,6 +65,15 @@ if(pane){
     catch(error){notice(error.message)}finally{busy=false}
   }
   el('fitnessFinish').onclick=()=>control('finish');
+  el('fitnessPhoneConnect').onclick=()=>{
+    document.querySelector('nav [data-view="devices"]')?.click();
+    document.querySelector('#settingsNav [data-pane="devices"]')?.click();
+    const button=document.getElementById('phoneConnectBtn');
+    if(!isVisible(button))return;
+    button.click();
+    const panel=document.getElementById('phoneConnectPanel');
+    panel.focus({preventScroll:true});panel.scrollIntoView({block:'start',behavior:'instant'});
+  };
   el('homeFitnessGo')?.addEventListener('click',()=>{
     document.querySelector('[data-view="devices"]')?.click();
     document.querySelector('#settingsNav [data-pane="fitness"]')?.click();

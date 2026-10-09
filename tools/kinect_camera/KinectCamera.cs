@@ -146,7 +146,11 @@ internal static class KinectCamera
                                 bool fresh = depthEnabled && validRatio > .05 &&
                                     Math.Abs(lastColor - lastDepth) <= .08;
                                 bool bodyFresh = fresh && Math.Abs(lastColor - lastBody) <= .08;
+                                ColorCameraSettings cameraSettings = color.ColorCameraSettings;
                                 Send(writer, Fields("width",Width,"height",Height,"qpc",arrived,
+                                    "color_frame_interval_ms",cameraSettings.FrameInterval.TotalMilliseconds,
+                                    "color_exposure_ms",cameraSettings.ExposureTime.TotalMilliseconds,
+                                    "color_gain",cameraSettings.Gain,
                                     "sensor_seconds",lastColor,"device_id","kinect2:"+sensor.UniqueKinectId,
                                     "depth_valid",fresh,"depth_ratio",validRatio,"bodies",bodyFresh ? tracked : new object[0],
                                     "floor",bodyFresh ? floor : null,"color_frames",colorCount,

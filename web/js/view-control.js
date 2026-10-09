@@ -144,7 +144,7 @@ export async function saveViewControlAxis(axis){
   }finally{setViewControlBusy(false);S.headDirty=false;renderViewControl(true)}
 }
 
-export function syncControlLabels(){head.algorithm=$('#headAlgorithm').value;head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.invertY=$('#invertY').checked;setText($('#deadzoneValue'),Math.round(head.deadzone*100)+'%');setText($('#speedXValue'),head.sensitivityX+'%');setText($('#speedYValue'),head.sensitivityY+'%');output.strength=Number($('#strength').value);setText($('#strengthValue'),output.strength+'%')}
+export function syncControlLabels(){head.algorithm='pnp';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.invertY=$('#invertY').checked;setText($('#deadzoneValue'),Math.round(head.deadzone*100)+'%');setText($('#speedXValue'),head.sensitivityX+'%');setText($('#speedYValue'),head.sensitivityY+'%');output.strength=Number($('#strength').value);setText($('#strengthValue'),output.strength+'%')}
 
 export async function pushHeadConfig(){
   syncControlLabels();

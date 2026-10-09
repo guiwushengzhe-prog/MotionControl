@@ -297,7 +297,6 @@ export function renderKernelState(runtime,force=false){
     const signature=JSON.stringify([hs.algorithm,hs.horizontal_algorithm,hs.deadzone,hs.sensitivity_x,hs.sensitivity_y,hs.enabled,hs.invert_y,k.vertical_look?.enabled,k.vertical_look?.exclusive_axes,hs.vertical_exclusive_axes,k.vertical_look?.body_motion_guard]);
     if(force||signature!==headConfigSignature){
     headConfigSignature=signature;
-    $('#headAlgorithm').value=hs.algorithm;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
     head.horizontalAlgorithm=['gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
     head.verticalLookEnabled=k.vertical_look?.enabled===true;

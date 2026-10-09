@@ -3653,6 +3653,9 @@ class NativeCameraService:
         self._capture_times: deque[float] = deque(maxlen=120)
         self._inference_times: deque[float] = deque(maxlen=120)
         self._inference_durations_ms: deque[float] = deque(maxlen=120)
+        self._inference_stages_ms = {
+            name: deque(maxlen=120) for name in ("prepare", "pose", "hands", "control")
+        }
         self._latencies_ms: deque[float] = deque(maxlen=120)
         self._preview_times: deque[float] = deque(maxlen=120)
         self._preview_durations_ms: deque[float] = deque(maxlen=120)
@@ -4091,6 +4094,8 @@ class NativeCameraService:
         self._capture_times.clear()
         self._inference_times.clear()
         self._inference_durations_ms.clear()
+        for samples in self._inference_stages_ms.values():
+            samples.clear()
         self._latencies_ms.clear()
         self._preview_times.clear()
         self._preview_durations_ms.clear()
@@ -4591,7 +4596,9 @@ class NativeCameraService:
                 image = session.mp.Image(image_format=session.mp.ImageFormat.SRGB, data=rgb)
                 timestamp_ms = max(int(captured_at * 1000), self._last_timestamp_ms + 1)
                 self._last_timestamp_ms = timestamp_ms
+                prepared_at = time.perf_counter()
                 result = session.detector.detect_for_video(image, timestamp_ms)
+                pose_finished_at = time.perf_counter()
                 landmarks = result.pose_landmarks[0] if result.pose_landmarks else None
                 world_landmarks = (
                     result.pose_world_landmarks[0]
@@ -4619,7 +4626,9 @@ class NativeCameraService:
                 controller = getattr(self.kernel, "hand_mouse_controller", None)
                 request = controller.tracking_request() if controller and not self.assist else {}
                 sides = request.get("hands", []) if request.get("enabled") else []
+                hands_started_at = time.perf_counter()
                 hands = gesture.recognize(rgb, pose_map, sides, session.mp)
+                hands_finished_at = time.perf_counter()
                 self.hand_model_state, self.hand_model_error = gesture.state, gesture.error
                 with self._condition:
                     if session.stop.is_set() or self._session is not session:
@@ -4636,7 +4645,8 @@ class NativeCameraService:
                                if depth_metadata else {}),
                         )
                     finished = time.monotonic()
-                    inference_ms = (time.perf_counter() - started) * 1000.0
+                    processing_finished_at = time.perf_counter()
+                    inference_ms = (processing_finished_at - started) * 1000.0
                     if (self.rotation == "auto" and not self._rotation_locked
                             and captured_at >= self._rotation_changed_at):
                         self._vote_rotation_locked(pose_map or {}, width, height,
@@ -4648,6 +4658,15 @@ class NativeCameraService:
                     self.last_pose_count = len(result.pose_landmarks or [])
                     self._inference_times.append(finished)
                     self._inference_durations_ms.append(inference_ms)
+                    # 点转换计入预处理；控制处理包含等待提交锁的时间。
+                    stages = {
+                        "prepare": prepared_at - started + hands_started_at - pose_finished_at,
+                        "pose": pose_finished_at - prepared_at,
+                        "hands": hands_finished_at - hands_started_at,
+                        "control": processing_finished_at - hands_finished_at,
+                    }
+                    for name, duration in stages.items():
+                        self._inference_stages_ms[name].append(duration * 1000.0)
                     self._latencies_ms.append(self.last_latency_ms)
                     self.frames += 1
                 if self.model_preference == "auto" and self.actual_model == "heavy":
@@ -4662,6 +4681,8 @@ class NativeCameraService:
                             previous = session.detector
                             session.detector = self._detector = replacement
                             self._inference_durations_ms.clear()
+                            for samples in self._inference_stages_ms.values():
+                                samples.clear()
                             self._inference_times.clear()
                         previous.close()
                 # 控制先提交，人像缓存随后更新；帧、点和遮罩来自同次识别。
@@ -4837,6 +4858,15 @@ class NativeCameraService:
                     if self._inference_durations_ms else None,
                 ),
                 "inference_p95_ms": self._round_or_none(self._p95(self._inference_durations_ms)),
+                "inference_stages_ms": {
+                    name: self._round_or_none(sum(samples) / len(samples)) if samples else None
+                    for name, samples in self._inference_stages_ms.items()
+                },
+                "camera_timing": {
+                    name: round(value, 2)
+                    for name in ("color_frame_interval_ms", "color_exposure_ms", "color_gain")
+                    if (value := _finite((self._latest_depth or {}).get(name))) > 0
+                } if self.selected_backend == "kinect" else {},
                 "pose_frame_age_ms": round(max(0.0, (now - self.last_inference_at) * 1000.0)) if self.last_inference_at else None,
                 "total_latency_ms": self._round_or_none(self.last_latency_ms),
                 "dropped_frames": int(self.dropped_frames),
