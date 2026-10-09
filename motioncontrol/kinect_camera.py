@@ -62,6 +62,91 @@ def list_devices():
     return json.loads(result.stdout.decode("utf-8-sig"))
 
 
+SERVICE_NAME = "kinectservice.exe"
+BOOST_ERRORS = {2: "未找到 Kinect 原厂服务", 3: "没有取得调整原厂服务的权限",
+                4: "显卡调度优先级未被系统接受"}
+_service_pid = None
+
+
+def _service_process():
+    global _service_pid
+    import psutil
+    if _service_pid:
+        try:
+            process = psutil.Process(_service_pid)
+            if process.name().lower() == SERVICE_NAME:
+                return process
+        except psutil.Error:
+            pass
+    for process in psutil.process_iter(["name"]):
+        if (process.info["name"] or "").lower() == SERVICE_NAME:
+            _service_pid = process.pid
+            return process
+    return None
+
+
+def service_boosted():
+    """原厂服务是否已按授权调高；服务或电脑重启后系统恢复默认。读取不需要管理员权限。"""
+    try:
+        import psutil
+        process = _service_process()
+        return None if process is None else process.nice() in (
+            psutil.ABOVE_NORMAL_PRIORITY_CLASS, psutil.HIGH_PRIORITY_CLASS, psutil.REALTIME_PRIORITY_CLASS)
+    except Exception:
+        return None
+
+
+def _run_elevated(executable, arguments, timeout_s):
+    """弹出 Windows 管理员确认，由用户决定；返回退出码。后台发起时确认窗口可能只在任务栏闪烁。"""
+    import ctypes
+    from ctypes import wintypes
+
+    class ShellExecuteInfo(ctypes.Structure):
+        _fields_ = (("cbSize", wintypes.DWORD), ("fMask", wintypes.ULONG), ("hwnd", wintypes.HWND),
+                    ("lpVerb", wintypes.LPCWSTR), ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
+                    ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE),
+                    ("lpIDList", ctypes.c_void_p), ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY),
+                    ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE))
+
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    shell32.ShellExecuteExW.argtypes = (ctypes.POINTER(ShellExecuteInfo),)
+    shell32.ShellExecuteExW.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    # 0x40 保留进程句柄以读取退出码；0x100 等启动完成再返回。窗口隐藏。
+    info = ShellExecuteInfo(cbSize=ctypes.sizeof(ShellExecuteInfo), fMask=0x40 | 0x100, lpVerb="runas",
+                            lpFile=str(executable), lpParameters=arguments, nShow=0)
+    if not shell32.ShellExecuteExW(ctypes.byref(info)):
+        error = ctypes.get_last_error()
+        if error == 1223:  # ERROR_CANCELLED：用户在确认窗口点了“否”。
+            raise PermissionError("已取消管理员授权，原厂服务优先级未改变")
+        raise ctypes.WinError(error)
+    try:
+        if kernel32.WaitForSingleObject(info.hProcess, int(timeout_s * 1000)) != 0:
+            raise TimeoutError("等待调整原厂服务超时")
+        code = wintypes.DWORD()
+        kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(code))
+        return code.value
+    finally:
+        kernel32.CloseHandle(info.hProcess)
+
+
+def boost_service(timeout_s=120):
+    """调高原厂服务的处理器与显卡调度。需要管理员权限：未以管理员运行时先征得用户确认。"""
+    from motioncontrol.game_launch import is_administrator
+    executable = bridge_executable()
+    if is_administrator():
+        code = owned_process.run([str(executable), "--boost-service"], capture_output=True,
+                                 timeout=timeout_s, creationflags=subprocess.CREATE_NO_WINDOW).returncode
+    else:
+        code = _run_elevated(executable, "--boost-service", timeout_s)
+    if code:
+        raise RuntimeError(BOOST_ERRORS.get(code, f"调整原厂服务失败（{code}）"))
+    return {"boosted": bool(service_boosted())}
+
+
 def rotate_point(x, y, rotation):
     if rotation == "cw":
         return 1 - y, x
