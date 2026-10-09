@@ -32,6 +32,7 @@
       <div class="row"><label class="row-main" for="studioSource">体感摄像头</label><span class="sel"><select id="studioSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
       <div class="row"><label class="row-main" for="studioPosition">人物位置</label><span class="sel"><select id="studioPosition"><option value="bottom-right">右下角</option><option value="bottom-left">左下角</option><option value="top-right">右上角</option><option value="top-left">左上角</option></select></span></div>
       <div class="row"><label class="row-main" for="studioSize">人物大小</label><span class="range-in"><input id="studioSize" type="range" min="15" max="65" step="1" value="30"/><b id="studioSizeValue">30%</b></span></div>
+      <div class="row"><label class="row-main" for="studioZoom"><span class="name">摄像头画面放大</span><span class="sub">显示区域不变，超出部分隐藏</span></label><span class="range-in"><input id="studioZoom" type="range" min="100" max="400" step="5" value="100"/><b id="studioZoomValue">100%</b></span></div>
       <div class="row"><label class="row-main" for="studioFace">人脸</label><span class="sel"><select id="studioFace"><option value="original">原样</option><option value="mask">纯色遮盖</option><option value="avatar">图片头像</option></select></span></div>
       <div class="row studio-avatar-row" id="studioAvatarRow" hidden>
         <span class="row-main">头像形象</span>
@@ -43,7 +44,7 @@
         <label class="btn" for="studioAvatar">选自己的图片</label><input id="studioAvatar" type="file" accept="image/png,image/jpeg,image/webp" class="visually-hidden" aria-label="选择头像图片"/><span class="sub" id="studioAvatarStatus"></span>
       </div>
       <div class="row"><label class="row-main" for="studioBackground">人物背景</label><span class="sel"><select id="studioBackground"><option value="original">原样</option><option value="green">绿幕</option><option value="transparent">去掉背景</option></select></span></div>
-    </div><p class="group-foot">镜像沿用「设备 → 摄像头」的设置。裁切仅影响录像和直播，不影响体感识别。遮脸时无法定位人脸会隐藏人物。</p></div>
+    </div><p class="group-foot">镜像沿用「设备 → 摄像头」的设置。裁切和放大仅影响录像和直播，不影响体感识别。遮脸时无法定位人脸会隐藏人物。</p></div>
     <div class="group"><h2 class="group-title">录制声音</h2><div class="list">
       <div class="row"><label class="row-main" for="studioSystemAudio">电脑声音</label><input class="switch" id="studioSystemAudio" type="checkbox" checked/></div>
       <div class="row"><label class="row-main" for="studioMicrophone">麦克风</label><input class="switch" id="studioMicrophone" type="checkbox"/></div>

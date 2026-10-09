@@ -16,7 +16,7 @@ from motioncontrol.studio_portrait import decode_avatar
 DEFAULT_CONFIG = {"source": "computer", "background": "original", "face": "original",
                   "avatar_data_url": "", "layout": "landscape", "position": "bottom-right",
                   "size": 30, "capture": "window", "system_audio": True, "microphone": False,
-                  "mirror": True, "avatar_preset": "",
+                  "mirror": True, "avatar_preset": "", "portrait_zoom": 100,
                   "screen_crop": {"x": 0, "y": 0, "width": 1, "height": 1},
                   "portrait_crop": {"x": 0, "y": 0, "width": 1, "height": 1}}
 MAX_CHUNK_BYTES = 16 * 1024 * 1024
@@ -71,6 +71,11 @@ class StudioService:
             if isinstance(size, bool) or not isinstance(size, (int, float)) or not math.isfinite(size) or not 15 <= size <= 65:
                 raise ValueError("人物大小必须在15%到65%之间")
             config["size"] = int(size)
+        if "portrait_zoom" in patch:
+            zoom = patch["portrait_zoom"]
+            if isinstance(zoom, bool) or not isinstance(zoom, (int, float)) or not math.isfinite(zoom) or not 100 <= zoom <= 400:
+                raise ValueError("摄像头画面放大必须在100%到400%之间")
+            config["portrait_zoom"] = int(zoom)
         for key in ("screen_crop", "portrait_crop"):
             if key not in patch:
                 continue
