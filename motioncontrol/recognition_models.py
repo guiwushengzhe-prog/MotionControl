@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import math
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -117,16 +119,10 @@ class LazyGestureRecognizer:
         height, width = rgb.shape[:2]
         hands = {}
         for side in sides:
-            wrist, elbow = pose_map.get(side + "_wrist"), pose_map.get(side + "_elbow")
-            if not wrist or not elbow or min(wrist["score"], elbow["score"]) < .35:
+            bounds = hand_crop(pose_map, side, width, height)
+            if bounds is None:
                 continue
-            dx, dy = (wrist["x"]-elbow["x"])*width, (wrist["y"]-elbow["y"])*height
-            forearm = math.hypot(dx, dy)
-            if forearm < 8:
-                continue
-            size = int(min(max(forearm*1.5, 48), width, height))
-            x = int(min(max(wrist["x"]*width+dx*.35-size/2, 0), width-size))
-            y = int(min(max(wrist["y"]*height+dy*.35-size/2, 0), height-size))
+            x, y, size = bounds
             crop = cv2.resize(rgb[y:y+size, x:x+size], (256, 256))
             result = self.detector.recognize(mp.Image(image_format=mp.ImageFormat.SRGB, data=crop))
             if result.hand_landmarks:
@@ -134,3 +130,71 @@ class LazyGestureRecognizer:
                                 "z": p.z*size/width, "score": 1.0}
                                for p in result.hand_landmarks[0]]
         return hands
+
+
+def hand_crop(pose_map, side, width, height):
+    """原有手部裁切规则，串行和并行路径共用。"""
+    if not pose_map:
+        return None
+    wrist, elbow = pose_map.get(side + "_wrist"), pose_map.get(side + "_elbow")
+    if not wrist or not elbow or min(wrist["score"], elbow["score"]) < .35:
+        return None
+    dx, dy = (wrist["x"]-elbow["x"])*width, (wrist["y"]-elbow["y"])*height
+    forearm = math.hypot(dx, dy)
+    if forearm < 8:
+        return None
+    size = int(min(max(forearm*1.5, 48), width, height))
+    x = int(min(max(wrist["x"]*width+dx*.35-size/2, 0), width-size))
+    y = int(min(max(wrist["y"]*height+dy*.35-size/2, 0), height-size))
+    return x, y, size
+
+
+def hand_crops_match(previous, current, sides, width, height, hands):
+    """用本帧身体点复核提前裁切；快速移动、丢人、错手时重新识别本帧。"""
+    for side in sides:
+        before = hand_crop(previous, side, width, height)
+        after = hand_crop(current, side, width, height)
+        if before is None or after is None:
+            return False
+        x, y, size = before
+        nx, ny, nsize = after
+        if (abs(nx+nsize/2-x-size/2) > size*.15
+                or abs(ny+nsize/2-y-size/2) > size*.15
+                or not .8 <= nsize/size <= 1.2):
+            return False
+        points = hands.get(side)
+        if points:
+            wrist = current[side + "_wrist"]
+            distance = math.hypot((points[0]["x"]-wrist["x"])*width,
+                                  (points[0]["y"]-wrist["y"])*height)
+            if distance > max(24, nsize/3):
+                return False
+    return True
+
+
+class ScheduledGestureRecognizer:
+    """一个按需线程，与身体识别重叠；不排队、不缓存跨帧手势。"""
+    def __init__(self, path):
+        self.gesture = LazyGestureRecognizer(path)
+        self.executor = None
+
+    def begin(self, rgb, pose_map, sides, mp):
+        if self.executor is None:
+            if not sides:
+                return None
+            self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="motion-camera-hands")
+        return self.executor.submit(self._recognize, rgb, pose_map, sides, mp)
+
+    def _recognize(self, rgb, pose_map, sides, mp):
+        started = time.perf_counter()
+        hands = self.gesture.recognize(rgb, pose_map, sides, mp)
+        return hands, (time.perf_counter()-started)*1000
+
+    def close(self):
+        if self.executor is not None:
+            try:
+                # 同一个线程创建、调用及关闭模型；等待在途调用后才允许新相机启动。
+                self.executor.submit(self.gesture.close).result()
+            finally:
+                self.executor.shutdown(wait=True)
+                self.executor = None
