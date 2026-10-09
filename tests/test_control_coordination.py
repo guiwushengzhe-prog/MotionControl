@@ -349,6 +349,57 @@ def test_camera_submits_capture_time_without_building_full_status(monkeypatch):
         camera.stop()
 
 
+@pytest.mark.parametrize("action", ["stop", "create_failure", "success"])
+def test_thread_adjustment_preserves_camera_ownership_and_closes_replaced_models(monkeypatch, action):
+    from motioncontrol.cpu_inference import FrameThreadBudget
+    import motioncontrol.control_kernel as module
+    capture, original, replacement = FakeCapture(one_frame=True), FakeDetector(), FakeDetector()
+    camera = _camera(monkeypatch, capture, original)
+    mp = SimpleNamespace(Image=lambda **kwargs: kwargs, ImageFormat=SimpleNamespace(SRGB=1))
+    entered, finish = threading.Event(), threading.Event()
+    class Budget(FrameThreadBudget):
+        def observe(self, *_args, **_kwargs):
+            return (3, 1)
+    monkeypatch.setattr(module, "FrameThreadBudget", Budget)
+    monkeypatch.setattr("motioncontrol.cpu_inference.thread_budget", lambda **_kwargs: 6)
+    def create(_choice=None, *, cpu_threads=None):
+        if cpu_threads is None:
+            camera.pose_cpu_threads = 2
+            return mp, original
+        entered.set()
+        if action == "stop":
+            assert finish.wait(2)
+        if action == "create_failure":
+            raise RuntimeError("new task failed")
+        camera.pose_cpu_threads = cpu_threads
+        return mp, replacement
+    monkeypatch.setattr(camera, "_create_detector", create)
+    try:
+        camera.start()
+        assert entered.wait(1)
+        if action == "stop":
+            _shorten_worker_joins(camera, monkeypatch)
+            camera.stop()
+            capture.finish.set()
+            finish.set()
+            _wait_until(lambda: camera._session is None)
+            assert replacement.close_count == original.close_count == capture.release_count == 1
+            assert len(camera.kernel.frames) == 1
+        elif action == "create_failure":
+            _wait_until(lambda: camera._cpu_budget.reason == "线程调整未完成，沿用当前配置")
+            assert camera._session.detector is original and original.close_count == 0
+            assert camera.pose_cpu_threads == 2 and camera.last_error is None
+        else:
+            _wait_until(lambda: camera._session.detector is replacement and original.close_count == 1)
+            assert camera.pose_cpu_threads == 3 and replacement.close_count == 0
+    finally:
+        finish.set()
+        capture.finish.set()
+        camera.stop_and_wait(timeout_s=2)
+    assert original.close_count == 1
+    assert replacement.close_count == (0 if action == "create_failure" else 1)
+
+
 def test_camera_inference_failure_automatically_releases_resources(monkeypatch):
     capture, detector = FakeCapture(one_frame=True), FakeDetector()
 

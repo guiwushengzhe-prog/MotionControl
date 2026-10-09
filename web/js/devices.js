@@ -138,9 +138,10 @@ function performanceBreakdown(data){
   if(stages.pose!=null){
     const model={full:'标准',heavy:'高精度'}[data.actual_model];
     if(model)lines.push(`当前身体模型：${model}`);
-    if(data.pose_cpu_threads!=null)lines.push(`身体计算线程：${data.pose_cpu_threads} · 自动分配`);
+    if(data.pose_cpu_threads!=null)lines.push(`身体计算线程：${data.pose_cpu_threads} · 跟随相机供帧`);
     else if(data.pose_thread_error)lines.push(`身体多线程：未启用 · ${data.pose_thread_error}`);
     if(data.hand_cpu_threads!=null)lines.push(`手部计算线程：${data.hand_cpu_threads} · 按需加载`);
+    if(data.thread_target_ms!=null)lines.push(`整帧处理目标：${formatPerf(data.thread_target_ms,' 毫秒')} · ${data.thread_allocation_reason||'自动调整计算线程'}`);
     const parallel=data.hand_scheduling==='parallel_same_frame';
     lines.push([stage('身体识别调用',stages.pose),stage(parallel?'手部额外等待':'手部识别流程',stages.hands),stage('画面准备与点整理',stages.prepare),stage('控制处理',stages.control)].join(' · '));
     if(parallel&&data.hand_processing_avg_ms!=null)lines.push(`手部独立处理：${formatPerf(data.hand_processing_avg_ms,' 毫秒')} · 与身体并行：${data.hand_parallel_percent??0}% · 已与身体识别重叠的时间不重复计入单帧耗时。`);

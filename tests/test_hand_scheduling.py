@@ -39,14 +39,24 @@ def test_hand_thread_is_lazy_and_closes_model_on_its_own_thread(monkeypatch):
                         lambda *_args: calls.append(("recognize", threading.get_ident())) or {})
     monkeypatch.setattr(LazyGestureRecognizer, "close",
                         lambda *_args: calls.append(("close", threading.get_ident())))
+    monkeypatch.setattr(LazyGestureRecognizer, "change_threads",
+                        lambda *_args: calls.append(("threads", threading.get_ident())) or True)
     scheduled = ScheduledGestureRecognizer(None)
     assert scheduled.begin(None, None, [], None) is None
     assert scheduled.executor is None
     scheduled.begin(None, None, ["left"], None).result()
+    assert scheduled.change_threads(1)
     scheduled.close()
-    assert [item[0] for item in calls] == ["recognize", "close"]
-    assert calls[0][1] == calls[1][1] != threading.get_ident()
+    assert [item[0] for item in calls] == ["recognize", "threads", "close"]
+    assert len({item[1] for item in calls}) == 1 and calls[0][1] != threading.get_ident()
     assert scheduled.executor is None
+
+
+def test_thread_allocation_without_hand_demand_does_not_load_model():
+    scheduled = ScheduledGestureRecognizer(None)
+    assert scheduled.change_threads(2)
+    assert scheduled.executor is None and scheduled.gesture.detector is None
+    assert scheduled.gesture.cpu_threads is None and scheduled.gesture.requested_cpu_threads == 2
 
 
 def test_native_body_threads_use_current_body_before_hand_cropping(monkeypatch):

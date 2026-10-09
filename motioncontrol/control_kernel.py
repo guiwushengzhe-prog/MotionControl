@@ -52,6 +52,7 @@ from motioncontrol import kinect_camera
 from motioncontrol.recognition_models import (
     AutoPoseChoice, ScheduledGestureRecognizer, hand_crop, hand_crops_match,
 )
+from motioncontrol.cpu_inference import FrameThreadBudget
 from motioncontrol.jump_detect import JumpDetector
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
@@ -3575,6 +3576,7 @@ class NativeCameraService:
         self.actual_model = "full"
         self.pose_model_optimization = None
         self.pose_cpu_threads, self.pose_thread_error = None, None
+        self._cpu_budget = FrameThreadBudget()
         self._auto_pose = AutoPoseChoice()
         self.hand_model_state, self.hand_model_error = "idle", None
         self.hand_cpu_threads = None
@@ -4123,7 +4125,7 @@ class NativeCameraService:
             self.model_paths = dict(paths)
             self.model_path = paths.get("full")
 
-    def _create_detector(self, choice=None):
+    def _create_detector(self, choice=None, *, cpu_threads=None):
         choice = choice or (self.model_preference if self.model_preference != "auto" else
                             "heavy" if self.model_paths.get("heavy") else "full")
         self.actual_model = choice
@@ -4155,13 +4157,13 @@ class NativeCameraService:
         )
         from motioncontrol.cpu_inference import create_cpu_task
         try:
-            detector, self.pose_cpu_threads, self.pose_thread_error = create_cpu_task(vision.PoseLandmarker, options)
+            detector, self.pose_cpu_threads, self.pose_thread_error = create_cpu_task(vision.PoseLandmarker, options, threads=cpu_threads)
         except Exception:
             if not optimized:
                 raise
             # 不支持这种输出布局的运行库直接回退，不影响摄像头连接。
             options.base_options = python.BaseOptions(model_asset_path=str(self.model_path))
-            detector, self.pose_cpu_threads, self.pose_thread_error = create_cpu_task(vision.PoseLandmarker, options)
+            detector, self.pose_cpu_threads, self.pose_thread_error = create_cpu_task(vision.PoseLandmarker, options, threads=cpu_threads)
             optimized = None
         self.pose_model_optimization = "skip_unused_mask" if optimized else None
         self._detector_masks_enabled = segmentation_enabled
@@ -4402,6 +4404,7 @@ class NativeCameraService:
             detector = None
             try:
                 self._auto_pose = AutoPoseChoice()
+                self._cpu_budget = FrameThreadBudget()
                 try:
                     mp, detector = self._create_detector()
                 except Exception:
@@ -4603,7 +4606,7 @@ class NativeCameraService:
                 if (self._studio_require_mask != self._detector_masks_enabled
                         and time.monotonic() >= self._studio_switch_after):
                     try:
-                        mp, detector = self._create_detector(self.actual_model)
+                        mp, detector = self._create_detector(self.actual_model, cpu_threads=self.pose_cpu_threads)
                     except Exception as exc:
                         self._studio_error = str(exc)
                         self._studio_switch_after = time.monotonic() + 5.0
@@ -4617,6 +4620,7 @@ class NativeCameraService:
                             self._detector = detector
                             self._studio_error = None
                         old_detector.close()
+                        self._cpu_budget.reset_samples()
                 started = time.perf_counter()
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = session.mp.Image(image_format=session.mp.ImageFormat.SRGB, data=rgb)
@@ -4717,7 +4721,60 @@ class NativeCameraService:
                         self._hand_parallel.append(parallel)
                     self._latencies_ms.append(self.last_latency_ms)
                     self.frames += 1
-                if self.model_preference == "auto" and self.actual_model == "heavy":
+                interval = (depth_metadata or {}).get("color_frame_interval_ms")
+                target_fps = 1000 / interval if interval and interval > 0 else self.actual_capture_fps
+                plan = self._cpu_budget.observe({key: value * 1000 for key, value in stages.items()},
+                    target_fps, self.pose_cpu_threads, gesture.cpu_threads, visible=bool(landmarks), now=finished)
+                adjusted = False
+                if plan:
+                    from motioncontrol.cpu_inference import thread_budget
+                    plan = (min(plan[0], thread_budget()), min(plan[1], thread_budget(hands=True)))
+                    before = self.pose_cpu_threads, self.pose_thread_error
+                    current_hand_threads = gesture.cpu_threads
+                    detector = None
+                    try:
+                        if plan[0] != self.pose_cpu_threads:
+                            mp, detector = self._create_detector(self.actual_model, cpu_threads=plan[0])
+                            if self.pose_cpu_threads != plan[0]:
+                                raise ValueError("新的计算线程设置未生效")
+                        changed_hands = scheduled.change_threads(plan[1])
+                    except Exception:
+                        if detector is not None:
+                            detector.close()
+                        self.pose_cpu_threads, self.pose_thread_error = before
+                        self._cpu_budget.defer(finished, "线程调整未完成，沿用当前配置")
+                    else:
+                        with self._condition:
+                            stopped = session.stop.is_set() or self._session is not session
+                            previous = None
+                            if not stopped:
+                                if detector is not None:
+                                    previous = session.detector
+                                    session.mp, session.detector = mp, detector
+                                    self._detector = detector
+                                self.hand_cpu_threads = gesture.cpu_threads
+                        if stopped:
+                            if detector is not None:
+                                detector.close()
+                            self.pose_cpu_threads, self.pose_thread_error = before
+                            break
+                        if previous is not None:
+                            previous.close()
+                        adjusted = detector is not None or (changed_hands and gesture.cpu_threads != current_hand_threads)
+                        if adjusted:
+                            self._auto_pose = AutoPoseChoice()
+                            previous_pose, previous_sample_at, previous_geometry = None, 0.0, None
+                            self._inference_durations_ms.clear()
+                            for samples in self._inference_stages_ms.values():
+                                samples.clear()
+                            self._hand_processing_ms.clear()
+                            self._hand_parallel.clear()
+                            self._inference_times.clear()
+                        if not adjusted or not changed_hands:
+                            self._cpu_budget.defer(finished, "沿用当前可用计算线程")
+                # 先让计算线程适应相机，再判断自动模型是否确实需要降级。
+                if (not adjusted and (self.pose_cpu_threads is None or self._cpu_budget.ready)
+                        and self.model_preference == "auto" and self.actual_model == "heavy"):
                     choice = self._auto_pose.observe(inference_ms, self.actual_capture_fps,
                         visible=bool(landmarks), hands_ready=gesture.state != "loading")
                     if choice == "full" and self.model_paths.get("full"):
@@ -4735,6 +4792,7 @@ class NativeCameraService:
                             self._hand_parallel.clear()
                             self._inference_times.clear()
                         previous.close()
+                        self._cpu_budget.reset_samples()
                 # 控制先提交，人像缓存随后更新；帧、点和遮罩来自同次识别。
                 if self._studio_enabled:
                     masks = getattr(result, "segmentation_masks", None)
@@ -4897,6 +4955,8 @@ class NativeCameraService:
                 "pose_cpu_threads": self.pose_cpu_threads,
                 "pose_thread_error": self.pose_thread_error,
                 "hand_cpu_threads": self.hand_cpu_threads,
+                "thread_target_ms": self._round_or_none(self._cpu_budget.interval_ms * .9) if self._cpu_budget.interval_ms else None,
+                "thread_allocation_reason": self._cpu_budget.reason,
                 "auto_model_reason": self._auto_pose.reason,
                 "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "camera_resolution": resolution,
