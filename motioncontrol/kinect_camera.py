@@ -66,6 +66,9 @@ SERVICE_NAME = "kinectservice.exe"
 BOOST_ERRORS = {2: "未找到 Kinect 原厂服务", 3: "没有取得调整原厂服务的权限",
                 4: "显卡调度优先级未被系统接受"}
 _service_pid = None
+# 辅助程序退出码对应实际生效的显卡调度级别；只有管理员能读回，所以记下本次结果供诊断。
+GPU_LEVELS = {0: "realtime", 10: "high"}
+last_gpu_priority = None
 
 
 def _service_process():
@@ -98,8 +101,9 @@ def service_boosted():
     try:
         import psutil
         process = _service_process()
+        # 提高时处理器同时调到“高”，以此判断；旧版只调到“高于普通”的视为未提高，会重新申请。
         return None if process is None else process.nice() in (
-            psutil.ABOVE_NORMAL_PRIORITY_CLASS, psutil.HIGH_PRIORITY_CLASS, psutil.REALTIME_PRIORITY_CLASS)
+            psutil.HIGH_PRIORITY_CLASS, psutil.REALTIME_PRIORITY_CLASS)
     except Exception:
         return None
 
@@ -143,6 +147,7 @@ def _run_elevated(executable, arguments, timeout_s):
 
 def _change_service(argument, timeout_s):
     """需要管理员权限：未以管理员运行时先征得用户确认。"""
+    global last_gpu_priority
     from motioncontrol.game_launch import is_administrator
     executable = bridge_executable()
     if is_administrator():
@@ -150,9 +155,11 @@ def _change_service(argument, timeout_s):
                                  timeout=timeout_s, creationflags=subprocess.CREATE_NO_WINDOW).returncode
     else:
         code = _run_elevated(executable, argument, timeout_s)
-    if code:
+    raising = argument == "--boost-service"
+    if code not in (GPU_LEVELS if raising else (0,)):
         raise RuntimeError(BOOST_ERRORS.get(code, f"调整原厂服务失败（{code}）"))
-    return {"boosted": bool(service_boosted())}
+    last_gpu_priority = GPU_LEVELS[code] if raising else None
+    return {"boosted": bool(service_boosted()), "gpu_priority": last_gpu_priority}
 
 
 def boost_service(timeout_s=120):

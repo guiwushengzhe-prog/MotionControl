@@ -197,7 +197,7 @@ function performanceBreakdown(data){
   }
   if(data.capture_decoder==='cpu')lines.push('画面解码：处理器（普通摄像头，不占显卡）');
   else if(data.capture_decoder==='gpu')lines.push('画面解码：显卡加速（普通摄像头；显卡被游戏占满时可能掉帧）');
-  else if(data.capture_decoder==='kinect_service')lines.push(`画面解码：Kinect 原厂服务（需要显卡） · 服务优先级：${data.kinect_service_boosted?'已提高':'默认'}`);
+  else if(data.capture_decoder==='kinect_service')lines.push(`画面解码：Kinect 原厂服务（需要显卡） · 服务优先级：${data.kinect_service_boosted?'已提高'+({realtime:'（显卡实时）',high:'（显卡高）'}[data.kinect_gpu_priority]||''):'默认'}`);
   if(data.kinect_boost_game)lines.push('这个游戏上次 Kinect 被拖慢过：开始识别或切到这个游戏时会先申请提高服务优先级（需要管理员确认）');
   if(data.kinect_boost_state==='declined')lines.push('本次没有同意管理员确认：服务重启前不再自动申请，资源提醒里仍可手动申请');
   else if(data.kinect_boost_state&&data.kinect_boost_state!=='pending')lines.push('自动申请未完成：'+data.kinect_boost_state);
@@ -305,6 +305,7 @@ export function renderCameraDepth(data){
   if(data?.gpu_decode_supported!==undefined)S.gpuDecodeSupported=!!data.gpu_decode_supported;
   if(data?.kinect_boost_always!==undefined)S.kinectBoostAlways=!!data.kinect_boost_always;
   if(data?.kinect_service_boosted!==undefined)S.kinectServiceBoosted=data.kinect_service_boosted;
+  if(data?.kinect_gpu_priority!==undefined)S.kinectGpuPriority=data.kinect_gpu_priority;
   setProperty($('#cameraDepth'),'checked',S.cameraDepthEnabled!==false);
   syncCameraDeviceRow();
 }
@@ -319,7 +320,7 @@ export function syncCameraDeviceRow(){
   const boost=$('#cameraBoost');
   if(boost&&!boost.disabled)setProperty(boost,'checked',!!S.kinectBoostAlways);
   setProperty($('#cameraBoostStatus'),'textContent',
-    S.kinectServiceBoosted?'已提高：Kinect 原厂服务优先于游戏；服务或电脑重启后会恢复默认'
+    S.kinectServiceBoosted?`已提高：Kinect 原厂服务处理器为高${{realtime:'、显卡为实时',high:'、显卡为高'}[S.kinectGpuPriority]||''}；服务或电脑重启后会恢复默认`
     :S.kinectBoostAlways?'已开启：启动 Kinect 时申请，需要管理员确认'
     :'关闭时只在被拖慢过的游戏里申请；需要管理员确认');
   // 画面解码只对普通摄像头有意义；Kinect 画面由原厂服务处理。

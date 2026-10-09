@@ -4075,6 +4075,7 @@ class NativeCameraService:
                 "gpu_decode_supported": self.gpu_decode_supported(),
                 "kinect_boost_always": self.boost_always,
                 "kinect_service_boosted": kinect_camera.service_boosted() if self.depth_supported else None,
+                "kinect_gpu_priority": kinect_camera.last_gpu_priority if self.depth_supported else None,
                 "probe_results": list(self._last_probe_results),
             }
 
@@ -5125,6 +5126,7 @@ class NativeCameraService:
                 # Kinect 画面由原厂服务处理，离不开显卡；普通摄像头报告实际解码方式。
                 "capture_decoder": "kinect_service" if self.selected_backend == "kinect" else self.capture_decoder,
                 "kinect_service_boosted": kinect_camera.service_boosted() if self.selected_backend == "kinect" else None,
+                "kinect_gpu_priority": kinect_camera.last_gpu_priority if self.selected_backend == "kinect" else None,
                 "kinect_boost_game": (self._current_game() in self.boost_games) if self.selected_backend == "kinect" else None,
                 "kinect_boost_state": self.kinect_boost_state,
                 "auto_model_reason": self._auto_pose.reason,

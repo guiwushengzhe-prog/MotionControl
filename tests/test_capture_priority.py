@@ -82,8 +82,21 @@ def helper(monkeypatch):
 
 def test_regular_user_is_asked_for_permission_before_boosting(monkeypatch, helper):
     monkeypatch.setattr("motioncontrol.game_launch.is_administrator", lambda: False)
-    assert kinect_camera.boost_service() == {"boosted": True}
+    assert kinect_camera.boost_service() == {"boosted": True, "gpu_priority": "realtime"}
     assert helper == [("KinectCamera.exe", "--boost-service")]
+
+
+def test_realtime_refused_falls_back_to_high_and_failures_are_reported(monkeypatch, helper):
+    monkeypatch.setattr("motioncontrol.game_launch.is_administrator", lambda: False)
+    monkeypatch.setattr(kinect_camera, "_run_elevated", lambda *_args: 10)
+    assert kinect_camera.boost_service()["gpu_priority"] == "high"
+    monkeypatch.setattr(kinect_camera, "_run_elevated", lambda *_args: 4)
+    with pytest.raises(RuntimeError, match="显卡调度"):
+        kinect_camera.boost_service()
+    # 恢复默认只认成功退出码。
+    monkeypatch.setattr(kinect_camera, "_run_elevated", lambda *_args: 10)
+    with pytest.raises(RuntimeError):
+        kinect_camera.restore_service()
 
 
 def test_administrator_boosts_without_a_second_prompt(monkeypatch, helper):
@@ -91,7 +104,7 @@ def test_administrator_boosts_without_a_second_prompt(monkeypatch, helper):
     runs = []
     monkeypatch.setattr(kinect_camera.owned_process, "run",
                         lambda args, **_kwargs: runs.append(args) or SimpleNamespace(returncode=0))
-    assert kinect_camera.boost_service() == {"boosted": True}
+    assert kinect_camera.boost_service() == {"boosted": True, "gpu_priority": "realtime"}
     assert runs == [["KinectCamera.exe", "--boost-service"]] and helper == []
 
 
@@ -189,7 +202,7 @@ def test_declined_permission_is_not_asked_again_for_the_same_service(service):
 def test_restore_runs_the_helper_in_restore_mode(monkeypatch, helper):
     monkeypatch.setattr("motioncontrol.game_launch.is_administrator", lambda: False)
     monkeypatch.setattr(kinect_camera, "service_boosted", lambda: False)
-    assert kinect_camera.restore_service() == {"boosted": False}
+    assert kinect_camera.restore_service() == {"boosted": False, "gpu_priority": None}
     assert helper == [("KinectCamera.exe", "--restore-service")]
 
 
