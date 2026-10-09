@@ -66,9 +66,9 @@ internal static class KinectCamera
         if (pixels != null) writer.Write(pixels);
         writer.Flush();
     }
-    // 管理员授权后单次运行：调高原厂服务的处理器与显卡调度，游戏占满显卡时它仍能按时出帧。
+    // 管理员授权后单次运行：调高（或恢复）原厂服务的处理器与显卡调度，游戏占满显卡时它仍能按时出帧。
     // 只针对 KinectService；服务或电脑重启后系统恢复默认，需要再次授权。
-    static int BoostService()
+    static int SetServicePriority(bool raise)
     {
         Process[] found = Process.GetProcessesByName("KinectService");
         if (found.Length == 0) { Console.Error.WriteLine("未找到 Kinect 原厂服务"); return 2; }
@@ -76,10 +76,10 @@ internal static class KinectCamera
         {
             Process.EnterDebugMode(); // 原厂服务以系统账户运行，需要调试特权才能打开。
             Process service = found[0];
-            service.PriorityClass = ProcessPriorityClass.AboveNormal;
-            // 4 = D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH。它的显卡工作量很小，排在游戏前面对游戏影响有限；
+            service.PriorityClass = raise ? ProcessPriorityClass.AboveNormal : ProcessPriorityClass.Normal;
+            // 4 = D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH，2 = NORMAL。它的显卡工作量很小，排在游戏前面对游戏影响有限；
             // 实时级需要额外特权，也会压过系统画面合成，不用。
-            int status = D3DKMTSetProcessSchedulingPriorityClass(service.Handle, 4);
+            int status = D3DKMTSetProcessSchedulingPriorityClass(service.Handle, raise ? 4 : 2);
             if (status != 0) { Console.Error.WriteLine("显卡调度优先级未被接受：0x" + status.ToString("X8")); return 4; }
             return 0;
         }
@@ -87,7 +87,8 @@ internal static class KinectCamera
     }
     public static int Main(string[] args)
     {
-        if (Array.IndexOf(args, "--boost-service") >= 0) return BoostService();
+        if (Array.IndexOf(args, "--boost-service") >= 0) return SetServicePriority(true);
+        if (Array.IndexOf(args, "--restore-service") >= 0) return SetServicePriority(false);
         try
         {
             Console.OutputEncoding = new UTF8Encoding(false);

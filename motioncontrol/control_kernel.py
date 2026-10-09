@@ -3582,6 +3582,8 @@ class NativeCameraService:
         self.capture_decoder = None
         # 上次在这些游戏里 Kinect 采集被显卡拖慢过：再开这些游戏时先申请提高原厂服务优先级。
         self.boost_games = {str(game) for game in (self._remembered("kinect_boost_games", []) or [])}
+        # “提高采集优先级”开关：开启后每次启动 Kinect 都申请，不限游戏。
+        self.boost_always = bool(self._remembered("kinect_boost_always", False))
         self.current_game = None  # 由服务器提供，返回当前游戏编号
         self.kinect_boost_state = None
         self._boost_declined = set()
@@ -4071,6 +4073,8 @@ class NativeCameraService:
                 "cached": bool(cache),
                 "decoder": self.decoder_preference,
                 "gpu_decode_supported": self.gpu_decode_supported(),
+                "kinect_boost_always": self.boost_always,
+                "kinect_service_boosted": kinect_camera.service_boosted() if self.depth_supported else None,
                 "probe_results": list(self._last_probe_results),
             }
 
@@ -4531,7 +4535,7 @@ class NativeCameraService:
                 for _ in session.threads[started:]:
                     self._worker_finished(session)
                 raise CameraUnavailable(f"摄像头工作线程启动失败：{exc}") from exc
-            if self.selected_backend == "kinect" and self.boost_games:
+            if self.selected_backend == "kinect" and (self.boost_always or self.boost_games):
                 self.request_boost_for_game_async()
             return self.status()
 
@@ -4549,8 +4553,9 @@ class NativeCameraService:
             self._remember("kinect_boost_games", sorted(self.boost_games))
 
     def request_boost_for_game(self) -> None:
-        """当前游戏上次拖慢过、原厂服务又未调高时申请提高；管理员确认由用户决定。"""
-        if not self.running or self.selected_backend != "kinect" or self._current_game() not in self.boost_games:
+        """开关已开启或当前游戏上次拖慢过、原厂服务又未调高时申请提高；管理员确认由用户决定。"""
+        if (not self.running or self.selected_backend != "kinect"
+                or not (self.boost_always or self._current_game() in self.boost_games)):
             return
         if not self._boost_lock.acquire(blocking=False):
             return
@@ -4571,6 +4576,35 @@ class NativeCameraService:
                 self.kinect_boost_state = str(exc)
         finally:
             self._boost_lock.release()
+
+    def configure_boost(self, enabled) -> dict:
+        """“提高采集优先级”开关：开启立即申请；关闭时恢复默认。两者都需要管理员确认。
+
+        开启被拒绝时开关保持关闭；关闭时恢复被拒绝，开关仍关闭，已提高的状态保持到服务重启。
+        Kinect 未接入时只保存选择，下次启动 Kinect 再申请。
+        """
+        if not isinstance(enabled, bool):
+            raise CameraUnavailable("提高采集优先级必须为开或关")
+        if not self._boost_lock.acquire(blocking=False):
+            raise CameraUnavailable("正在等待管理员确认，请先在 Windows 弹出的窗口中选择")
+        result = {}
+        try:
+            boosted = kinect_camera.service_boosted()
+            if enabled and boosted is False:
+                kinect_camera.boost_service()
+            elif not enabled and boosted:
+                try:
+                    kinect_camera.restore_service()
+                except PermissionError:
+                    result["restore_declined"] = True
+            self.boost_always = enabled
+            self._remember("kinect_boost_always", enabled)
+            if enabled:
+                self._boost_declined.discard(kinect_camera.service_pid())
+                self.kinect_boost_state = None
+        finally:
+            self._boost_lock.release()
+        return {**self.backend_config(), **result}
 
     def request_boost_for_game_async(self) -> None:
         threading.Thread(target=self.request_boost_for_game, name="kinect-service-boost", daemon=True).start()

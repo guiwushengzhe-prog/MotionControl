@@ -371,6 +371,19 @@ async function scanCameras(){
 
 bind('cameraScanBtn',scanCameras);
 
+// 开关两个方向都会弹出 Windows 管理员确认；等待期间锁住开关，不占用其他操作。
+$('#cameraBoost').addEventListener('change',e=>{
+  const box=e.currentTarget,always=box.checked;box.disabled=true;
+  notice('请在 Windows 弹出的管理员确认中选择“是”；没看到窗口时，点任务栏里闪烁的图标。');
+  post('/api/camera/kinect-service-priority',{always},130000)
+    .then(data=>{
+      notice(always?(data.kinect_service_boosted?'已提高 Kinect 采集优先级，之后启动 Kinect 会自动保持':'已开启，下次启动 Kinect 时申请')
+        :data.restore_declined?'已关闭；这次没有恢复，已提高的状态保持到服务或电脑重启':'已关闭并恢复 Kinect 默认优先级');
+    })
+    .catch(error=>notice(String(error?.message||error)))
+    .finally(async()=>{box.disabled=false;await refreshCameraConfig()});
+});
+
 $('#cameraDecoder').addEventListener('change',e=>runAction(async()=>{
   try{
     const data=await post('/api/camera/config',{decoder:e.target.value},CAMERA_REQUEST_TIMEOUT);

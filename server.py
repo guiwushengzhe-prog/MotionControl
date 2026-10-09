@@ -2306,9 +2306,14 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "请从本机控制页面操作"}, 403)
                 return
             try:
-                self._send_json({"ok": True, **kinect_camera.boost_service()})
+                if isinstance(body, dict) and "always" in body:
+                    # 设备页的“提高采集优先级”开关。
+                    self._send_json({"ok": True, **RUNTIME.camera.configure_boost(body["always"])})
+                else:
+                    self._send_json({"ok": True, **kinect_camera.boost_service()})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), "boosted": bool(kinect_camera.service_boosted())}, 400)
+                self._send_json({"ok": False, "error": str(exc), "boosted": bool(kinect_camera.service_boosted()),
+                                 **RUNTIME.camera_backend_config()}, 400)
             return
         if route == "/api/head/calibration/start":
             if not self._is_loopback():

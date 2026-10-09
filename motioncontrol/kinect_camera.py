@@ -141,18 +141,28 @@ def _run_elevated(executable, arguments, timeout_s):
         kernel32.CloseHandle(info.hProcess)
 
 
-def boost_service(timeout_s=120):
-    """调高原厂服务的处理器与显卡调度。需要管理员权限：未以管理员运行时先征得用户确认。"""
+def _change_service(argument, timeout_s):
+    """需要管理员权限：未以管理员运行时先征得用户确认。"""
     from motioncontrol.game_launch import is_administrator
     executable = bridge_executable()
     if is_administrator():
-        code = owned_process.run([str(executable), "--boost-service"], capture_output=True,
+        code = owned_process.run([str(executable), argument], capture_output=True,
                                  timeout=timeout_s, creationflags=subprocess.CREATE_NO_WINDOW).returncode
     else:
-        code = _run_elevated(executable, "--boost-service", timeout_s)
+        code = _run_elevated(executable, argument, timeout_s)
     if code:
         raise RuntimeError(BOOST_ERRORS.get(code, f"调整原厂服务失败（{code}）"))
     return {"boosted": bool(service_boosted())}
+
+
+def boost_service(timeout_s=120):
+    """调高原厂服务的处理器与显卡调度。"""
+    return _change_service("--boost-service", timeout_s)
+
+
+def restore_service(timeout_s=120):
+    """恢复原厂服务的默认处理器与显卡调度。"""
+    return _change_service("--restore-service", timeout_s)
 
 
 def rotate_point(x, y, rotation):
