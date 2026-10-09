@@ -13,7 +13,7 @@ async function next(){
     if(epoch!==generation){bitmap.close();return}
     const crop=config.portrait_crop||FULL_CROP,[w,h]=sourceSize(bitmap,crop);
     canvas.width=Math.max(1,Math.round(w));canvas.height=Math.max(1,Math.round(h));
-    clear();contained(ctx,bitmap,0,0,canvas.width,canvas.height,crop,config.portrait_zoom);bitmap.close();
+    clear();contained(ctx,bitmap,0,0,canvas.width,canvas.height,crop,config.portrait_zoom,config.portrait_pan);bitmap.close();
   }catch{clear()}
   finally{setTimeout(next,100)}
 }

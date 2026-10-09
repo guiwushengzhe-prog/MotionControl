@@ -86,12 +86,14 @@ class LazyGestureRecognizer:
     def __init__(self, path: Path | None):
         self.path, self.detector = path, None
         self.state, self.error = "idle", None
+        self.cpu_threads = None
 
     def close(self):
         if self.detector:
             self.detector.close()
             self.detector = None
         self.state, self.error = "idle", None
+        self.cpu_threads = None
 
     def configure(self, enabled: bool):
         if not enabled:
@@ -103,10 +105,11 @@ class LazyGestureRecognizer:
                 from mediapipe.tasks import python
                 from mediapipe.tasks.python import vision
                 self.state = "loading"
-                self.detector = vision.GestureRecognizer.create_from_options(
-                    vision.GestureRecognizerOptions(
+                from motioncontrol.cpu_inference import create_cpu_task
+                self.detector, self.cpu_threads, _ = create_cpu_task(
+                    vision.GestureRecognizer, vision.GestureRecognizerOptions(
                         base_options=python.BaseOptions(model_asset_path=str(self.path)),
-                        running_mode=vision.RunningMode.IMAGE, num_hands=1))
+                        running_mode=vision.RunningMode.IMAGE, num_hands=1), hands=True)
                 self.state = "ready"
             except Exception as exc:
                 self.state, self.error = "error", str(exc)

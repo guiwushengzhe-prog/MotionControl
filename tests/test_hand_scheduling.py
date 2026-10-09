@@ -49,6 +49,49 @@ def test_hand_thread_is_lazy_and_closes_model_on_its_own_thread(monkeypatch):
     assert scheduled.executor is None
 
 
+def test_native_body_threads_use_current_body_before_hand_cropping(monkeypatch):
+    capture, detector = FakeCapture(one_frame=True), FakeDetector()
+    camera = _camera(monkeypatch, capture, detector)
+    camera.pose_cpu_threads = 6
+    camera.kernel.hand_mouse_controller = SimpleNamespace(tracking_request=lambda: {"enabled": True, "hands": ["left"]})
+    entered, finish = threading.Event(), threading.Event()
+    pose_calls, hand_calls = [], []
+    def detect(image, _timestamp):
+        pose_calls.append(image["data"])
+        if len(pose_calls) == 2:
+            entered.set()
+            assert finish.wait(2)
+        pose = hand_pose()
+        pose["left_wrist"]["x"] = .8 if len(pose_calls) == 2 else .4
+        points = [SimpleNamespace(x=pose.get(name, {}).get("x", .5), y=pose.get(name, {}).get("y", .5), z=0, visibility=1) for name in MP_NAMES]
+        return SimpleNamespace(pose_landmarks=[points], pose_world_landmarks=[])
+    def recognize(_self, rgb, pose, _sides, _mp):
+        hand_calls.append((rgb, pose))
+        return {}
+    monkeypatch.setattr(detector, "detect_for_video", detect)
+    monkeypatch.setattr(LazyGestureRecognizer, "recognize", recognize)
+    try:
+        camera.start()
+        _wait_until(lambda: camera.frames == 1)
+        second_frame = SimpleNamespace(shape=(480, 640, 3))
+        with camera._condition:
+            camera._latest_frame = second_frame
+            camera._latest_sequence += 1
+            camera._latest_capture_at += .033
+            camera._condition.notify_all()
+        assert entered.wait(1)
+        assert len(hand_calls) == 1, "内部多线程启用后，手部不应提前用上一帧身体点裁切"
+        finish.set()
+        _wait_until(lambda: camera.frames == 2)
+        assert len(hand_calls) == 2 and hand_calls[1][0] is second_frame
+        assert hand_calls[1][1]["left_wrist"]["x"] == .8
+        assert camera.performance()["hand_scheduling"] == "serial_same_frame"
+    finally:
+        finish.set()
+        capture.finish.set()
+        camera.stop_and_wait(timeout_s=2)
+
+
 @pytest.mark.parametrize("action", ["normal", "stop", "moved", "configuration", "expired", "rotated", "lost"])
 def test_camera_parallel_hands_keep_frame_and_stop_ownership(monkeypatch, action):
     capture, detector = FakeCapture(one_frame=True), FakeDetector()

@@ -3574,8 +3574,10 @@ class NativeCameraService:
             self.model_preference = "auto"
         self.actual_model = "full"
         self.pose_model_optimization = None
+        self.pose_cpu_threads, self.pose_thread_error = None, None
         self._auto_pose = AutoPoseChoice()
         self.hand_model_state, self.hand_model_error = "idle", None
+        self.hand_cpu_threads = None
         # 不写死 0。一台电脑上可以有好几个摄像头（内置的、外接的、虚拟的），
         # 而 0 号未必是对着人的那个——以前这个数字没有任何地方能改，插了采集卡
         # 或者装了 OBS 虚拟摄像头的人就只能对着一块黑屏，没有别的办法。
@@ -4151,14 +4153,15 @@ class NativeCameraService:
             min_tracking_confidence=0.35,
             output_segmentation_masks=segmentation_enabled,
         )
+        from motioncontrol.cpu_inference import create_cpu_task
         try:
-            detector = vision.PoseLandmarker.create_from_options(options)
+            detector, self.pose_cpu_threads, self.pose_thread_error = create_cpu_task(vision.PoseLandmarker, options)
         except Exception:
             if not optimized:
                 raise
             # 不支持这种输出布局的运行库直接回退，不影响摄像头连接。
             options.base_options = python.BaseOptions(model_asset_path=str(self.model_path))
-            detector = vision.PoseLandmarker.create_from_options(options)
+            detector, self.pose_cpu_threads, self.pose_thread_error = create_cpu_task(vision.PoseLandmarker, options)
             optimized = None
         self.pose_model_optimization = "skip_unused_mask" if optimized else None
         self._detector_masks_enabled = segmentation_enabled
@@ -4623,9 +4626,9 @@ class NativeCameraService:
                 request = controller.tracking_request() if controller and not self.assist else {}
                 sides = request.get("hands", []) if request.get("enabled") else []
                 geometry = (width, height, frame_rotation)
-                # 只借上一帧身体点定位，本帧手部像素与身体像素完全相同。
-                # 旧点超过 120 毫秒、画面转向或首次识别时沿用原串行路径。
-                parallel = bool(sides and previous_geometry == geometry
+                # 模型内部多线程生效时，先取得本帧身体点再裁切手部。
+                # 未开放该接口的运行库沿用经本帧复核的并行路径。
+                parallel = bool(self.pose_cpu_threads is None and sides and previous_geometry == geometry
                     and 0 < captured_at-previous_sample_at <= .120
                     and all(hand_crop(previous_pose, side, width, height) for side in sides))
                 hand_job = scheduled.begin(rgb, previous_pose, sides, session.mp) if parallel else None
@@ -4668,6 +4671,7 @@ class NativeCameraService:
                 previous_pose, previous_sample_at, previous_geometry = pose_map, captured_at, geometry
                 hands_finished_at = time.perf_counter()
                 self.hand_model_state, self.hand_model_error = gesture.state, gesture.error
+                self.hand_cpu_threads = gesture.cpu_threads
                 with self._condition:
                     if session.stop.is_set() or self._session is not session:
                         break
@@ -4890,6 +4894,9 @@ class NativeCameraService:
                 "model_preference": self.model_preference,
                 "actual_model": self.actual_model,
                 "pose_model_optimization": self.pose_model_optimization,
+                "pose_cpu_threads": self.pose_cpu_threads,
+                "pose_thread_error": self.pose_thread_error,
+                "hand_cpu_threads": self.hand_cpu_threads,
                 "auto_model_reason": self._auto_pose.reason,
                 "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "camera_resolution": resolution,
@@ -4911,7 +4918,7 @@ class NativeCameraService:
                     name: self._round_or_none(sum(samples) / len(samples)) if samples else None
                     for name, samples in self._inference_stages_ms.items()
                 },
-                "hand_scheduling": "parallel_same_frame",
+                "hand_scheduling": "serial_same_frame" if self.pose_cpu_threads is not None else "parallel_same_frame",
                 "hand_processing_avg_ms": self._round_or_none(
                     sum(self._hand_processing_ms)/len(self._hand_processing_ms)
                     if self._hand_processing_ms else None),
