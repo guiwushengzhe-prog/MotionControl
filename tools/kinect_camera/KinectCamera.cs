@@ -15,6 +15,9 @@ internal static class KinectCamera
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     static double Qpc() { return (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency; }
     [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint milliseconds);
+    [StructLayout(LayoutKind.Sequential)] struct PowerThrottling { public uint Version, ControlMask, StateMask; }
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern bool SetProcessInformation(IntPtr process, int infoClass, ref PowerThrottling info, int size);
     static bool Finite(float v) { return !Single.IsNaN(v) && !Single.IsInfinity(v); }
     static Dictionary<string, object> Fields(params object[] pairs)
     {
@@ -84,6 +87,10 @@ internal static class KinectCamera
             bool depthEnabled = Array.IndexOf(args, "--no-depth") < 0;
             // 默认计时精度下 Sleep(1) 约 15.6 毫秒，会给每帧白白加上等待。
             timeBeginPeriod(1);
+            // 游戏在前台时不被系统压低调度或节能降速；只到“高于普通”，不抢游戏输入。
+            Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal;
+            var throttling = new PowerThrottling { Version = 1, ControlMask = 0x1 | 0x4, StateMask = 0 };
+            SetProcessInformation(GetCurrentProcess(), 4, ref throttling, Marshal.SizeOf(throttling));
             try
             {
             // 原厂深度与骨骼在显卡上计算；分开读取，游戏占满显卡时彩色画面不必等它们同步。
