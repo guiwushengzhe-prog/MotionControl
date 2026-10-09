@@ -49,7 +49,9 @@ from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.responsive_march import ResponsiveMarch
 from motioncontrol.depth_march import DepthMarchLifts
 from motioncontrol import kinect_camera
-from motioncontrol.recognition_models import AutoPoseChoice, LazyGestureRecognizer
+from motioncontrol.recognition_models import (
+    AutoPoseChoice, ScheduledGestureRecognizer, hand_crop, hand_crops_match,
+)
 from motioncontrol.jump_detect import JumpDetector
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
@@ -3657,6 +3659,9 @@ class NativeCameraService:
         self._inference_stages_ms = {
             name: deque(maxlen=120) for name in ("prepare", "pose", "hands", "control")
         }
+        self._hand_processing_ms: deque[float] = deque(maxlen=120)
+        self._hand_parallel: deque[bool] = deque(maxlen=120)
+        self.hand_crop_retries = 0
         self._latencies_ms: deque[float] = deque(maxlen=120)
         self._preview_times: deque[float] = deque(maxlen=120)
         self._preview_durations_ms: deque[float] = deque(maxlen=120)
@@ -4097,6 +4102,9 @@ class NativeCameraService:
         self._inference_durations_ms.clear()
         for samples in self._inference_stages_ms.values():
             samples.clear()
+        self._hand_processing_ms.clear()
+        self._hand_parallel.clear()
+        self.hand_crop_retries = 0
         self._latencies_ms.clear()
         self._preview_times.clear()
         self._preview_durations_ms.clear()
@@ -4565,7 +4573,9 @@ class NativeCameraService:
             self._worker_finished(session)
 
     def _inference_loop(self, session: _CameraSession) -> None:
-        gesture = LazyGestureRecognizer(self.model_paths.get("gesture"))
+        scheduled = ScheduledGestureRecognizer(self.model_paths.get("gesture"))
+        gesture = scheduled.gesture
+        previous_pose, previous_sample_at, previous_geometry = None, 0.0, None
         try:
             import cv2
             while True:
@@ -4609,6 +4619,16 @@ class NativeCameraService:
                 image = session.mp.Image(image_format=session.mp.ImageFormat.SRGB, data=rgb)
                 timestamp_ms = max(int(captured_at * 1000), self._last_timestamp_ms + 1)
                 self._last_timestamp_ms = timestamp_ms
+                controller = getattr(self.kernel, "hand_mouse_controller", None)
+                request = controller.tracking_request() if controller and not self.assist else {}
+                sides = request.get("hands", []) if request.get("enabled") else []
+                geometry = (width, height, frame_rotation)
+                # 只借上一帧身体点定位，本帧手部像素与身体像素完全相同。
+                # 旧点超过 120 毫秒、画面转向或首次识别时沿用原串行路径。
+                parallel = bool(sides and previous_geometry == geometry
+                    and 0 < captured_at-previous_sample_at <= .120
+                    and all(hand_crop(previous_pose, side, width, height) for side in sides))
+                hand_job = scheduled.begin(rgb, previous_pose, sides, session.mp) if parallel else None
                 prepared_at = time.perf_counter()
                 result = session.detector.detect_for_video(image, timestamp_ms)
                 pose_finished_at = time.perf_counter()
@@ -4636,16 +4656,24 @@ class NativeCameraService:
                         }
                         for index, point in enumerate(world_landmarks)
                     }
-                controller = getattr(self.kernel, "hand_mouse_controller", None)
-                request = controller.tracking_request() if controller and not self.assist else {}
-                sides = request.get("hands", []) if request.get("enabled") else []
                 hands_started_at = time.perf_counter()
-                hands = gesture.recognize(rgb, pose_map, sides, session.mp)
+                if not parallel:
+                    hand_job = scheduled.begin(rgb, pose_map, sides, session.mp)
+                hands, hand_processing_ms = hand_job.result() if hand_job else ({}, 0.0)
+                if parallel and not hand_crops_match(previous_pose, pose_map, sides, width, height, hands):
+                    # 快速移动或人体丢失时不用提前裁切的结果，等待本帧重新裁切。
+                    hands, retry_ms = scheduled.begin(rgb, pose_map, sides, session.mp).result()
+                    hand_processing_ms += retry_ms
+                    self.hand_crop_retries += 1
+                previous_pose, previous_sample_at, previous_geometry = pose_map, captured_at, geometry
                 hands_finished_at = time.perf_counter()
                 self.hand_model_state, self.hand_model_error = gesture.state, gesture.error
                 with self._condition:
                     if session.stop.is_set() or self._session is not session:
                         break
+                    current_request = controller.tracking_request() if controller and not self.assist else {}
+                    if current_request != request:
+                        hands = {}
                     # Submission and stop admission share this lock: a result
                     # finishing after stop cannot reclaim the control source.
                     if self.assist:
@@ -4680,6 +4708,9 @@ class NativeCameraService:
                     }
                     for name, duration in stages.items():
                         self._inference_stages_ms[name].append(duration * 1000.0)
+                    if sides:
+                        self._hand_processing_ms.append(hand_processing_ms)
+                        self._hand_parallel.append(parallel)
                     self._latencies_ms.append(self.last_latency_ms)
                     self.frames += 1
                 if self.model_preference == "auto" and self.actual_model == "heavy":
@@ -4696,6 +4727,8 @@ class NativeCameraService:
                             self._inference_durations_ms.clear()
                             for samples in self._inference_stages_ms.values():
                                 samples.clear()
+                            self._hand_processing_ms.clear()
+                            self._hand_parallel.clear()
                             self._inference_times.clear()
                         previous.close()
                 # 控制先提交，人像缓存随后更新；帧、点和遮罩来自同次识别。
@@ -4717,9 +4750,11 @@ class NativeCameraService:
         except Exception as exc:
             self._fail_session(session, str(exc))
         finally:
-            gesture.close()
-            self.hand_model_state, self.hand_model_error = "idle", None
-            self._worker_finished(session)
+            try:
+                scheduled.close()
+            finally:
+                self.hand_model_state, self.hand_model_error = "idle", None
+                self._worker_finished(session)
 
     def _preview_loop(self, session: _CameraSession) -> None:
         """Encode the newest raw frame separately from detector inference."""
@@ -4876,6 +4911,13 @@ class NativeCameraService:
                     name: self._round_or_none(sum(samples) / len(samples)) if samples else None
                     for name, samples in self._inference_stages_ms.items()
                 },
+                "hand_scheduling": "parallel_same_frame",
+                "hand_processing_avg_ms": self._round_or_none(
+                    sum(self._hand_processing_ms)/len(self._hand_processing_ms)
+                    if self._hand_processing_ms else None),
+                "hand_parallel_percent": round(100*sum(self._hand_parallel)/len(self._hand_parallel))
+                    if self._hand_parallel else None,
+                "hand_crop_retries": self.hand_crop_retries,
                 "camera_timing": {
                     name: round(value, 2)
                     for name in ("color_frame_interval_ms", "color_exposure_ms", "color_gain")

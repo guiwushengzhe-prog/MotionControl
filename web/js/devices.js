@@ -138,7 +138,9 @@ function performanceBreakdown(data){
   if(stages.pose!=null){
     const model={full:'标准',heavy:'高精度'}[data.actual_model];
     if(model)lines.push(`当前身体模型：${model}`);
-    lines.push([stage('身体识别调用',stages.pose),stage('手部识别流程',stages.hands),stage('画面准备与点整理',stages.prepare),stage('控制处理',stages.control)].join(' · '));
+    const parallel=data.hand_scheduling==='parallel_same_frame';
+    lines.push([stage('身体识别调用',stages.pose),stage(parallel?'手部额外等待':'手部识别流程',stages.hands),stage('画面准备与点整理',stages.prepare),stage('控制处理',stages.control)].join(' · '));
+    if(parallel&&data.hand_processing_avg_ms!=null)lines.push(`手部独立处理：${formatPerf(data.hand_processing_avg_ms,' 毫秒')} · 与身体并行：${data.hand_parallel_percent??0}% · 已与身体识别重叠的时间不重复计入单帧耗时。`);
     lines.push('身体识别调用包含识别库内部处理；以上均非单独的神经网络耗时。');
   }
   const interval=timing.color_frame_interval_ms;
