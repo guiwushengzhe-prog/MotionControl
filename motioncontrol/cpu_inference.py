@@ -92,7 +92,7 @@ class FrameThreadBudget:
 
 def thread_budget(*, hands=False):
     logical = os.cpu_count() or 1
-    physical, load = max(1, logical // 2), 0.0
+    physical = max(1, logical // 2)
     try:
         import psutil
     except ImportError:
@@ -101,16 +101,76 @@ def thread_budget(*, hands=False):
         try:
             logical = min(logical, len(psutil.Process().cpu_affinity()))
             physical = min(logical, psutil.cpu_count(logical=False) or physical)
-            load = psutil.cpu_percent(interval=.05)
         except (psutil.Error, AttributeError, OSError):
             pass
-    return threads_for_capacity(logical, physical, load, hands=hands)
+    return threads_for_capacity(logical, physical, hands=hands)
 
 
-def threads_for_capacity(logical, physical, load, *, hands=False):
-    # 留一个可用物理核心给游戏、采集和控制；不强行绑定具体核心。
-    free = max(1, math.floor(min(logical, physical) * (1 - min(100, max(0, load)) / 100)))
-    return max(1, min(2 if hands else 6, free - 1))
+def threads_for_capacity(logical, physical, *, hands=False):
+    # 以跟上相机为先，不因游戏占用整机而主动让出线程；实际用多少由整帧耗时决定。
+    # 留一个物理核心给采集和控制；不强行绑定具体核心。
+    return max(1, min(2 if hands else 6, min(logical, physical) - 1))
+
+
+def prioritize_process():
+    """识别所在进程略高于普通程序，并退出 Windows 对后台程序的节能降速。
+
+    游戏在前台时，后台识别默认会被系统压低调度或放到节能核心；这里只抬到“高于普通”，
+    不用“高”或“实时”，避免反过来卡住游戏输入和系统。
+    """
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.SetPriorityClass.restype = wintypes.BOOL
+    kernel32.SetProcessInformation.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    kernel32.SetProcessInformation.restype = wintypes.BOOL
+
+    class PowerThrottling(ctypes.Structure):
+        _fields_ = (("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG), ("StateMask", wintypes.ULONG))
+
+    process = kernel32.GetCurrentProcess()
+    raised = bool(kernel32.SetPriorityClass(process, 0x8000))  # ABOVE_NORMAL_PRIORITY_CLASS
+    # ProcessPowerThrottling：执行速度与计时精度两项都明确关闭节能限制。
+    state = PowerThrottling(1, 0x1 | 0x4, 0)
+    kernel32.SetProcessInformation(process, 4, ctypes.byref(state), ctypes.sizeof(state))
+    return "above_normal" if raised else None
+
+
+class ResourceShortage:
+    """持续跟不上相机时提醒降配；线程还在调整或短暂波动时不提醒。"""
+    HOLD_S, CLEAR_S = 10.0, 5.0
+
+    def __init__(self):
+        self.kind = None
+        self._since = {}
+        self._clear_since = None
+
+    def observe(self, now, *, camera_fps, capture_fps, inference_fps, visible, threads_maxed):
+        active = {
+            # 原厂报告的供帧明显高于实际收到的：采集被拖慢，多为显卡被占满。
+            "capture": bool(camera_fps and capture_fps and capture_fps < camera_fps * .75),
+            # 线程已加到上限仍跟不上已收到的画面：处理器不够。
+            "inference": bool(visible and threads_maxed and capture_fps and inference_fps
+                              and inference_fps < capture_fps * .85),
+        }
+        for kind, on in active.items():
+            if on:
+                self._since.setdefault(kind, now)
+            else:
+                self._since.pop(kind, None)
+        due = [kind for kind in ("capture", "inference")
+               if kind in self._since and now - self._since[kind] >= self.HOLD_S]
+        if due:
+            self.kind, self._clear_since = due[0], None
+        elif self.kind:
+            self._clear_since = self._clear_since or now
+            if now - self._clear_since >= self.CLEAR_S:
+                self.kind, self._clear_since = None, None
+        return self.kind
 
 
 def cpu_options(base_options, threads):

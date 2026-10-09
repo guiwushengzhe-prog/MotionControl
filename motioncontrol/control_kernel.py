@@ -52,7 +52,7 @@ from motioncontrol import kinect_camera
 from motioncontrol.recognition_models import (
     AutoPoseChoice, ScheduledGestureRecognizer, hand_crop, hand_crops_match,
 )
-from motioncontrol.cpu_inference import FrameThreadBudget
+from motioncontrol.cpu_inference import FrameThreadBudget, ResourceShortage, prioritize_process
 from motioncontrol.jump_detect import JumpDetector
 from motioncontrol.zone_fit import (
     HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
@@ -3577,6 +3577,9 @@ class NativeCameraService:
         self.pose_model_optimization = None
         self.pose_cpu_threads, self.pose_thread_error = None, None
         self._cpu_budget = FrameThreadBudget()
+        self._shortage = ResourceShortage()
+        self._thread_ceiling = None
+        self.process_priority = None
         self._auto_pose = AutoPoseChoice()
         self.hand_model_state, self.hand_model_error = "idle", None
         self.hand_cpu_threads = None
@@ -4405,6 +4408,12 @@ class NativeCameraService:
             try:
                 self._auto_pose = AutoPoseChoice()
                 self._cpu_budget = FrameThreadBudget()
+                self._shortage = ResourceShortage()
+                from motioncontrol.cpu_inference import thread_budget
+                self._thread_ceiling = thread_budget()
+                if self.process_priority is None:
+                    # 游戏在前台时识别仍优先拿到处理器，以跟上摄像头供帧为目标。
+                    self.process_priority = prioritize_process()
                 try:
                     mp, detector = self._create_detector()
                 except Exception:
@@ -4793,6 +4802,10 @@ class NativeCameraService:
                             self._inference_times.clear()
                         previous.close()
                         self._cpu_budget.reset_samples()
+                self._shortage.observe(finished, camera_fps=1000 / interval if interval and interval > 0 else None,
+                    capture_fps=self.actual_capture_fps, inference_fps=self._rate(self._inference_times),
+                    visible=bool(landmarks),
+                    threads_maxed=self.pose_cpu_threads is None or self.pose_cpu_threads >= (self._thread_ceiling or 1))
                 # 控制先提交，人像缓存随后更新；帧、点和遮罩来自同次识别。
                 if self._studio_enabled:
                     masks = getattr(result, "segmentation_masks", None)
@@ -4942,6 +4955,16 @@ class NativeCameraService:
                 "assist": bool(self.assist),
             }
 
+    def _resource_hint(self) -> dict | None:
+        """持续跟不上时给出用户能直接操作的降配项；文字由页面按实时帧率组织。"""
+        kind = self._shortage.kind if self.running else None
+        if not kind:
+            return None
+        actions = ["standard_model"] if kind == "inference" and self.actual_model == "heavy" else []
+        if self.depth_supported and self.depth_enabled:
+            actions.append("disable_depth")
+        return {"kind": kind, "actions": actions}
+
     def performance(self) -> dict:
         with self._lock:
             now = time.monotonic()
@@ -4957,6 +4980,8 @@ class NativeCameraService:
                 "hand_cpu_threads": self.hand_cpu_threads,
                 "thread_target_ms": self._round_or_none(self._cpu_budget.interval_ms * .9) if self._cpu_budget.interval_ms else None,
                 "thread_allocation_reason": self._cpu_budget.reason,
+                "process_priority": self.process_priority,
+                "resource_hint": self._resource_hint(),
                 "auto_model_reason": self._auto_pose.reason,
                 "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "camera_resolution": resolution,

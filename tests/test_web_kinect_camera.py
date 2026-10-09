@@ -97,3 +97,52 @@ def test_kinect_regions_and_editing_keep_original_display_direction(desktop):
         assert abs(result["resized"]["x1"] - (.18 if mirrored else .21)) < 1e-6
         assert abs(result["resized"]["x2"] - (.34 if mirrored else .37)) < 1e-6
     assert desktop.errors == []
+
+
+def test_resource_shortage_banner_names_the_cause_and_reuses_settings(desktop):
+    page, api = desktop.page, desktop.api
+    # 资源持续不够时在开始页提醒；按钮直接走设置页同一个开关。
+    api.runtime["camera"] = {"running": True, "depth_supported": True, "depth_enabled": True}
+    perf = {"running": True, "capture_fps": 15, "inference_fps": 9, "actual_model": "heavy",
+            "camera_timing": {"color_frame_interval_ms": 66.67},
+            "resource_hint": {"kind": "inference", "actions": ["standard_model", "disable_depth"]}}
+    requests = []
+    page.route("**/api/performance", lambda route: api.fulfill(route, perf))
+    def camera(route):
+        if route.request.method == "POST":
+            requests.append(route.request.post_data_json)
+        api.fulfill(route, {**api.runtime["camera"], "camera_device": "kinect2:one",
+                            "depth_enabled": {"depth_enabled": False} not in requests})
+    page.route("**/api/camera/config", camera)
+    def models(route):
+        if route.request.method == "POST":
+            requests.append(route.request.post_data_json)
+        api.fulfill(route, {"model_preference": "full", "models": [{"id": "mp-full", "available": True},
+                                                                   {"id": "mp-heavy", "available": True}]})
+    page.route("**/api/recognition/models", models)
+    banner = page.locator("#resourceHint")
+    expect(banner).to_be_visible(timeout=6000)
+    expect(banner).to_contain_text("识别 9 帧/秒，跟不上摄像头的 15 帧/秒")
+    expect(banner).to_contain_text("建议识别精度改用标准、关闭深度，或关闭其他占用处理器的程序")
+    page.click("#resourceHintModel")
+    expect(banner).to_be_hidden()
+    page.wait_for_function("document.querySelector('#poseModelSelect').value==='full'")
+    assert {"preference": "full"} in requests
+
+    # 同一种情况点过就不再弹；恢复后换成采集被拖慢，重新提醒并只给关闭深度。
+    page.wait_for_timeout(1700)
+    expect(banner).to_be_hidden()
+    perf["resource_hint"] = None
+    page.evaluate("async()=>{await (await import('/js/devices.js')).refreshPerformance()}")
+    perf.update(capture_fps=3, inference_fps=3, actual_model="full",
+                camera_timing={"color_frame_interval_ms": 33.33},
+                resource_hint={"kind": "capture", "actions": ["disable_depth"]})
+    page.evaluate("async()=>{await (await import('/js/devices.js')).refreshPerformance()}")
+    expect(banner).to_contain_text("摄像头只收到 3 帧/秒（相机可出 30 帧），多半是显卡被游戏占满")
+    expect(banner).to_contain_text("建议关闭深度，或在游戏里限制帧率")
+    expect(page.locator("#resourceHintModel")).to_be_hidden()
+    page.click("#resourceHintDepth")
+    expect(banner).to_be_hidden()
+    expect(page.locator("#cameraDepth")).not_to_be_checked()
+    assert {"depth_enabled": False} in requests
+    assert desktop.errors == []

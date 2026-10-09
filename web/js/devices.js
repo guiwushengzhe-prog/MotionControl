@@ -107,8 +107,40 @@ export async function refreshAudioDevices(){
   try{const data=await api('/api/audio/devices');renderAudioDevices(data.devices,data.audio_device);return true}catch{return false}
 }
 
+// 持续跟不上摄像头时提醒降配。点「知道了」后同一种情况这次不再提示；恢复正常后再出现才重新提醒。
+let resourceHintDismissed=null;
+
+function renderResourceHint(data){
+  const box=$('#resourceHint');if(!box)return;
+  const hint=sourceMode==='computer'&&cameraRunning?data.resource_hint:null;
+  if(!hint)resourceHintDismissed=null;
+  const show=!!hint&&resourceHintDismissed!==hint.kind;
+  box.hidden=!show;if(!show)return;
+  const actions=hint.actions||[],fps=value=>Math.round(Number(value)||0),interval=data.camera_timing?.color_frame_interval_ms;
+  const advice=[actions.includes('standard_model')&&'识别精度改用标准',actions.includes('disable_depth')&&'关闭深度'].filter(Boolean);
+  const [head,tail]=hint.kind==='capture'
+    ?[`摄像头只收到 ${fps(data.capture_fps)} 帧/秒${interval>0?`（相机可出 ${fps(1000/interval)} 帧）`:''}，多半是显卡被游戏占满。`,'在游戏里限制帧率，给摄像头服务留出显卡']
+    :[`电脑计算资源紧张：识别 ${fps(data.inference_fps)} 帧/秒，跟不上摄像头的 ${fps(data.capture_fps)} 帧/秒。`,'关闭其他占用处理器的程序'];
+  const text=`${head}建议${advice.length?advice.join('、')+'，或':''}${tail}。`;
+  const span=box.querySelector('span');if(span.textContent!==text)span.textContent=text;
+  box.dataset.kind=hint.kind;
+  $('#resourceHintModel').hidden=!actions.includes('standard_model');
+  $('#resourceHintDepth').hidden=!actions.includes('disable_depth');
+}
+
+// 直接走设置页同一个开关，保存和重启摄像头的流程只有一份。
+function applyResourceHint(id,value){
+  resourceHintDismissed=$('#resourceHint').dataset.kind;$('#resourceHint').hidden=true;
+  const control=$(id);if(control.type==='checkbox')control.checked=value;else control.value=value;
+  control.dispatchEvent(new Event('change'));
+}
+$('#resourceHintModel')?.addEventListener('click',()=>applyResourceHint('#poseModelSelect','full'));
+$('#resourceHintDepth')?.addEventListener('click',()=>applyResourceHint('#cameraDepth',false));
+$('#resourceHintDismiss')?.addEventListener('click',()=>{resourceHintDismissed=$('#resourceHint').dataset.kind;$('#resourceHint').hidden=true});
+
 function renderPerformance(data){
   renderRecognitionPerformance(data);
+  renderResourceHint(data);
   // 画面左上角只写一个数：每秒认几帧。毫秒、丢帧、CPU 这些排查问题才看，放在「实验与诊断」。
   // 手机那边不报推理帧率，用每秒收到几帧代替——人看到的就是这个。
   const fps=Number(data.inference_fps??data.network_fps);
@@ -142,6 +174,7 @@ function performanceBreakdown(data){
     else if(data.pose_thread_error)lines.push(`身体多线程：未启用 · ${data.pose_thread_error}`);
     if(data.hand_cpu_threads!=null)lines.push(`手部计算线程：${data.hand_cpu_threads} · 按需加载`);
     if(data.thread_target_ms!=null)lines.push(`整帧处理目标：${formatPerf(data.thread_target_ms,' 毫秒')} · ${data.thread_allocation_reason||'自动调整计算线程'}`);
+    if(data.process_priority==='above_normal')lines.push('后台调度：高于普通程序，游戏在前台时识别仍优先拿到处理器');
     const parallel=data.hand_scheduling==='parallel_same_frame';
     lines.push([stage('身体识别调用',stages.pose),stage(parallel?'手部额外等待':'手部识别流程',stages.hands),stage('画面准备与点整理',stages.prepare),stage('控制处理',stages.control)].join(' · '));
     if(parallel&&data.hand_processing_avg_ms!=null)lines.push(`手部独立处理：${formatPerf(data.hand_processing_avg_ms,' 毫秒')} · 与身体并行：${data.hand_parallel_percent??0}% · 已与身体识别重叠的时间不重复计入单帧耗时。`);

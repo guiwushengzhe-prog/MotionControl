@@ -1,16 +1,52 @@
 """验证实际计算线程参数、负载适配及不能确认时的回退。"""
 from types import SimpleNamespace
 import pytest
-from motioncontrol.cpu_inference import FrameThreadBudget, cpu_options, threads_for_capacity, create_cpu_task
+from motioncontrol.cpu_inference import (
+    FrameThreadBudget, ResourceShortage, cpu_options, threads_for_capacity, create_cpu_task,
+)
 
 
-@pytest.mark.parametrize("logical,physical,load,expected", [
-    (24, 16, 0, 6), (24, 16, 70, 3), (24, 16, 95, 1),
-    (4, 4, 0, 3), (2, 2, 0, 1), (1, 1, 0, 1),
+@pytest.mark.parametrize("logical,physical,expected", [
+    (24, 16, 6), (4, 4, 3), (2, 2, 1), (1, 1, 1), (24, 2, 1),
 ])
-def test_thread_budget_adapts_without_benchmarking_thread_slots(logical, physical, load, expected):
-    assert threads_for_capacity(logical, physical, load) == expected
-    assert 1 <= threads_for_capacity(logical, physical, load, hands=True) <= 2
+def test_thread_ceiling_follows_cores_not_whole_machine_load(logical, physical, expected):
+    # 游戏占满整机时也不主动让出：上限只看核心数，实际用多少由整帧耗时决定。
+    assert threads_for_capacity(logical, physical) == expected
+    assert 1 <= threads_for_capacity(logical, physical, hands=True) <= 2
+
+
+def _feed(monitor, seconds, start=0.0, step=.1, **rates):
+    kind = None
+    for n in range(round(seconds / step)):
+        kind = monitor.observe(start + n * step, **rates)
+    return kind
+
+
+SLOW_CAPTURE = dict(camera_fps=30, capture_fps=3, inference_fps=3, visible=True, threads_maxed=False)
+SLOW_INFERENCE = dict(camera_fps=15, capture_fps=15, inference_fps=9, visible=True, threads_maxed=True)
+HEALTHY = dict(camera_fps=30, capture_fps=30, inference_fps=30, visible=True, threads_maxed=False)
+
+
+def test_slow_supply_is_reported_only_after_it_persists_and_clears_after_recovery():
+    monitor = ResourceShortage()
+    assert _feed(monitor, 9.5, **SLOW_CAPTURE) is None
+    assert _feed(monitor, 1, start=9.5, **SLOW_CAPTURE) == "capture"
+    assert _feed(monitor, 4, start=10.5, **HEALTHY) == "capture"
+    assert _feed(monitor, 2, start=14.5, **HEALTHY) is None
+
+
+def test_slow_inference_waits_for_threads_to_be_exhausted_and_a_visible_person():
+    for rates in ({**SLOW_INFERENCE, "threads_maxed": False}, {**SLOW_INFERENCE, "visible": False}):
+        assert _feed(ResourceShortage(), 20, **rates) is None
+    assert _feed(ResourceShortage(), 11, **SLOW_INFERENCE) == "inference"
+
+
+def test_brief_dips_and_cameras_without_rated_supply_do_not_warn():
+    monitor = ResourceShortage()
+    for second in range(0, 30, 5):
+        _feed(monitor, 4, start=second, **SLOW_CAPTURE)
+        assert _feed(monitor, 1, start=second + 4, **HEALTHY) is None
+    assert _feed(ResourceShortage(), 20, **{**SLOW_CAPTURE, "camera_fps": None}) is None
 
 
 def test_thread_options_are_instance_local_and_do_not_replace_model_or_delegates():
