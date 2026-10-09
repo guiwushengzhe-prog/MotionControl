@@ -168,7 +168,8 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     page.wait_for_function("document.getElementById('fitnessSteps').textContent==='2'")
     page.click("#mainActionBtn")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已暂停'")
-    assert page.locator("#fitnessHeartNow").inner_text() == "—"
+    app.FITNESS.heart_rate({"bpm": 120})  # 暂停时可以预览，不累计平均值。
+    page.wait_for_function("fitnessHeartNow.textContent==='120'")
     assert page.locator("#fitnessHeartAvg").inner_text() == "112"
     page.click("#mainActionBtn")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='记录中'")

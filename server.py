@@ -1749,7 +1749,8 @@ class AdminHandler(_BaseHandler):
     def do_POST(self):
         global CONFIG_REVISION
         route = urlparse(self.path).path
-        if route.startswith("/api/studio/") or route in {"/api/fitness/control", "/api/cloud/account/login",
+        if route.startswith("/api/studio/") or route in {"/api/fitness/control", "/api/fitness/heart-rate",
+                                                          "/api/fitness/heart-rate-input", "/api/cloud/account/login",
                                                           "/api/cloud/account/cancel", "/api/cloud/account/logout"}:
             origin = self.headers.get("Origin")
             if not self._is_loopback() or (origin and origin not in {
@@ -1775,6 +1776,17 @@ class AdminHandler(_BaseHandler):
                     data = FITNESS.control(body)
                     if body.get("action") in {"finish", "profile"}:
                         FITNESS_SYNC.wake()  # 刚结束一次、刚改了身体数据：别等一分钟
+                elif route == "/api/fitness/heart-rate-input":
+                    if body.get("action") == "release":
+                        accepted = FITNESS.clear_computer_heart_rate(body.get("reader_id"), release=True)
+                        data = {"accepted": accepted, **FITNESS.state()}
+                    else:
+                        data = FITNESS.set_heart_rate_input(body.get("source"), body.get("reader_id", ""))
+                elif route == "/api/fitness/heart-rate":
+                    reader_id = body.get("reader_id", "")
+                    accepted = (FITNESS.clear_computer_heart_rate(reader_id) if body.get("bpm") is None else
+                                FITNESS.heart_rate(body, source="computer", reader_id=reader_id))
+                    data = {"accepted": accepted, **FITNESS.state()}
                 elif route == "/api/cloud/account/login":
                     try:
                         data = CLOUD_ACCOUNT.begin_login()
