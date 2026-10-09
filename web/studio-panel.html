@@ -7,6 +7,13 @@
       <span class="studio-recording-badge" id="studioRecordingBadge" hidden>● 录制中 <b id="studioElapsed">00:00</b></span>
       <span class="studio-view-label" id="studioViewLabel">合成预览</span>
     </div>
+    <div class="studio-transform-tools" role="group" aria-label="调整摄像头画面">
+      <button class="btn" id="studioZoomOut" title="缩小" aria-label="缩小摄像头画面"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>
+      <button class="btn" id="studioZoomIn" title="放大" aria-label="放大摄像头画面"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12"/></svg></button>
+      <button class="btn" id="studioFill" title="填满显示区域" aria-label="填满显示区域"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M9 9h6v6H9z"/></svg></button>
+      <button class="btn" id="studioCenter" title="居中" aria-label="摄像头画面居中"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/><circle cx="12" cy="12" r="4"/></svg></button>
+      <span class="sub">放大后拖动画面调整位置</span>
+    </div>
     <div class="studio-actions">
       <button class="btn" id="studioPreviewBtn">开启人物预览</button>
       <button class="btn" id="studioScreenBtn">选择画面预览</button>
@@ -32,7 +39,7 @@
       <div class="row"><label class="row-main" for="studioSource">体感摄像头</label><span class="sel"><select id="studioSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
       <div class="row"><label class="row-main" for="studioPosition">人物位置</label><span class="sel"><select id="studioPosition"><option value="bottom-right">右下角</option><option value="bottom-left">左下角</option><option value="top-right">右上角</option><option value="top-left">左上角</option></select></span></div>
       <div class="row"><label class="row-main" for="studioSize">人物大小</label><span class="range-in"><input id="studioSize" type="range" min="15" max="65" step="1" value="30"/><b id="studioSizeValue">30%</b></span></div>
-      <div class="row"><label class="row-main" for="studioZoom"><span class="name">摄像头画面放大</span><span class="sub">显示区域不变，超出部分隐藏</span></label><span class="range-in"><input id="studioZoom" type="range" min="100" max="400" step="5" value="100"/><b id="studioZoomValue">100%</b></span></div>
+      <div class="row"><label class="row-main" for="studioZoom"><span class="name">摄像头画面放大</span><span class="sub">显示区域不变；放大后可拖动，超出部分隐藏</span></label><span class="range-in"><input id="studioZoom" type="range" min="100" max="400" step="5" value="100"/><b id="studioZoomValue">100%</b></span></div>
       <div class="row"><label class="row-main" for="studioFace">人脸</label><span class="sel"><select id="studioFace"><option value="original">原样</option><option value="mask">纯色遮盖</option><option value="avatar">图片头像</option></select></span></div>
       <div class="row studio-avatar-row" id="studioAvatarRow" hidden>
         <span class="row-main">头像形象</span>

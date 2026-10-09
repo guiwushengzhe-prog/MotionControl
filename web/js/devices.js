@@ -138,6 +138,9 @@ function performanceBreakdown(data){
   if(stages.pose!=null){
     const model={full:'标准',heavy:'高精度'}[data.actual_model];
     if(model)lines.push(`当前身体模型：${model}`);
+    if(data.pose_cpu_threads!=null)lines.push(`身体计算线程：${data.pose_cpu_threads} · 自动分配`);
+    else if(data.pose_thread_error)lines.push(`身体多线程：未启用 · ${data.pose_thread_error}`);
+    if(data.hand_cpu_threads!=null)lines.push(`手部计算线程：${data.hand_cpu_threads} · 按需加载`);
     const parallel=data.hand_scheduling==='parallel_same_frame';
     lines.push([stage('身体识别调用',stages.pose),stage(parallel?'手部额外等待':'手部识别流程',stages.hands),stage('画面准备与点整理',stages.prepare),stage('控制处理',stages.control)].join(' · '));
     if(parallel&&data.hand_processing_avg_ms!=null)lines.push(`手部独立处理：${formatPerf(data.hand_processing_avg_ms,' 毫秒')} · 与身体并行：${data.hand_parallel_percent??0}% · 已与身体识别重叠的时间不重复计入单帧耗时。`);
@@ -145,6 +148,7 @@ function performanceBreakdown(data){
   }
   const interval=timing.color_frame_interval_ms;
   if(interval>0)lines.push(`相机供帧间隔：${formatPerf(interval,' 毫秒')}（约 ${Math.round(1000/interval)} 帧/秒） · 曝光：${formatPerf(timing.color_exposure_ms,' 毫秒')}`);
+  if(data.running&&interval>=60&&timing.color_exposure_ms>1000/30)lines.push('相机报告约 15 帧/秒，曝光超过 33 毫秒；可能与自动曝光有关，可增加镜头前的光照观察是否恢复 30 帧/秒。');
   const capture=Number(data.capture_fps),inference=Number(data.inference_fps);
   if(data.running&&capture>=2&&inference>0&&duration>0){
     if(inference<capture*.9&&duration>1000/capture*.95)lines.push('识别处理未跟上相机；标准或自动模型可减少等待。');

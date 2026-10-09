@@ -1,0 +1,14 @@
+# 多核运行环境使用 Python 3.12，MediaPipe 0.10.21 由准备工具单独安装。
+# 仅安装实际使用的任务依赖，不安装不用的模型训练组件。
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+protobuf>=4.25.3,<5
+flatbuffers>=24.3.25
+absl-py>=2,<3
+attrs>=23
+matplotlib>=3.8,<4
+cryptography>=42
+sounddevice>=0.4.6
+vosk>=0.3.45
+qrcode==8.2
+psutil>=6

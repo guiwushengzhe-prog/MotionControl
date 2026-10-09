@@ -49,4 +49,9 @@ if ($running -and $running.StatusCode -eq 200) {
     exit 0
 }
 
-python -X utf8 server.py
+$multicorePython = Join-Path $PSScriptRoot '.venv-multicore\Scripts\python.exe'
+if (Test-Path -LiteralPath $multicorePython) {
+    & $multicorePython -X utf8 server.py
+} else {
+    python -X utf8 server.py
+}

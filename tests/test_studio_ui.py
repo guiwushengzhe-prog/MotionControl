@@ -319,3 +319,49 @@ def test_camera_zoom_keeps_viewport_clips_overflow_and_is_saved_for_overlay(brow
     page.wait_for_function("document.getElementById('portrait').width===180 && document.getElementById('portrait').getContext('2d').getImageData(0,0,1,1).data[1]===255")
     assert page.evaluate("document.getElementById('portrait').height") == 100
     page.close()
+
+
+def test_zoom_drag_clamps_saves_and_center_fill_shortcuts_work(browser, studio_server):
+    base, state = studio_server
+    row = b"\0" + b"\xff\0\0\xff" * 60 + b"\0\xff\0\xff" * 60 + b"\0\0\xff\xff" * 60
+    state["picture"] = (b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", 180, 100, 8, 6, 0, 0, 0))
+                        + _png_chunk(b"IDAT", zlib.compress(row * 100)) + _png_chunk(b"IEND", b""))
+    page = browser.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    ready(page, base)
+    page.select_option("#studioLayout", "portrait")
+    page.click("#studioPreviewBtn")
+    page.wait_for_function("!document.getElementById('studioFill').disabled")
+    page.click("#studioFill")
+    page.wait_for_function("document.getElementById('studioCanvas').classList.contains('is-draggable')")
+    assert state["config"]["portrait_zoom"] == 320
+    rect = page.locator("#studioCanvas").bounding_box()
+    x, y = rect["x"] + rect["width"] / 2, rect["y"] + rect["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 500, y, steps=5)
+    page.mouse.up()
+    page.wait_for_function("!document.getElementById('studioCenter').disabled && document.getElementById('studioPlaceholder').hidden")
+    assert state["config"]["portrait_pan"] == {"x": 1, "y": 0}
+    assert page.evaluate("Array.from(document.getElementById('studioCanvas').getContext('2d').getImageData(20,640,1,1).data)") == [255, 0, 0, 255]
+    page.reload()
+    page.wait_for_function("!document.getElementById('studioCenter').disabled")
+    page.click("#studioPreviewBtn")
+    page.wait_for_function("document.getElementById('studioPlaceholder').hidden")
+    page.click("#studioCenter")
+    page.wait_for_function("document.getElementById('studioCenter').disabled && document.getElementById('studioPlaceholder').hidden")
+    assert state["config"]["portrait_pan"] == {"x": 0, "y": 0}
+    assert state["config"]["portrait_zoom"] == 320, "居中不改变放大比例"
+    page.click("#studioZoomOut")
+    page.wait_for_function("document.getElementById('studioZoomValue').textContent==='295%' && document.getElementById('studioPlaceholder').hidden")
+    page.click("#studioZoomIn")
+    page.wait_for_function("document.getElementById('studioZoomValue').textContent==='320%' && document.getElementById('studioPlaceholder').hidden")
+    # 直播画面沿用保存的偏移，不申请设备或修改设置。
+    state["config"]["portrait_pan"] = {"x": 1, "y": 0}
+    posts = len(state["posts"])
+    page.goto(base + "/studio-overlay.html")
+    page.wait_for_function("document.getElementById('portrait').width===180 && document.getElementById('portrait').getContext('2d').getImageData(0,50,1,1).data[0]===255")
+    assert all(path == "/api/studio/video-demand" and body["enabled"] is False for path, body in state["posts"][posts:])
+    assert errors == []
+    page.close()

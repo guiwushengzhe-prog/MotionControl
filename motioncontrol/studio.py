@@ -17,6 +17,7 @@ DEFAULT_CONFIG = {"source": "computer", "background": "original", "face": "origi
                   "avatar_data_url": "", "layout": "landscape", "position": "bottom-right",
                   "size": 30, "capture": "window", "system_audio": True, "microphone": False,
                   "mirror": True, "avatar_preset": "", "portrait_zoom": 100,
+                  "portrait_pan": {"x": 0, "y": 0},
                   "screen_crop": {"x": 0, "y": 0, "width": 1, "height": 1},
                   "portrait_crop": {"x": 0, "y": 0, "width": 1, "height": 1}}
 MAX_CHUNK_BYTES = 16 * 1024 * 1024
@@ -76,6 +77,13 @@ class StudioService:
             if isinstance(zoom, bool) or not isinstance(zoom, (int, float)) or not math.isfinite(zoom) or not 100 <= zoom <= 400:
                 raise ValueError("摄像头画面放大必须在100%到400%之间")
             config["portrait_zoom"] = int(zoom)
+        if "portrait_pan" in patch:
+            pan = patch["portrait_pan"]
+            if not isinstance(pan, dict) or any(
+                    isinstance(pan.get(axis), bool) or not isinstance(pan.get(axis), (int, float))
+                    or not math.isfinite(pan[axis]) or not -1 <= pan[axis] <= 1 for axis in ("x", "y")):
+                raise ValueError("画面移动范围无效")
+            config["portrait_pan"] = {axis: float(pan[axis]) for axis in ("x", "y")}
         for key in ("screen_crop", "portrait_crop"):
             if key not in patch:
                 continue

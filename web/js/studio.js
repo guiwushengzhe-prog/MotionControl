@@ -1,9 +1,9 @@
 // 摄像头只取后端共享采集的处理结果；浏览器仅负责用户选择的屏幕、声音和合成编码。
 import {readStudioFrame} from './studio-frame.js';
-import {compose,FULL_CROP} from './studio-compose.js';
+import {compose,FULL_CROP,containGeometry,portraitViewport,sourceSize} from './studio-compose.js';
 import {cropEditor} from './studio-crop.js';
 const root=document.querySelector('#studioRoot');
-const defaults={source:'computer',background:'original',face:'original',layout:'landscape',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false,mirror:true,avatar_preset:'',portrait_zoom:100,screen_crop:FULL_CROP,portrait_crop:FULL_CROP};
+const defaults={source:'computer',background:'original',face:'original',layout:'landscape',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false,mirror:true,avatar_preset:'',portrait_zoom:100,portrait_pan:{x:0,y:0},screen_crop:FULL_CROP,portrait_crop:FULL_CROP};
 const $=id=>document.getElementById(id);
 const clientId=globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random();
 let config={...defaults},loaded=false,preview=false,starting=false,recording=false,saving=false;
@@ -11,6 +11,7 @@ let frame=null,frameAt=0,frameEpoch=0,frameBusy=false,frameBlocked=0,frameTimer=
 let screenStream=null,micStream=null,canvasStream=null,audioContext=null,audioSources=[];
 let screenVideo=null,recorder=null,recordingId=null,uploadTail=Promise.resolve(),pendingBytes=0,uploadError='',startedAt=0,drawTimer=0;
 let saveTail=Promise.resolve(),liveState={},configSaveError='';
+let panDrag=null;
 
 async function request(path,body,options={}){
   const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:body===undefined?undefined:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(10000),...options});
@@ -69,6 +70,7 @@ function renderButtons(){
   $('studioSystemAudio').disabled=!loaded||busy||!!screenStream;
   for(const id of ['studioSource','studioBackground','studioFace','studioPosition','studioSize','studioZoom','studioAvatar'])$(id).disabled=!loaded||starting||saving;
   for(const button of root.querySelectorAll('[data-avatar-preset]'))button.disabled=!loaded||starting||saving;
+  renderTransformTools();
 }
 
 function screenCaptureSupported(){return !!navigator.mediaDevices?.getDisplayMedia&&typeof MediaRecorder!=='undefined'&&!!HTMLCanvasElement.prototype.captureStream}
@@ -118,6 +120,7 @@ function draw(){
   const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;
   const usableFrame=frame&&Date.now()-frameAt<1500&&!frameBlocked;
   compose(ctx,screenVideo?.readyState>=2?screenVideo:null,usableFrame?frame:null,w,h,config);
+  renderTransformTools();
   $('studioViewLabel').textContent=screenStream?'合成预览':usableFrame?'人物预览':'合成预览';
   $('studioCropBtn').disabled=!loaded||starting||saving||(!screenStream&&!usableFrame);
   $('studioPlaceholder').hidden=!!screenStream||!!usableFrame;
@@ -125,6 +128,57 @@ function draw(){
     const seconds=Math.floor((Date.now()-startedAt)/1000);
     $('studioElapsed').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
   }
+}
+
+function portraitGeometry(){
+  if(!loaded||starting||saving||frameBlocked||!frame||Date.now()-frameAt>=1500)return null;
+  const canvas=$('studioCanvas'),view=portraitViewport(frame,canvas.width,canvas.height,config,screenVideo?.readyState>=2);
+  return {...view,...containGeometry(frame,view.width,view.height,config.portrait_crop||FULL_CROP,config.portrait_zoom,config.portrait_pan)};
+}
+
+function renderTransformTools(){
+  const geometry=portraitGeometry(),draggable=!!geometry&&(geometry.overflowX>.5||geometry.overflowY>.5);
+  $('studioCanvas').classList.toggle('is-draggable',draggable);
+  $('studioZoomIn').disabled=!loaded||starting||saving||config.portrait_zoom>=400;
+  $('studioZoomOut').disabled=!loaded||starting||saving||config.portrait_zoom<=100;
+  $('studioFill').disabled=!geometry;
+  $('studioCenter').disabled=!loaded||starting||saving||!(config.portrait_pan.x||config.portrait_pan.y);
+}
+
+function bindTransformTools(){
+  const canvas=$('studioCanvas'),clamp=value=>Math.max(-1,Math.min(1,value));
+  const point=event=>{const rect=canvas.getBoundingClientRect();return {x:(event.clientX-rect.left)*canvas.width/rect.width,y:(event.clientY-rect.top)*canvas.height/rect.height}};
+  canvas.addEventListener('pointerdown',event=>{
+    if(event.button!==0||panDrag)return;
+    const geometry=portraitGeometry(),p=point(event);
+    if(!geometry||(geometry.overflowX<=.5&&geometry.overflowY<=.5)||p.x<geometry.x||p.x>geometry.x+geometry.width||p.y<geometry.y||p.y>geometry.y+geometry.height)return;
+    panDrag={id:event.pointerId,point:p,geometry,pan:{...config.portrait_pan}};
+    canvas.setPointerCapture(event.pointerId);canvas.classList.add('is-dragging');event.preventDefault();
+  });
+  canvas.addEventListener('pointermove',event=>{
+    if(!panDrag||event.pointerId!==panDrag.id)return;
+    const p=point(event),{geometry,pan,point:start}=panDrag;
+    config.portrait_pan={x:geometry.overflowX>.5?clamp(pan.x+(p.x-start.x)/geometry.overflowX):0,y:geometry.overflowY>.5?clamp(pan.y+(p.y-start.y)/geometry.overflowY):0};
+    draw();
+  });
+  const finish=(event,cancel)=>{
+    if(!panDrag||event.pointerId!==panDrag.id)return;
+    const original=panDrag.pan;panDrag=null;canvas.classList.remove('is-dragging');
+    if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);
+    if(cancel){config.portrait_pan=original;draw();return}
+    if(original.x!==config.portrait_pan.x||original.y!==config.portrait_pan.y)void persist({portrait_pan:{...config.portrait_pan}}).catch(()=>{});
+  };
+  canvas.addEventListener('pointerup',event=>finish(event,false));
+  canvas.addEventListener('pointercancel',event=>finish(event,true));
+  canvas.addEventListener('lostpointercapture',event=>finish(event,true));
+  for(const [id,delta] of [['studioZoomOut',-25],['studioZoomIn',25]])$(id).addEventListener('click',()=>void persist({portrait_zoom:Math.max(100,Math.min(400,config.portrait_zoom+delta))}).catch(()=>{}));
+  $('studioCenter').addEventListener('click',()=>void persist({portrait_pan:{x:0,y:0}}).catch(()=>{}));
+  $('studioFill').addEventListener('click',()=>{
+    const view=portraitGeometry();if(!view)return;
+    const [w,h]=sourceSize(frame,config.portrait_crop||FULL_CROP);
+    const zoom=Math.max(view.width/w,view.height/h)/Math.min(view.width/w,view.height/h)*100;
+    void persist({portrait_zoom:Math.max(100,Math.min(400,Math.ceil(zoom/5)*5)),portrait_pan:{x:0,y:0}}).catch(()=>{});
+  });
 }
 
 function stopTracks(stream){stream?.getTracks().forEach(track=>track.stop())}
@@ -319,6 +373,7 @@ async function mount(){
     $('studioReleaseScreenBtn').addEventListener('click',()=>{releaseRecordingSources();renderButtons();status('画面预览已结束')});
     $('studioStartBtn').addEventListener('click',()=>void startRecording());
     $('studioStopBtn').addEventListener('click',stopRecording);
+    bindTransformTools();
     for(const [id,key] of Object.entries({studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size',studioZoom:'portrait_zoom'})){
       $(id).addEventListener('change',event=>void persist({[key]:['size','portrait_zoom'].includes(key)?Number(event.target.value):event.target.value}).catch(()=>{}));
     }
