@@ -667,6 +667,18 @@ def _set_body_input(source: str, enabled: bool, *, device=None) -> dict:
             INPUT_BRIDGE.set_body_enabled(active)
 
 
+def _restore_saved_recognition(source: str, generation: int) -> None:
+    """监听已就绪后恢复识别；停止或换源优先，启动失败不关闭网页。"""
+    with INPUT_SOURCE_LOCK:
+        with INPUT_STOP_LOCK:
+            if generation != INPUT_STOP_GENERATION or source != RUNTIME.body_mode:
+                return
+        try:
+            _set_body_input(source, True)
+        except Exception as exc:
+            print(f"摄像头识别未能自动启动，可在设备页重试：{exc}", flush=True)
+
+
 def _select_camera_input(device) -> dict:
     data = _set_body_input("computer", True, device=device)
     with INPUT_SOURCE_LOCK:
@@ -2681,7 +2693,6 @@ def _boot_ok_and_check() -> None:
 
 def main():
     global MODEL_ROOT, MODEL_PATH, RECOGNITION_MODELS
-    ensure_lifetime_job()
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="0.0.0.0", help="监听地址；默认允许局域网手机连接")
     ap.add_argument("--port", type=int, default=8765)
@@ -2704,6 +2715,9 @@ def main():
             print(f"管理员启动未完成，继续以普通权限运行：{exc}")
         else:
             return
+
+    # 管理员交接完成后才绑定当前后台；新后台不属于即将退出的旧实例。
+    ensure_lifetime_job()
 
     MODEL_ROOT = choose_model_root(args.model_root)
     try:
@@ -2775,6 +2789,12 @@ def main():
         target=device_server.serve_forever, name="motion-device-plane", daemon=True)
     device_thread.start()
     FIREWALL.ensure_async(args.port)
+
+    with INPUT_STOP_LOCK:
+        startup_generation = INPUT_STOP_GENERATION
+    threading.Thread(target=_restore_saved_recognition,
+                     args=(RUNTIME.body_mode, startup_generation),
+                     name="motion-start-recognition", daemon=True).start()
 
     # 两个监听都起来了，这一份就算站住了：清掉启动记号，不然下次启动会以为上次
     # 崩了然后把包退回去。也顺手去查一次有没有新版本，下到暂存目录等下次启动。

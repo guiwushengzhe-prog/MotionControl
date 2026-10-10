@@ -44,6 +44,15 @@ if ($running -and $running.StatusCode -eq 200) {
     } catch {
         Write-Host "未能切换启动权限，现有程序继续运行：$($_.Exception.Message)"
     }
+    try {
+        $cameraState = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/kernel/status' -TimeoutSec 3
+        if ($cameraState.body_mode -eq 'computer' -and -not $cameraState.camera.running) {
+            Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/input/source' `
+                -Method Post -ContentType 'application/json' -Body '{"source":"computer","enabled":true}' -TimeoutSec 55 | Out-Null
+        }
+    } catch {
+        Write-Host "摄像头未能自动启动，可在设备页重试：$($_.Exception.Message)"
+    }
     Write-Host 'MotionControl 已在运行，正在打开控制页面。'
     Start-Process 'http://127.0.0.1:8766/'
     exit 0
@@ -55,3 +64,4 @@ if (Test-Path -LiteralPath $multicorePython) {
 } else {
     python -X utf8 server.py
 }
+exit $LASTEXITCODE

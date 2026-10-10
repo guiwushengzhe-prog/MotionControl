@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import threading
+import pytest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
+from motioncontrol import game_launch
 from motioncontrol.game_launch import elevated_command
 from motioncontrol.game_profiles import GameProfileStore
 from motioncontrol_shared.canonical import canonicalize
@@ -17,6 +19,42 @@ from test_configuration_coordination import application
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_cold_admin_handoff_does_not_bind_new_backend_to_old_job(application, monkeypatch):
+    app, events = application, []
+    monkeypatch.setattr(app.sys, "argv", ["server.py", "--no-browser"])
+    monkeypatch.setattr(app, "is_administrator", lambda: False)
+    monkeypatch.setattr(app.PROFILES, "requires_admin", lambda _game: True)
+    monkeypatch.setattr(app, "ensure_lifetime_job", lambda: events.append("job"))
+    monkeypatch.setattr(app, "launch_as_administrator", lambda *args, **kwargs: events.append("launch"))
+    app.main()
+    assert events == ["launch"]
+
+
+@pytest.mark.parametrize("wait_result", [0, 0x102])
+def test_elevated_launch_detects_early_exit_and_closes_handle(monkeypatch, wait_result):
+    closed = []
+    def launched(info):
+        info._obj.hProcess = 42
+        return True
+    def wait(_handle, _milliseconds):
+        return wait_result
+    def exit_code(_handle, code):
+        code._obj.value = 5
+        return True
+    def close(handle):
+        closed.append(handle)
+        return True
+    shell = SimpleNamespace(ShellExecuteExW=launched)
+    kernel = SimpleNamespace(WaitForSingleObject=wait, GetExitCodeProcess=exit_code, CloseHandle=close)
+    monkeypatch.setattr(game_launch.ctypes, "WinDLL", lambda name, **kwargs: shell if name == "shell32" else kernel)
+    if wait_result == 0:
+        with pytest.raises(RuntimeError, match="提前退出（5）"):
+            game_launch.launch_as_administrator(ROOT)
+    else:
+        game_launch.launch_as_administrator(ROOT)
+    assert closed == [42]
 
 
 def test_only_the_chosen_game_remembers_administrator(isolated_user_data):
