@@ -47,6 +47,7 @@ class JumpDetector:
         self.still_since: float | None = None
         self.air_since: float | None = None
         self.rise: float | None = None     # 这一帧肩和胯里高出得少的那个，躯干为单位
+        self.drop: float | None = None     # 肩和胯都比站着时低了多少（取低得少的那个），躯干为单位
 
     @property
     def airborne(self) -> bool:
@@ -85,7 +86,7 @@ class JumpDetector:
                 self.still_since = now
             elif now - self.still_since >= SETTLE_S:
                 self.base = {"shoulder": shoulder_y, "hip": hip_y}
-            self.rise = None
+            self.rise = self.drop = None
             return False
 
         base = self.base
@@ -97,6 +98,7 @@ class JumpDetector:
             base.update(shoulder=shoulder_y, hip=hip_y)
             self.air_since = None
         rise = self.rise = min(base["shoulder"] - shoulder_y, base["hip"] - hip_y) / span
+        self.drop = min(shoulder_y - base["shoulder"], hip_y - base["hip"]) / span
 
         if self.air_since is None:
             if rise >= RISE_START:
@@ -107,7 +109,7 @@ class JumpDetector:
             # 起来了就不下来：不是跳，是换了高度。认下现在的位置。
             base.update(shoulder=shoulder_y, hip=hip_y)
             self.air_since = None
-            self.rise = 0.0
+            self.rise = self.drop = 0.0
             return False
 
         if self.air_since is None and dt > 0.0 and vy < FREEZE_VY:

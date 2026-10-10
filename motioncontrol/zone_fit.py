@@ -152,9 +152,9 @@ def body_frame(pose_map: dict[str, dict] | None, width: int, height: int) -> dic
     }
 
 
-# 脚的"下缘"：脚踝、脚跟、脚尖里画面上最低的那个点。地面线、量身量的离地高度、运行时
-# 判定脚离没离地，全按它算。以前三处都只看脚踝：脚踝本身离地还有一截，地面线就整体
-# 偏高，脚区跟着偏高，伸脚时脚尖脚跟到了、脚踝却够不着。
+# 脚的"下缘"：脚踝、脚跟、脚尖里画面上最低的那个点。地面线、量身量的离地高度按它算。
+# 以前都只看脚踝：脚踝本身离地还有一截，地面线就整体偏高，脚区跟着偏高，伸脚时脚尖
+# 脚跟到了、脚踝却够不着。运行时判定脚离没离地不用它，见下面的 ankle_y。
 FOOT_PARTS = ("ankle", "heel", "foot_index")
 
 
@@ -162,6 +162,25 @@ def foot_bottom_y(pose_map: dict[str, dict] | None, side: str) -> float | None:
     ys = [float(point["y"]) for part in FOOT_PARTS
           if (point := (pose_map or {}).get(f"{side}_{part}")) and _score(point) >= MIN_POINT_SCORE]
     return max(ys) if ys else None
+
+
+# 判断抬没抬脚（踏步、脚区"确实抬了脚"）只比两只脚踝，不再用下缘。横屏摄像头
+# 常把脚尖、脚跟切在画面下缘外，模型照样给 0.6 以上的可信度，坐标却是从腿推出来
+# 的：2026-10-10 Kinect 640×360 录制里脚尖 99% 的帧在画外，站着不动时两脚下缘的
+# 高低差九成落在 0.05 个躯干内，快碰到踏步起动门槛；只比脚踝是 0.034。手机全身
+# 录制回放，踏步照样连成一段、其余动作不误起，左脚区反而按得下去了。
+# 画外的点不算看见（和握拳那边同一个道理，见 hand_mouse_control._FRAME_MARGIN）。
+FRAME_MARGIN = 0.03
+
+
+def ankle_y(pose_map: dict[str, dict] | None, side: str) -> float | None:
+    point = (pose_map or {}).get(f"{side}_ankle")
+    if not point or _score(point) < MIN_POINT_SCORE:
+        return None
+    x, y = _finite(point.get("x")), _finite(point.get("y"))
+    if not (-FRAME_MARGIN <= x <= 1 + FRAME_MARGIN and -FRAME_MARGIN <= y <= 1 + FRAME_MARGIN):
+        return None
+    return y
 
 
 def foot_floor_y(pose_map: dict[str, dict] | None) -> float | None:

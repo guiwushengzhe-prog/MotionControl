@@ -16,6 +16,8 @@ because both are about how it shares the kernel with everything else:
 
 from __future__ import annotations
 
+import pytest
+
 from motioncontrol.control_kernel import ControlKernel
 
 
@@ -310,3 +312,23 @@ def test_losing_the_body_forgets_the_hands():
     assert kernel.latest_hands is not None
     kernel.handle_pose_map("another-source", body(spread=0.5), width=640, height=480)
     assert kernel.latest_hands is None
+
+
+def test_the_kernel_measures_curl_in_the_frame_it_was_seen_in():
+    """同一个拳在 640×360 画面里朝旁边：内核要按画面尺寸量，读出来仍是拳。"""
+    from motioncontrol.hand_mouse_control import _FINGER_KNUCKLES, _FINGER_TIPS
+
+    kernel, _output = kernel_with_hand_mouse()
+    try:
+        wx, wy = .70, .30
+        points = [p(wx, wy) for _ in range(21)]
+        for knuckle, tip in zip(_FINGER_KNUCKLES, _FINGER_TIPS):
+            points[knuckle] = p(wx + 30 / 640, wy)
+            points[tip] = p(wx + 20 / 640, wy + 15 / 360)
+        kernel.handle_pose_map("computer_camera", body(spread=.8), width=640, height=360,
+                               hands={"right": points})
+        state = kernel.hand_mouse_controller.status()
+        assert state["curl"] == pytest.approx(25 / 30, abs=.01)
+        assert state["engaged"] and state["grip_source"] == "hand"
+    finally:
+        kernel.close()

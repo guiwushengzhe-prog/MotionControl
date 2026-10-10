@@ -169,7 +169,10 @@ function renderReadiness(){
   const calibrated=!needCal||!!(hs.horizontal_calibrated??hs.calibrated);
   setStep('camera',cameraOk?'done':'warn',phoneMode?(cameraOk?'手机摄像头':'等手机连上'):(cameraRunning&&cameraInfo.picture_black?'画面全黑，请检查镜头或画面来源':cameraOk?(cameraInfo.camera_name||'电脑摄像头'):'还没连接'));
   const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk);
-  setStep('pose',posed?'done':(cameraOk?'warn':''),posed?'已识别':'站到镜头前，头和双肩入镜');
+  // 脚踝出了画面，踏步和脚区就认不出抬脚。只在它们绑了键时提，不算进"还差几步"。
+  const feetOut=posed&&kernelState?.feet_in_view===false&&['motion.march','zone.leftFoot','zone.rightFoot'].some(triggerMapped);
+  const feetHint='脚没入镜，踏步和脚区认不出：往后站或把摄像头放低';
+  setStep('pose',posed&&!feetOut?'done':(cameraOk?'warn':''),posed?(feetOut?feetHint:'已识别'):'站到镜头前，头和双肩入镜');
   setStep('game',gameProfile.selected?'done':'',gameProfile.selected?.name||'正在读取…');
   // 握拳管左右时不用校准头；这一步照样列着，写明用不着。
   const calStep=document.querySelector('.checklist [data-step="cal"]');
@@ -186,7 +189,7 @@ function renderReadiness(){
     const text=sec>=3600?`${Math.floor(sec/3600)}:${pad(Math.floor(sec/60)%60)}:${pad(sec%60)}`:`${pad(Math.floor(sec/60))}:${pad(sec%60)}`;
     if($('#runElapsed').textContent!==text)$('#runElapsed').textContent=text;
     const sub=$('#runSub'),lost=!posed;
-    setText(sub,lost?'看不到人了，站回镜头前':`${gameProfile.selected?.name||''} · F9 随时停`);setClass(sub,'warn',lost);
+    setText(sub,lost?'看不到人了，站回镜头前':feetOut?feetHint:`${gameProfile.selected?.name||''} · F9 随时停`);setClass(sub,'warn',lost||feetOut);
   }else runStartedAt=0;
 }
 

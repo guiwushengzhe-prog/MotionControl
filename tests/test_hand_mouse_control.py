@@ -384,3 +384,100 @@ def test_curl_keeps_its_hysteresis():
 def test_a_thresholds_pair_without_a_gap_is_refused():
     with pytest.raises(ValueError):
         merge_config(None, {"curl_close": 1.6, "curl_open": 1.5})
+
+
+# --- 按像素和深度量弯曲度 ---------------------------------------------------
+
+
+def hand_in_pixels(knuckle, tip, *, size=(640, 360), wrist=(320.0, 180.0), z_knuckle=0.0, z_tip=0.0):
+    """四根手指一样的手，点按像素给，换成程序里的归一化坐标。z 按画面宽归一，
+    和电脑、手机两边打包手部点的方式一样。"""
+    width, height = size
+    wx, wy = wrist
+
+    def at(dx, dy, dz=0.0):
+        return {"x": (wx + dx) / width, "y": (wy + dy) / height, "z": dz / width, "score": 0.9}
+
+    from motioncontrol.hand_mouse_control import _FINGER_KNUCKLES, _FINGER_TIPS
+
+    points = [at(0.0, 0.0) for _ in range(21)]
+    for knuckle_index, tip_index in zip(_FINGER_KNUCKLES, _FINGER_TIPS):
+        points[knuckle_index] = at(*knuckle, z_knuckle)
+        points[tip_index] = at(*tip, z_tip)
+    return points
+
+
+def test_a_curled_hand_reads_the_same_turned_sideways_in_a_wide_picture():
+    """16:9 画面里归一化的 y 一格比 x 长 1.78 倍。同一个拳，手指朝上和朝旁边，
+    以前读成 0.72 和 1.11——按 1.07 的门槛，转个方向就不算拳了。"""
+    from motioncontrol.hand_mouse_control import measure_curl
+
+    upright = hand_in_pixels(knuckle=(0, -30), tip=(15, -20))
+    sideways = hand_in_pixels(knuckle=(30, 0), tip=(20, 15))
+    size = (640, 360)
+    assert measure_curl(upright, size) == pytest.approx(25 / 30, abs=0.01)
+    assert measure_curl(sideways, size) == pytest.approx(25 / 30, abs=0.01)
+    assert abs(measure_curl(upright) - measure_curl(sideways)) > 0.3, "旧的读法确实受方向影响"
+
+
+def test_fingers_pointing_at_the_camera_are_not_a_fist():
+    """张开的手指朝镜头伸：画面上指尖贴着指根，平面读数像拳；带上深度是张开的。"""
+    from motioncontrol.hand_mouse_control import measure_curl
+
+    toward = hand_in_pixels(knuckle=(0, -30), tip=(0, -40), z_tip=-45.0)
+    assert measure_curl(toward) == pytest.approx(40 / 30, abs=0.01)
+    assert measure_curl(toward, (640, 360)) == pytest.approx(2.0, abs=0.02)
+    ctl = controller(hand="right")
+    ctl.update(pose(spread=0.5), now=1.0, hand_points=hand_points(curl=1.0))
+    assert ctl.engaged
+    state = ctl.update(pose(spread=0.5), now=1.03, hand_points=toward, frame_size=(640, 360))
+    assert state["engaged"] is False, "朝镜头张开手要松得开"
+
+
+def test_points_without_depth_still_measure_flat():
+    from motioncontrol.hand_mouse_control import measure_curl
+
+    points = hand_points(curl=1.8)
+    for point in points:
+        point.pop("z", None)
+    assert measure_curl(points, (640, 480)) is not None
+
+
+# --- 手部模型漏一帧 --------------------------------------------------------
+
+
+def test_a_missed_hand_frame_keeps_the_fist_and_keeps_moving():
+    """握着拳，手部模型漏了一帧：不换成指尖间距那把尺子，照常按手腕移动。"""
+    from motioncontrol.hand_mouse_control import FINGER_GAP_HOLD_S
+
+    ctl = controller(hand="right")
+    ctl.update(pose(spread=0.9), now=1.0, hand_points=hand_points(curl=1.0))
+    assert ctl.engaged
+    moved = pose(spread=0.9, wrist=(0.58, 0.5))
+    state = ctl.update(moved, now=1.033)
+    assert state["engaged"] is True
+    assert state["state"] == "moving" and state["output_x"] != 0.0
+    assert state["grip_source"] == "hand"
+    back = ctl.update(moved, now=1.066, hand_points=hand_points(curl=1.0, wrist=(0.58, 0.5)))
+    assert back["engaged"] is True and back["state"] == "moving", "没有松开再握，起点没重定"
+    # 断得太久：退回指尖间距，它说张开就松开。
+    late = ctl.update(moved, now=1.066 + FINGER_GAP_HOLD_S + 0.05)
+    assert late["engaged"] is False
+    assert late["grip_source"] == "pose"
+
+
+def test_a_missed_hand_frame_does_not_close_an_open_hand():
+    ctl = controller(hand="right")
+    ctl.update(pose(spread=0.1), now=1.0, hand_points=hand_points(curl=2.0))
+    assert not ctl.engaged
+    state = ctl.update(pose(spread=0.1), now=1.033)
+    assert state["engaged"] is False
+
+
+def test_a_missed_hand_frame_with_no_wrist_still_releases():
+    """手腕都没了：照旧松开，不能拿旧起点一直推鼠标。"""
+    ctl = controller(hand="right")
+    ctl.update(pose(spread=0.5), now=1.0, hand_points=hand_points(curl=1.0))
+    assert ctl.engaged
+    state = ctl.update({}, now=1.033)
+    assert state["engaged"] is False

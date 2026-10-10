@@ -55,7 +55,7 @@ from motioncontrol.recognition_models import (
 from motioncontrol.cpu_inference import FrameThreadBudget, ResourceShortage, prioritize_process
 from motioncontrol.jump_detect import JumpDetector
 from motioncontrol.zone_fit import (
-    HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, body_frame, foot_bottom_y,
+    HEAD_JUMP_HALF_H, ZONE_FIT_PREPARE_S, ZoneFitSession, ankle_y, body_frame,
     foot_floor_y, foot_out, is_default, normalize_zone_fit,
 )
 from motioncontrol_shared import pose_library, pose_rules
@@ -225,12 +225,21 @@ CALF_LIFT_SHIN_MAX = 0.15
 
 # 原地踏步：一只脚比另一只高出 0.07 个躯干算抬起来了，落到 0.04 以下算放下。录像
 # 里小的那几步 0.07~0.09、大的到 0.29，站着晃最多 0.055。走完一步之后 0.8 秒内
-# 没有下一步就停。高出多少按脚的下缘直接比（见 _update_feet_locked），不再各自
-# 相对自己那边的胯量：侧踢、换重心时骨盆一歪，站着那只脚相对胯就"抬高"了，
+# 没有下一步就停。高出多少按两只脚踝直接比（见 _update_feet_locked、zone_fit.ankle_y），
+# 不再各自相对自己那边的胯量：侧踢、换重心时骨盆一歪，站着那只脚相对胯就"抬高"了，
 # 真人录像里左脚往外伸，右脚被算成迈了一步。
 MARCH_LIFT_START = 0.07
 MARCH_LIFT_END = 0.04
 MARCH_HOLD_S = 0.80
+# 身体整体比站着时低这么多（躯干，见 jump_detect 的 drop），不开始踏步。蹲下、蹲起
+# 途中膝盖朝镜头弯，两只脚踝的估计跟着漂，先后回位时像左右交替抬脚：2026-10-10
+# Kinect 下蹲录制里这样认出的"步"都在低 0.22~0.37 时，当成踏步走了两段。手机录制
+# 里踏步时最多低 0.023，其余动作（跳跃前下蹲除外）不超过 0.061。已经在走的不管：
+# 边走边起跳要先往下蹲一点，不能因此停下。
+MARCH_START_MAX_DROP = 0.10
+# 脚踝出画这么久，状态里才报"脚没入镜"，界面据此提示往后站。蹲下时脚踝的估计会
+# 短暂出画，贴着画面边缘时也会进进出出，不能一闪一闪地提示。
+FEET_OUT_HINT_S = 1.0
 
 # 两只脚站着时的基准（见 _update_feet_locked）：高低差、各自往外多远。手机斜着
 # 放时，站着的两只脚在画面上本来就差一截（录像里右脚高 0.05），不扣掉的话一只脚
@@ -639,6 +648,8 @@ class ControlKernel:
         self.foot_base: dict[str, float] | None = None
         self.foot_history: list[tuple[float, float, float, float]] = []
         self.feet: dict[str, dict[str, float]] | None = None
+        # 脚踝从什么时候起不在画面里（两只都在时为 None）。见 FEET_OUT_HINT_S。
+        self.feet_out_since: float | None = None
         self.last_motion_emit = 0.0
 
         self.body_motion_guard_enabled = False
@@ -1690,7 +1701,8 @@ class ControlKernel:
         # zone button fire on the very frame the fist closes.
         self.hand_mouse_controller.update(
             pose_map, now, self._hand_points_for_mouse_locked(),
-            kinect_camera.depth_hand_states(self.latest_depth_body))
+            kinect_camera.depth_hand_states(self.latest_depth_body),
+            frame_size=(self.width, self.height) if self.width > 0 and self.height > 0 else None)
         # Recorded after the hand pass so the saved frames carry the fist
         # reading alongside the skeleton -- that pairing is the point of
         # recording at all when tuning the thresholds.
@@ -2287,24 +2299,29 @@ class ControlKernel:
     def _update_feet_locked(self, pose_map: dict[str, dict], now: float) -> None:
         """这一帧两只脚各离地多高、往外离站着的位置多远，存进 self.feet。
 
-        离地：两只脚的下缘直接比高低（躯干），再扣掉站着时本来就有的那点差。往外：
+        离地：两只脚踝直接比高低（躯干），再扣掉站着时本来就有的那点差。往外：
         和量身同一把横向尺子，减去站着时的位置。踏步和脚区都读这一份。
+        脚踝出了画面就不报：那是从腿推出来的，不是看见的（见 zone_fit.ankle_y）。
 
         站着的基准只在两脚着地、最近 FOOT_STILL_S 里没怎么动时才往现在挪（见
         FOOT_STILL_*）。以前是第一次站好时记一下就再也不动：人挪了位置、站宽了，
         基准就一直是错的。
         """
         self.feet = None
+        ankles = {side: ankle_y(pose_map, side) for side in ("left", "right")}
+        if None not in ankles.values():
+            self.feet_out_since = None
+        elif self.feet_out_since is None:
+            self.feet_out_since = now
         frame = body_frame(pose_map, self.width, self.height)
         if frame is None:
             return
         torso = abs(frame["hip"]["y"] - frame["shoulder"]["y"])
-        bottoms = {side: foot_bottom_y(pose_map, side) for side in ("left", "right")}
         outs = {side: foot_out(pose_map, frame, side) for side in ("left", "right")}
-        if torso < .025 or None in bottoms.values() or None in outs.values():
+        if torso < .025 or None in ankles.values() or None in outs.values():
             return
         # 左脚比右脚高多少。右脚的就是它的相反数。
-        diff = (bottoms["right"] - bottoms["left"]) / torso
+        diff = (ankles["right"] - ankles["left"]) / torso
         history = self.foot_history
         history.append((now, diff, outs["left"], outs["right"]))
         while now - history[0][0] > FOOT_FIRST_BASE_S:
@@ -2521,6 +2538,8 @@ class ControlKernel:
         else:
             self._jump.reset()
             jump_raw = False
+        # 身体整体低着（蹲着、正在蹲起）不开始踏步，已经在走的不管。见 MARCH_START_MAX_DROP。
+        lowered = (self._jump.drop or 0.0) > MARCH_START_MAX_DROP
         # 从云端下载的动作（下蹲、双手举过头……）：规则是数据，交给规则引擎。
         # 以前写死在这里的判断原样搬进了各自的规则，逐帧一致（tests/test_pose_rules.py）。
         rules = pose_rules.evaluate_rules(self._motion_rules, pose_map, self.width, self.height,
@@ -2568,6 +2587,10 @@ class ControlKernel:
             # 就算。等到最高是为了和那两个分开，没绑的动作不需要分。
             wait_for_peak = (self._motion_has_effective_binding_locked("calf_back")
                              or bool(lift_claimers_bound))
+            start_lowered = lowered and now >= self.step["active_until"]
+            if start_lowered:
+                # 蹲下前记住的那一步也不能和蹲起后的一步凑成交替。
+                self.step["last_side"] = ""
 
             def step_done(side: str, other: str) -> bool:
                 """这只脚是不是刚走完一步。
@@ -2618,7 +2641,7 @@ class ControlKernel:
                 if (lift["crossed"] or lift.get("cross_attempt", False)
                         or calf_like(lift["peak_ankle"], lift["peak_knee"], lift["min_shin"])):
                     return False
-                return not steps_blocked and not self._foot_outward(pose_map, side)
+                return not steps_blocked and not start_lowered and not self._foot_outward(pose_map, side)
 
             left_step = step_done("left", "right")
             right_step = step_done("right", "left")
@@ -2682,9 +2705,12 @@ class ControlKernel:
                 )
                 excluded = {side for side in ("left", "right")
                             if self._foot_outward(pose_map, side) or knee_meets_elbow[side] or knee_near_elbow[side]}
+                # 低着时整个检测器清空，蹲下前的那一步也一起忘掉。
+                responsive_lowered = lowered and now >= self._responsive_march.active_until
                 march_raw = self._responsive_march.update(
                     march_lifts, now,
-                    excluded=excluded, blocked=steps_blocked or calf_raw or calf_in_progress or cross_attempting,
+                    excluded=excluded,
+                    blocked=steps_blocked or calf_raw or calf_in_progress or cross_attempting or responsive_lowered,
                     jumping=jumping,
                 )
         else:
@@ -3307,6 +3333,7 @@ class ControlKernel:
         self._jump.reset()
         self.foot_history.clear()
         self.feet = None
+        self.feet_out_since = None
         self._depth_march.reset()
         self.march_depth_source = "image"
         self.step.clear()
@@ -3457,6 +3484,8 @@ class ControlKernel:
             # stream from a rejected personal template.
             "world_pose_available": bool(self.latest_world_pose),
             "march_depth_source": self.march_depth_source,
+            # 脚踝连续出画 FEET_OUT_HINT_S 才算没入镜；界面只在踏步、脚区绑了键时提示。
+            "feet_in_view": self.feet_out_since is None or now - self.feet_out_since < FEET_OUT_HINT_S,
             "zones": zones,
             "buttons": self._pressed_keys_locked(),
             "motions": sorted(self.motion_active),
