@@ -100,8 +100,14 @@ _TIPS = ("thumb", "index", "pinky")
 # 不妥：那是另一把尺子、另一组门槛，握着拳也可能读成张开——松开再握，起点重定，
 # 鼠标断一下；张着手也可能读成握拳，鼠标被拽一下。2026-10-07 Kinect 录制里手腕
 # 在画面内时有 29% 的帧没认出手。刚才还有手指读数的话，这么久之内维持上一帧的
-# 握拳状态（照常按手腕移动），过了才退回指尖间距。
-FINGER_GAP_HOLD_S = 0.25
+# 握拳状态（照常按手腕移动），过了就当看不到手、松开。
+FINGER_GAP_HOLD_S = 0.5
+# 这么久之内手部模型认出过这只手，就说明它在工作：认不出时不改用指尖间距。
+# 2026-10-10 两段真人握拳录制里，握拳状态的来回切换几乎都出在退回指尖间距的那些
+# 帧：指尖间距读数 0.24～0.6 连成一片，和握拳门槛搅在一起；10 秒握放 4～5 次切了
+# 24 次，改成保持 0.5 秒后松开是 16 次，踏步时张着的手误判握拳从 22% 降到 17%。
+# 超过这么久都没认出过，才当作没有手部模型，照旧用指尖间距。
+FINGER_SOURCE_S = 3.0
 
 # MediaPipe hand landmark order: 0 is the wrist, then each finger runs from
 # knuckle to tip.  Only the four fingers count towards curl.  The thumb folds
@@ -329,6 +335,11 @@ class HandMouseController:
             # 手指读数只断了一下：维持上一帧的状态，见 FINGER_GAP_HOLD_S。
             grip, held = None, True
             self.grip_source = "hand"
+        elif (self.finger_seen_at is not None
+              and 0.0 <= now - self.finger_seen_at <= FINGER_SOURCE_S):
+            # 手部模型在工作，只是这会儿认不出手：当看不到手，不换指尖间距。
+            grip = None
+            self.grip_source = "none"
         elif spread is not None:
             grip = spread
             close_at = float(config["fist_close"])
