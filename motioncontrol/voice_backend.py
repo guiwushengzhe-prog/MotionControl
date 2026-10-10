@@ -674,12 +674,14 @@ class VoiceService:
                 self._audio_generation += 1
             self._rebuild_recognizer()
 
-    def switch_profile_bindings(self, bindings: dict | None) -> None:
+    def switch_profile_bindings(self, bindings: dict | None, *, mode_bindings: list[dict] | None = None) -> None:
         """控制中换模式：只换"哪句话是哪条口令"。识别语法本来就含所有模式的口令，
         合集没变就不重建识别器；万一变了（模式刚被改过）才重建。"""
         with self._lock:
             before = self.grammar_phrases()
             self._profile_bindings = copy.deepcopy(bindings) if isinstance(bindings, dict) else {}
+            if mode_bindings is not None:
+                self._mode_bindings = copy.deepcopy(mode_bindings)
             self._build_registry()
             if self.grammar_phrases() != before:
                 with self._audio_submit_lock:

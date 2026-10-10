@@ -1,6 +1,7 @@
 // 按键、触发器、动作的名字和写法。圈上、卡片上、大字里都从这里取，说法才一致。
 import {customPoses,poseLibrary} from './library.js';
 import {kernelState} from './play.js';
+import {gameProfile} from './state.js';
 import {voiceCatalog,voiceCommandNames,voiceCommandPhrases} from './voice.js';
 
 // The browser is a display/configuration client. Pose inference, zones,
@@ -36,6 +37,7 @@ export function actionKeyText(action){
   if(type==='voice_release')return `松开「${voiceCommandPhrases(action.target).join('、')}」`;
   if(type==='keyboard')return target;
   if(type==='system')return SYSTEM_TARGET_NAMES.get(target)||target;
+  if(type==='mode')return modeTargetLabel(action.target);
   if(type==='mouse_button')return({LEFT:'左键',RIGHT:'右键',MIDDLE:'中键',X1:'侧键1',X2:'侧键2'}[target]||target);
   if(type==='mouse_wheel')return target.includes('UP')?'滚轮↑':target.includes('DOWN')?'滚轮↓':target;
   if(type==='gamepad_axis')return target.endsWith('UP')?'摇杆↑':target.endsWith('DOWN')?'摇杆↓':target.endsWith('LEFT')?'摇杆←':target.endsWith('RIGHT')?'摇杆→':target;
@@ -104,10 +106,18 @@ export const MOTION_CONFLICT_GROUPS=[];
 
 export const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',jump:'跳跃',squat:'下蹲',hands_up:'双手举过头',side_step_jack:'侧步开合'};
 
-export const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'手柄按键',gamepad_trigger:'手柄扳机',gamepad_axis:'左摇杆',macro:'键盘宏',voice_release:'松开口令按住的键',system:'系统功能'};
+export const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'手柄按键',gamepad_trigger:'手柄扳机',gamepad_axis:'左摇杆',macro:'键盘宏',voice_release:'松开口令按住的键',system:'系统功能',mode:'切换模式'};
 
 // 输出类型下拉分三组，一眼找到在哪一类。
-export const ACTION_TYPE_GROUPS=[['键盘鼠标',['keyboard','mouse_button','mouse_wheel']],['手柄',['gamepad','gamepad_trigger','gamepad_axis']],['其他',['macro','voice_release','system']]];
+export const ACTION_TYPE_GROUPS=[['键盘鼠标',['keyboard','mouse_button','mouse_wheel']],['手柄',['gamepad','gamepad_trigger','gamepad_axis']],['其他',['macro','voice_release','system','mode']]];
+
+export function modeTargetLabel(target){
+  const text=String(target||'').trim();
+  if(text.toUpperCase()==='NEXT')return '下一个模式';
+  if(text.toUpperCase()==='DEFAULT')return '回到默认模式';
+  const mode=gameProfile.selected?.modes?.find(item=>item.id===text.toLowerCase());
+  return mode?`切到 ${mode.name}`:'模式已删除';
+}
 
 // 宏库。每一处映射的下拉都从这里取，所以只在增删改之后刷一次，不跟着状态轮询走。
 export const macroLibrary={items:[],limits:null};
@@ -140,7 +150,7 @@ export function profileTriggers(){
     .map(item=>({
       key:`voice.${item.id}`,group:'voice',id:item.id,
       slot:String(item.id||'').startsWith('game.profile_slot_'),
-      name:`口令 ${Number(String(item.id||'').replace('game.profile_slot_',''))}`,phrase:item.phrase,tapOnly:false,
+      name:`口令 ${Number(String(item.id||'').replace('game.profile_slot_',''))}`,phrase:item.base_phrase??item.phrase,tapOnly:false,
       defaultBinding:item.default_action?{label:item.label,action:item.default_action}:null,
     }));
   // 用户自己录的姿势并进同一份触发器列表，于是它们自动出现在映射界面里，
@@ -160,6 +170,7 @@ export function targetLabel(action){
   if(!action)return '未映射';
   if(action.type==='macro')return macroName(action.target);
   if(action.type==='voice_release')return voiceCommandNames(action.target).join('、');
+  if(action.type==='mode')return modeTargetLabel(action.target);
   const t=String(action.target||'').toUpperCase();
   if(action.type==='system')return SYSTEM_TARGET_NAMES.get(t)||t;
   if(action.type==='keyboard')return t;

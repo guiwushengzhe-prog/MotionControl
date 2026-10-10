@@ -419,6 +419,13 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .cloud-row-title:hover { color: var(--on-tint); }
 
 .map-tabs { justify-self: start; }
+.mode-toolbar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.mode-tabs { display: flex; flex-wrap: wrap; gap: .375rem; }
+.mode-tabs button { border: 1px solid var(--line); border-radius: .625rem; background: var(--fill); color: var(--text-2); padding: .5rem .75rem; font: inherit; cursor: pointer; }
+.mode-tabs button[aria-selected="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.mode-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mode-live { margin-left: .375rem; font-size: .6875rem; opacity: .8; }
+.mode-chip { max-width: 10rem; }
 .tab-caption { margin: -4px 0 0 .25rem; color: var(--text-2); font-size: .8125rem; }
 fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .binding-list { display: grid; gap: .875rem; }

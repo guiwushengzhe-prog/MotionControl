@@ -19,6 +19,6 @@ export const output={enabled:false,mode:'mouse',strength:160,server:null,xinputE
 
 export const head={algorithm:'pnp',horizontalAlgorithm:'roll_tilt',deadzone:.10,sensitivityX:58,sensitivityY:46,enabled:true,invertY:false,verticalLookEnabled:false,verticalExclusive:false,bodyMotionGuard:false};
 
-export const gameProfile={catalog:[],selected:null,actions:{},overrides:{}};
+export const gameProfile={catalog:[],selected:null,actions:{},overrides:{},activeMode:{id:null,name:'默认'}};
 
 export const profileDirty=new Set();

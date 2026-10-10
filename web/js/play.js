@@ -5,7 +5,7 @@ import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMer
 import {renderTriggerRecord} from './diagnostics.js';
 import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseCountdown,paintPoseLibrary} from './library.js';
-import {paintZoneConflictNotes,revealBindingRow} from './mapping.js';
+import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode} from './mapping.js';
 import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runAction} from './shell.js';
 import {S,gameProfile,head,output} from './state.js';
 import {handMouseConfig,renderViewControl,syncControlLabels} from './view-control.js';
@@ -248,6 +248,7 @@ export function renderKernelState(runtime,force=false){
   latestRuntime=runtime;
   if(typeof runtime?.preview_mirror==='boolean')setPreviewMirror(runtime.preview_mirror);
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
+  renderCurrentMode(k.game_mode);
   currentPoseMap=k.pose||null;
   // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
   const capture=runtime?.pose_capture,captureSignature=JSON.stringify([capture?.counting,capture?.purpose,capture?.remaining_s,capture?.pose_id,capture?.message]);

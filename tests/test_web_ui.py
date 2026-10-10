@@ -123,6 +123,111 @@ def _go(page, view: str) -> None:
     page.wait_for_selector(f'[data-panel="{view}"]:not([hidden])')
 
 
+@pytest.fixture
+def mode_ui(ui):
+    """每条模式测试用自己的游戏，结束后还原共用测试服务。"""
+    page = ui.page
+    selected = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]["selected_id"]
+    made = page.request.post(ui.base + "/api/game-profiles/custom/add", data={"name": "界面模式测试"}).json()["game"]
+    page.request.post(ui.base + "/api/game-profiles/select", data={"id": made["id"]})
+    page.reload()
+    page.wait_for_function("document.querySelector('#currentGameName').textContent === '界面模式测试'")
+    _go(page, "games")
+    yield ui, made["id"]
+    page.request.post(ui.base + "/api/game-profiles/custom/remove", data={"id": made["id"]})
+    page.request.post(ui.base + "/api/game-profiles/select", data={"id": selected})
+
+
+def _new_mode(page, name):
+    page.once("dialog", lambda dialog: dialog.accept(name))
+    page.click("#addModeBtn")
+    page.wait_for_function("name => document.querySelector('#modeEditStatus').textContent.includes('「' + name + '」')", arg=name)
+    return page.locator('#modeTabs [aria-selected="true"]').get_attribute("data-mode-id")
+
+
+def _set_mode_key(page, key):
+    row = page.locator('.binding-row[data-trigger="zone.rightHand"]')
+    row.locator("select.binding-type").select_option("keyboard")
+    with page.expect_response(lambda response: response.url.endswith("/api/game-profiles/overrides") and response.request.method == "POST"):
+        row.locator(".binding-target").press(key)
+    page.wait_for_function("document.querySelector('#profileSaveStatus').textContent === '已保存'")
+
+
+def test_modes_create_copy_edit_switch_and_reload(mode_ui):
+    ui, game_id = mode_ui
+    page = ui.page
+    default = page.request.get(ui.base + "/api/game-profiles/selected?mode=DEFAULT").json()["profile"]["bindings"]
+    drive = _new_mode(page, "开车")
+    _set_mode_key(page, "F")
+    assert page.locator("#currentModeName").inner_text() == "默认", "点编辑标签不会切输出"
+    ride = _new_mode(page, "骑车")
+    assert page.locator('.binding-row[data-trigger="zone.rightHand"] .binding-target').input_value() == "F", "复制当前编辑模式"
+    _set_mode_key(page, "E")
+    page.click(f'#modeTabs [data-mode-id="{drive}"]')
+    page.wait_for_function("document.querySelector('.binding-row[data-trigger=\"zone.rightHand\"] .binding-target').value === 'F'")
+    page.click('#modeTabs [data-mode-id="DEFAULT"]')
+    page.wait_for_function("document.querySelector('#modeTabs [data-mode-id=DEFAULT]').getAttribute('aria-selected') === 'true'")
+    assert page.request.get(ui.base + "/api/game-profiles/selected?mode=DEFAULT").json()["profile"]["bindings"] == default
+    _go(page, "play")
+    page.click("#playModeBtn")
+    page.wait_for_function("document.querySelector('#currentModeName').textContent === '开车'")
+    assert page.locator("#runMode").text_content() == "模式：开车"
+    assert page.request.get(ui.base + "/api/kernel/status").json()["kernel"]["game_mode"]["id"] == drive
+    page.click("#playModeBtn")
+    page.wait_for_function("document.querySelector('#currentModeName').textContent === '骑车'")
+    page.reload()
+    page.wait_for_function("document.querySelector('#currentGameName').textContent === '界面模式测试'")
+    _go(page, "games")
+    assert page.locator('#modeTabs [data-mode-id="DEFAULT"]').get_attribute("aria-selected") == "true"
+    assert page.locator('#modeTabs [role="tab"]').count() == 3
+    assert page.locator("#currentModeName").inner_text() == "骑车", "网页刷新不打断正在使用的模式"
+    # 换游戏再回来相当于运行状态重置，不会从上次的骑车模式继续。
+    page.request.post(ui.base + "/api/game-profiles/select", data={"id": "generic-xbox"})
+    page.request.post(ui.base + "/api/game-profiles/select", data={"id": game_id})
+    page.wait_for_function("document.querySelector('#currentModeName').textContent === '默认'")
+    assert ui.errors == []
+
+
+def test_mode_targets_shared_voice_rename_delete_and_reset(mode_ui):
+    ui, _ = mode_ui
+    page = ui.page
+    mode_id = _new_mode(page, "开车")
+    _set_mode_key(page, "F")
+    page.click("#gameMenuBtn")
+    page.click("#resetProfileBindingsBtn")
+    page.wait_for_function("document.querySelector('.binding-row[data-trigger=\"zone.rightHand\"] .binding-type').value === 'gamepad'")
+    row = page.locator('.binding-row[data-trigger="zone.rightHand"]')
+    with page.expect_response(lambda response: response.url.endswith("/api/game-profiles/overrides") and response.request.method == "POST"):
+        row.locator("select.binding-type").select_option("mode")
+        row.locator(".binding-target").select_option(mode_id)
+    assert row.locator(".binding-behavior").inner_text() == "切换一次"
+    page.click("#modeMenuBtn")
+    page.once("dialog", lambda dialog: dialog.accept("驾驶"))
+    page.click("#renameModeBtn")
+    page.wait_for_function("document.querySelector('#modeEditStatus').textContent.includes('「驾驶」')")
+    assert "切到 驾驶" in row.locator(".binding-target").inner_text()
+    _go(page, "devices")
+    page.click('[data-pane="voice"]')
+    page.click("#addVoiceBtn")
+    shared = page.locator("#voiceRows .voice-row").last
+    shared.locator(".voice-type").select_option("mode")
+    assert "切到 驾驶" in shared.locator(".binding-target").inner_text()
+    assert "下一个模式" in shared.locator(".binding-target").inner_text()
+    assert shared.locator(".binding-behavior").inner_text() == "切换一次"
+    # 空草稿不提交，离开前清掉类型，防止干扰模式删除。
+    shared.locator(".voice-type").select_option("keyboard")
+    _go(page, "games")
+    page.click("#playModeBtn")
+    page.wait_for_function("document.querySelector('#currentModeName').textContent === '驾驶'")
+    page.click("#modeMenuBtn")
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.click("#removeModeBtn")
+    page.wait_for_function("document.querySelector('#modeTabs').children.length === 1")
+    assert page.locator("#currentModeName").inner_text() == "默认"
+    assert page.locator("#modeMenuBtn").is_hidden()
+    assert ui.errors == []
+
+
 def test_the_page_runs_without_script_errors(ui):
     ui.page.wait_for_timeout(1500)  # 让轮询跑几轮
     assert ui.errors == []

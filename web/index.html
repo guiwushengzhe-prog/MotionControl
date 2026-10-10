@@ -12,6 +12,7 @@
 <div class="top-actions">
 <span id="serviceStatus" role="status">正在连接服务…</span>
 <button class="game-chip" data-go="games" title="换游戏、改按键"><span class="game-chip-label">游戏</span><strong id="currentGameName">正在读取…</strong></button>
+<button class="game-chip mode-chip" id="playModeBtn" type="button" title="切到下一个模式" disabled=""><span class="game-chip-label">模式</span><strong id="currentModeName">默认</strong><span aria-hidden="true">⇄</span></button>
 <button class="btn primary cta" disabled="" id="mainActionBtn">开始控制</button>
 <button class="btn stop" id="stopBtn" title="停止识别并松开所有体感输出，快捷键 F9">停止识别 <kbd>F9</kbd></button>
 <div class="menu-wrap"><button aria-expanded="false" aria-haspopup="menu" aria-label="帮助与外观" class="icon-btn" id="helpBtn" title="帮助与外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.5M12 16.8h.01"></path></svg></button>
@@ -77,6 +78,7 @@
 <span class="run-label">正在控制</span>
 <div class="run-time" id="runElapsed">00:00</div>
 <p class="run-sub" id="runSub">F9 随时停</p>
+<p class="run-sub" id="runMode">模式：默认</p>
 </section>
 <section class="card home-fitness" id="homeFitnessCard">
 <div class="card-head"><h2 class="card-title" id="homeFitnessTitle">今日运动</h2><button class="btn link" id="homeFitnessGo">查看记录</button></div>
@@ -135,6 +137,13 @@
 <div id="cloudList"></div>
 </section>
 
+<div class="mode-toolbar">
+<div aria-label="编辑模式" class="mode-tabs" id="modeTabs" role="tablist"></div>
+<button class="btn link" id="addModeBtn" type="button">＋ 新建模式</button>
+<div class="menu-wrap"><button aria-expanded="false" aria-haspopup="menu" aria-label="模式更多操作" class="icon-btn" id="modeMenuBtn" type="button" title="模式更多操作">⋯</button>
+<div class="menu" hidden="" id="modeMenu" role="menu"><button class="menu-item" id="renameModeBtn" role="menuitem">改模式名</button><button class="menu-item danger" id="removeModeBtn" role="menuitem">删除这个模式</button></div></div>
+</div>
+<p class="tab-caption" id="modeEditStatus" role="status"></p>
 <div aria-label="按键映射" class="seg map-tabs" id="mapTabs" role="tablist">
 <button aria-pressed="true" data-tab="zones" type="button">区域<span class="n" data-count="zones"></span></button>
 <button aria-pressed="false" data-tab="body" type="button">身体动作<span class="n" data-count="body"></span></button>

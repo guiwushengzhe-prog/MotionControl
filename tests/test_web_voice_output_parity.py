@@ -29,7 +29,7 @@ def test_both_menus_have_all_output_types_and_game_controls_are_separate(desktop
     row = page.locator('.binding-row[data-trigger="voice.game.profile_slot_01"]')
     game = row.locator('.binding-type').evaluate("el=>[...el.options].map(o=>o.value).filter(Boolean)")
     assert general == game == ["keyboard", "mouse_button", "mouse_wheel", "gamepad", "gamepad_trigger",
-                               "gamepad_axis", "macro", "voice_release", "system"]
+                               "gamepad_axis", "macro", "voice_release", "system", "mode"]
     box = row.locator('.binding-output').evaluate("el=>{const a=el.querySelector('.binding-type').getBoundingClientRect(),b=el.querySelector('.binding-target').getBoundingClientRect();return {gap:b.left-a.right,border:getComputedStyle(el).borderWidth,typeRadius:getComputedStyle(el.querySelector('.binding-type')).borderRadius}}")
     assert box["gap"] >= 6
     assert box["border"] == "0px"
