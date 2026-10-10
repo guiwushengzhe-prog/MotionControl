@@ -1,6 +1,9 @@
 """相机热切换与彻底停止，使用替代设备，不产生真实鼠标或游戏输出。"""
 import io
+import json
 import threading
+import urllib.request
+from http.server import ThreadingHTTPServer
 
 import pytest
 
@@ -23,6 +26,69 @@ def mock_camera(app, monkeypatch):
     monkeypatch.setattr(camera, "start", started)
     monkeypatch.setattr(app, "_set_audio_source", lambda *args, **kwargs: {})
     return camera, events
+
+
+def test_saved_camera_starts_without_a_control_click(application, monkeypatch):
+    app = application
+    camera, events = mock_camera(app, monkeypatch)
+    app.RUNTIME.body_mode = "computer"
+    app._restore_saved_recognition("computer", app.INPUT_STOP_GENERATION)
+    assert camera.running
+    assert events == ["release", "start"]
+    assert app.INPUT_BRIDGE.status()["body_enabled"]
+    assert not app.OUTPUT.status()["enabled"]
+    camera.running = False
+
+
+def test_stop_or_changed_source_cancels_queued_startup(application, monkeypatch):
+    app = application
+    camera, events = mock_camera(app, monkeypatch)
+    app.RUNTIME.body_mode = "computer"
+    app._restore_saved_recognition("computer", app.INPUT_STOP_GENERATION - 1)
+    app.RUNTIME.body_mode = "phone"
+    app._restore_saved_recognition("computer", app.INPUT_STOP_GENERATION)
+    assert not events
+    assert not camera.running
+
+
+def test_camera_start_failure_does_not_exit_application(application, monkeypatch, capsys):
+    app = application
+    camera, _events = mock_camera(app, monkeypatch)
+    app.RUNTIME.body_mode = "computer"
+    monkeypatch.setattr(camera, "start", lambda: (_ for _ in ()).throw(CameraUnavailable("设备未就绪")))
+    app._restore_saved_recognition("computer", app.INPUT_STOP_GENERATION)
+    assert "设备未就绪" in capsys.readouterr().out
+    assert not app.OUTPUT.status()["enabled"]
+
+
+def test_stop_recognition_keeps_web_server_and_restart_available(application, monkeypatch):
+    app = application
+    camera, _events = mock_camera(app, monkeypatch)
+    camera.running = True
+    http = ThreadingHTTPServer(("127.0.0.1", 0), app.AdminHandler)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{http.server_address[1]}"
+    try:
+        request = urllib.request.Request(base + "/api/input/stop", data=b"{}",
+                                         headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert json.load(response)["ok"]
+        assert not camera.running
+        with urllib.request.urlopen(base + "/api/kernel/status", timeout=5) as response:
+            assert not json.load(response)["camera"]["running"]
+        request = urllib.request.Request(base + "/api/input/source",
+                                         data=b'{"source":"computer","enabled":true}',
+                                         headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert json.load(response)["ok"]
+        assert camera.running
+        assert not app.OUTPUT.status()["enabled"]
+    finally:
+        camera.running = False
+        http.shutdown()
+        http.server_close()
+        thread.join(timeout=2)
 
 
 def test_running_camera_selection_releases_then_starts_and_preserves_controls(application, monkeypatch):
