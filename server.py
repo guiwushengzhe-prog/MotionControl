@@ -336,6 +336,16 @@ KERNEL.configure_system_action_handler(_run_bound_system_action, asynchronous=Fa
 
 
 def execute_voice_action(action: dict) -> dict:
+    result = _execute_voice_action(action)
+    command_id = str(action.get("command_id", "")).strip()
+    if result.get("executed") and command_id:
+        binding = KERNEL.control_bindings.get(f"voice.{command_id}")
+        selected = binding.get("action") if isinstance(binding, dict) else None
+        KERNEL.note_voice_rule_trigger(f"voice.{command_id}", selected or action)
+    return result
+
+
+def _execute_voice_action(action: dict) -> dict:
     """Keep system voice commands at the local control-kernel boundary.
 
     A selected game Profile may override a stable voice command id.  The
@@ -361,7 +371,7 @@ def execute_voice_action(action: dict) -> dict:
                     if binding["action"].get("type") == "system":
                         # 本游戏口令在映射表里选了「系统功能」。
                         return execute_voice_action({**action, **binding["action"]})
-                    mapped = dict(binding["action"])
+                    mapped = {**action, **binding["action"]}
                     mapped["source"] = action.get("source", "voice")
                     return OUTPUT.execute_voice_action(mapped)
             if command_id.startswith("game.profile_slot_"):

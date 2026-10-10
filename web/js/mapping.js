@@ -756,7 +756,13 @@ function readZonePointChoices(row){
 }
 
 function bodyRuleTriggerChoices(trigger){
-  return profileTriggers().filter(item=>['zones','motions','poses'].includes(item.group)&&item.key!==trigger.key);
+  const choices=[...profileTriggers(),...voiceCatalog.filter(item=>!item.system_fixed&&item.id)
+    .map(item=>({key:`voice.${item.id}`,group:'voice',name:voiceCommandName(item.id)}))];
+  return [...new Map(choices.filter(item=>item.key!==trigger.key).map(item=>[item.key,item])).values()];
+}
+
+export function syncRuleTriggerChoices(){
+  document.querySelectorAll('.binding-rule-trigger').forEach(select=>select.refreshChoices?.(select.value));
 }
 
 function buildExtraOutputRow(trigger,action,number,onRemove){
@@ -826,19 +832,25 @@ function buildAlternateActionRow(trigger,binding,onRemove){
   const refreshRule=selected=>{
     const cycle=mode.value==='cycle';
     triggerPick.replaceChildren();
-    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=cycle?'选择重置用的区域或动作':'选择配合的动作';triggerPick.appendChild(placeholder);
-    const candidates=bodyRuleTriggerChoices(trigger).filter(item=>cycle||isBodyTrigger(item));
-    for(const item of candidates){const option=document.createElement('option');option.value=item.key;option.textContent=item.name;triggerPick.appendChild(option)}
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=cycle?'选择重置用的触发项':'选择配合的触发项';triggerPick.appendChild(placeholder);
+    const candidates=bodyRuleTriggerChoices(trigger);
+    for(const [group,label] of [['zones','触发圈'],['motions','身体动作'],['poses','姿势'],['voice','语音']]){
+      const items=candidates.filter(item=>item.group===group);if(!items.length)continue;
+      const options=document.createElement('optgroup');options.label=label;
+      for(const item of items){const option=document.createElement('option');option.value=item.key;option.textContent=item.name;options.appendChild(option)}
+      triggerPick.appendChild(options);
+    }
     if(selected&&!candidates.some(item=>item.key===selected)){
       const missing=document.createElement('option');missing.value=selected;missing.textContent=`已不可用：${selected}`;triggerPick.appendChild(missing);
     }
     triggerPick.value=selected||'';
-    triggerPick.setAttribute('aria-label',trigger.name+(cycle?' 重置区域或动作':' 配合动作'));
-    help.textContent=cycle?'每触发一次换下一个键；碰到重置用的区域或动作，回到第一个。':'这个动作开始时正做着配合动作，就改按下面的键。';
+    triggerPick.setAttribute('aria-label',trigger.name+(cycle?' 重置触发项':' 配合动作'));
+    help.textContent=cycle?'每触发一次换下一个键；选中的触发项触发时，回到第一个。':'这个动作开始时，选中的触发项也在触发，就改按下面的键。语音在刚触发或持续按住时配合。';
     steps.firstElementChild.querySelector('.binding-alternate-label span').textContent=cycle?'第 2 次':'配合时';
     steps.querySelectorAll('.binding-sequence-action').forEach((row,index)=>{row.hidden=!cycle&&index>0});
     addStep.hidden=!cycle;
   };
+  triggerPick.refreshChoices=refreshRule;
   refreshRule(mode.value==='cycle'?binding.reset_trigger:binding.alternate_when);
   mode.addEventListener('change',()=>refreshRule(''));
   wrap.append(header,rule,steps,addStep);return wrap;

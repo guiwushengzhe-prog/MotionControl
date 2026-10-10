@@ -2,7 +2,7 @@
 
 import math
 
-from .roll_tilt_control import TILT_SPAN_DEG
+from .roll_tilt_control import TILT_SPAN_DEG, gentle_turn_rate
 
 
 class ResponsiveHeadControl:
@@ -36,7 +36,7 @@ class ResponsiveHeadControl:
         self.directions[source] = direction
         amount = min(1.0, (abs(delta) - stop) / max(.1, 1.0 - stop))
         # 中心附近便于细调，大幅动作加速；连续、单调，不突然跳到高速。
-        curved = .60 * amount + .40 * amount * amount
+        curved = gentle_turn_rate(amount)
         return math.copysign(curved, delta)
 
     def _return_brake(self, delta, dt, noise, source):

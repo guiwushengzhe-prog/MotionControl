@@ -3,7 +3,7 @@ import math
 import pytest
 
 from motioncontrol.head_control import HeadController, HeadEstimate
-from motioncontrol.roll_tilt_control import RollTiltControl, eye_line_tilt
+from motioncontrol.roll_tilt_control import RollTiltControl, eye_line_tilt, gentle_turn_rate
 
 
 def eyes(angle, width=640, height=480, mirror=False, offset_y=0.):
@@ -110,3 +110,28 @@ def test_tilt_does_not_require_yaw_estimator_to_be_valid_after_calibration(tmp_p
         output = c.update(eyes(10.), 640, 480, now=1 + i * .04)[0]
     assert output > 0
     assert c.status()['horizontal_frame_valid']
+
+
+def test_gentle_turn_curve_is_continuous_progressive_and_has_no_speed_jump():
+    values = [gentle_turn_rate(index / 1000) for index in range(1001)]
+    assert values[0] == 0 and values[-1] == 1
+    assert all(0 < b - a < .0015 for a, b in zip(values, values[1:]))
+    assert 0 < values[100] < .07
+    assert .35 < values[500] < .4
+    assert .65 < values[750] < .7
+    assert all(value <= index / 1000 for index, value in enumerate(values))
+
+
+@pytest.mark.parametrize('direction', [-1, 1])
+def test_real_tilt_angle_controls_rate_and_keeps_original_start_stop(direction):
+    values = []
+    for angle in (4., 8., 12., 18., 25.):
+        c = RollTiltControl()
+        for frame in range(12):
+            value = c.update(direction * angle, 1. + frame / 30,
+                             center=0., noise=.1, deadzone=.1)
+        values.append(direction * value)
+        assert c.update(0., 1.4, center=0., noise=.1, deadzone=.1) == 0.
+    assert 0 < values[0] < .1
+    assert values[0] < values[1] < values[2] < values[3]
+    assert values[3:] == [1., 1.]

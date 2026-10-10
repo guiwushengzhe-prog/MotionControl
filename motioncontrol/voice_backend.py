@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from motioncontrol_shared.mapping_schema import shared_voice_command_id
+
 SYSTEM_HEAD_CALIBRATION_START = "HEAD_CALIBRATION_START"
 VOICE_TIMEOUT_SECONDS = 1.5
 WAKE_COMMAND_WINDOW_SECONDS = 3.5
@@ -1136,7 +1138,8 @@ class VoiceService:
         if match is None:
             return {"matched": False, "reason": "command_not_in_mapping"}
         action = {**{key: value for key, value in match.items() if key not in {"phrase", "synonyms"}},
-                  "phrase": f"{self.wake_word}{match['phrase']}"}
+                  "phrase": f"{self.wake_word}{match['phrase']}",
+                  "command_id": shared_voice_command_id(match["phrase"])}
         # 校验过的映射总带 behavior；没走校验直接放进来的旧写法照旧按点按发。
         action.setdefault("behavior", "tap")
         action["source"] = f"voice:{source_id}" if source_id else "voice"
