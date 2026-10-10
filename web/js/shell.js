@@ -246,6 +246,7 @@ for(const [id,key,digits] of [['handMouseSensitivity','sensitivity',0],['handMou
   $('#'+id).addEventListener('input',e=>{$('#'+id+'Value').textContent=Number(e.target.value).toFixed(digits)});
   $('#'+id).addEventListener('change',e=>void saveHandMouseFields({[key]:Number(e.target.value)}));
 }
+$('#handMouseGripAlgorithm').addEventListener('change',e=>void saveHandMouseFields({grip_algorithm:e.target.value}));
 
 for(const axis of ['horizontal','vertical']){
   $('#view'+(axis==='horizontal'?'Horizontal':'Vertical')+'Source').addEventListener('change',()=>void saveViewControlAxis(axis));
