@@ -153,7 +153,7 @@ export function renderVoiceRows(items){
   const rows=[...document.querySelectorAll('#voiceRows .voice-row')];
   const targetValue=(type,value)=>Array.isArray(value)?(type==='voice_release'?value.join(','):value.join('+')):String(value||'');
   const current=rows.map(row=>{const type=row.querySelector('.voice-type').value;return [row.querySelector('.voice-phrase').value,type,type==='voice_release'?[...row.querySelector('.voice-release-target').selectedOptions].map(item=>item.value).join(','):row.querySelector('.binding-target')?.value||'',row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'tap',row.querySelector('.combo-lead-ms')?.dataset.explicit==='1'?Number(row.querySelector('.combo-lead-ms').value):null]});
-  const desired=(items||[]).map(item=>[item.phrase||'',item.type||'keyboard',targetValue(item.type,item.target),['system','voice_release','mouse_wheel'].includes(item.type)?'tap':item.behavior||'tap',item.combo_stick_lead_ms??null]);
+  const desired=(items||[]).map(item=>[item.phrase||'',item.type||'keyboard',targetValue(item.type,item.target),['system','voice_release','mouse_wheel','mode'].includes(item.type)?'tap':item.behavior||'tap',item.combo_stick_lead_ms??null]);
   if(rows.length&&JSON.stringify(current)===JSON.stringify(desired.length?desired:[['','keyboard','','tap',null]]))return;
   $('#voiceRows').replaceChildren();for(const m of items||[])addVoiceRow(m);if(!$('#voiceRows').children.length)addVoiceRow();
 }
@@ -246,7 +246,7 @@ function announceVoice(s,phrase){
 
 export async function refreshVoice(){const revision=voiceRevision;try{const data=await api('/api/voice/status');if(revision===voiceRevision){voice.status=data;renderVoiceStatus(data)}return true}catch{if(revision===voiceRevision){voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}return false}}
 
-function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandNames(action.target).join('、')}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
+function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='mode')return targetLabel(action);if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandNames(action.target).join('、')}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 
 function renderVoiceCommandCard(command,card){
   if(!card){card=document.createElement('div');card.className='voice-command-card';card.setAttribute('role','listitem');card.append(document.createElement('div'),document.createElement('small'))}

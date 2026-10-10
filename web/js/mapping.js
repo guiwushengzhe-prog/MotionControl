@@ -104,7 +104,7 @@ function syncProfileZoneLabels(){
     // The region is read at a glance mid-game, so show the button by itself.
     // A profile's descriptive label ("左脚区 · LB") belongs in the mapping list;
     // here it only shrinks the part that matters. The body part stays in <small>.
-    const binding=bindingFor(trigger);
+    const binding=bindingsForDisplay()[trigger.key]||bindingFor(trigger);
     const label=binding&&!binding.disabled?targetLabel(binding.action):'—';
     if(BODY_ZONES[trigger.id])BODY_ZONES[trigger.id].label=label;
     const el=$(zonePad[trigger.id]);if(el)el.textContent=label;
@@ -133,6 +133,8 @@ function renderProfileHeader(){
   // 「自动生成」说的是那两百个没人试过的；自己加的不算。
   $('#profileUnverified').hidden=!p||mine||Boolean(p.source?.verified);
   renderGameLaunch();
+  renderModeTabs();
+  refreshModeTargets();
   syncProfileZoneLabels();
 }
 
@@ -222,14 +224,121 @@ export async function searchProfiles(){
 }
 
 export async function refreshProfile(){
-  const [selected,actions]=await Promise.all([api('/api/game-profiles/selected'),api('/api/output/actions')]);
+  const [selected,actions]=await Promise.all([api('/api/game-profiles/selected?mode=DEFAULT'),api('/api/output/actions')]);
   gameProfile.selected=selected.profile||null;gameProfile.actions=actions.actions||{};gameProfile.overrides=gameProfile.selected?.overrides||{};
+  gameProfile.activeMode=selected.active_mode||{id:null,name:'默认'};
   gameLaunch=selected.launch||null;
   gameProfile.zonePointLabels=actions.zone_point_labels||{};
   gameProfile.zoneSegments=actions.zone_segments||[];
   gameProfile.zoneDefaultPoints=actions.zone_default_points||{};
   renderProfileHeader();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
 }
+
+// 编辑标签和实际控制的模式分别保存。点标签只读那套映射，开始页按钮才切输出。
+let modeTabsSignature='';
+function renderModeTabs(){
+  const profile=gameProfile.selected,box=$('#modeTabs'),modes=profile?.modes||[{id:null,name:'默认'}];
+  const signature=JSON.stringify([profile?.selected_id,modes]);
+  if(signature!==modeTabsSignature){
+    modeTabsSignature=signature;
+    box.replaceChildren(...modes.map(mode=>{
+      const button=document.createElement('button');button.type='button';button.dataset.modeId=mode.id||'DEFAULT';
+      button.setAttribute('role','tab');button.setAttribute('aria-controls','mappingFields');
+      button.append(document.createTextNode(mode.name));
+      const live=document.createElement('span');live.className='mode-live';live.textContent='使用中';button.append(live);
+      button.addEventListener('click',()=>editMode(mode.id).catch(error=>notice(error.message)));return button;
+    }));
+  }
+  const editing=profile?.mode||{id:null,name:'默认'},active=gameProfile.activeMode;
+  for(const button of box.children){
+    const id=button.dataset.modeId==='DEFAULT'?null:button.dataset.modeId;
+    setAttribute(button,'aria-selected',id===editing.id);
+    setProperty(button.querySelector('.mode-live'),'hidden',id!==active.id);
+  }
+  setText($('#modeEditStatus'),editing.id===active.id?`正在编辑并使用「${editing.name}」`:`正在编辑「${editing.name}」 · 当前控制：${active.name}`);
+  setProperty($('#modeMenuBtn'),'hidden',!editing.id);
+  setProperty($('#addModeBtn'),'disabled',modes.length>=9||profileSwitching);
+  renderCurrentMode(active);
+}
+
+export function renderCurrentMode(mode){
+  if(mode)gameProfile.activeMode=mode;
+  const active=gameProfile.activeMode;
+  setText($('#currentModeName'),active.name||'默认');
+  setText($('#runMode'),`模式：${active.name||'默认'}`);
+  setProperty($('#playModeBtn'),'disabled',profileSwitching||(gameProfile.selected?.modes?.length||1)<2);
+  // 状态轮询不重建映射表，不冲掉正在编辑的内容。
+  const editing=gameProfile.selected?.mode||{id:null,name:'默认'};
+  for(const button of $('#modeTabs').children){
+    setProperty(button.querySelector('.mode-live'),'hidden',(button.dataset.modeId==='DEFAULT'?null:button.dataset.modeId)!==active.id);
+  }
+  setText($('#modeEditStatus'),editing.id===active.id?`正在编辑并使用「${editing.name}」`:`正在编辑「${editing.name}」 · 当前控制：${active.name}`);
+}
+
+function acceptModeProfile(data){
+  gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
+  gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
+  shownBodyRows.keys.clear();
+  renderProfileHeader();renderProfileBindingRows();
+}
+
+async function editMode(id){
+  if(profileSwitching||id===(gameProfile.selected?.mode?.id||null))return;
+  await profileOperation(async()=>{
+    const data=await api('/api/game-profiles/selected?mode='+encodeURIComponent(id||'DEFAULT'));
+    acceptModeProfile(data);
+  });
+}
+
+async function addMode(){
+  if(profileSwitching)return;
+  const name=prompt('新模式叫什么？按键会从正在编辑的模式复制，之后可以分别修改。');
+  if(name===null)return;
+  await profileOperation(async()=>{
+    const data=await post('/api/game-profiles/modes',{op:'add',name,profile_id:gameProfile.selected.selected_id,copy_from:gameProfile.selected.mode?.id||null});
+    acceptModeProfile(data);notice(`已新建「${data.profile.mode.name}」，正在使用的模式不变`);
+  });
+}
+
+async function renameMode(){
+  const mode=gameProfile.selected?.mode;if(profileSwitching||!mode?.id)return;
+  const name=prompt('模式改成什么名字？',mode.name);if(name===null)return;
+  await profileOperation(async()=>{
+    acceptModeProfile(await post('/api/game-profiles/modes',{op:'rename',id:mode.id,name,profile_id:gameProfile.selected.selected_id}));
+  });
+}
+
+async function removeMode(){
+  const mode=gameProfile.selected?.mode;if(profileSwitching||!mode?.id)return;
+  if(!confirm(`删除「${mode.name}」及它的按键？如果正在使用，会回到默认模式。`))return;
+  await profileOperation(async()=>{
+    acceptModeProfile(await post('/api/game-profiles/modes',{op:'remove',id:mode.id,profile_id:gameProfile.selected.selected_id}));
+  });
+}
+
+async function nextMode(){
+  if(profileSwitching)return;
+  await profileOperation(async()=>{
+    const data=await post('/api/game-profiles/mode',{target:'NEXT',profile_id:gameProfile.selected.selected_id});
+    renderCurrentMode(data.active_mode);notice(`已切到「${data.active_mode.name}」`);
+    await refreshVoiceCommands();
+  });
+}
+
+function refreshModeTargets(){
+  document.querySelectorAll('.binding-target-box').forEach(box=>{
+    if(box.closest('.binding-main,.binding-sequence-action,.voice-row')?.querySelector('.binding-type')?.value==='mode'){
+      const value=box.querySelector('.binding-target')?.value||'NEXT';
+      const signature=JSON.stringify([gameProfile.selected?.modes,value]);
+      if(box.dataset.modeOptions!==signature){fillTargetControl(box,'mode',value);box.dataset.modeOptions=signature}
+    }
+  });
+}
+
+for(const[id,handler]of [['addModeBtn',addMode],['renameModeBtn',renameMode],['removeModeBtn',removeMode],['playModeBtn',nextMode]]){
+  $('#'+id).addEventListener('click',()=>{togglePanel('modeMenuBtn','modeMenu',false);handler().catch(error=>notice(error.message))});
+}
+$('#modeMenuBtn').addEventListener('click',()=>togglePanel('modeMenuBtn','modeMenu'));
 
 // ---- 自己加的游戏 ---------------------------------------------------------
 // 内置目录只有两百个，而且是从 Steam 榜单生成的，漏掉很正常。以前搜不到就只能
@@ -246,6 +355,7 @@ export async function addCustomGame(){
     $('#customGameName').value='';$('#customGameAppid').value='';
     const picked=await post('/api/game-profiles/select',{id:data.game.id});
     gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};++profileApplies;
+    gameProfile.activeMode=picked.active_mode||picked.profile.mode;
     gameLaunch=picked.launch||null;
     // searchProfiles 会把 #profileMeta 写成库统计，所以头部要排在它后面重画一次。
     await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
@@ -275,7 +385,7 @@ export async function removeCustomGame(){
     // 要用它返回的那份，不能继续显示一个已经不存在的游戏。
     const data=await post('/api/game-profiles/custom/remove',{id:current.id});
     gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
-    gameLaunch=(await api('/api/game-profiles/selected')).launch||null;
+    const selected=await api('/api/game-profiles/selected');gameLaunch=selected.launch||null;gameProfile.activeMode=selected.active_mode;
     await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
     notice(`已删掉，当前游戏退回「${data.profile.name}」`);
   });
@@ -287,6 +397,7 @@ export async function applySelectedProfile(){
     await saveProfileBindings();
     const data=await post('/api/game-profiles/select',{id});
     gameProfile.selected=data.profile;++profileApplies;
+    gameProfile.activeMode=data.active_mode||data.profile.mode;
     gameProfile.overrides=data.profile.overrides||{};
     gameLaunch=data.launch||null;
     await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
@@ -297,12 +408,12 @@ export async function applySelectedProfile(){
 
 async function profileOperation(operation,{recoverConflict=false}={}){
   return configurationOperation(async()=>{
-    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn')];
+    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn,#modeTabs button,#addModeBtn,#modeMenuBtn,#renameModeBtn,#removeModeBtn,#playModeBtn')];
     const disabled=controls.map(el=>el.disabled);
     profileSwitching=true;
     controls.forEach(el=>{el.disabled=true});
     try{await operation()}
-    finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]})}
+    finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]});renderModeTabs()}
   },{skipDrafts:recoverConflict?[saveProfileBindings]:[]});
 }
 
@@ -505,6 +616,14 @@ export function makeKeyCaptureInput(className,value=''){
 export function fillTargetControl(container,type,value='',comboLeadMs=80,comboLeadExplicit=false){
   container.replaceChildren();if(!type)return;
   const meta=gameProfile.actions?.[type]||{};
+  if(type==='mode'){
+    const select=document.createElement('select');select.className='binding-target';
+    const targets=[['NEXT','下一个模式'],['DEFAULT','回到默认模式'],...(gameProfile.selected?.modes||[]).filter(item=>item.id).map(item=>[item.id,`切到 ${item.name}`])];
+    for(const[id,name]of targets){const option=document.createElement('option');option.value=id;option.textContent=name;select.appendChild(option)}
+    const raw=String(value||'NEXT'),want=['NEXT','DEFAULT'].includes(raw.toUpperCase())?raw.toUpperCase():raw.toLowerCase();
+    if(!targets.some(([id])=>id===want)){const option=document.createElement('option');option.value=want;option.textContent='模式已删除';select.appendChild(option)}
+    select.value=want;container.appendChild(select);return;
+  }
   if(type==='gamepad'){
     const select=document.createElement('select');select.className='binding-target';
     for(const key of meta.targets||['A','B','X','Y','LB','RB','L3','R3','START','BACK','DPAD_UP','DPAD_DOWN','DPAD_LEFT','DPAD_RIGHT']){const option=document.createElement('option');option.value=key;option.textContent=TARGET_LABELS[key]||key;select.appendChild(option)}
@@ -589,7 +708,7 @@ export function fillBehaviorControl(container,trigger,type,value,macroId){
     span.dataset.value=mode;span.textContent=text;container.appendChild(span);return;
   }
   if(type==='voice_release'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='松开一次';span.dataset.value='tap';container.appendChild(span);return}
-  if(type==='system'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='执行一次';span.dataset.value='tap';container.appendChild(span);return}
+  if(type==='system'||type==='mode'){const span=document.createElement('span');span.className='binding-behavior';span.textContent=type==='mode'?'切换一次':'执行一次';span.dataset.value='tap';container.appendChild(span);return}
   if(trigger.tapOnly||type==='mouse_wheel'){const span=document.createElement('span');span.className='binding-behavior';span.textContent='点一下';span.dataset.value='tap';container.appendChild(span);return}
   if(!type){const span=document.createElement('span');span.className='binding-behavior';span.textContent='';span.dataset.value='hold';container.appendChild(span);return}
   const sel=document.createElement('select');sel.className='binding-behavior';
@@ -616,7 +735,9 @@ function bodyRowWanted(trigger){
 
 // 卡片上那个键位按钮：绑了写键，表里有这一行但没绑写「未映射」，表里还没有写「加到映射」。
 export function libraryKeyLabel(triggerKey){
-  const label=triggerKeyLabel(triggerKey);
+  const trigger=profileTriggers().find(item=>item.key===triggerKey);
+  const binding=trigger?bindingFor(trigger):null;
+  const label=binding&&!binding.disabled?targetLabel(binding.action):'未映射';
   return label==='未映射'?(shownBodyRows.keys.has(triggerKey)?'没绑键':'加到映射'):label;
 }
 
@@ -624,10 +745,10 @@ export function libraryKeyLabel(triggerKey){
 // 的口令，就显示成「停住语音按住 · 那条口令」；存的还是旧写法，改这一行时才换成新的。
 function legacyReleaseTarget(action){
   const same=(a,b)=>{const norm=x=>(Array.isArray(x)?x:String(x||'').split('+')).map(v=>String(v).trim().toUpperCase()).filter(Boolean).sort().join('+');return norm(a)===norm(b)};
-  const bindings=bindingsForDisplay();
+  const bindings=gameProfile.selected?.bindings?.voice||{};
   for(const[key,binding]of Object.entries(bindings)){
     const other=binding?.action;
-    if(!key.startsWith('voice.')||binding?.disabled||!other||other.behavior!=='hold')continue;
+    if(binding?.disabled||!other||other.behavior!=='hold')continue;
     if(other.type===action.type&&(other.type==='macro'?String(other.target).toLowerCase()===String(action.target).toLowerCase():same(other.target,action.target)))return voiceCommandId(key);
   }
   return '';
@@ -1033,7 +1154,7 @@ function emptyNote(text){const el=document.createElement('div');el.className='pr
 export function renderProfileBindingRows(){
   const box=$('#profileBindingRows');if(!box)return;box.replaceChildren();
   if(!gameProfile.selected){const group=document.createElement('div');group.className='binding-group';group.append(emptyNote('还没有可编辑的游戏配置。'));box.append(group);return}
-  const profileId=gameProfile.selected.selected_id||gameProfile.selected.id;
+  const profileId=(gameProfile.selected.selected_id||gameProfile.selected.id)+':'+(gameProfile.selected.mode?.id||'DEFAULT');
   if(shownBodyRows.profile!==profileId){shownBodyRows.profile=profileId;shownBodyRows.keys.clear()}
   const triggers=profileTriggers();
   const groups=[
@@ -1071,11 +1192,11 @@ export function readBindingAction(container,trigger,ordinal=''){
     target=ids.length===1?ids[0]:ids;
   }else{
     const raw=String(container.querySelector('.binding-target')?.value||'').trim();
-    target=type==='macro'?raw.toLowerCase():raw.toUpperCase();
+    target=type==='macro'||(type==='mode'&&!['NEXT','DEFAULT'].includes(raw.toUpperCase()))?raw.toLowerCase():raw.toUpperCase();
   }
   const name=trigger.name+(ordinal?`（${ordinal}）`:'');
   if(!target||(Array.isArray(target)&&!target.length))throw new Error(type==='macro'?`${name} 还没有选择要跑哪条宏`:type==='voice_release'?`${name} 还没有选择要停住哪条口令`:`${name} 还没有选择具体键位`);
-  const behavior=trigger.tapOnly||type==='mouse_wheel'||type==='voice_release'||type==='system'?'tap':(container.querySelector('select.binding-behavior')?.value||container.querySelector('.binding-behavior')?.dataset.value||'hold');
+  const behavior=trigger.tapOnly||['mouse_wheel','voice_release','system','mode'].includes(type)?'tap':(container.querySelector('select.binding-behavior')?.value||container.querySelector('.binding-behavior')?.dataset.value||'hold');
   const action={type,target,behavior};
   const comboLead=container.querySelector('.combo-lead-ms');
   if(type==='gamepad'&&comboLead&&!comboLead.closest('.combo-lead-box')?.hidden&&(comboLead.dataset.explicit==='1'||comboLead.dataset.touched==='1')){
@@ -1132,8 +1253,9 @@ export async function saveProfileBindings(){
   const id=gameProfile.selected.selected_id||gameProfile.selected.id,revision=profileRevision;
   $('#profileSaveStatus').textContent='正在保存…';$('#retryProfileSaveBtn').hidden=true;
   profileFlight=(async()=>{
-    const data=await post('/api/game-profiles/overrides',{profile_id:id,overrides:readProfileOverrides()});
+    const data=await post('/api/game-profiles/overrides',{profile_id:id,mode_id:gameProfile.selected.mode?.id||null,overrides:readProfileOverrides()});
     gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
+    gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
     if(revision===profileRevision)profileDirty.clear();
     renderProfileHeader();await refreshVoiceCommands();
   })();
@@ -1186,11 +1308,12 @@ export async function resetProfileBindings(){
   await profileOperation(async()=>{
     await saveProfileBindings();
     const profile_id=gameProfile.selected.selected_id||gameProfile.selected.id;
-    const data=await post('/api/game-profiles/overrides',{profile_id,overrides:{}});
+    const data=await post('/api/game-profiles/overrides',{profile_id,mode_id:gameProfile.selected.mode?.id||null,overrides:{}});
     gameProfile.selected=data.profile;gameProfile.overrides={};
+    gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
     // 恢复默认就是回到默认那几行，这次手动加进来的没绑的动作一起收回动作库。
     shownBodyRows.keys.clear();
     await refreshVoiceCommands();renderProfileHeader();renderProfileBindingRows();
-    notice('已恢复这个游戏的默认按键');
+    notice(`已恢复「${data.profile.mode?.name||'默认'}」的初始按键`);
   });
 }

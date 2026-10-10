@@ -847,7 +847,7 @@ export function paintPoseLibrary() {
       if (bound.textContent !== label) bound.textContent = label;
       bound.classList.toggle('add', label === '加到映射' || label === '没绑键');
     }
-    if (triggerMapped(item.trigger)) used++;
+    if (label !== '加到映射' && label !== '没绑键') used++;
   }
   const count = document.getElementById('libraryCount');
   const text = `${poseLibrary.length} 个${used ? ` · ${used} 个在用` : ''}`;

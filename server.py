@@ -397,8 +397,8 @@ def _queue_mode_switch(target) -> dict:
     """口令选了「切换模式」。普通口令是语音服务持着自己的锁执行的，而换模式要先拿
     配置锁、再拿语音锁和内核锁；当场切会和保存配置互相等死。交给后台命令队列，
     它先拿配置锁，顺序和保存配置一样。"""
-    SYSTEM_COMMANDS.submit({"type": "mode", "target": target, "trigger": "voice"})
-    return {"executed": True, "queued": True}
+    result = SYSTEM_COMMANDS.submit({"type": "mode", "target": target, "trigger": "voice"})
+    return {**result, "executed": bool(result.get("queued"))}
 
 
 def execute_voice_action(action: dict) -> dict:
@@ -1099,11 +1099,12 @@ def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
     """
     by_profile = document.get("overrides_by_profile", {})
     launch_modes = document.get("launch_mode_by_profile", {})
+    game_modes = document.get("modes_by_profile", {})
     for custom_game in document.get("custom_games", []):
         if not game_id or custom_game["id"] == game_id:
             PROFILES.import_custom_game(custom_game)
     if game_id:
-        if game_id not in by_profile and game_id not in launch_modes:
+        if game_id not in by_profile and game_id not in launch_modes and game_id not in game_modes:
             raise ValueError(f"这份配置里没有 {game_id} 的映射")
         wanted = {game_id: by_profile[game_id]} if game_id in by_profile else {}
         final_selection = game_id
@@ -1118,11 +1119,16 @@ def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
         # validate; neither touches the file directly.
         PROFILES.select(profile_id)
         PROFILES.set_overrides(overrides, profile_id=profile_id, check=VOICE.check_profile_phrases)
-        # 带了模式就整组换上；没带（旧格式）就留着本机原有的模式。
-        game_modes = document.get("modes_by_profile", {})
-        if isinstance(game_modes, dict) and profile_id in game_modes:
-            PROFILES.set_modes(profile_id, game_modes[profile_id], check=VOICE.check_profile_phrases)
         applied.append(profile_id)
+
+    # 默认按键没改过的游戏也可能有模式，不能依赖 overrides_by_profile 里有它。
+    # 带了模式就整组换上；没带（旧格式）就留着本机原有的模式。
+    for profile_id, modes in game_modes.items():
+        if game_id and profile_id != game_id:
+            continue
+        PROFILES.set_modes(profile_id, modes, check=VOICE.check_profile_phrases)
+        if profile_id not in applied:
+            applied.append(profile_id)
 
     for profile_id, mode in launch_modes.items():
         if game_id and profile_id != game_id:
@@ -1156,8 +1162,18 @@ def _profile_configuration_transaction():
                 user_data_root() / ".profile-install.journal",
             ):
                 yield
-                KERNEL.configure_motions(MOTION_CONFIG)
-                _apply_effective_profile()
+                profile = _active_profile()
+                if (profile["selected_id"] == previous_profile["selected_id"]
+                        and profile.get("bindings", {}) == previous_bindings
+                        and MOTION_CONFIG == previous_motions):
+                    # 改的是未使用模式或模式名字：保留当前按住、点按边沿和循环状态。
+                    # 语音只在所有模式的口令合集真的变化时重建，改键、改名不重建。
+                    GAME_MODE.update(game=profile["selected_id"], id=profile["mode"]["id"])
+                    KERNEL.game_mode = copy.deepcopy(profile["mode"])
+                    VOICE.switch_profile_bindings(profile.get("bindings", {}), mode_bindings=PROFILES.mode_bindings())
+                else:
+                    KERNEL.configure_motions(MOTION_CONFIG)
+                    _apply_effective_profile()
             CONFIG_REVISION += 1
         except BaseException:
             SYSTEM_COMMANDS.invalidate()
@@ -1278,6 +1294,7 @@ def voice_command_catalog() -> dict:
     # 口令现在做什么，跟着当前模式。
     profile = _active_profile() if "PROFILES" in globals() else {"bindings": {}}
     voice_bindings = profile.get("bindings", {}).get("voice", {})
+    base_phrases = {item["id"]: item.get("phrase", "") for item in VOICE._commands_for({})}
     commands = []
     # Use the same registry VoiceService actually parses.  Keeping a second UI
     # catalog here allowed a phrase to be shown even when the recognizer did
@@ -1290,6 +1307,8 @@ def voice_command_catalog() -> dict:
             "id": str(item.get("id", "")),
             "label": str(item.get("label", item.get("phrase", ""))),
             "phrase": str(item.get("phrase", "")),
+            # 映射表可能正在编辑另一模式，不能把当前模式改过的词带进它的空口令。
+            "base_phrase": base_phrases.get(str(item.get("id", "")), ""),
             "synonyms": list(item.get("synonyms", []) or []),
             "kind": kind,
             "system_fixed": kind == "system",
@@ -1676,10 +1695,13 @@ class AdminHandler(_BaseHandler):
             return
         if route == "/api/game-profiles/selected":
             # ?mode= 读某个模式的按键给映射表编辑；不带就是当前正在用的模式。
-            wanted = parse_qs(parsed.query).get("mode", [None])[0]
+            wanted = parse_qs(parsed.query, keep_blank_values=True).get("mode", [None])[0]
             with PROFILE_UPDATE_LOCK:
                 active = _active_profile()
-                profile = PROFILES.effective_profile(wanted) if wanted else active
+                if wanted is not None and wanted.upper() not in {"", "DEFAULT"} and not any(item["id"] == wanted for item in PROFILES.modes()):
+                    self._send_json({"ok": False, "error": "这个模式已经删掉了，请重新选择"}, 409)
+                    return
+                profile = PROFILES.effective_profile(None if wanted.upper() in {"", "DEFAULT"} else wanted) if wanted is not None else active
             self._send_json({"version": VERSION, "profile": profile, "active_mode": active["mode"],
                              "launch": _game_launch_status(profile)})
             return
@@ -2333,7 +2355,11 @@ class AdminHandler(_BaseHandler):
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "game profile changes are loopback-only"}, 403)
                 return
-            result = switch_game_mode(body.get("target", "NEXT"))
+            with PROFILE_UPDATE_LOCK:
+                if body.get("profile_id") and body["profile_id"] != PROFILES.selected_id():
+                    self._send_json({"ok": False, "error": "当前游戏已改变，请重新选择"}, 409)
+                    return
+                result = switch_game_mode(body.get("target", "NEXT"))
             self._send_json({"ok": bool(result.get("executed")), **result,
                              "active_mode": _active_profile()["mode"]}, 200 if result.get("executed") else 404)
             return
