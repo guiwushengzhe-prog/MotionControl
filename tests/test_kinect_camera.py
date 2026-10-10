@@ -158,7 +158,9 @@ def test_depth_preserves_alternation_and_small_continuing_steps():
     feed(body(), {"left": 0, "right": 0}, 2)
     assert feed(body(right=.04), {"left": -.08, "right": .08}, 2)
     feed(body(), {"left": 0, "right": 0}, 2)
-    assert feed(body(left=.013), {"left": .026, "right": -.026}, 2)
+    assert feed(body(left=.006), {"left": .012, "right": -.012}, 2)
+    feed(body(), {"left": 0, "right": 0}, 2)
+    assert feed(body(right=.006), {"left": -.012, "right": .012}, 2)
     assert not feed(body(), {"left": 0, "right": 0}, 15)
 
 

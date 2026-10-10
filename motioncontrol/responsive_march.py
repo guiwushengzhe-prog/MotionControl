@@ -6,8 +6,7 @@ import math
 class ResponsiveMarch:
     LIFT_START = .055
     LIFT_END = .04
-    LIFT_CONTINUE = .02
-    LIFT_CONTINUE_END = .01
+    GROUND_TOLERANCE = .004
     CONFIRM_S = .020
     GROUNDED_STOP_MIN_S = .12
     GROUNDED_STOP_MAX_S = .28
@@ -26,6 +25,8 @@ class ResponsiveMarch:
         self.grounded_stop_s = self.GROUNDED_STOP_MIN_S
         self.active_until = 0.0
         self.last_at = None
+        self.ground_samples = []
+        self.ground_tolerance = self.GROUND_TOLERANCE
 
     def update(self, lifts, now, *, excluded=(), blocked=False, jumping=False):
         if not math.isfinite(now) or blocked or not lifts or not all(math.isfinite(lifts.get(side, math.nan))
@@ -39,9 +40,18 @@ class ResponsiveMarch:
             self.reset()
         self.last_at = now
         was_active = now < self.active_until
-        lift_start = self.LIFT_CONTINUE if was_active else self.LIFT_START
-        lift_end = self.LIFT_CONTINUE_END if was_active else self.LIFT_END
-        motion_delta = .004 if was_active else .01
+        if not was_active and not self.last_side and not jumping:
+            height = max(abs(lifts[side]) for side in self.legs)
+            if height < self.LIFT_END:
+                self.ground_samples.append(height)
+                self.ground_samples = self.ground_samples[-24:]
+                noise = sorted(self.ground_samples)[math.ceil(len(self.ground_samples) * .9) - 1]
+                self.ground_tolerance = min(self.LIFT_END, noise + self.GROUND_TOLERANCE)
+        # 起动仍需要原来的抬脚证据；已起动后只区分离地与落地。
+        # 续步不再另设动作高度门槛，落地误差由起动前的静止抖动估计。
+        lift_start = self.ground_tolerance if was_active else self.LIFT_START
+        lift_end = self.ground_tolerance if was_active else self.LIFT_END
+        motion_delta = self.ground_tolerance / 4 if was_active else .01
         moving = False
         two_feet_lifted = all(height >= lift_start for height in lifts.values())
         for side, leg in self.legs.items():

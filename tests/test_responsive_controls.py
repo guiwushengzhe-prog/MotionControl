@@ -311,14 +311,15 @@ def test_uneven_alternating_steps_stay_continuous_with_the_lower_lift_threshold(
     assert not active
 
 
-@pytest.mark.parametrize('fps', [16, 30, 60])
+@pytest.mark.parametrize('fps', [15, 16, 30, 60])
 @pytest.mark.parametrize('cadence', [.45, .65])
-def test_started_march_continues_with_very_small_alternating_steps_and_stops(fps, cadence):
+@pytest.mark.parametrize('amplitude', [.012, .025])
+def test_started_march_continues_with_very_small_alternating_steps_and_stops(fps, cadence, amplitude):
     c = ResponsiveMarch()
     start_march(c)
     for index in range(1, 3 * fps + 1):
         elapsed = index / fps
-        height = .025 * math.sin(elapsed / cadence * math.tau)
+        height = amplitude * math.sin(elapsed / cadence * math.tau)
         lifts = {'left': max(0., height), 'right': max(0., -height)}
         assert c.update(lifts, 1.29 + elapsed), elapsed
     for index in range(1, int(.3 * fps) + 1):
@@ -326,7 +327,7 @@ def test_started_march_continues_with_very_small_alternating_steps_and_stops(fps
     assert not active
     # 停下后，这样的小幅交替不能重新起动。
     for index in range(1, 2 * fps + 1):
-        height = .025 * math.sin(index / fps / cadence * math.tau)
+        height = amplitude * math.sin(index / fps / cadence * math.tau)
         assert not c.update({'left': max(0., height), 'right': max(0., -height)}, 4.59 + index / fps)
 
 
@@ -346,6 +347,19 @@ def test_small_alternation_alone_does_not_start_a_walk():
         assert not c.update({'left': max(0., height), 'right': max(0., -height)}, 10 + index / 30)
 
 
+def test_standing_noise_is_ground_contact_and_cannot_extend_started_march():
+    c = ResponsiveMarch()
+    for index in range(30):
+        height = .007 * math.sin(index / 30 / .45 * math.tau)
+        assert not c.update({'left': height, 'right': -height}, index/30)
+    assert c.ground_tolerance > .007
+    start_march(c)
+    for index in range(1, 11):
+        height = .007 * math.sin(index / 30 / .45 * math.tau)
+        active = c.update({'left': height, 'right': -height}, 1.29+index/30)
+    assert not active
+
+
 def test_started_walk_cannot_be_kept_alive_by_repeated_movements_of_one_leg():
     c = ResponsiveMarch()
     start_march(c)
@@ -356,10 +370,18 @@ def test_started_walk_cannot_be_kept_alive_by_repeated_movements_of_one_leg():
     assert not any(values[45:]), '同一脚反复动不能一直续上踏步'
 
 
-def test_small_steps_continue_through_the_kernel_and_stop_when_grounded(monkeypatch):
-    kernel = ControlKernel(KernelOutput())
+@pytest.mark.parametrize('target_type,target', [('gamepad_axis', 'LS_UP'), ('keyboard', 'W')])
+def test_small_steps_continue_through_the_kernel_and_stop_when_grounded(monkeypatch, target_type, target):
+    class Recorder(KernelOutput):
+        def set_action_holds(self, holds, source_group='controls'):
+            self.holds = holds
+    output = Recorder()
+    kernel = ControlKernel(output)
     try:
         kernel.configure_march_algorithm('responsive')
+        kernel.configure_bindings({'motions': {'march': {
+            'action': {'type': target_type, 'target': target, 'behavior': 'hold'},
+        }}})
         feed = _zone_feeder(kernel, monkeypatch)
         feed(_standing_pose(), 20)
         feed(lifted('left'), 4)
@@ -367,11 +389,14 @@ def test_small_steps_continue_through_the_kernel_and_stop_when_grounded(monkeypa
         feed(lifted('right'), 3)
         assert 'march' in kernel.motion_active
         for index in range(90):
-            height = .025 * math.sin((index + 1) / 30 / .65 * math.tau)
+            height = .012 * math.sin((index + 1) / 30 / .65 * math.tau)
             feed(lifted('left' if height >= 0 else 'right', knee=.01, ankle=abs(height)), 1)
             assert 'march' in kernel.motion_active
+            held = next(item['action'] for item in output.holds if item['id'] == 'motion.march')
+            assert held['type'] == target_type and held['target'] == target
         feed(_standing_pose(), 10)
         assert 'march' not in kernel.motion_active
+        assert not any(item['id'] == 'motion.march' for item in output.holds)
     finally:
         kernel.close()
 
