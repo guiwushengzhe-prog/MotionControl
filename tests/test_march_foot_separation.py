@@ -499,13 +499,13 @@ def test_ankles_outside_the_picture_report_feet_out_of_view(monkeypatch):
         feed = _zone_feeder(kernel, monkeypatch)
         feed(_standing_pose(), 20)
         assert kernel.status()['feet_in_view'] is True
-        low = _standing_pose(left_ankle=(.46, 1.06), right_ankle=(.54, 1.06))
+        low = _standing_pose(left_ankle=(.46, 1.16), right_ankle=(.54, 1.16))
         feed(low, 10)
         assert kernel.status()['feet_in_view'] is True, '蹲一下那样短暂出画不提示'
         feed(low, 10)
         for side in ('left', 'right') * 3:
-            pose = _standing_pose(left_ankle=(.46, 1.06), right_ankle=(.54, 1.06))
-            pose[side + '_ankle']['y'] = 1.04
+            pose = _standing_pose(left_ankle=(.46, 1.16), right_ankle=(.54, 1.16))
+            pose[side + '_ankle']['y'] = 1.14
             feed(pose, 5)
             assert 'march' not in kernel.motion_active
         assert kernel.feet is None
@@ -578,3 +578,36 @@ def test_crouching_does_not_change_a_walk_already_running(monkeypatch, algorithm
             kernel.close()
 
     assert run(.20) == run(0.0)
+
+
+@pytest.mark.parametrize('algorithm', ['legacy', 'responsive'])
+def test_ankles_sitting_on_the_bottom_edge_do_not_break_the_walk(monkeypatch, algorithm):
+    """人站得让脚踝正压在画面下沿：迈步时站着那只脚的脚踝会压出下沿一点。小腿还在
+    画面里，这一小段跟得住，不能每次压线都把踏步清空重来。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_march_algorithm(algorithm)
+        feed = _zone_feeder(kernel, monkeypatch)
+
+        def edge(side=None):
+            pose = _standing_pose(left_ankle=(.46, 1.01), right_ankle=(.54, 1.01))
+            if side:
+                other = 'right' if side == 'left' else 'left'
+                pose[side + '_ankle']['y'] -= .10 * .24
+                pose[other + '_ankle']['y'] = 1.06
+            return pose
+
+        feed(edge(), 20)
+        states = []
+        for side in ('left', 'right') * 4:
+            for _ in range(5):
+                feed(edge(side))
+                states.append('march' in kernel.motion_active)
+            for _ in range(3):
+                feed(edge())
+                states.append('march' in kernel.motion_active)
+        first = states.index(True)
+        assert all(states[first:]), '起步之后一直在走'
+        assert kernel.status()['feet_in_view'] is True
+    finally:
+        kernel.close()

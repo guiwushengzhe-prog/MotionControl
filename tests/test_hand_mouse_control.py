@@ -460,10 +460,25 @@ def test_a_missed_hand_frame_keeps_the_fist_and_keeps_moving():
     assert state["grip_source"] == "hand"
     back = ctl.update(moved, now=1.066, hand_points=hand_points(curl=1.0, wrist=(0.58, 0.5)))
     assert back["engaged"] is True and back["state"] == "moving", "没有松开再握，起点没重定"
-    # 断得太久：退回指尖间距，它说张开就松开。
+    # 断得太久：当看不到手，松开。
     late = ctl.update(moved, now=1.066 + FINGER_GAP_HOLD_S + 0.05)
     assert late["engaged"] is False
-    assert late["grip_source"] == "pose"
+    assert late["grip_source"] == "none"
+
+
+def test_while_the_hand_model_works_the_fingertip_spread_is_not_used():
+    """手部模型在工作、只是一时认不出手：指尖间距说是拳也不握，那把尺子读数乱。
+    很久都没认出过才当没有手部模型，指尖间距照旧管用。"""
+    from motioncontrol.hand_mouse_control import FINGER_GAP_HOLD_S, FINGER_SOURCE_S
+
+    ctl = controller(hand="right")
+    ctl.update(pose(spread=0.9), now=1.0, hand_points=hand_points(curl=2.0))
+    assert not ctl.engaged
+    for step in range(1, 6):
+        state = ctl.update(pose(spread=0.1), now=1.0 + FINGER_GAP_HOLD_S + step * 0.4)
+        assert state["engaged"] is False
+    state = ctl.update(pose(spread=0.1), now=1.0 + FINGER_SOURCE_S + 0.1)
+    assert state["engaged"] is True and state["grip_source"] == "pose"
 
 
 def test_a_missed_hand_frame_does_not_close_an_open_hand():

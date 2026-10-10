@@ -171,6 +171,10 @@ def foot_bottom_y(pose_map: dict[str, dict] | None, side: str) -> float | None:
 # 录制回放，踏步照样连成一段、其余动作不误起，左脚区反而按得下去了。
 # 画外的点不算看见（和握拳那边同一个道理，见 hand_mouse_control._FRAME_MARGIN）。
 FRAME_MARGIN = 0.03
+# 只有下沿放宽：脚踝刚出下沿时小腿还在画面里，推出去的这一小段跟得住。人常站得
+# 让脚踝正压在下沿上（2026-10-10 20:04 Kinect 录制里站着时 0.96～1.03、迈步时到
+# 1.11），按 0.03 卡的话每次压线都把踏步清空重来：起步晚 0.9 秒，中途断开。
+ANKLE_BOTTOM_MARGIN = 0.10
 
 
 def ankle_y(pose_map: dict[str, dict] | None, side: str) -> float | None:
@@ -178,7 +182,7 @@ def ankle_y(pose_map: dict[str, dict] | None, side: str) -> float | None:
     if not point or _score(point) < MIN_POINT_SCORE:
         return None
     x, y = _finite(point.get("x")), _finite(point.get("y"))
-    if not (-FRAME_MARGIN <= x <= 1 + FRAME_MARGIN and -FRAME_MARGIN <= y <= 1 + FRAME_MARGIN):
+    if not (-FRAME_MARGIN <= x <= 1 + FRAME_MARGIN and -FRAME_MARGIN <= y <= 1 + ANKLE_BOTTOM_MARGIN):
         return None
     return y
 
