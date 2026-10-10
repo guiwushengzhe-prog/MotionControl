@@ -442,3 +442,139 @@ def test_a_low_side_kick_with_the_toe_lifted_presses_the_foot_zone(monkeypatch):
         assert 'march' not in kernel.motion_active
     finally:
         kernel.close()
+
+
+def cut_off(pose, *, left_toe=1.10, right_toe=1.10):
+    """横屏摄像头把脚切在画面下缘：脚跟压着边，脚尖在画外。模型照样给可信度，
+    脚尖的坐标是从腿推出来的（2026-10-10 Kinect 640×360 录制里 99% 的帧如此）。"""
+    pose = copy.deepcopy(pose)
+    for side, toe in (('left', left_toe), ('right', right_toe)):
+        ankle = pose[side + '_ankle']
+        pose[side + '_heel'] = {'x': ankle['x'], 'y': ankle['y'] + .03, 'score': .68}
+        pose[side + '_foot_index'] = {'x': ankle['x'], 'y': toe, 'score': .66}
+    return pose
+
+
+@pytest.mark.parametrize('algorithm', ['legacy', 'responsive'])
+def test_guessed_toes_outside_the_picture_are_not_steps(monkeypatch, algorithm):
+    """画外的脚尖是猜的，左右轮流跳动也不能当成抬脚。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_march_algorithm(algorithm)
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(cut_off(_standing_pose()), 20)
+        for left_toe, right_toe in ((1.10, 1.17), (1.17, 1.10)) * 3:
+            feed(cut_off(_standing_pose(), left_toe=left_toe, right_toe=right_toe), 5)
+            assert 'march' not in kernel.motion_active
+        assert kernel.status()['feet_in_view'] is True
+    finally:
+        kernel.close()
+
+
+@pytest.mark.parametrize('algorithm', ['legacy', 'responsive'])
+def test_steps_count_while_the_toes_are_outside_the_picture(monkeypatch, algorithm):
+    """脚尖一直在画外、看得见的脚踝在交替抬起：照样是踏步。以前按脚的下缘比，
+    下缘总是那个不动的画外脚尖，这样的踏步一步都认不出来。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_march_algorithm(algorithm)
+        feed = _zone_feeder(kernel, monkeypatch)
+        rest = cut_off(_standing_pose())
+        feed(rest, 20)
+        for side in ('left', 'right', 'left', 'right'):
+            feed(cut_off(lifted(side)), 5)
+            feed(rest, 4)
+        feed(cut_off(lifted('left')), 3)
+        assert 'march' in kernel.motion_active
+        feed(rest, 35)
+        assert 'march' not in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+def test_ankles_outside_the_picture_report_feet_out_of_view(monkeypatch):
+    """脚踝也出画了：不报抬脚，不出踏步；出画超过一秒，状态里写明脚没入镜。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        assert kernel.status()['feet_in_view'] is True
+        low = _standing_pose(left_ankle=(.46, 1.06), right_ankle=(.54, 1.06))
+        feed(low, 10)
+        assert kernel.status()['feet_in_view'] is True, '蹲一下那样短暂出画不提示'
+        feed(low, 10)
+        for side in ('left', 'right') * 3:
+            pose = _standing_pose(left_ankle=(.46, 1.06), right_ankle=(.54, 1.06))
+            pose[side + '_ankle']['y'] = 1.04
+            feed(pose, 5)
+            assert 'march' not in kernel.motion_active
+        assert kernel.feet is None
+        assert kernel.status()['feet_in_view'] is False
+        feed(_standing_pose(), 1)
+        assert kernel.status()['feet_in_view'] is True
+    finally:
+        kernel.close()
+
+
+def lowered(drop, side=None):
+    """上身整体往下沉 drop 个躯干，膝盖不动（不让下蹲规则来挡）。side：这一侧
+    脚踝的估计往上漂了一截，蹲起途中模型常这样。"""
+    pose = _standing_pose()
+    for name in ('nose', 'left_ear', 'right_ear', 'left_shoulder', 'right_shoulder', 'left_wrist', 'right_wrist'):
+        pose[name]['y'] += drop * .24
+    for name in ('left_hip', 'right_hip'):
+        pose[name]['y'] += drop * .24
+    if side:
+        pose[side + '_ankle']['y'] -= .08 * .24
+    return pose
+
+
+@pytest.mark.parametrize('algorithm', ['legacy', 'responsive'])
+def test_ankles_drifting_while_crouched_do_not_start_a_walk(monkeypatch, algorithm):
+    """蹲着、蹲起途中两只脚踝先后漂一下，像左右交替抬脚，但人是低着的：不走。"""
+    kernel = ControlKernel(KernelOutput())
+    try:
+        kernel.configure_march_algorithm(algorithm)
+        feed = _zone_feeder(kernel, monkeypatch)
+        feed(_standing_pose(), 20)
+        feed(lowered(.25), 6)
+        for side in ('left', 'right', 'left'):
+            feed(lowered(.25, side), 5)
+            assert 'march' not in kernel.motion_active
+            feed(lowered(.25), 4)
+        feed(_standing_pose(), 10)
+        assert 'march' not in kernel.motion_active
+        # 站直了，照常两步起走。
+        for side in ('left', 'right', 'left'):
+            feed(lifted(side), 5)
+            feed(_standing_pose(), 4)
+        assert 'march' in kernel.motion_active
+    finally:
+        kernel.close()
+
+
+@pytest.mark.parametrize('algorithm', ['legacy', 'responsive'])
+def test_crouching_does_not_change_a_walk_already_running(monkeypatch, algorithm):
+    """边走边起跳要先往下蹲一点：已经在走的，蹲不蹲结果都一样。"""
+    def run(dip):
+        kernel = ControlKernel(KernelOutput())
+        try:
+            kernel.configure_march_algorithm(algorithm)
+            feed = _zone_feeder(kernel, monkeypatch)
+            feed(_standing_pose(), 20)
+            for side in ('left', 'right', 'left', 'right'):
+                feed(lifted(side), 5)
+                feed(_standing_pose(), 2)
+            assert 'march' in kernel.motion_active
+            states = []
+            for _ in range(5):
+                feed(lowered(dip))
+                states.append('march' in kernel.motion_active)
+            for _ in range(10):
+                feed(_standing_pose(dy=-.08))
+                states.append('march' in kernel.motion_active)
+            return states
+        finally:
+            kernel.close()
+
+    assert run(.20) == run(0.0)

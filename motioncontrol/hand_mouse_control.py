@@ -96,6 +96,13 @@ _FRAME_MARGIN = 0.03
 
 _TIPS = ("thumb", "index", "pinky")
 
+# 手部模型时不时漏掉一帧手（动得快、模糊、裁切没跟上）。漏的那帧改看人体指尖间距
+# 不妥：那是另一把尺子、另一组门槛，握着拳也可能读成张开——松开再握，起点重定，
+# 鼠标断一下；张着手也可能读成握拳，鼠标被拽一下。2026-10-07 Kinect 录制里手腕
+# 在画面内时有 29% 的帧没认出手。刚才还有手指读数的话，这么久之内维持上一帧的
+# 握拳状态（照常按手腕移动），过了才退回指尖间距。
+FINGER_GAP_HOLD_S = 0.25
+
 # MediaPipe hand landmark order: 0 is the wrist, then each finger runs from
 # knuckle to tip.  Only the four fingers count towards curl.  The thumb folds
 # across the palm rather than back towards the wrist, so its tip barely moves
@@ -147,12 +154,35 @@ def _in_frame(point: dict) -> bool:
     return True
 
 
-def measure_curl(points: object) -> float | None:
+def _reach(a: dict, b: dict, frame_size: tuple[float, float] | None) -> float:
+    """手部两点的距离。知道画面尺寸时按像素算，并带上手部模型给的深度 z。
+
+    归一化坐标里 x 按画面宽、y 按画面高，16:9 画面上 y 的一格比 x 长 1.78 倍，
+    同一只手转个方向读数就变。z 和 x 一样按画面宽归一（电脑和手机两边都这样打
+    包），乘宽度就是像素。手指朝镜头伸直时，平面上指尖贴着指根，看着像拳；带上
+    深度才量得出这段长度。
+    """
+    if frame_size is None:
+        return _distance(a, b)
+    width, height = frame_size
+    dz = 0.0
+    if all(isinstance(point.get("z"), (int, float)) and math.isfinite(point["z"]) for point in (a, b)):
+        dz = float(a["z"]) - float(b["z"])
+    return math.sqrt(((float(a["x"]) - float(b["x"])) * width) ** 2
+                     + ((float(a["y"]) - float(b["y"])) * height) ** 2 + (dz * width) ** 2)
+
+
+def measure_curl(points: object, frame_size: tuple[float, float] | None = None) -> float | None:
     """Mean fingertip reach in knuckle-distances, or None if unusable.
 
     Extended fingers read near 2.0 and a closed fist near 1.0.  Every distance
     starts at the wrist, which is what makes the number independent of how the
     hand is rotated and how far away the player is standing.
+
+    ``frame_size`` (宽, 高) 给了就按像素加深度量，见 _reach。2026-10-07 两段
+    Kinect 640×360 录制里 1457 只手，新旧读数中位数 1.26/1.28，判断跨过整段
+    门槛翻转的只有 2 只，原来量好的握拳门槛照用；变化主要在两头，平面上读到
+    0.3~0.5 这种指尖比指根还近一半的拳，带深度后在 0.8~0.9。
     """
     if not isinstance(points, list) or len(points) != HAND_LANDMARK_COUNT:
         return None
@@ -169,10 +199,10 @@ def measure_curl(points: object) -> float | None:
         tip = points[tip_index]
         if not _in_frame(knuckle) or not _in_frame(tip):
             continue
-        base = _distance(wrist, knuckle)
+        base = _reach(wrist, knuckle, frame_size)
         if base <= 1e-6:
             continue
-        ratios.append(_distance(wrist, tip) / base)
+        ratios.append(_reach(wrist, tip, frame_size) / base)
     if len(ratios) < _MIN_FINGERS:
         return None
     return sum(ratios) / len(ratios)
@@ -225,6 +255,7 @@ class HandMouseController:
         self.offset = (0.0, 0.0)
         self.tips_seen = 0
         self.reason = "idle"
+        self.finger_seen_at: float | None = None
 
     def configure(self, updates: dict | None) -> dict:
         self.config = merge_config(self.config, updates)
@@ -261,7 +292,8 @@ class HandMouseController:
     # -- update ------------------------------------------------------------
 
     def update(self, pose_map: dict, now: float,
-               hand_points: list | None = None, hand_state: dict | None = None) -> dict:
+               hand_points: list | None = None, hand_state: dict | None = None,
+               frame_size: tuple[float, float] | None = None) -> dict:
         config = self.config
         if not config["enabled"]:
             self.reset()
@@ -272,8 +304,11 @@ class HandMouseController:
         spread, tips = self.measure_spread(pose_map, hand)
         self.spread = spread
         self.tips_seen = tips
-        curl = measure_curl(hand_points)
+        curl = measure_curl(hand_points, frame_size)
         self.curl = curl
+        if curl is not None:
+            self.finger_seen_at = now
+        held = False
 
         # Both readings shrink as the hand closes, so the gate below is the
         # same shape either way; only the number and its thresholds change.
@@ -289,6 +324,11 @@ class HandMouseController:
             close_at = float(config["curl_close"])
             open_at = float(config["curl_open"])
             self.grip_source = "hand"
+        elif (self.finger_seen_at is not None
+              and 0.0 <= now - self.finger_seen_at <= FINGER_GAP_HOLD_S):
+            # 手指读数只断了一下：维持上一帧的状态，见 FINGER_GAP_HOLD_S。
+            grip, held = None, True
+            self.grip_source = "hand"
         elif spread is not None:
             grip = spread
             close_at = float(config["fist_close"])
@@ -298,7 +338,7 @@ class HandMouseController:
             grip = None
             self.grip_source = "none"
 
-        if grip is None:
+        if grip is None and not held:
             # Losing sight of the hand must release, not freeze: a stuck
             # engagement would keep driving the pointer from a stale anchor.
             if self.engaged:
@@ -308,7 +348,9 @@ class HandMouseController:
             return self.status()
 
         was_engaged = self.engaged
-        if self.engaged:
+        if held:
+            pass
+        elif self.engaged:
             if grip > open_at:
                 self._release("opened")
                 return self.status()

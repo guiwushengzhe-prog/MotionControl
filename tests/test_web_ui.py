@@ -242,7 +242,7 @@ def test_settings_sections_and_contextual_groups(ui):
     assert ui.errors == []
 
 
-def _fake_live_state(page) -> None:
+def _fake_live_state(page, **kernel_fields) -> None:
     """在真实返回上改几个字段：有人、右手在框里、刚踏了一步、摄像头开着。"""
     def point(x, y):
         return {"x": x, "y": y, "score": 0.99}
@@ -265,6 +265,7 @@ def _fake_live_state(page) -> None:
         k["recent_triggers"] = [{"trigger": "motion.march", "at": now - 0.3, "action": {"type": "keyboard", "target": "W"}}]
         k["head"] = {**k.get("head", {}), "output_x": 20, "sensitivity_x": 58, "calibrated": True,
                      "horizontal_calibrated": True, "enabled": True}
+        k.update(kernel_fields)
         data["body_mode"] = "computer"
         data["camera"] = {**(data.get("camera") or {}), "running": True}
         route.fulfill(response=response, json=data)
@@ -293,6 +294,23 @@ def test_the_start_page_follows_what_is_happening(ui):
     assert page.locator("#recentCard").is_visible(), "有触发才列最近触发"
     assert page.locator('.checklist [data-step="pose"]').get_attribute("class").find("done") >= 0
     assert page.locator('.zone[data-zone="rightHand"]').get_attribute("class").find("active") >= 0
+    assert ui.errors == []
+
+
+def test_the_start_page_says_when_the_feet_are_out_of_the_picture(ui):
+    """踏步绑了键、脚踝出了画面：准备卡片那一步点名，告诉人往后站。"""
+    page = ui.page
+    bindings = {"motion.march": {"action": {"type": "keyboard", "target": "W"}}}
+    _fake_live_state(page, feet_in_view=False, effective_bindings=bindings)
+    step = page.locator('.checklist [data-step="pose"]')
+    # 还没认出人时这一步也是警告样式，所以等的是提示文字本身。
+    shows = "document.querySelector('.checklist [data-step=\"pose\"]').textContent.includes('%s')"
+    page.wait_for_function(shows % "往后站")
+    assert "warn" in step.get_attribute("class")
+    page.unroute("**/api/kernel/status")
+    _fake_live_state(page, feet_in_view=True, effective_bindings=bindings)
+    page.wait_for_function(shows % "已识别")
+    assert "done" in step.get_attribute("class")
     assert ui.errors == []
 
 
