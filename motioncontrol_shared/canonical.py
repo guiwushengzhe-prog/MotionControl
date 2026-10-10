@@ -35,7 +35,7 @@ from .mapping_schema import (
     normalize_voice_mappings,
 )
 from .motion_conflicts import validate_motion_config
-from .profile_schema import normalize_overrides
+from .profile_schema import normalize_modes, normalize_overrides
 from .profile_versions import (
     GAME_BUNDLE_SCHEMA,
     MOTION_MAPPINGS_SCHEMA,
@@ -102,6 +102,16 @@ def _normalize_profile_selection(raw) -> dict:
         ):
             raise ValueError("游戏启动权限数据无效：launch_mode_by_profile")
         result["launch_mode_by_profile"] = {game_id.strip(): mode for game_id, mode in modes.items()}
+    if "modes_by_profile" in data:
+        # 默认模式之外的几套按键（见 profile_schema.normalize_modes）。空列表不存。
+        by_game = data["modes_by_profile"]
+        if not isinstance(by_game, dict) or any(not isinstance(game_id, str) or not game_id.strip()
+                                                for game_id in by_game):
+            raise ValueError("游戏模式数据无效：modes_by_profile")
+        game_modes = {game_id.strip(): normalize_modes(items) for game_id, items in by_game.items()}
+        game_modes = {game_id: items for game_id, items in game_modes.items() if items}
+        if game_modes:
+            result["modes_by_profile"] = game_modes
     if "custom_games" in data:
         if not isinstance(data["custom_games"], list):
             raise ValueError("自建游戏列表无效")
@@ -201,6 +211,8 @@ def _normalize_game_bundle(raw) -> dict:
         if not isinstance(raw["launch_mode"], str) or raw["launch_mode"] not in {"normal", "admin"}:
             raise ValueError("游戏启动权限只能是普通或管理员")
         result["launch_mode"] = raw["launch_mode"]
+    if raw.get("modes"):
+        result["modes"] = normalize_modes(raw["modes"])
     if "custom_game" in raw:
         game = _normalize_custom_game(raw["custom_game"])
         if game["id"] != result["game_id"]:

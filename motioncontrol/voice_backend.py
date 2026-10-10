@@ -233,6 +233,9 @@ class VoiceService:
         self.command_registry: dict[str, dict] = {}
         self._catalog: list[dict] = []
         self._profile_bindings: dict = {}
+        # 同一个游戏其他模式的绑定。它们的口令也进识别语法，切换模式时只换对照表、
+        # 不重建识别器（重建要重新加载模型，期间听不了口令）。
+        self._mode_bindings: list[dict] = []
         self._phrase_index: dict[str, dict] = {}
         self._configuration_conflicts: tuple[str, ...] = ()
         self.recognizer: VoskCommandRecognizer | None = None
@@ -658,14 +661,30 @@ class VoiceService:
         return [self._with_wake_word(item) if item == DEFAULT_EMERGENCY_STOP else self.wake_word + item
                 for item in self.emergency_stop_phrases]
 
-    def configure_profile_bindings(self, bindings: dict | None) -> None:
-        """Overlay editable per-game trigger words on shipped command IDs."""
+    def configure_profile_bindings(self, bindings: dict | None,
+                                   mode_bindings: list[dict] | None = None) -> None:
+        """Overlay editable per-game trigger words on shipped command IDs.
+
+        mode_bindings：这个游戏所有模式的绑定，口令的合集一起进识别语法。"""
         with self._lock:
             self._profile_bindings = copy.deepcopy(bindings) if isinstance(bindings, dict) else {}
+            self._mode_bindings = copy.deepcopy([item for item in (mode_bindings or []) if isinstance(item, dict)])
             self._build_registry()
             with self._audio_submit_lock:
                 self._audio_generation += 1
             self._rebuild_recognizer()
+
+    def switch_profile_bindings(self, bindings: dict | None) -> None:
+        """控制中换模式：只换"哪句话是哪条口令"。识别语法本来就含所有模式的口令，
+        合集没变就不重建识别器；万一变了（模式刚被改过）才重建。"""
+        with self._lock:
+            before = self.grammar_phrases()
+            self._profile_bindings = copy.deepcopy(bindings) if isinstance(bindings, dict) else {}
+            self._build_registry()
+            if self.grammar_phrases() != before:
+                with self._audio_submit_lock:
+                    self._audio_generation += 1
+                self._rebuild_recognizer()
 
     def grammar_phrases(self) -> list[str]:
         """Every phrase the constrained grammar must accept.
@@ -684,9 +703,20 @@ class VoiceService:
             phrases.extend(f"{self.wake_word}{command}" for command in commands)
         # The user-facing command catalog is canonical. Legacy mappings
         # remain aliases, but they are no longer a separate behavior path.
+        # 有几个模式时，本游戏口令按模式的先后从所有模式里取：其他模式的口令也听得到，
+        # 切过去时语法不变、不用重建识别器；不在当前模式里的那几句听到了也不对应任何
+        # 口令。顺序和当前在哪个模式无关。
+        by_modes = bool(self._mode_bindings)
         for command in self.command_registry.values():
+            if by_modes and self._is_game_profile_command(command.get("id")):
+                continue
             phrases.append(command.get("phrase", ""))
             phrases.extend(command.get("synonyms", []) or [])
+        for bindings in self._mode_bindings:
+            for command in self._commands_for(bindings):
+                if self._is_game_profile_command(command.get("id")):
+                    phrases.append(command.get("phrase", ""))
+                    phrases.extend(command.get("synonyms", []) or [])
         return [phrase for phrase in dict.fromkeys(phrases) if compact_text(phrase)]
 
     def grammar_entries(self) -> list[str]:

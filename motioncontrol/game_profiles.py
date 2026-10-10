@@ -20,7 +20,14 @@ from pathlib import Path
 from motioncontrol_shared.catalog import catalog_entry, load_catalog, load_profile
 from motioncontrol.user_paths import user_path
 from motioncontrol_shared.motion_conflicts import validate_motion_bindings
-from motioncontrol_shared.profile_schema import _merge_bindings, normalize_bindings
+from motioncontrol_shared.profile_schema import (
+    DEFAULT_MODE_NAME,
+    MAX_GAME_MODES,
+    _merge_bindings,
+    is_mode_id,
+    normalize_bindings,
+    normalize_mode_name,
+)
 from motioncontrol_shared.profile_versions import (
     CATALOG_SCHEMA,
     CUSTOM_GAMES_SCHEMA,
@@ -99,6 +106,14 @@ class GameProfileStore:
             for key, mode in launch_modes.items()
         ):
             raise ValueError("游戏启动权限数据无效，原文件已保留")
+        game_modes = data.get("modes_by_profile", {})
+        if not isinstance(game_modes, dict) or any(
+            not isinstance(items, list) or any(
+                not isinstance(item, dict) or not is_mode_id(item.get("id")) or not isinstance(item.get("name"), str)
+                or not isinstance(item.get("overrides", {}), dict) for item in items)
+            for items in game_modes.values()
+        ):
+            raise ValueError("游戏模式数据无效，原文件已保留")
         return data
 
     def _save_selection(self, selection: dict) -> None:
@@ -247,6 +262,7 @@ class GameProfileStore:
             selection = copy.deepcopy(self._selection)
             selection["overrides_by_profile"].pop(ident, None)
             selection.get("launch_mode_by_profile", {}).pop(ident, None)
+            selection.get("modes_by_profile", {}).pop(ident, None)
             # 正选着它就退回通用档，否则界面会指向一个已经不存在的游戏。
             if selection["selected_id"] == ident:
                 selection["selected_id"] = "generic-xbox"
@@ -334,7 +350,8 @@ class GameProfileStore:
         with self._lock:
             return self._selection["selected_id"]
 
-    def effective_profile(self) -> dict:
+    def effective_profile(self, mode_id: str | None = None) -> dict:
+        """当前游戏某个模式真正生效的那份绑定。mode_id 为空或已不存在时是默认模式。"""
         with self._lock:
             selected_id = self._selection["selected_id"]
             try:
@@ -344,11 +361,106 @@ class GameProfileStore:
                 profile = self.get_profile("generic-xbox")
                 selected_id = "generic-xbox"
                 self._save_selection({**self._selection, "selected_id": selected_id})
-            overrides = self._selection["overrides_by_profile"].get(selected_id, {})
+            modes = self._modes_for(selected_id)
+            mode = next((item for item in modes if item["id"] == mode_id), None) if mode_id else None
+            overrides = (mode.get("overrides", {}) if mode
+                         else self._selection["overrides_by_profile"].get(selected_id, {}))
             profile["bindings"] = _merge_bindings(profile.get("bindings", {}), overrides)
             profile["selected_id"] = selected_id
             profile["overrides"] = copy.deepcopy(overrides)
+            profile["mode"] = {"id": mode["id"], "name": mode["name"]} if mode else {"id": None, "name": DEFAULT_MODE_NAME}
+            profile["modes"] = [{"id": None, "name": DEFAULT_MODE_NAME},
+                                *({"id": item["id"], "name": item["name"]} for item in modes)]
             return profile
+
+    # ---- 模式：同一个游戏的几套按键 -----------------------------------------
+    #
+    # 默认模式就是 overrides_by_profile 里原来那份；别的模式存在 modes_by_profile，
+    # 同样是叠在内置档上的覆盖（规则见 motioncontrol_shared.profile_schema）。
+    # 这里只管当前选中的游戏；切到哪个模式是运行时的事，不写进文件。
+
+    def _modes_for(self, profile_id: str) -> list[dict]:
+        return self._selection.get("modes_by_profile", {}).get(profile_id, [])
+
+    def modes(self) -> list[dict]:
+        """当前游戏的模式，默认模式在最前（编号为 None），也是「下一个」轮换的顺序。"""
+        with self._lock:
+            return [{"id": None, "name": DEFAULT_MODE_NAME},
+                    *({"id": item["id"], "name": item["name"]}
+                      for item in self._modes_for(self._selection["selected_id"]))]
+
+    def mode_bindings(self) -> list[dict]:
+        """当前游戏每个模式生效的绑定（默认在前）。语音按这些口令的合集建语法。"""
+        with self._lock:
+            return [self.effective_profile(item["id"])["bindings"] for item in self.modes()]
+
+    def _write_modes(self, profile_id: str, modes: list[dict]) -> None:
+        selection = copy.deepcopy(self._selection)
+        by_game = selection.setdefault("modes_by_profile", {})
+        if modes:
+            by_game[profile_id] = copy.deepcopy(modes)
+        else:
+            by_game.pop(profile_id, None)
+        if not by_game:
+            selection.pop("modes_by_profile", None)
+        self._save_selection(selection)
+
+    def _check_mode_name(self, name: str, modes: list[dict], *, except_id: str | None = None) -> str:
+        name = normalize_mode_name(name)
+        if name == DEFAULT_MODE_NAME or any(item["name"] == name and item["id"] != except_id for item in modes):
+            raise ValueError(f"已经有一个叫「{name}」的模式了")
+        return name
+
+    def add_mode(self, name: str, copy_from: str | None = None) -> dict:
+        """新建一个模式，按键从 copy_from（默认模式或另一个模式）复制过来，再去改。"""
+        with self._lock:
+            profile_id = self._selection["selected_id"]
+            modes = list(self._modes_for(profile_id))
+            if len(modes) >= MAX_GAME_MODES:
+                raise ValueError(f"一个游戏除默认外最多 {MAX_GAME_MODES} 个模式")
+            label = self._check_mode_name(name, modes)
+            if copy_from:
+                source = next((item for item in modes if item["id"] == copy_from), None)
+                if source is None:
+                    raise KeyError("要复制的模式已经不在了")
+                overrides = source.get("overrides", {})
+            else:
+                overrides = self._selection["overrides_by_profile"].get(profile_id, {})
+            ident = "mode-" + uuid.uuid4().hex[:8]
+            modes.append({"id": ident, "name": label, "overrides": copy.deepcopy(overrides)})
+            self._write_modes(profile_id, modes)
+            return {"id": ident, "name": label}
+
+    def rename_mode(self, mode_id: str, name: str) -> dict:
+        with self._lock:
+            profile_id = self._selection["selected_id"]
+            modes = list(self._modes_for(profile_id))
+            if not any(item["id"] == mode_id for item in modes):
+                raise KeyError("这个模式已经不在了")
+            label = self._check_mode_name(name, modes, except_id=mode_id)
+            self._write_modes(profile_id, [{**item, "name": label} if item["id"] == mode_id else item
+                                           for item in modes])
+            return {"id": mode_id, "name": label}
+
+    def remove_mode(self, mode_id: str) -> None:
+        with self._lock:
+            profile_id = self._selection["selected_id"]
+            modes = list(self._modes_for(profile_id))
+            if not any(item["id"] == mode_id for item in modes):
+                raise KeyError("这个模式已经不在了")
+            self._write_modes(profile_id, [item for item in modes if item["id"] != mode_id])
+
+    def set_modes(self, profile_id: str, modes: list[dict], check=None) -> None:
+        """装别人分享的配置时整组换上那个游戏的模式。调用方已按共用规则校验过；
+        这里再按这个游戏的底档合一遍，``check`` 同 set_overrides。"""
+        with self._lock:
+            base = self.get_profile(profile_id).get("bindings", {})
+            for item in modes:
+                merged = _merge_bindings(base, item.get("overrides", {}))
+                validate_motion_bindings(merged)
+                if check is not None:
+                    check(merged)
+            self._write_modes(profile_id, modes)
 
     def select(self, profile_id: str) -> dict:
         with self._lock:
@@ -373,22 +485,33 @@ class GameProfileStore:
             modes[profile_id] = wanted
             self._save_selection(selection)
 
-    def set_overrides(self, overrides: dict, profile_id: str | None = None, check=None) -> dict:
+    def set_overrides(self, overrides: dict, profile_id: str | None = None, check=None,
+                      mode_id: str | None = None) -> dict:
         """``check`` sees the merged bindings before anything is saved and may
         raise to refuse them -- the voice service uses it so a game's phrase
-        cannot take one that is already spoken for."""
+        cannot take one that is already spoken for.
+
+        mode_id 为空存的是默认模式，否则存那个模式的按键。"""
         if not isinstance(overrides, dict):
             raise ValueError("overrides must be an object")
         # Validate by applying to the currently selected base profile before saving.
         with self._lock:
             if profile_id is not None and profile_id != self._selection["selected_id"]:
                 raise ProfileSelectionChanged("当前游戏已改变，映射未保存。请重新选择游戏后重试")
-            base = self.get_profile(self._selection["selected_id"])
+            selected = self._selection["selected_id"]
+            modes = self._modes_for(selected)
+            if mode_id is not None and not any(item["id"] == mode_id for item in modes):
+                raise ProfileSelectionChanged("这个模式已经删掉了，映射未保存")
+            base = self.get_profile(selected)
             merged = _merge_bindings(base.get("bindings", {}), overrides)
             validate_motion_bindings(merged)
             if check is not None:
                 check(merged)
-            selection = copy.deepcopy(self._selection)
-            selection["overrides_by_profile"][selection["selected_id"]] = copy.deepcopy(overrides)
-            self._save_selection(selection)
-            return self.effective_profile()
+            if mode_id is None:
+                selection = copy.deepcopy(self._selection)
+                selection["overrides_by_profile"][selected] = copy.deepcopy(overrides)
+                self._save_selection(selection)
+            else:
+                self._write_modes(selected, [{**item, "overrides": copy.deepcopy(overrides)}
+                                             if item["id"] == mode_id else item for item in modes])
+            return self.effective_profile(mode_id)
