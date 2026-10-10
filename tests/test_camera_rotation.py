@@ -193,3 +193,56 @@ def test_auto_correction_matches_capture_order_with_or_without_mirror(kernel, tu
     for _ in range(camera.ROTATION_VOTE_FRAMES):
         camera._vote_rotation_locked(pose, width, height, mirrored=mirrored)
     assert camera._rotation_locked
+
+
+def face_pose() -> dict[str, tuple[float, float]]:
+    """640×360 画面里离得很近、坐着的人（像素），带眼睛和嘴角。取自 2026-10-10 的电脑录制。"""
+    return {"nose": (326, 212), "left_eye": (335, 200), "right_eye": (315, 199),
+            "mouth_left": (332, 226), "mouth_right": (318, 225),
+            "left_shoulder": (371, 262), "right_shoulder": (263, 262)}
+
+
+@pytest.mark.parametrize("turns", [0, 1, 2, 3])
+def test_with_a_visible_face_each_direction_still_turns_upright(turns):
+    pose, w, h = pose_map(face_pose(), 640, 360, turns)
+    assert NativeCameraService._upright_turns(pose, w, h) == (-turns) % 4
+
+
+def leaning_forward() -> dict[str, tuple[float, float]]:
+    """摄像头在人上方，人往桌前倾、低头：鼻子低过双肩，脸本身还是正的（眼睛在嘴上方）。"""
+    pose = face_pose()
+    for name in ("nose", "left_eye", "right_eye", "mouth_left", "mouth_right"):
+        x, y = pose[name]
+        pose[name] = (x, y + 75)
+    return pose
+
+
+def test_leaning_forward_under_the_camera_is_not_an_upside_down_picture():
+    """只看鼻子会判成画面倒了；脸的上下没倒，不投票。"""
+    pose, w, h = pose_map(leaning_forward(), 640, 360, 0)
+    nose_only = {name: point for name, point in pose.items() if not name.startswith(("left_eye", "right_eye", "mouth"))}
+    assert NativeCameraService._upright_turns(nose_only, w, h) == 2
+    assert NativeCameraService._upright_turns(pose, w, h) is None
+
+
+def test_leaning_forward_at_start_does_not_turn_the_picture(kernel):
+    camera = NativeCameraService(kernel)
+    pose, w, h = pose_map(leaning_forward(), 640, 360, 0)
+    with camera._lock:
+        for _ in range(3 * camera.ROTATION_VOTE_FRAMES):
+            camera._vote_rotation_locked(pose, w, h, mirrored=True)
+    assert camera.applied_rotation == "none"
+    assert not camera._rotation_locked
+    upright, w, h = pose_map(face_pose(), 640, 360, 0)
+    with camera._lock:
+        for _ in range(camera.ROTATION_VOTE_FRAMES):
+            camera._vote_rotation_locked(upright, w, h, mirrored=True)
+    assert camera.applied_rotation == "none" and camera._rotation_locked
+
+
+def test_a_face_turned_sideways_does_not_vote():
+    """肩膀是平的、鼻子在上，脸却横着：说不清，不投。"""
+    pose = face_pose()
+    pose.update({"left_eye": (340, 214), "right_eye": (339, 204), "mouth_left": (318, 214), "mouth_right": (319, 205)})
+    pose, w, h = pose_map(pose, 640, 360, 0)
+    assert NativeCameraService._upright_turns(pose, w, h) is None

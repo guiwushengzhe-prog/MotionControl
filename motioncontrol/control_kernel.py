@@ -3940,7 +3940,13 @@ class NativeCameraService:
 
     @staticmethod
     def _upright_turns(pose_map: dict, width: int, height: int) -> int | None:
-        """选择鼻子高于双肩中点、双肩连线接近水平的画面方向。"""
+        """选择鼻子高于双肩中点、双肩连线接近水平的画面方向。
+
+        脸看得清时，眼睛还要在嘴上方（偏斜不超过 45°），否则不投票。摄像头在人上方、
+        人往桌前倾或低头时，鼻子会低过双肩，只看鼻子就把正常画面判成倒的、转 180°
+        后锁住（2026-10-10 重启后实际发生）。脸内部的上下不随前倾低头颠倒，只随摄像
+        头转动颠倒。脸看不清时仍按鼻子和双肩判断。
+        """
         def point(name: str):
             p = pose_map.get(name)
             if not p or float(p.get("score", 0.0)) < 0.6:
@@ -3958,13 +3964,23 @@ class NativeCameraService:
             return None
         dx = nose[0] - (ls[0] + rs[0]) / 2
         dy = nose[1] - (ls[1] + rs[1]) / 2
+        # 嘴到眼睛的方向。
+        face = [point(name) for name in ("left_eye", "right_eye", "mouth_left", "mouth_right")]
+        fx = fy = None
+        if None not in face:
+            fx = (face[0][0] + face[1][0] - face[2][0] - face[3][0]) / 2
+            fy = (face[0][1] + face[1][1] - face[2][1] - face[3][1]) / 2
         min_gap = max(2.0, span * 0.05)
         slope_limit = math.tan(math.radians(30))
         for turns in range(4):
             if dy < -min_gap and abs(sy) <= abs(sx) * slope_limit:
+                if fx is not None and -fy < max(1.5, abs(fx)):
+                    return None
                 return turns
             # 向量每次顺时针转90°，平移不影响头肩关系。
             dx, dy, sx, sy = -dy, dx, -sy, sx
+            if fx is not None:
+                fx, fy = -fy, fx
         return None
 
     def _vote_rotation_locked(self, pose_map: dict, width: int, height: int, *, mirrored=False) -> None:
