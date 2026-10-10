@@ -161,7 +161,10 @@ def test_conditional_second_output_taps_once():
         kernel.close()
 
 
-@pytest.mark.parametrize("binding", [CYCLE, CONDITION, {**CYCLE, "extra_actions": [X]}])
+@pytest.mark.parametrize("binding", [CYCLE, CONDITION, {**CYCLE, "extra_actions": [X]},
+    {**CONDITION, "alternate_when": "zone.leftHand"},
+    {**CONDITION, "alternate_when": "voice.game.profile_slot_01"},
+    {**CYCLE, "reset_trigger": "voice.shared.0123456789ab"}])
 def test_rules_round_trip_with_game_profile(isolated_user_data, binding):
     first = GameProfileStore(ROOT)
     first.set_overrides({"motion.squat": binding})
@@ -175,7 +178,7 @@ def test_rules_round_trip_with_game_profile(isolated_user_data, binding):
     ("motion.squat", {**CYCLE, "alternate_action": {**Z, "behavior": "release"}}),
     ("motion.squat", {**CYCLE, "reset_trigger": "motion.squat"}),
     ("motion.squat", {**CONDITION, "alternate_when": "motion.squat"}),
-    ("motion.squat", {**CONDITION, "alternate_when": "voice.foo"}),
+    ("motion.squat", {**CONDITION, "alternate_when": "unknown.foo"}),
     ("motion.squat", {**CYCLE, "reset_trigger": ""}),
     ("motion.squat", {**CYCLE, "extra_actions": "X"}),
     ("motion.squat", {"action": C, "alternate_action": Z}),
@@ -185,3 +188,18 @@ def test_rules_round_trip_with_game_profile(isolated_user_data, binding):
 def test_invalid_or_non_body_rule_is_rejected(trigger, binding):
     with pytest.raises(ValueError):
         normalize_overrides({trigger: binding})
+
+
+def test_trigger_circle_is_also_a_companion():
+    output = Output()
+    kernel = ControlKernel(output)
+    try:
+        kernel.configure_bindings({"motions": {"squat": {**CONDITION, "alternate_when": "zone.headJump"}},
+                                   "zones": {"headJump": {"disabled": True}}})
+        dispatch(kernel, squat=True, reset=True)
+        assert squat_key(output) == ["Z"]
+        dispatch(kernel, now=1.1)
+        dispatch(kernel, squat=True, now=1.2)
+        assert squat_key(output) == ["C"]
+    finally:
+        kernel.close()

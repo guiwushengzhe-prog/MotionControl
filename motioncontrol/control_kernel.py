@@ -659,6 +659,7 @@ class ControlKernel:
         self._zone_point_groups: dict[str, tuple] = {}
         self.trigger_previous: set[str] = set()
         self._rule_previous: set[str] = set()
+        self._voice_rule_pulses: set[str] = set()
         self._sequence_next: dict[str, int] = {}
         self._selected_active: dict[str, dict] = {}
         self.pose_active: set[str] = set()
@@ -1052,6 +1053,7 @@ class ControlKernel:
                     self.zone_state[name] = fresh_zone_state()
             self.trigger_previous.clear()
             self._rule_previous.clear()
+            self._voice_rule_pulses.clear()
             self._sequence_next.clear()
             self._selected_active.clear()
             self.action_chain.reset()
@@ -2977,6 +2979,17 @@ class ControlKernel:
             record["label"] = str(label)
         self.recent_triggers.append(record)
 
+    def note_voice_rule_trigger(self, trigger: str, action: dict) -> None:
+        """口令成功执行后才参与条件；短口令留到下一帧，重置口令立即重置。"""
+        with self._lock:
+            if not getattr(self.output, "enabled", True):
+                return
+            if action.get("behavior", "tap") != "hold":
+                self._voice_rule_pulses.add(trigger)
+            for binding_trigger, binding in self.control_bindings.items():
+                if binding.get("alternate_mode") == "cycle" and binding.get("reset_trigger") == trigger:
+                    self._sequence_next[binding_trigger] = 0
+
     def _update_action_chain_locked(self, now: float) -> None:
         squat = "squat" in self.motion_active
         signals = {
@@ -3040,8 +3053,13 @@ class ControlKernel:
         body_active.update(f"motion.{name}" for name in self.motion_active)
         body_active.update(f"pose.{name}" for name in self.pose_active)
         active = body_active - managed
-
-        rising = body_active - self._rule_previous
+        voice_reader = getattr(self.output, "active_voice_triggers", None)
+        voice_active = voice_reader() if voice_reader is not None else set()
+        rule_active = body_active | voice_active
+        if getattr(self.output, "enabled", True):
+            rule_active.update(self._voice_rule_pulses)
+        self._voice_rule_pulses.clear()
+        rising = rule_active - self._rule_previous
         # Reset first, so a reset and a new primary action in the same frame
         # begin a fresh sequence. Unmapped body triggers still count as resets.
         for trigger, binding in self.control_bindings.items():
@@ -3062,7 +3080,7 @@ class ControlKernel:
             if isinstance(alternate, dict) and mode in {"with_trigger", "cycle"}:
                 if trigger not in self.trigger_previous:
                     if mode == "with_trigger":
-                        selected = alternate if binding.get("alternate_when") in body_active else binding.get("action", {})
+                        selected = alternate if binding.get("alternate_when") in rule_active else binding.get("action", {})
                     else:
                         choices = [binding.get("action", {}), alternate, *binding.get("extra_actions", [])]
                         step = self._sequence_next.get(trigger, 0) % len(choices)
@@ -3143,7 +3161,7 @@ class ControlKernel:
                 self._safe_output(legacy_setter, legacy_holds)
         for trigger in self._selected_active.keys() - active:
             self._selected_active.pop(trigger, None)
-        self._rule_previous = body_active
+        self._rule_previous = body_active | voice_active
         self.trigger_previous = active
 
     # ---------- clean head control ----------
@@ -3283,6 +3301,7 @@ class ControlKernel:
             state.clear()
             state.update({"active": False, "on": 0, "off": 0})
         self.trigger_previous.clear()
+        self._voice_rule_pulses.clear()
         self.foot_base = None
         self._responsive_march.reset()
         self._jump.reset()

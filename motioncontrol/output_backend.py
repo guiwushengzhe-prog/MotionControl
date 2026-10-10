@@ -752,6 +752,7 @@ class OutputManager:
         self._mouse_button_sources: dict[str, set[str]] = {}
         self._left_stick_sources: dict[str, tuple[float, float]] = {}
         self._trigger_sources: dict[str, tuple[float, float]] = {}
+        self._voice_trigger_sources: dict[str, set[str]] = {}
         # 正在跑的键盘宏，按触发它的 source 存。宏库本身在别处（key_macros.MacroStore），
         # 这里只拿着它问两件事：这条宏展开之后按哪些键、它是不是循环的。
         self._macro_runs: dict[str, _MacroRun] = {}
@@ -1718,6 +1719,9 @@ class OutputManager:
     def _clear_sources(self, predicate) -> dict:
         with self._lock:
             self._cancel_combo_timers_locked(predicate)
+            for source in list(self._voice_trigger_sources):
+                if predicate(source):
+                    self._voice_trigger_sources.pop(source, None)
             # 说"松开"要能停住一条正在循环的宏。不停它，键会被下面清掉又被宏按回来。
             self._stop_macros_locked(predicate)
             for store in (self._button_sources, self._keyboard_sources, self._mouse_button_sources, self._left_stick_sources, self._trigger_sources):
@@ -1835,7 +1839,24 @@ class OutputManager:
                 return {"executed": True, "action": f"release:{self._voice_hold_key(normalized)}"}
             if behavior == "tap":
                 source = f"{owner}|voice-tap:{time.monotonic_ns()}"
-            return self.execute_action({**action, **normalized, "source": source, "nonblocking": True}, persistent=behavior == "hold")
+            result = self.execute_action({**action, **normalized, "source": source, "nonblocking": True}, persistent=behavior == "hold")
+            command_id = str(action.get("command_id", "")).strip()
+            if result.get("executed") and command_id:
+                self._voice_trigger_sources.setdefault(source, set()).add(f"voice.{command_id}")
+            return result
+
+    def active_voice_triggers(self) -> set[str]:
+        """按真实输出来源判断口令是否仍生效，松开、断连和暂停均自动结束。"""
+        with self._lock:
+            if not self.enabled:
+                return set()
+            sources = set().union(self._button_sources, self._keyboard_sources,
+                                  self._mouse_button_sources, self._left_stick_sources,
+                                  self._trigger_sources)
+            sources.update(source for source, run in self._macro_runs.items() if not run.finished)
+            for source in self._voice_trigger_sources.keys() - sources:
+                self._voice_trigger_sources.pop(source, None)
+            return set().union(*self._voice_trigger_sources.values())
 
     def release_voice_hold(self, action: dict) -> dict:
         """松开语音按住的这一条动作，不管是哪部手机、哪个麦克风说的。
@@ -1973,6 +1994,7 @@ class OutputManager:
         self._mouse_button_sources = {}
         self._left_stick_sources = {}
         self._trigger_sources = {}
+        self._voice_trigger_sources.clear()
         self.keyboard.release_all()
         release_mouse = getattr(self.mouse, "release_all", None)
         if release_mouse is not None:
@@ -1994,6 +2016,7 @@ class OutputManager:
         self.last_y = 0.0
         self.last_buttons = ()
         self._stop_macros_locked(lambda key: True)
+        self._voice_trigger_sources.clear()
         self._button_sources = {"zones": set()}
         self._keyboard_sources = {}
         self._mouse_button_sources = {}

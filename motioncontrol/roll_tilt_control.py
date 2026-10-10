@@ -5,6 +5,12 @@ import math
 TILT_SPAN_DEG = 18.0
 
 
+def gentle_turn_rate(amount):
+    """死区外的小幅偏转便于微调，随角度平滑提速，最大速度保持不变。"""
+    amount = max(0.0, min(1.0, amount))
+    return amount * (.55 + .45 * amount)
+
+
 def eye_line_tilt(pose, width, height):
     """以像素计算双眼连线；解剖学右眼更低时为右侧倾。"""
     if not isinstance(pose, dict) or width <= 0 or height <= 0:
@@ -79,4 +85,4 @@ class RollTiltControl:
             self.direction = desired
         amount = max(0.0, min(1.0, (abs(self.filtered) - self.threshold) / max(1.0, TILT_SPAN_DEG - self.threshold)))
         self.state = "TILT_RIGHT" if self.direction > 0 else "TILT_LEFT"
-        return self.direction * amount ** 1.3
+        return self.direction * gentle_turn_rate(amount)

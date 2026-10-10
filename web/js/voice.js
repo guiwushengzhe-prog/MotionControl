@@ -1,7 +1,7 @@
 // 语音：唤醒词、口令检查、通用口令、口令列表。
 import {$,api,configurationOperation,notice,post,setProperty,setText,syncChildren} from './core.js';
 import {ACTION_TYPE_LABELS,SYSTEM_TARGET_NAMES,bindingsForDisplay,targetLabel} from './labels.js';
-import {fillBehaviorControl,fillTargetControl,makeKeyCaptureInput,makeTypeSelect,readBindingAction,syncVoiceReleaseChoices} from './mapping.js';
+import {fillBehaviorControl,fillTargetControl,makeKeyCaptureInput,makeTypeSelect,readBindingAction,syncRuleTriggerChoices,syncVoiceReleaseChoices} from './mapping.js';
 import {gameProfile} from './state.js';
 
 export let voiceInputReady=false;
@@ -286,4 +286,4 @@ function renderVoiceCommandCatalog(commands){
   syncChildren(full,sections);
 }
 
-export async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[]);for(const row of document.querySelectorAll('#voiceRows .voice-row')){const phrase=row.querySelector('.voice-phrase').value.trim(),item=voiceCatalog.find(item=>item.scope==='shared'&&item.phrase===currentVoiceWakeWord()+phrase);if(item){row.dataset.trigger='voice.'+item.id;row.querySelector('.binding-target-box').dataset.trigger=row.dataset.trigger}}syncVoiceReleaseChoices()}catch{renderVoiceCommandCatalog([])}}
+export async function refreshVoiceCommands(){try{const data=await api('/api/voice/commands');renderVoiceCommandCatalog(data.commands||[]);for(const row of document.querySelectorAll('#voiceRows .voice-row')){const phrase=row.querySelector('.voice-phrase').value.trim(),item=voiceCatalog.find(item=>item.scope==='shared'&&item.phrase===currentVoiceWakeWord()+phrase);if(item){row.dataset.trigger='voice.'+item.id;row.querySelector('.binding-target-box').dataset.trigger=row.dataset.trigger}}syncVoiceReleaseChoices();syncRuleTriggerChoices()}catch{renderVoiceCommandCatalog([])}}

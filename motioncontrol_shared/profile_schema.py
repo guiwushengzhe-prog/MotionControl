@@ -312,11 +312,11 @@ def normalize_binding(binding: dict, *, default_behavior: str,
 
 def _normalize_body_rule_trigger(value, label: str) -> str:
     if not isinstance(value, str):
-        raise ValueError(f"{label}必须选择身体区域或身体动作")
+        raise ValueError(f"{label}必须选择区域、动作、姿势或语音")
     trigger = value.strip()
     prefix, separator, ident = trigger.partition(".")
-    if not separator or prefix not in {"zone", "motion", "pose"} or not ident or len(trigger) > 128:
-        raise ValueError(f"{label}必须选择身体区域或身体动作")
+    if not separator or prefix not in {"zone", "motion", "pose", "voice"} or not ident or len(trigger) > 128:
+        raise ValueError(f"{label}必须选择区域、动作、姿势或语音")
     return trigger
 
 
