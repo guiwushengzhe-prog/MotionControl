@@ -4,7 +4,6 @@ import ctypes
 import ctypes.wintypes
 import os
 import platform
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -399,15 +398,35 @@ def _service_running() -> bool:
     if os.name != "nt":
         return False
     try:
-        from motioncontrol import owned_process
-        cp = owned_process.run(
-            ["sc.exe", "query", "ViGEmBus"],
-            capture_output=True,
-            text=True,
-            timeout=1.5,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        return cp.returncode == 0 and "RUNNING" in (cp.stdout or "").upper()
+        # 初始化也会读输出状态，不能为了只读查询提前绑定后台的进程树。
+        # 直接查询系统服务，不启动外部命令，也不启动或结束该服务。
+        class ServiceStatus(ctypes.Structure):
+            _fields_ = [(name, ctypes.wintypes.DWORD) for name in
+                        ("service_type", "current_state", "controls", "exit_code",
+                         "specific_exit", "checkpoint", "wait_hint")]
+        api = ctypes.WinDLL("advapi32", use_last_error=True)
+        api.OpenSCManagerW.argtypes = (ctypes.wintypes.LPCWSTR, ctypes.wintypes.LPCWSTR, ctypes.wintypes.DWORD)
+        api.OpenSCManagerW.restype = ctypes.wintypes.HANDLE
+        api.OpenServiceW.argtypes = (ctypes.wintypes.HANDLE, ctypes.wintypes.LPCWSTR, ctypes.wintypes.DWORD)
+        api.OpenServiceW.restype = ctypes.wintypes.HANDLE
+        api.QueryServiceStatus.argtypes = (ctypes.wintypes.HANDLE, ctypes.POINTER(ServiceStatus))
+        api.QueryServiceStatus.restype = ctypes.wintypes.BOOL
+        api.CloseServiceHandle.argtypes = (ctypes.wintypes.HANDLE,)
+        api.CloseServiceHandle.restype = ctypes.wintypes.BOOL
+        manager = api.OpenSCManagerW(None, None, 1)  # 只连接服务管理器。
+        if not manager:
+            return False
+        try:
+            service = api.OpenServiceW(manager, "ViGEmBus", 4)  # 只查询状态。
+            if not service:
+                return False
+            try:
+                status = ServiceStatus()
+                return bool(api.QueryServiceStatus(service, ctypes.byref(status)) and status.current_state == 4)
+            finally:
+                api.CloseServiceHandle(service)
+        finally:
+            api.CloseServiceHandle(manager)
     except Exception:
         return False
 
