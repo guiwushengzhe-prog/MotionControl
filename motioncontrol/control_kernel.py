@@ -30,7 +30,7 @@ from motioncontrol.head_control import (
     PITCH_INTENT_STOP_VELOCITY,
     HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION,
 )
-from motioncontrol_shared.profile_schema import flatten_bindings
+from motioncontrol_shared.profile_schema import DEFAULT_MODE_NAME, flatten_bindings
 from motioncontrol_shared.pose_points import MP_NAMES, trigger_point_groups
 from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
@@ -706,6 +706,11 @@ class ControlKernel:
         # 它，server 装上。在单独的线程里调，不占控制线程、不在锁里。
         self._system_action_handler = None
         self._system_action_async = True
+        # 「切换模式」交给 server 去换绑定（要读游戏配置、换语音口令），见 switch_bindings。
+        self._mode_action_handler = None
+        # 换模式那一刻还按着、而新模式里键变了的触发：放开再做才算新的一次。
+        self._mode_held: set[str] = set()
+        self.game_mode = {"id": None, "name": DEFAULT_MODE_NAME}
 
         # Head control is intentionally isolated from body actions.  The clean
         # engine owns its estimator, center capture, filtering and compact
@@ -1053,16 +1058,15 @@ class ControlKernel:
             self.control_bindings = self._apply_macro_behavior_locked(self.control_bindings)
             self._dispatch_controls_locked(time.monotonic())
 
-    def configure_bindings(self, bindings: dict | None) -> None:
-        """Install one effective Game Profile without touching recognition thresholds."""
+    def configure_bindings(self, bindings: dict | None, *, mode: dict | None = None) -> None:
+        """Install one effective Game Profile without touching recognition thresholds.
+
+        mode 是这份绑定属于哪个模式（{id, name}），只用来报给界面；不给就是默认模式。
+        """
         with self._lock:
-            previous_points = {name: self._zone_point_groups_locked(name) for name in RUNTIME_BODY_ZONES}
-            self.control_bindings = self._apply_macro_behavior_locked(flatten_bindings(bindings))
-            self._zone_point_groups.clear()
-            for name, points in previous_points.items():
-                if points != self._zone_point_groups_locked(name):
-                    self.zone_state[name] = fresh_zone_state()
+            self._install_bindings_locked(bindings, mode)
             self.trigger_previous.clear()
+            self._mode_held.clear()
             self._rule_previous.clear()
             self._voice_rule_pulses.clear()
             self._sequence_next.clear()
@@ -1077,6 +1081,39 @@ class ControlKernel:
             setter = getattr(self.output, "set_action_holds", None)
             if setter is not None:
                 self._safe_output(setter, [], source_group="controls")
+
+    def _install_bindings_locked(self, bindings: dict | None, mode: dict | None) -> None:
+        previous_points = {name: self._zone_point_groups_locked(name) for name in RUNTIME_BODY_ZONES}
+        self.control_bindings = self._apply_macro_behavior_locked(flatten_bindings(bindings))
+        self._zone_point_groups.clear()
+        for name, points in previous_points.items():
+            if points != self._zone_point_groups_locked(name):
+                self.zone_state[name] = fresh_zone_state()
+        self.game_mode = {"id": (mode or {}).get("id"), "name": (mode or {}).get("name") or DEFAULT_MODE_NAME}
+
+    def switch_bindings(self, bindings: dict | None, *, mode: dict | None = None) -> None:
+        """控制中换一套按键（切换模式）。
+
+        和 configure_bindings 不同，这里不把所有触发当成"重新按下"：
+        - 新旧模式里键没变的触发照常继续——边踏步边换模式，W 不断；点按的不重按。
+        - 键变了、此刻还按着的触发，先松开旧键，要放开再做才算新的一次。否则举双手
+          切到「开车」，新模式里举双手绑的键会被立刻按下去。
+        - 只换绑定，不碰识别、区域位置和视角。
+        """
+        with self._lock:
+            triggers = set(self.control_bindings) | set(self.trigger_previous) | set(self._sequence_next)
+            before = {trigger: self._effective_binding_locked(trigger) for trigger in triggers}
+            self._install_bindings_locked(bindings, mode)
+            changed = {trigger for trigger, binding in before.items()
+                       if self._effective_binding_locked(trigger) != binding}
+            changed |= set(self.control_bindings) - triggers
+            self._mode_held |= self.trigger_previous & changed
+            for trigger in changed:
+                self._selected_active.pop(trigger, None)
+                self._sequence_next.pop(trigger, None)
+            self._prune_body_motion_action_risk_locked()
+            # 马上按新绑定分发一次：变了键的旧键立刻松开，不等下一帧人体数据。
+            self._dispatch_controls_locked(time.monotonic())
 
     def configure_action_chain(self, config: dict | None) -> dict:
         """Apply and persist the opt-in declarative action-chain experiment."""
@@ -2907,6 +2944,12 @@ class ControlKernel:
         with self._lock:
             self._trigger_listener = listener
 
+    def configure_mode_action_handler(self, handler) -> None:
+        """装上切换模式的回调：handler(target, trigger)。它必须马上返回（server 交给
+        后台线程去换绑定），因为这里是在识别线程、持着内核锁的时候调的。"""
+        with self._lock:
+            self._mode_action_handler = handler
+
     def configure_system_action_handler(self, handler, *, asynchronous: bool = True) -> None:
         """装上执行系统功能的回调：handler(target, trigger)。见 _system_action_handler。"""
         with self._lock:
@@ -3078,7 +3121,9 @@ class ControlKernel:
         }
         body_active.update(f"motion.{name}" for name in self.motion_active)
         body_active.update(f"pose.{name}" for name in self.pose_active)
-        active = body_active - managed
+        # 换模式时还按着、键又变了的触发，放开之前不算（见 switch_bindings）。
+        self._mode_held &= body_active
+        active = body_active - managed - self._mode_held
         voice_reader = getattr(self.output, "active_voice_triggers", None)
         voice_active = voice_reader() if voice_reader is not None else set()
         rule_active = body_active | voice_active
@@ -3135,6 +3180,13 @@ class ControlKernel:
                 # 系统功能也是只在刚触发那一下做一次，不按游戏里的任何键。
                 if trigger not in self.trigger_previous:
                     self._run_system_action_locked(action.get("target", ""), trigger)
+            elif action.get("type") == "mode":
+                # 切换模式同样只在刚触发那一下做一次。
+                if trigger not in self.trigger_previous and self._mode_action_handler is not None:
+                    try:
+                        self._mode_action_handler(action.get("target", ""), trigger)
+                    except Exception as exc:  # noqa: BLE001 - 切换失败不该拖垮控制
+                        self.last_error = str(exc)
             elif behavior == "tap":
                 if trigger not in self.trigger_previous:
                     action["source"] = f"trigger:{trigger}:{time.monotonic_ns()}"
@@ -3497,6 +3549,8 @@ class ControlKernel:
             "control_bindings": _snapshot_copy(self.control_bindings),
             # 界面要显示"按的是哪个键"时用这一份，见 _effective_bindings_locked。
             "effective_bindings": self._effective_bindings_locked(),
+            # 当前在哪个模式（同一个游戏的几套按键），开始页显示、切换后提示。
+            "game_mode": dict(self.game_mode),
             "recent_triggers": list(self.recent_triggers),
             # 界面要靠它把 at 换算成"几秒前"。用服务端自己的钟，省得和浏览器对时。
             "now": round(now, 3),

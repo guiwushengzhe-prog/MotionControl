@@ -47,7 +47,18 @@ ACTION_TYPES = {
     # target 必须在白名单里（身体映射 BINDING_SYSTEM_TARGETS，语音 VOICE_SYSTEM_TARGETS），
     # 电脑端按名字执行。永远是触发一次。
     "system",
+    # 切换模式：一个游戏可以有几套按键（「步行」「开车」），控制中用任何触发切换。
+    # target 是 NEXT（下一个，轮着来）、DEFAULT（回到默认模式）或某个模式的编号。
+    # 和宏一样不检查那个模式还在不在：引用失效时运行时什么都不做。永远是触发一次。
+    "mode",
 }
+MODE_TARGETS = {"NEXT", "DEFAULT"}
+# 默认模式就是这个游戏原来那份按键，不在模式列表里，名字固定。
+DEFAULT_MODE_NAME = "默认"
+# 默认模式之外最多再加几个。
+MAX_GAME_MODES = 8
+MODE_NAME_MAX = 12
+_MODE_ID_RE = re.compile(r"^mode-[0-9a-f]{8}$")
 # 映射表里能选的系统功能。白名单：电脑端按名字执行，云端校验别人上传的配置也照这
 # 一份。两类语音都使用下面的 VOICE_SYSTEM_TARGETS；身体映射的界面和校验都只认这组
 # 常用功能，录姿势等操作放在语音里。
@@ -179,6 +190,11 @@ def normalize_action(action: dict, *, default_behavior: str = "hold",
         target = str(raw_target).strip().upper()
         if target not in system_targets:
             raise ValueError(f"不支持的系统功能：{target or '(空)'}")
+    elif action_type == "mode":
+        text = str(raw_target).strip()
+        target = text.upper() if text.upper() in MODE_TARGETS else text.lower()
+        if target not in MODE_TARGETS and not _MODE_ID_RE.match(target):
+            raise ValueError(f"要切到的模式不对：{text or '(空)'}")
     else:
         target = str(raw_target).strip().upper()
         if not target:
@@ -202,7 +218,7 @@ def normalize_action(action: dict, *, default_behavior: str = "hold",
     if behavior not in {"hold", "tap", "release"}:
         raise ValueError("动作方式必须为点按、持续按住或松开")
     # A wheel is an impulse by definition; allowing hold would create runaway scrolling.
-    if action_type in {"mouse_wheel", "voice_release", "system"}:
+    if action_type in {"mouse_wheel", "voice_release", "system", "mode"}:
         behavior = "tap"
     out = {"type": action_type, "target": target, "behavior": behavior}
     # 只给同时含 Xbox 按键和左摇杆方向的组合保存领先时间；普通动作不带这
@@ -426,6 +442,8 @@ def action_catalog() -> dict:
         # 目标是本游戏里设成"持续按住"的口令，界面从映射表自己的语音行里列。
         "voice_release": {"library": "voice_holds", "behavior": "tap"},
         "system": {"targets": sorted(BINDING_SYSTEM_TARGETS), "behavior": "tap"},
+        # 目标是本游戏的模式，界面从当前游戏的模式列表里列，另加「下一个」「默认」。
+        "mode": {"library": "modes", "targets": sorted(MODE_TARGETS), "behavior": "tap"},
     }
 
 
@@ -520,4 +538,48 @@ def normalize_overrides(overrides) -> dict:
 
         has_points = "trigger_points" in normalized or "trigger_segments" in normalized
         out[key] = None if normalized.get("disabled") and not has_points else normalized
+    return out
+
+
+# ---- 模式：同一个游戏的几套按键 ---------------------------------------------
+#
+# 默认模式就是 overrides_by_profile 里原来那份，旧程序、旧云端照旧只认它。别的模式
+# 另外存成 [{id, name, overrides}]，和默认那份一样是叠在内置档上的覆盖。只加字段、
+# 不改原有结构，所以不升配置的 schema：旧版本读到会忽略模式，只用默认那套。
+
+
+def normalize_mode_name(raw) -> str:
+    name = str(raw or "").strip()
+    if not name:
+        raise ValueError("模式名不能为空")
+    if len(name) > MODE_NAME_MAX:
+        raise ValueError(f"模式名最多 {MODE_NAME_MAX} 个字")
+    return name
+
+
+def is_mode_id(value) -> bool:
+    return isinstance(value, str) and bool(_MODE_ID_RE.match(value))
+
+
+def normalize_modes(raw) -> list[dict]:
+    """一个游戏默认模式之外的几套按键，按给的顺序（也是「下一个」轮换的顺序）。"""
+    if not isinstance(raw, list):
+        raise ValueError("模式列表无效")
+    if len(raw) > MAX_GAME_MODES:
+        raise ValueError(f"一个游戏除默认外最多 {MAX_GAME_MODES} 个模式")
+    out: list[dict] = []
+    ids: set[str] = set()
+    names = {DEFAULT_MODE_NAME}
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("模式无效")
+        ident = str(item.get("id", "")).strip().lower()
+        if not is_mode_id(ident) or ident in ids:
+            raise ValueError("模式编号无效或重复")
+        name = normalize_mode_name(item.get("name"))
+        if name in names:
+            raise ValueError(f"已经有一个叫「{name}」的模式了")
+        ids.add(ident)
+        names.add(name)
+        out.append({"id": ident, "name": name, "overrides": normalize_overrides(item.get("overrides", {}))})
     return out

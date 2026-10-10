@@ -170,6 +170,23 @@ def runtime_status() -> dict:
 PROFILES = GameProfileStore(ROOT)
 # Kinect 是否被拖慢按游戏记住，下次开这个游戏时先申请提高原厂服务优先级。
 RUNTIME.camera.current_game = PROFILES.selected_id
+# 当前在哪个模式（同一个游戏的几套按键，见 GameProfileStore.modes）。只在运行时记着、
+# 不写文件：每次启动、换游戏都从默认模式开始，免得上次切到「开车」、这次一开局就按错键。
+GAME_MODE = {"game": None, "id": None}
+
+
+def _active_mode_id() -> str | None:
+    """当前游戏正在用的模式；默认模式、换了游戏、模式被删了都是 None。"""
+    if GAME_MODE["game"] != PROFILES.selected_id():
+        return None
+    ident = GAME_MODE["id"]
+    return ident if any(item["id"] == ident for item in PROFILES.modes()) else None
+
+
+def _active_profile() -> dict:
+    return PROFILES.effective_profile(_active_mode_id())
+
+
 KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
 
 
@@ -181,12 +198,45 @@ def _game_launch_status(profile: dict | None = None) -> dict:
 
 
 def _apply_effective_profile() -> dict:
-    profile = PROFILES.effective_profile()
+    profile = _active_profile()
+    GAME_MODE.update(game=profile["selected_id"], id=profile["mode"]["id"])
     with VOICE._lock, KERNEL._lock:
         VOICE._release_locked(VOICE.source_id)
-        KERNEL.configure_bindings(profile.get("bindings", {}))
-        VOICE.configure_profile_bindings(profile.get("bindings", {}))
+        KERNEL.configure_bindings(profile.get("bindings", {}), mode=profile["mode"])
+        VOICE.configure_profile_bindings(profile.get("bindings", {}), PROFILES.mode_bindings())
     return profile
+
+
+def switch_game_mode(target) -> dict:
+    """控制中切到同一个游戏的另一套按键。target：NEXT、DEFAULT 或模式编号。
+
+    只换运行中的绑定，不写文件、不重建语音识别器（语法里本来就有所有模式的口令），
+    不碰识别、区域位置和视角。新旧模式里键没变的动作照常继续，见 KERNEL.switch_bindings。
+    """
+    with PROFILE_UPDATE_LOCK:
+        ids = [item["id"] for item in PROFILES.modes()]
+        current = _active_mode_id()
+        raw = str(target or "").strip()
+        if raw.upper() == "NEXT":
+            wanted = ids[(ids.index(current) + 1) % len(ids)]
+        elif raw.upper() in {"DEFAULT", ""}:
+            wanted = None
+        elif raw.lower() in ids:
+            wanted = raw.lower()
+        else:
+            return {"executed": False, "reason": "要切到的模式已经删掉了"}
+        profile = PROFILES.effective_profile(wanted)
+        GAME_MODE.update(game=profile["selected_id"], id=wanted)
+        changed = wanted != current
+        if changed:
+            with VOICE._lock, KERNEL._lock:
+                KERNEL.switch_bindings(profile.get("bindings", {}), mode=profile["mode"])
+                VOICE.switch_profile_bindings(profile.get("bindings", {}))
+    if changed:
+        broadcaster = getattr(globals().get("INPUT_BRIDGE"), "broadcast_control_config", None)
+        if broadcaster is not None:
+            broadcaster(_phone_control_payload())
+    return {"executed": True, "changed": changed, "mode": profile["mode"]}
 
 
 def emergency_stop_all() -> dict:
@@ -335,6 +385,22 @@ def _run_bound_system_action(target: str, trigger: str) -> None:
 KERNEL.configure_system_action_handler(_run_bound_system_action, asynchronous=False)
 
 
+def _run_bound_mode_action(target: str, trigger: str) -> None:
+    """区域、动作、姿势上绑的「切换模式」：交给后台线程去换，不在识别线程里等。"""
+    SYSTEM_COMMANDS.submit({"type": "mode", "target": target, "trigger": trigger})
+
+
+KERNEL.configure_mode_action_handler(_run_bound_mode_action)
+
+
+def _queue_mode_switch(target) -> dict:
+    """口令选了「切换模式」。普通口令是语音服务持着自己的锁执行的，而换模式要先拿
+    配置锁、再拿语音锁和内核锁；当场切会和保存配置互相等死。交给后台命令队列，
+    它先拿配置锁，顺序和保存配置一样。"""
+    SYSTEM_COMMANDS.submit({"type": "mode", "target": target, "trigger": "voice"})
+    return {"executed": True, "queued": True}
+
+
 def execute_voice_action(action: dict) -> dict:
     result = _execute_voice_action(action)
     command_id = str(action.get("command_id", "")).strip()
@@ -357,7 +423,14 @@ def _execute_voice_action(action: dict) -> dict:
     generation = action.get("_command_generation")
     if generation is not None and not SYSTEM_COMMANDS.is_current(generation):
         return {"executed": False, "reason": "操作已被停止或切换取消"}
+    if str(action.get("type", "")).lower() == "mode" and action.get("trigger"):
+        # 从后台命令队列来的「切换模式」（区域、动作、姿势或口令触发的）。内核分发时
+        # 已经记过身体触发，口令在排队前记过，这里只管切。
+        return switch_game_mode(action.get("target", ""))
     _note_voice_trigger(action)
+    if str(action.get("type", "")).lower() == "mode":
+        # 通用口令选了「切换模式」。
+        return _queue_mode_switch(action.get("target", ""))
     if str(action.get("type", "")).lower() != "system":
         command_id = str(action.get("command_id", "")).strip()
         if command_id:
@@ -371,6 +444,8 @@ def _execute_voice_action(action: dict) -> dict:
                     if binding["action"].get("type") == "system":
                         # 本游戏口令在映射表里选了「系统功能」。
                         return execute_voice_action({**action, **binding["action"]})
+                    if binding["action"].get("type") == "mode":
+                        return _queue_mode_switch(binding["action"].get("target", ""))
                     mapped = {**action, **binding["action"]}
                     mapped["source"] = action.get("source", "voice")
                     return OUTPUT.execute_voice_action(mapped)
@@ -449,7 +524,7 @@ VOICE = VoiceService(
     emergency_stop=voice_emergency_stop,
     clear_source=OUTPUT.clear_source,
 )
-VOICE.configure_profile_bindings(PROFILES.effective_profile().get("bindings", {}))
+VOICE.configure_profile_bindings(PROFILES.effective_profile().get("bindings", {}), PROFILES.mode_bindings())
 
 
 def _shared_voice_action(mapping: dict) -> dict:
@@ -734,12 +809,14 @@ def _phone_control_payload() -> dict:
 
 
 def _phone_control_payload_locked() -> dict:
-    profile = PROFILES.effective_profile()
+    profile = _active_profile()
     return {
         "type": "control_config_v1",
         "version": VERSION,
         "config_revision": CONFIG_REVISION,
         "game": {"id": profile.get("id"), "name": profile.get("name"), "appid": profile.get("appid")},
+        # 当前模式（同一个游戏的几套按键）。旧手机不认，照旧按 bindings 显示。
+        "game_mode": profile.get("mode"),
         "bindings": profile.get("bindings", {}),
         # 真正会生效的那份。区域有一层内置兜底：配置里没有 zone.headJump 时它照样按 A。
         # 手机只看 bindings 的话会写「未映射」，而游戏里明明有反应。
@@ -1041,6 +1118,10 @@ def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
         # validate; neither touches the file directly.
         PROFILES.select(profile_id)
         PROFILES.set_overrides(overrides, profile_id=profile_id, check=VOICE.check_profile_phrases)
+        # 带了模式就整组换上；没带（旧格式）就留着本机原有的模式。
+        game_modes = document.get("modes_by_profile", {})
+        if isinstance(game_modes, dict) and profile_id in game_modes:
+            PROFILES.set_modes(profile_id, game_modes[profile_id], check=VOICE.check_profile_phrases)
         applied.append(profile_id)
 
     for profile_id, mode in launch_modes.items():
@@ -1064,8 +1145,11 @@ def _profile_configuration_transaction():
         previous_selection = copy.deepcopy(PROFILES._selection)
         previous_custom = copy.deepcopy(PROFILES._custom)
         previous_motions = copy.deepcopy(MOTION_CONFIG)
-        previous_bindings = copy.deepcopy(PROFILES.effective_profile().get("bindings", {}))
+        previous_profile = _active_profile()
+        previous_bindings = copy.deepcopy(previous_profile.get("bindings", {}))
+        previous_game_mode = dict(GAME_MODE)
         previous_voice = copy.deepcopy(VOICE._profile_bindings)
+        previous_voice_modes = copy.deepcopy(VOICE._mode_bindings)
         try:
             with file_transaction(
                 [PROFILES.selection_path, PROFILES.custom_games_path, MOTION_CONFIG_FILE],
@@ -1081,8 +1165,9 @@ def _profile_configuration_transaction():
             PROFILES._custom = previous_custom
             MOTION_CONFIG = previous_motions
             KERNEL.configure_motions(previous_motions)
-            KERNEL.configure_bindings(previous_bindings)
-            VOICE.configure_profile_bindings(previous_voice)
+            GAME_MODE.update(previous_game_mode)
+            KERNEL.configure_bindings(previous_bindings, mode=previous_profile["mode"])
+            VOICE.configure_profile_bindings(previous_voice, previous_voice_modes)
             SYSTEM_COMMANDS.invalidate()
             raise
 
@@ -1105,6 +1190,8 @@ def _install_game_bundle(document: dict) -> dict:
         PROFILES.select(game_id)
         PROFILES.set_overrides(document.get("overrides", {}), profile_id=game_id,
                                check=VOICE.check_profile_phrases)
+        if "modes" in document:
+            PROFILES.set_modes(game_id, document["modes"], check=VOICE.check_profile_phrases)
         if "launch_mode" in document:
             PROFILES.set_admin(game_id, document["launch_mode"] == "admin")
         MOTION_CONFIG = save_motion_config(motions)
@@ -1188,7 +1275,8 @@ def _effective_voice_catalog_action(item: dict, voice_bindings: dict) -> dict | 
 
 def voice_command_catalog() -> dict:
     """Return the recognizer's exact phrases and what each does right now."""
-    profile = PROFILES.effective_profile() if "PROFILES" in globals() else {"bindings": {}}
+    # 口令现在做什么，跟着当前模式。
+    profile = _active_profile() if "PROFILES" in globals() else {"bindings": {}}
     voice_bindings = profile.get("bindings", {}).get("voice", {})
     commands = []
     # Use the same registry VoiceService actually parses.  Keeping a second UI
@@ -1587,8 +1675,12 @@ class AdminHandler(_BaseHandler):
             self._send_json({"version": VERSION, **PROFILES.list_games(query)})
             return
         if route == "/api/game-profiles/selected":
-            profile = PROFILES.effective_profile()
-            self._send_json({"version": VERSION, "profile": profile,
+            # ?mode= 读某个模式的按键给映射表编辑；不带就是当前正在用的模式。
+            wanted = parse_qs(parsed.query).get("mode", [None])[0]
+            with PROFILE_UPDATE_LOCK:
+                active = _active_profile()
+                profile = PROFILES.effective_profile(wanted) if wanted else active
+            self._send_json({"version": VERSION, "profile": profile, "active_mode": active["mode"],
                              "launch": _game_launch_status(profile)})
             return
         if route == "/api/game-profiles/profile":
@@ -2185,12 +2277,15 @@ class AdminHandler(_BaseHandler):
                     if route.endswith("/select"):
                         profile = PROFILES.select(str(body.get("id", "")))
                     else:
+                        # mode_id 为空存默认模式，否则存映射表正在编辑的那个模式。
                         profile = PROFILES.set_overrides(body.get("overrides", {}), profile_id=body.get("profile_id"),
-                                                         check=VOICE.check_profile_phrases)
+                                                         check=VOICE.check_profile_phrases,
+                                                         mode_id=body.get("mode_id") or None)
                 broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
                 if broadcaster is not None:
                     broadcaster(_phone_control_payload())
-                response = {"ok": True, "profile": profile, "config_revision": CONFIG_REVISION}
+                response = {"ok": True, "profile": profile, "config_revision": CONFIG_REVISION,
+                            "active_mode": _active_profile()["mode"]}
                 if route.endswith("/select"):
                     response["launch"] = _game_launch_status(profile)
                     RUNTIME.camera.request_boost_for_game_async()
@@ -2199,6 +2294,48 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": str(exc)}, 409)
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/game-profiles/modes":
+            # 当前游戏的模式：新建（从默认或另一个模式复制）、改名、删除。
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "game profile changes are loopback-only"}, 403)
+                return
+            try:
+                op = str(body.get("op", ""))
+                SYSTEM_COMMANDS.invalidate()
+                with _profile_configuration_transaction():
+                    if body.get("profile_id") and body["profile_id"] != PROFILES.selected_id():
+                        raise ProfileSelectionChanged("当前游戏已改变，请重新选择游戏后再改模式")
+                    if op == "add":
+                        made = PROFILES.add_mode(body.get("name", ""), body.get("copy_from") or None)
+                        shown = made["id"]
+                    elif op == "rename":
+                        shown = PROFILES.rename_mode(str(body.get("id", "")), body.get("name", ""))["id"]
+                    elif op == "remove":
+                        PROFILES.remove_mode(str(body.get("id", "")))
+                        shown = None
+                    else:
+                        raise ValueError("不支持的模式操作")
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
+                self._send_json({"ok": True, "profile": PROFILES.effective_profile(shown),
+                                 "active_mode": _active_profile()["mode"], "config_revision": CONFIG_REVISION})
+            except ProfileSelectionChanged as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 409)
+            except KeyError as exc:
+                self._send_json({"ok": False, "error": str(exc.args[0] if exc.args else exc)}, 404)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/game-profiles/mode":
+            # 手动切到某个模式（开始页点模式名）。和身体、口令触发的切换走同一条路。
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "game profile changes are loopback-only"}, 403)
+                return
+            result = switch_game_mode(body.get("target", "NEXT"))
+            self._send_json({"ok": bool(result.get("executed")), **result,
+                             "active_mode": _active_profile()["mode"]}, 200 if result.get("executed") else 404)
             return
         if route == "/api/input/source":
             if not self._is_loopback():
