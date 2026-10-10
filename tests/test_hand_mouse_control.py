@@ -496,3 +496,46 @@ def test_a_missed_hand_frame_with_no_wrist_still_releases():
     assert ctl.engaged
     state = ctl.update({}, now=1.033)
     assert state["engaged"] is False
+
+
+# --- 新旧两种握拳识别 --------------------------------------------------------
+
+
+def test_the_classic_algorithm_reads_the_flat_picture_like_before():
+    """旧版不看画面尺寸和深度：16:9 画面里转个方向的拳，读数和以前一样会变。"""
+    upright = hand_in_pixels(knuckle=(0, -30), tip=(15, -20))
+    sideways = hand_in_pixels(knuckle=(30, 0), tip=(20, 15))
+    classic = controller(hand="right", grip_algorithm="classic")
+    steady = controller(hand="right")
+    readings = {}
+    for name, ctl in (("classic", classic), ("steady", steady)):
+        readings[name] = [ctl.update(pose(spread=0.5), now=1.0, hand_points=points, frame_size=(640, 360))["curl"]
+                          for points in (upright, sideways)]
+    assert abs(readings["classic"][0] - readings["classic"][1]) > 0.3
+    assert readings["steady"][0] == pytest.approx(readings["steady"][1], abs=0.01)
+
+
+def test_the_classic_algorithm_falls_back_to_the_spread_at_once():
+    """旧版：这一帧没有手指读数，立刻改看指尖间距，不保持。"""
+    ctl = controller(hand="right", grip_algorithm="classic")
+    ctl.update(pose(spread=0.9), now=1.0, hand_points=hand_points(curl=1.0))
+    assert ctl.engaged
+    state = ctl.update(pose(spread=0.9), now=1.033)
+    assert state["engaged"] is False and state["grip_source"] == "pose"
+    steady = controller(hand="right")
+    steady.update(pose(spread=0.9), now=1.0, hand_points=hand_points(curl=1.0))
+    assert steady.update(pose(spread=0.9), now=1.033)["engaged"] is True
+
+
+def test_an_unknown_fist_algorithm_is_refused():
+    with pytest.raises(ValueError):
+        merge_config(None, {"grip_algorithm": "fast"})
+
+
+def test_both_hands_follow_the_chosen_fist_algorithm():
+    from motioncontrol.axis_hand_mouse import AxisHandMouseController
+
+    axis = AxisHandMouseController()
+    status = axis.configure({"grip_algorithm": "classic"})
+    assert status["config"]["grip_algorithm"] == "classic"
+    assert all(c.config["grip_algorithm"] == "classic" for c in axis.hands.values())

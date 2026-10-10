@@ -78,7 +78,15 @@ DEFAULT_CONFIG = {
     # "unknown", not "open".
     "min_visibility": 0.35,
     "min_tips": 2,
+    # 握拳识别方式，两种都留着好对比（见 GRIP_ALGORITHMS）。
+    "grip_algorithm": "steady",
 }
+
+# steady（新版，2026-10-10 起）：弯曲度按像素并带手部模型的深度量；手部模型漏检时
+# 维持上一状态 FINGER_GAP_HOLD_S，之后当看不到手松开，不改用指尖间距。
+# classic（旧版）：弯曲度按归一化平面坐标量；这一帧没有手指读数就立刻改用指尖间距。
+# 两种都是原厂张合状态优先，用同一组握拳门槛。
+GRIP_ALGORITHMS = ("steady", "classic")
 
 # How far outside the picture a landmark may sit and still be believed.
 #
@@ -229,6 +237,10 @@ def merge_config(current: dict | None, updates: dict | None) -> dict:
             config[key] = value
         elif key == "min_tips":
             config[key] = int(_clamp(float(value), 1, 3))
+        elif key == "grip_algorithm":
+            if value not in GRIP_ALGORITHMS:
+                raise ValueError("握拳识别方式只能是新版或旧版")
+            config[key] = value
         else:
             config[key] = float(value)
     if config["fist_open"] <= config["fist_close"]:
@@ -310,9 +322,11 @@ class HandMouseController:
         spread, tips = self.measure_spread(pose_map, hand)
         self.spread = spread
         self.tips_seen = tips
-        curl = measure_curl(hand_points, frame_size)
+        # 旧版不看画面尺寸和深度，也不在漏检时保持（见 GRIP_ALGORITHMS）。
+        steady = config["grip_algorithm"] == "steady"
+        curl = measure_curl(hand_points, frame_size if steady else None)
         self.curl = curl
-        if curl is not None:
+        if curl is not None and steady:
             self.finger_seen_at = now
         held = False
 

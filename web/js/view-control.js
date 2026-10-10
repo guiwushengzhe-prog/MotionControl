@@ -55,6 +55,12 @@ export function initViewControl(){
   tutorial.autoOpen();
 }
 
+// 两种握拳识别都留着，好在同一个人、同一台摄像头上对比。
+const GRIP_DESC={
+  steady:'按画面像素和手的深度判断；手一时没认出来先保持半秒，不改用粗略的指尖判断',
+  classic:'10 月 10 日之前的做法：只看画面平面；手没认出来就立刻改用身体模型的指尖判断',
+};
+
 function renderHandMouse(state){
   if(!state)return;
   const c=state.config||{};
@@ -67,6 +73,9 @@ function renderHandMouse(state){
   }
   setText($('#handMouseSensitivityValue'),Number(c.sensitivity||0).toFixed(0));
   setText($('#handMouseDeadzoneValue'),Number(c.deadzone||0).toFixed(2));
+  const grip=c.grip_algorithm==='classic'?'classic':'steady';
+  if(document.activeElement!==$('#handMouseGripAlgorithm'))setProperty($('#handMouseGripAlgorithm'),'value',grip);
+  setText($('#handMouseGripDesc'),GRIP_DESC[grip]);
   // 握没握拳、手张没张开，玩的时候画面上看得到，这里不再挂一行「左手待机」。
   // 只在握拳真用不了的时候说一句。
   const fistOn=!!c.enabled&&(['left','right'].includes(c.horizontal_hand)||['left','right'].includes(c.vertical_hand));

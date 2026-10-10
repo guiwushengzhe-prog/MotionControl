@@ -314,6 +314,31 @@ def test_the_start_page_says_when_the_feet_are_out_of_the_picture(ui):
     assert ui.errors == []
 
 
+def test_the_fist_algorithm_can_be_switched_and_is_kept(ui):
+    """视角 → 手感里选握拳识别方式：切到旧版就存下，刷新后还是旧版，说明跟着变。"""
+    page = ui.page
+    _go(page, "devices")
+    page.click('#settingsNav [data-pane="view"]')
+    select = page.locator("#handMouseGripAlgorithm")
+    select.wait_for(state="visible")
+    page.wait_for_function("!document.querySelector('#handMouseGripAlgorithm').disabled")
+    assert select.input_value() == "steady"
+    assert "深度" in page.locator("#handMouseGripDesc").inner_text()
+    select.select_option("classic")
+    page.wait_for_function("document.querySelector('#handMouseSaveStatus').textContent.includes('已保存')")
+    saved = json.loads(_get(ui.base + "/api/hand-mouse/config"))["hand_mouse"]["config"]
+    assert saved["grip_algorithm"] == "classic"
+    page.reload()
+    page.wait_for_function("document.querySelector('#currentGameName').textContent !== '正在读取…'")
+    _go(page, "devices")
+    page.click('#settingsNav [data-pane="view"]')
+    page.wait_for_function("document.querySelector('#handMouseGripAlgorithm').value === 'classic'")
+    assert "10 月 10 日之前" in page.locator("#handMouseGripDesc").inner_text()
+    select.select_option("steady")
+    page.wait_for_function("document.querySelector('#handMouseSaveStatus').textContent.includes('已保存')")
+    assert ui.errors == []
+
+
 def test_nothing_scrolls_sideways_on_a_narrow_window(ui):
     page = ui.page
     page.set_viewport_size({"width": 390, "height": 844})

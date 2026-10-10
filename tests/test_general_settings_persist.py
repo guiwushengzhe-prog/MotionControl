@@ -134,3 +134,21 @@ def test_someone_elses_key_is_not_wiped_by_the_next_save(home):
 def test_an_unknown_key_reads_back_as_its_default(home):
     kernel = ControlKernel(Output())
     assert kernel.general_setting("从来没存过的东西", "兜底") == "兜底"
+
+
+def test_the_fist_algorithm_choice_survives_a_restart(home):
+    """握拳识别方式选了旧版，重启后还是旧版；没选过的是新版。"""
+    first = ControlKernel(Output())
+    try:
+        assert first.hand_mouse_controller.config["grip_algorithm"] == "steady"
+        first.configure_hand_mouse({"grip_algorithm": "classic"})
+    finally:
+        first.close()
+    saved = json.loads(settings_file(home).read_text(encoding="utf-8"))
+    assert saved["hand_mouse"]["grip_algorithm"] == "classic"
+    second = ControlKernel(Output())
+    try:
+        assert second.hand_mouse_controller.config["grip_algorithm"] == "classic"
+        assert all(c.config["grip_algorithm"] == "classic" for c in second.hand_mouse_controller.hands.values())
+    finally:
+        second.close()
