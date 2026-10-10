@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import struct
@@ -182,18 +183,27 @@ def rotate_point(x, y, rotation):
     return x, y
 
 
+def _valid_depth_point(point):
+    try:
+        return (.6 <= float(point.get("score", 0)) <= 1 and float(point["z"]) > 0
+                and all(math.isfinite(float(point[key])) for key in ("x", "y", "z", "color_x", "color_y")))
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+
 def matching_depth_body(metadata, pose_map, rotation="none"):
     """只接纳与当前二维人物匹配的可靠原厂关节；不采用推断关节或旧帧。"""
     if not metadata or not metadata.get("depth_valid") or not pose_map:
         return None
-    names = ("left_hip", "right_hip", "left_shoulder", "right_shoulder")
-    if any(not pose_map.get(name) or pose_map[name].get("score", 0) < .6 for name in names):
+    names = tuple(name for name in ("left_hip", "right_hip", "left_shoulder", "right_shoulder")
+                  if pose_map.get(name) and pose_map[name].get("score", 0) >= .6
+                  and all(math.isfinite(pose_map[name].get(key, math.nan)) for key in ("x", "y")))
+    # 坐着或下半身出画时仍可用双肩匹配；至少两个可靠身体点，不能只凭一个点接纳另一人。
+    if len(names) < 2:
         return None
     candidates = []
     for body in metadata.get("bodies", []):
         points = body.get("points", {})
-        if any(name not in points for name in names):
-            continue
         mirrored = bool(metadata.get("image_mirrored"))
         matches = []
         # 镜像画面重新识别后，按肩髋位置确认图像与原厂骨骼的左右命名。
@@ -202,8 +212,11 @@ def matching_depth_body(metadata, pose_map, rotation="none"):
             matched = {("right_" + name[5:] if name.startswith("left_") else
                         "left_" + name[6:] if name.startswith("right_") else name): point
                        for name, point in points.items()} if swapped else points
+            anchors = tuple(name for name in names if _valid_depth_point(matched.get(name)))
+            if len(anchors) < 2:
+                continue
             errors = []
-            for name in names:
+            for name in anchors:
                 point = matched[name]
                 x, y = rotate_point(point["color_x"], point["color_y"], rotation)
                 if mirrored:
@@ -212,7 +225,10 @@ def matching_depth_body(metadata, pose_map, rotation="none"):
                 errors.append((x - observed["x"]) ** 2 + (y - observed["y"]) ** 2)
             error = sum(errors) / len(errors)
             if error < .08 ** 2 and max(errors) < .15 ** 2:
-                matches.append((error, {**body, "points": matched}))
+                states = body.get("hand_states") or {}
+                if swapped:
+                    states = {"left": states.get("right"), "right": states.get("left")}
+                matches.append((error, {**body, "points": matched, "hand_states": states}))
         if matches:
             candidates.append(min(matches, key=lambda match: match[0]))
     if not candidates:
@@ -223,6 +239,46 @@ def matching_depth_body(metadata, pose_map, rotation="none"):
         return None
     result = dict(candidates[0][1])
     result["floor"] = metadata.get("floor")
+    return result
+
+
+# 只替换解剖位置明确对应的点。原厂头中心不是鼻子、手尖不是食指、足部不是脚跟。
+DEPTH_POSE_NAMES = frozenset(side + "_" + joint for side in ("left", "right")
+                           for joint in ("shoulder", "elbow", "wrist", "thumb", "hip", "knee", "ankle"))
+
+
+def merge_depth_pose(pose_map, body, rotation="none", *, mirrored=False):
+    """把同一人物的可靠原厂点投影到当前画面，保留完整的 33 点结构。"""
+    if not pose_map or not body:
+        return pose_map
+    result = dict(pose_map)
+    for name in DEPTH_POSE_NAMES.intersection(pose_map):
+        point = body.get("points", {}).get(name)
+        if not _valid_depth_point(point):
+            continue
+        x, y = rotate_point(float(point["color_x"]), float(point["color_y"]), rotation)
+        if mirrored:
+            x = 1 - x
+        # 图像 z 仍是模型的相对单位；原厂以米计的三维坐标另存，不能直接混入归一化图像坐标。
+        result[name] = {**pose_map[name], "x": x, "y": y, "score": float(point["score"]),
+                        "position_source": "kinect",
+                        "camera_space": {key: float(point[key]) for key in ("x", "y", "z")}}
+    return result
+
+
+def depth_hand_states(body):
+    """只使用同一人物可靠的张手/握拳状态；未知、推断或手腕不可见时回退原识别。"""
+    if not body:
+        return {}
+    result = {}
+    for side, state in (body.get("hand_states") or {}).items():
+        wrist = body.get("points", {}).get(side + "_wrist")
+        if side not in ("left", "right") or not _valid_depth_point(wrist):
+            continue
+        if (not isinstance(state, dict) or state.get("state") not in ("open", "closed")
+                or not isinstance(state.get("score"), (int, float)) or not .6 <= state["score"] <= 1):
+            continue
+        result[side] = dict(state)
     return result
 
 

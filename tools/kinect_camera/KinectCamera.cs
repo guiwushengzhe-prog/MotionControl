@@ -45,10 +45,14 @@ internal static class KinectCamera
         return row;
     }
     static readonly Dictionary<JointType, string> Names = new Dictionary<JointType, string> {
-        {JointType.Head,"head"}, {JointType.SpineBase,"pelvis"}, {JointType.SpineShoulder,"chest"},
+        {JointType.Head,"head"}, {JointType.SpineBase,"pelvis"}, {JointType.SpineMid,"spine_mid"},
+        {JointType.Neck,"neck"}, {JointType.SpineShoulder,"chest"},
         {JointType.ShoulderLeft,"left_shoulder"}, {JointType.ShoulderRight,"right_shoulder"},
         {JointType.ElbowLeft,"left_elbow"}, {JointType.ElbowRight,"right_elbow"},
         {JointType.WristLeft,"left_wrist"}, {JointType.WristRight,"right_wrist"},
+        {JointType.HandLeft,"left_hand"}, {JointType.HandRight,"right_hand"},
+        {JointType.HandTipLeft,"left_hand_tip"}, {JointType.HandTipRight,"right_hand_tip"},
+        {JointType.ThumbLeft,"left_thumb"}, {JointType.ThumbRight,"right_thumb"},
         {JointType.HipLeft,"left_hip"}, {JointType.HipRight,"right_hip"},
         {JointType.KneeLeft,"left_knee"}, {JointType.KneeRight,"right_knee"},
         {JointType.AnkleLeft,"left_ankle"}, {JointType.AnkleRight,"right_ankle"},
@@ -71,7 +75,12 @@ internal static class KinectCamera
                 points.Add(pair.Value, Fields("x",p.X,"y",p.Y,"z",p.Z,"score",1.0,
                     "color_x",color.X / 1920.0,"color_y",color.Y / 1080.0));
             }
-            result.Add(Fields("tracking_id",body.TrackingId.ToString(),"points",points));
+            result.Add(Fields("tracking_id",body.TrackingId.ToString(),"points",points,
+                "hand_states",Fields(
+                    "left",Fields("state",body.HandLeftState.ToString().ToLowerInvariant(),
+                                  "score",body.HandLeftConfidence == TrackingConfidence.High ? 1.0 : 0.0),
+                    "right",Fields("state",body.HandRightState.ToString().ToLowerInvariant(),
+                                   "score",body.HandRightConfidence == TrackingConfidence.High ? 1.0 : 0.0))));
         }
         return result;
     }

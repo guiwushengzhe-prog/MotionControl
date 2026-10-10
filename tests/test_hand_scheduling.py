@@ -59,6 +59,64 @@ def test_thread_allocation_without_hand_demand_does_not_load_model():
     assert scheduled.gesture.cpu_threads is None and scheduled.gesture.requested_cpu_threads == 2
 
 
+@pytest.mark.parametrize("case,model_sides", [("native", []), ("one_uncertain", ["right"]),
+                                            ("depth_off", ["left", "right"]),
+                                            ("other_person", ["left", "right"])])
+def test_camera_fuses_native_points_and_only_runs_missing_hand_recognition(monkeypatch, case, model_sides):
+    from test_kinect_camera import body
+    native = body()
+    for side in ("left", "right"):
+        native["points"][side + "_wrist"] = {**native["points"][side + "_shoulder"], "color_y": .5}
+    native["hand_states"] = {"left": {"state": "closed", "score": 1},
+                             "right": {"state": "open", "score": 1}}
+    raw_pose = {name: {"x": point["color_x"] + .01, "y": point["color_y"], "score": 1}
+                for name, point in native["points"].items()}
+    raw_pose["left_wrist"]["x"] += .04
+    capture, detector = FakeCapture(one_frame=True), FakeDetector()
+    camera = _camera(monkeypatch, capture, detector)
+    request = {"enabled": False, "hands": []}
+    camera.kernel.hand_mouse_controller = SimpleNamespace(tracking_request=lambda: copy.deepcopy(request))
+    monkeypatch.setattr(detector, "detect_for_video", lambda *_args: SimpleNamespace(
+        pose_landmarks=[[SimpleNamespace(x=raw_pose.get(name, {}).get("x", .5),
+                        y=raw_pose.get(name, {}).get("y", .5), z=-.1, visibility=1)
+                         for name in MP_NAMES]], pose_world_landmarks=[]))
+    calls = []
+    monkeypatch.setattr(LazyGestureRecognizer, "recognize",
+                        lambda _self, _rgb, _pose, sides, _mp: calls.append(list(sides)) or {})
+    try:
+        camera.start()
+        _wait_until(lambda: camera.frames == 1)
+        assert calls == []
+        request.update(enabled=True, hands=["left", "right"])
+        if case == "one_uncertain":
+            native["hand_states"]["right"]["score"] = 0
+        elif case == "other_person":
+            for point in native["points"].values():
+                point["color_x"] += .3
+        with camera._condition:
+            camera._latest_frame = SimpleNamespace(shape=(480, 640, 3))
+            camera._latest_depth = {"depth_valid": case != "depth_off", "bodies": [native]}
+            camera._latest_sequence += 1
+            camera._latest_capture_at += .033
+            camera._condition.notify_all()
+        _wait_until(lambda: camera.frames == 2)
+        _, pose, extra = camera.kernel.frames[-1]
+        if case in {"native", "one_uncertain"}:
+            assert extra["depth_body"]["tracking_id"] == "person-one"
+            assert pose["left_wrist"]["x"] == native["points"]["left_wrist"]["color_x"]
+            assert pose["left_wrist"]["position_source"] == "kinect"
+        else:
+            assert extra["depth_body"] is None
+            assert pose["left_wrist"]["x"] == raw_pose["left_wrist"]["x"]
+            assert "position_source" not in pose["left_wrist"]
+        assert calls == ([model_sides] if model_sides else [])
+        if case == "native":
+            assert camera.hand_model_state == "native"
+    finally:
+        capture.finish.set()
+        camera.stop_and_wait(timeout_s=2)
+
+
 def test_native_body_threads_use_current_body_before_hand_cropping(monkeypatch):
     capture, detector = FakeCapture(one_frame=True), FakeDetector()
     camera = _camera(monkeypatch, capture, detector)

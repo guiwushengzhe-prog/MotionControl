@@ -60,10 +60,11 @@ class AxisHandMouseController:
         self.config = config
         return self.status()
 
-    def update(self, pose_map, now, hand_points=None):
+    def update(self, pose_map, now, hand_points=None, hand_states=None):
         points = hand_points or {}
+        states = hand_states or {}
         for hand, controller in self.hands.items():
-            controller.update(pose_map, now, points.get(hand))
+            controller.update(pose_map, now, points.get(hand), states.get(hand))
         return self.status()
 
     def owns_hand(self, hand):

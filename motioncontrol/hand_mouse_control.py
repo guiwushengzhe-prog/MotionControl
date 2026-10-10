@@ -217,6 +217,7 @@ class HandMouseController:
     def reset(self, now: float | None = None) -> None:
         self.engaged = False
         self.anchor: tuple[float, float] | None = None
+        self.anchor_source = None
         self.spread: float | None = None
         self.curl: float | None = None
         self.grip_source = "none"
@@ -260,7 +261,7 @@ class HandMouseController:
     # -- update ------------------------------------------------------------
 
     def update(self, pose_map: dict, now: float,
-               hand_points: list | None = None) -> dict:
+               hand_points: list | None = None, hand_state: dict | None = None) -> dict:
         config = self.config
         if not config["enabled"]:
             self.reset()
@@ -276,8 +277,14 @@ class HandMouseController:
 
         # Both readings shrink as the hand closes, so the gate below is the
         # same shape either way; only the number and its thresholds change.
-        # Real finger joints win whenever the device sends them.
-        if curl is not None:
+        # 原厂可靠张合状态优先，其次是手指关节，最后是人体模型的指尖间距。
+        if (isinstance(hand_state, dict) and hand_state.get("state") in ("open", "closed")
+                and isinstance(hand_state.get("score"), (int, float)) and .6 <= hand_state["score"] <= 1):
+            # 原厂已计算的张合状态优先，未知状态仍走下方原有手指/人体判断。
+            grip = 0.0 if hand_state["state"] == "closed" else 1.0
+            close_at, open_at = .25, .75
+            self.grip_source = "kinect"
+        elif curl is not None:
             grip = curl
             close_at = float(config["curl_close"])
             open_at = float(config["curl_open"])
@@ -322,8 +329,10 @@ class HandMouseController:
             return self.status()
         forearm = max(1e-6, _distance(elbow, wrist))
 
-        if not was_engaged or self.anchor is None:
+        source = wrist.get("position_source", "image")
+        if not was_engaged or self.anchor is None or source != self.anchor_source:
             self.anchor = (float(wrist["x"]), float(wrist["y"]))
+            self.anchor_source = source
             self.output = (0.0, 0.0)
             self.offset = (0.0, 0.0)
             self.reason = "engaged"
@@ -356,6 +365,7 @@ class HandMouseController:
     def _release(self, reason: str) -> None:
         self.engaged = False
         self.anchor = None
+        self.anchor_source = None
         self.output = (0.0, 0.0)
         self.offset = (0.0, 0.0)
         self.reason = reason
@@ -371,9 +381,7 @@ class HandMouseController:
             # Surfaced so a user whose hand does not match the default
             # thresholds can watch the number and set their own.
             "spread": None if self.spread is None else round(float(self.spread), 4),
-            # Which reading drove the gate this frame: "hand" for real finger
-            # joints, "pose" for the fingertip-spread fallback, "none" when
-            # neither was usable.
+            # 来源：原厂张合 kinect、手指关节 hand、人体指尖 pose 或无有效数据 none。
             "grip_source": str(self.grip_source),
             "curl": None if self.curl is None else round(float(self.curl), 4),
             "tips_seen": int(self.tips_seen),
