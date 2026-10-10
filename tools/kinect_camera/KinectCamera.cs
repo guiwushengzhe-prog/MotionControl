@@ -220,7 +220,10 @@ internal static class KinectCamera
                                 "color_exposure_ms",cameraSettings.ExposureTime.TotalMilliseconds,
                                 "color_gain",cameraSettings.Gain,
                                 "sensor_seconds",lastColor,"device_id","kinect2:"+sensor.UniqueKinectId,
-                                "depth_valid",fresh,"depth_ratio",validRatio,"bodies",bodyFresh ? tracked : new object[0],
+                                "depth_valid",fresh,"depth_ratio",validRatio,"body_valid",bodyFresh,
+                                "body_age_ms",lastBody >= 0 ? (object)(Math.Abs(lastColor-lastBody)*1000) : null,
+                                "tracked_body_count",((ICollection<object>)tracked).Count,
+                                "bodies",bodyFresh ? tracked : new object[0],
                                 "floor",bodyFresh ? floor : null,"color_frames",colorCount,
                                 "depth_frames",depthCount,"body_frames",bodyCount), pixels);
                             lastArrival = arrived;
