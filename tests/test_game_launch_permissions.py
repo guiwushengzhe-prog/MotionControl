@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from motioncontrol import game_launch
+from motioncontrol import output_backend
 from motioncontrol.game_launch import elevated_command
 from motioncontrol.game_profiles import GameProfileStore
 from motioncontrol_shared.canonical import canonicalize
@@ -30,6 +31,28 @@ def test_cold_admin_handoff_does_not_bind_new_backend_to_old_job(application, mo
     monkeypatch.setattr(app, "launch_as_administrator", lambda *args, **kwargs: events.append("launch"))
     app.main()
     assert events == ["launch"]
+
+
+@pytest.mark.parametrize("service_state,available", [(4, True), (1, True), (4, False)])
+def test_driver_status_query_uses_native_handles_without_starting_a_process(monkeypatch, service_state, available):
+    from motioncontrol import owned_process
+    closed = []
+    def manager(*_args):
+        return 11
+    def service(*_args):
+        return 22 if available else None
+    def query(_handle, state):
+        state._obj.current_state = service_state
+        return True
+    def close(handle):
+        closed.append(handle)
+        return True
+    api = SimpleNamespace(OpenSCManagerW=manager, OpenServiceW=service,
+                          QueryServiceStatus=query, CloseServiceHandle=close)
+    monkeypatch.setattr(output_backend.ctypes, "WinDLL", lambda *args, **kwargs: api)
+    monkeypatch.setattr(owned_process, "run", lambda *args, **kwargs: pytest.fail("只读状态查询不应启动子进程"))
+    assert output_backend._service_running() == (available and service_state == 4)
+    assert closed == ([22, 11] if available else [11])
 
 
 @pytest.mark.parametrize("wait_result", [0, 0x102])
