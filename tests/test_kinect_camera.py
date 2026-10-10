@@ -7,7 +7,9 @@ import pytest
 
 from motioncontrol.control_kernel import ControlKernel, NativeCameraService, CameraUnavailable
 from motioncontrol.depth_march import DepthMarchLifts
-from motioncontrol.kinect_camera import matching_depth_body, rotate_point
+from motioncontrol.kinect_camera import (
+    DEPTH_POSE_NAMES, depth_hand_states, matching_depth_body, merge_depth_pose, rotate_point,
+)
 from motioncontrol.responsive_march import ResponsiveMarch
 from test_camera_source_default import Output
 
@@ -197,6 +199,91 @@ def test_missing_depth_and_overlapping_people_do_not_supply_depth():
     pose = {name: {"x": p["color_x"], "y": p["color_y"], "score": 1} for name, p in native["points"].items()}
     assert matching_depth_body({"depth_valid": False, "bodies": [native]}, pose) is None
     assert matching_depth_body({"depth_valid": True, "bodies": [native, copy.deepcopy(native)]}, pose) is None
+
+
+def test_seated_person_matches_by_visible_shoulders_but_one_point_is_not_enough():
+    native = body()
+    pose = {name: {"x": p["color_x"], "y": p["color_y"], "score": 1}
+            for name, p in native["points"].items()}
+    pose["left_hip"]["score"] = pose["right_hip"]["score"] = .1
+    metadata = {"depth_valid": True, "bodies": [native]}
+    assert matching_depth_body(metadata, pose)["tracking_id"] == "person-one"
+    pose["left_hip"]["score"] = pose["right_hip"]["score"] = 1
+    native["points"]["left_hip"]["score"] = native["points"]["right_hip"]["score"] = .1
+    assert matching_depth_body(metadata, pose)["tracking_id"] == "person-one"
+    pose["left_shoulder"]["score"] = .1
+    assert matching_depth_body(metadata, pose) is None
+
+
+@pytest.mark.parametrize("rotation", ["none", "cw", "ccw", "180"])
+@pytest.mark.parametrize("mirrored", [False, True])
+def test_native_points_replace_only_anatomical_matches_in_current_frame(rotation, mirrored):
+    from motioncontrol_shared.pose_points import MP_NAMES
+    original = {name: {"x": .2, "y": .3, "z": -.15, "score": .7} for name in MP_NAMES}
+    native = body()
+    for name in DEPTH_POSE_NAMES:
+        native["points"][name] = {"x": .1, "y": .6, "z": 2., "score": 1.,
+                                   "color_x": .62, "color_y": .44}
+    native["points"]["head"] = {"x": 0, "y": 1.7, "z": 2, "score": 1,
+                                    "color_x": .9, "color_y": .8}
+    merged = merge_depth_pose(original, native, rotation, mirrored=mirrored)
+    x, y = rotate_point(.62, .44, rotation)
+    if mirrored:
+        x = 1 - x
+    assert len(merged) == 33
+    assert len(DEPTH_POSE_NAMES) == 14
+    for name in MP_NAMES:
+        if name in DEPTH_POSE_NAMES:
+            assert merged[name]["x"] == pytest.approx(x)
+            assert merged[name]["y"] == pytest.approx(y)
+            assert merged[name]["score"] == 1
+            assert merged[name]["position_source"] == "kinect"
+            assert merged[name]["camera_space"]["z"] == 2
+            assert merged[name]["z"] == -.15  # 实测米制坐标不能混入图像相对 z。
+        else:
+            assert merged[name] == original[name]
+    assert original["left_wrist"]["x"] == .2  # 不污染同帧原始人物匹配数据。
+
+
+@pytest.mark.parametrize("field,value", [("score", .2), ("score", math.nan),
+                                        ("x", math.nan), ("z", -1), ("color_x", math.inf)])
+def test_invalid_native_joint_falls_back_point_by_point(field, value):
+    native = body()
+    native["points"]["left_shoulder"][field] = value
+    pose = {name: {"x": .2, "y": .3, "z": -.1, "score": .9}
+            for name in native["points"]}
+    merged = merge_depth_pose(pose, native)
+    assert merged["left_shoulder"] == pose["left_shoulder"]
+    assert merged["right_shoulder"]["position_source"] == "kinect"
+    assert merge_depth_pose(pose, None) is pose
+    assert merge_depth_pose(None, native) is None
+
+
+@pytest.mark.parametrize("swapped", [False, True])
+def test_native_hand_states_follow_the_matched_body_side(swapped):
+    native = body()
+    native["points"]["left_wrist"] = {**native["points"]["left_shoulder"], "color_y": .5}
+    native["points"]["right_wrist"] = {**native["points"]["right_shoulder"], "color_y": .5}
+    native["hand_states"] = {"left": {"state": "closed", "score": 1},
+                             "right": {"state": "open", "score": 1}}
+    pose = {}
+    for name in ("left_hip", "right_hip", "left_shoulder", "right_shoulder"):
+        source = (("right_" if name.startswith("left_") else "left_") + name.split("_", 1)[1]) if swapped else name
+        point = native["points"][source]
+        pose[name] = {"x": 1 - point["color_x"], "y": point["color_y"], "score": 1}
+    matched = matching_depth_body({"depth_valid": True, "image_mirrored": True, "bodies": [native]}, pose)
+    states = depth_hand_states(matched)
+    assert states["left"]["state"] == ("open" if swapped else "closed")
+    assert states["right"]["state"] == ("closed" if swapped else "open")
+
+
+@pytest.mark.parametrize("state,score", [("unknown", 1), ("lasso", 1), ("nottracked", 1),
+                                        ("closed", .1), ("open", math.nan)])
+def test_uncertain_native_hand_state_keeps_the_image_fallback(state, score):
+    native = body()
+    native["points"]["left_wrist"] = native["points"]["left_shoulder"]
+    native["hand_states"] = {"left": {"state": state, "score": score}}
+    assert depth_hand_states(native) == {}
 
 
 def test_prolonged_dropout_restarts_alternation_and_does_not_inherit_first_leg():

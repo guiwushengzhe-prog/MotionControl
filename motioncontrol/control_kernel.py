@@ -1687,7 +1687,8 @@ class ControlKernel:
         # opposite ends of this function.  Updating it in between would let a
         # zone button fire on the very frame the fist closes.
         self.hand_mouse_controller.update(
-            pose_map, now, self._hand_points_for_mouse_locked())
+            pose_map, now, self._hand_points_for_mouse_locked(),
+            kinect_camera.depth_hand_states(self.latest_depth_body))
         # Recorded after the hand pass so the saved frames carry the fist
         # reading alongside the skeleton -- that pairing is the point of
         # recording at all when tuning the thresholds.
@@ -4777,7 +4778,7 @@ class NativeCameraService:
                 geometry = (width, height, frame_rotation)
                 # 模型内部多线程生效时，先取得本帧身体点再裁切手部。
                 # 未开放该接口的运行库沿用经本帧复核的并行路径。
-                parallel = bool(self.pose_cpu_threads is None and sides and previous_geometry == geometry
+                parallel = bool(not depth_metadata and self.pose_cpu_threads is None and sides and previous_geometry == geometry
                     and 0 < captured_at-previous_sample_at <= .120
                     and all(hand_crop(previous_pose, side, width, height) for side in sides))
                 hand_job = scheduled.begin(rgb, previous_pose, sides, session.mp) if parallel else None
@@ -4809,8 +4810,13 @@ class NativeCameraService:
                         for index, point in enumerate(world_landmarks)
                     }
                 hands_started_at = time.perf_counter()
+                depth_body = kinect_camera.matching_depth_body(depth_metadata, pose_map, frame_rotation)
+                native_hands = kinect_camera.depth_hand_states(depth_body)
+                pose_map = kinect_camera.merge_depth_pose(pose_map, depth_body, frame_rotation,
+                    mirrored=bool(depth_metadata and depth_metadata.get("image_mirrored")))
+                model_sides = [side for side in sides if side not in native_hands]
                 if not parallel:
-                    hand_job = scheduled.begin(rgb, pose_map, sides, session.mp)
+                    hand_job = scheduled.begin(rgb, pose_map, model_sides, session.mp)
                 hands, hand_processing_ms = hand_job.result() if hand_job else ({}, 0.0)
                 if parallel and not hand_crops_match(previous_pose, pose_map, sides, width, height, hands):
                     # 快速移动或人体丢失时不用提前裁切的结果，等待本帧重新裁切。
@@ -4819,7 +4825,8 @@ class NativeCameraService:
                     self.hand_crop_retries += 1
                 previous_pose, previous_sample_at, previous_geometry = pose_map, captured_at, geometry
                 hands_finished_at = time.perf_counter()
-                self.hand_model_state, self.hand_model_error = gesture.state, gesture.error
+                self.hand_model_state = "native" if sides and not model_sides else gesture.state
+                self.hand_model_error = None if self.hand_model_state == "native" else gesture.error
                 self.hand_cpu_threads = gesture.cpu_threads
                 with self._condition:
                     if session.stop.is_set() or self._session is not session:
@@ -4835,8 +4842,7 @@ class NativeCameraService:
                         self.kernel.handle_pose_map(
                             "computer_camera", pose_map, width=width, height=height,
                             world_pose=world_pose, hands=hands, sample_at=captured_at, return_status=False,
-                            **({"depth_body": kinect_camera.matching_depth_body(depth_metadata, pose_map, frame_rotation)}
-                               if depth_metadata else {}),
+                            depth_body=depth_body,
                         )
                     finished = time.monotonic()
                     processing_finished_at = time.perf_counter()

@@ -21,7 +21,8 @@ export function renderRecognitionPerformance(data){
     status.textContent=data.running===false?'下次识别按所选模型运行':data.model_preference==='auto'?`${name} · ${data.auto_model_reason}`:`使用${name}`;
   }
   if(gesture&&data.hand_model_state){
-    gesture.textContent=data.hand_model_state==='ready'?'已加载 · 只识别配置需要的手'
+    gesture.textContent=data.hand_model_state==='native'?'使用摄像头原厂张手、握拳识别'
+      :data.hand_model_state==='ready'?'已加载 · 只识别配置需要的手'
       :data.hand_model_state==='error'?'手势模型暂不可用：'+(data.hand_model_error||'请检查模型文件')
       :'需要握拳等手势功能时自动加载';
   }

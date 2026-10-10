@@ -91,6 +91,51 @@ def feed(kernel, pose, frames=1, clock=None):
         kernel.handle_pose_map("hand-mouse-test", pose, width=640, height=480)
 
 
+def test_native_closed_and_open_override_opposite_finger_predictions_and_loss_recovers():
+    kernel, output = kernel_with_hand_mouse()
+    try:
+        def native(state):
+            return {"points": {"right_wrist": {"x": .1, "y": .8, "z": 2, "score": 1,
+                                                    "color_x": .7, "color_y": .3}},
+                    "hand_states": {"right": {"state": state, "score": 1}}}
+        kernel.handle_pose_map("computer_camera", body(spread=.8), width=640, height=480,
+                               depth_body=native("closed"), hands={"right": fingers(curl=2)})
+        state = kernel.hand_mouse_controller.status()
+        assert state["engaged"] and state["grip_source"] == "kinect"
+        kernel.handle_pose_map("computer_camera", body(wrist=(.85, .4), spread=.8),
+                               width=640, height=480, depth_body=native("closed"))
+        assert output.applied[-1] != (0, 0)
+        kernel.handle_pose_map("computer_camera", body(spread=.1), width=640, height=480,
+                               depth_body=native("open"), hands={"right": fingers(curl=1)})
+        assert not kernel.hand_mouse_controller.engaged
+        assert output.applied[-1] == (0, 0)
+        # 深度关闭/失效时不保留旧的原厂握拳状态，普通手部模型继续工作。
+        kernel.handle_pose_map("computer_camera", body(spread=.8), width=640, height=480,
+                               hands={"right": fingers(curl=1)})
+        state = kernel.hand_mouse_controller.status()
+        assert state["engaged"] and state["grip_source"] == "hand"
+        kernel.handle_pose_map("computer_camera", None, depth_body=native("closed"))
+        assert not kernel.hand_mouse_controller.engaged
+    finally:
+        kernel.close()
+
+
+def test_point_source_change_recentres_held_hand_without_mouse_jump():
+    kernel, output = kernel_with_hand_mouse()
+    try:
+        image = body(spread=.1)
+        kernel.handle_pose_map("computer_camera", image)
+        depth_pose = body(wrist=(.85, .45), spread=.1)
+        depth_pose["right_wrist"]["position_source"] = "kinect"
+        kernel.handle_pose_map("computer_camera", depth_pose)
+        assert kernel.hand_mouse_controller.engaged
+        assert output.applied[-1] == (0, 0)
+        kernel.handle_pose_map("computer_camera", image)
+        assert output.applied[-1] == (0, 0)
+    finally:
+        kernel.close()
+
+
 def fake_clock(monkeypatch):
     """手区要待够 HAND_DWELL_S 才按，测区域的这几条得让帧之间真的隔开时间。"""
     clock = [1000.0]
