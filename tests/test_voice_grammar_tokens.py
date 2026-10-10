@@ -57,13 +57,21 @@ def test_empty_phrase_has_no_tokens():
     assert grammar_tokens(" ，", known) == ([], [])
 
 
-MODEL = find_vosk_model(ROOT)
+@pytest.fixture(scope="module")
+def real_vosk_model(request):
+    configured = request.config.getoption("--vosk-model")
+    model = Path(configured) if configured else find_vosk_model(ROOT)
+    assert model is not None and model.is_dir(), (
+        "真实语音模型测试需要中文模型，请用 --vosk-model 指定目录，"
+        "或安装到 models/vosk-model-small-cn-0.22"
+    )
+    return model
 
 
-@pytest.mark.skipif(MODEL is None, reason="没有 Vosk 中文模型")
-def test_the_real_model_hears_climbing_rope_and_castle_but_not_flute():
-    pytest.importorskip("vosk")
-    recognizer = VoskCommandRecognizer(MODEL, ["体感爬绳", "体感城堡", "体感吹笛"])
+def test_the_real_model_hears_climbing_rope_and_castle_but_not_flute(real_vosk_model):
+    import vosk  # 模型和运行依赖缺失应明确失败，不能把真实语音检查跳过。
+
+    recognizer = VoskCommandRecognizer(real_vosk_model, ["体感爬绳", "体感城堡", "体感吹笛"])
     try:
         assert "体 感 爬 绳" in recognizer.supported
         assert "体 感 城堡" in recognizer.supported
@@ -75,9 +83,8 @@ def test_the_real_model_hears_climbing_rope_and_castle_but_not_flute():
         recognizer.close()
 
 
-@pytest.mark.skipif(MODEL is None, reason="没有 Vosk 中文模型")
-def test_the_voice_service_says_which_phrases_it_can_never_hear(tmp_path, monkeypatch):
-    pytest.importorskip("vosk")
+def test_the_voice_service_says_which_phrases_it_can_never_hear(tmp_path, monkeypatch, real_vosk_model, request):
+    import vosk
     import shutil
 
     from motioncontrol.voice_backend import VoiceService
@@ -85,8 +92,9 @@ def test_the_voice_service_says_which_phrases_it_can_never_hear(tmp_path, monkey
     generated = tmp_path / "config" / "generated_voice"
     generated.mkdir(parents=True)
     shutil.copy(ROOT / "config" / "generated_voice" / "voice_action_map.json", generated)
-    monkeypatch.setenv("VOSK_MODEL_PATH", str(MODEL))
+    monkeypatch.setenv("VOSK_MODEL_PATH", str(real_vosk_model))
     service = VoiceService(tmp_path, lambda action: {"executed": True})
+    request.addfinalizer(service.close)
     service.configure([
         {"phrase": "吹笛", "type": "keyboard", "target": "M", "behavior": "tap"},
         {"phrase": "城堡", "type": "keyboard", "target": "N", "behavior": "tap"},

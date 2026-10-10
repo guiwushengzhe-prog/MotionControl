@@ -202,15 +202,24 @@ def test_an_unknown_document_type_is_refused():
         describe("head_profile", {})
 
 
-def test_the_real_configuration_describes_without_error():
-    """本机真实配置——手写的小样本描述得再好也说明不了什么。"""
-    path = REPO / "config" / "game_profile_selection.json"
-    if not path.is_file():
-        pytest.skip("本机没有真实配置")
+def test_a_saved_configuration_describes_without_error(tmp_path):
+    """用真正的配置存储落盘再描述，不依赖开发者的私有配置文件。"""
+    from motioncontrol.game_profiles import GameProfileStore
+
+    store = GameProfileStore(REPO, selection_path=tmp_path / "selection.json")
+    store.set_overrides({
+        "zone.rightHand": {"action": {"type": "keyboard", "target": "E"}},
+        "motion.march": {"action": {"type": "keyboard", "target": "W", "behavior": "hold"}},
+    })
+    mode = store.add_mode("开车")
+    store.set_overrides({"zone.rightHand": {"action": {"type": "keyboard", "target": "F"}}},
+                        mode_id=mode["id"])
+    path = store.selection_path
     doc = canonicalize("profile_selection",
                        json.loads(path.read_text(encoding="utf-8"))).data
     result = describe("profile_selection", doc)
-    assert result["games"], "真实配置描述出来是空的"
+    assert result["games"], "落盘配置描述出来是空的"
+    assert result["games"][0]["modes"][0]["name"] == "开车"
     for game in result["games"]:
         for group in game["groups"]:
             for item in group["items"]:

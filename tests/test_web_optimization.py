@@ -285,7 +285,9 @@ def test_emergency_stop_wins_over_late_output_settings_response(desktop):
     page.wait_for_timeout(50)
     assert api.held_output is not None
     page.click("#stopBtn")
-    page.wait_for_function("!mainActionBtn.textContent.includes('暂停')")
+    # 按钮会先更新，急停还要刷新输入；等它完成，避免成功提示覆盖迟到请求的中断提示。
+    page.wait_for_function("notice.textContent.includes('识别已停止')")
+    assert "暂停" not in page.locator("#mainActionBtn").inner_text()
     route, old_data = api.held_output
     api.fulfill(route, old_data)
     page.wait_for_function("notice.textContent.includes('中断')")

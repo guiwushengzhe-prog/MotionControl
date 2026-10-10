@@ -35,6 +35,9 @@ JUMP = 0.08
 
 
 class Output:
+    def active_voice_triggers(self):
+        return set()
+
     def __getattr__(self, name):
         return lambda *args, **kwargs: None
 

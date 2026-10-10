@@ -40,6 +40,10 @@ class _NullOutput:
     """回放时的输出：什么都不做。"""
     enabled = True
 
+    def active_voice_triggers(self):
+        # 回放没有实时语音输入，条件映射仍需要一个可做集合运算的结果。
+        return set()
+
     def __getattr__(self, name):
         return lambda *args, **kwargs: None
 
