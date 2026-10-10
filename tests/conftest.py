@@ -13,6 +13,10 @@ from __future__ import annotations
 import pytest
 
 
+def pytest_addoption(parser):
+    parser.addoption("--vosk-model", help="真实中文语音模型目录，仅用于语音模型测试")
+
+
 @pytest.fixture(autouse=True)
 def isolated_user_data(tmp_path, monkeypatch):
     """Give every test its own user-data directory."""

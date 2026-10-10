@@ -364,6 +364,7 @@ def _fake_live_state(page, **kernel_fields) -> None:
         k = data.get("kernel", data)
         now = float(k.get("now") or 0)
         k["pose"] = pose
+        k["feet_in_view"] = True
         k["zones"] = {"rightHand": {"rect": {"x1": .2, "y1": .3, "x2": .38, "y2": .55}, "pressed": True},
                       "leftHand": {"rect": {"x1": .62, "y1": .3, "x2": .8, "y2": .55}}}
         k["motions"] = []
@@ -388,11 +389,14 @@ def _fake_live_state(page, **kernel_fields) -> None:
 def test_the_start_page_follows_what_is_happening(ui):
     page = ui.page
     # 没人没画面：画面中间一句话告诉人该干什么。
-    assert page.locator("#hint").is_visible()
+    _fake_live_state(page, pose=None)
+    sync_api.expect(page.locator("#hint")).to_be_visible()
+    page.unroute("**/api/kernel/status")
+    page.unroute("**/api/performance")
     _fake_live_state(page)
     page.wait_for_function("document.querySelector('#hint').hidden")
     page.wait_for_function("!document.querySelector('#fpsHud').hidden", timeout=6000)
-    assert page.locator("#fpsHud").inner_text() == "30 帧/秒", "画面角上只写帧数"
+    sync_api.expect(page.locator("#fpsHud")).to_have_text("30 帧/秒")
     page.wait_for_function("!document.querySelector('#rangeHit').hidden")
     assert "→" in page.locator("#rangeHitWhat").inner_text(), "触发了，画面上大字写按了什么"
     assert "游戏控制没开" in page.locator("#rangeHitWhen").inner_text()

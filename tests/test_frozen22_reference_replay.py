@@ -1,9 +1,7 @@
 """Replay the audited R3 frozen22 recordings against the product helpers.
 
-This test is opt-in because the archived recordings live outside the product
-repository.  Set ``MOTIONCONTROL_FROZEN22_ROOT`` to the R3 ``dataset_ab_v2``
-directory to compare both A/B JSONL streams; without it the normal test suite
-does not require research assets.
+常规测试使用从独立冻结参考程序计算并随仓库保存的真实帧和预期值。
+设置 MOTIONCONTROL_FROZEN22_ROOT 后额外回放完整归档；显式指定的归档缺失应失败。
 """
 
 from __future__ import annotations
@@ -18,6 +16,21 @@ from pathlib import Path
 import pytest
 
 from motioncontrol import head_control as product
+
+FIXTURE = Path(__file__).parent / "fixtures" / "frozen22_reference.json"
+
+
+def _check_saved_reference(tag):
+    stream = json.loads(FIXTURE.read_text(encoding="utf-8"))["streams"][tag]
+    center, sigma, signature = (stream[key] for key in
+                                ("calibration_center", "calibration_sigma", "signature"))
+    assert len(stream["cases"]) >= 16
+    for case in stream["cases"]:
+        feature, scale = product._head11_local_feature(case["pose"], case["width"], case["height"])
+        assert feature == pytest.approx(case["feature"], abs=1e-12, rel=0)
+        assert scale == pytest.approx(case["scale"], abs=1e-12, rel=0)
+        yaw = product._personal22_matched_yaw(feature, center, sigma, signature)
+        assert yaw == pytest.approx(case["yaw"], abs=1e-12, rel=0)
 
 
 def _load_reference(path: Path):
@@ -53,15 +66,16 @@ def _pose_map(landmarks: object) -> dict[str, dict] | None:
 
 @pytest.mark.parametrize("tag", ["A", "B"])
 def test_frozen22_matches_audited_reference_replay(tag: str):
+    _check_saved_reference(tag)
     root_raw = os.environ.get("MOTIONCONTROL_FROZEN22_ROOT", "").strip()
     if not root_raw:
-        pytest.skip("set MOTIONCONTROL_FROZEN22_ROOT to run archived R3 replay")
+        return
     root = Path(root_raw)
     reference_path = root / "frozen22" / "MotionControl_head_control_v186_stageA_frozen22_evidence.py"
     source_path = root / "data" / f"{tag}.pose.frames.jsonl"
     baseline_path = root / "frozen22" / f"baseline_{tag}.json"
     if not reference_path.is_file() or not source_path.is_file() or not baseline_path.is_file():
-        pytest.skip(f"frozen22 archive is incomplete under {root}")
+        pytest.fail(f"指定的冻结参考归档不完整：{root}")
     reference = _load_reference(reference_path)
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     center = tuple(float(value) for value in baseline["calibration_center"])

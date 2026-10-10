@@ -11,6 +11,7 @@ from motioncontrol.output_backend import OutputManager, XUSB_GAMEPAD_BUTTONS, GA
 from motioncontrol.control_kernel import ControlKernel
 from motioncontrol.voice_backend import VoiceService, compact_text
 from motioncontrol.sherpa_kws_backend import _spoken_command_candidates
+from motioncontrol_shared.mapping_schema import shared_voice_command_id
 from conftest import apply_layout
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -278,7 +279,8 @@ def test_voice_exact_final_dispatches_custom_mapping(tmp_path):
     service._match_and_execute('打开 地图')
     deadline=time.time()+1
     while not calls and time.time()<deadline: time.sleep(.01)
-    assert calls == [{'type':'keyboard','target':'M','behavior':'tap','phrase':'打开地图','source':'voice'}]
+    assert calls == [{'type':'keyboard','target':'M','behavior':'tap','phrase':'打开地图','source':'voice',
+                      'command_id': shared_voice_command_id('打开地图')}]
 
 
 def test_voice_counts_each_command_heard_but_not_the_bare_wake_word(tmp_path):
@@ -390,7 +392,7 @@ def test_voice_parser_requires_wake_word_for_phone_and_clears_source(tmp_path):
         time.sleep(.01)
     assert result['matched'] is True
     assert calls == [{'type': 'keyboard', 'target': 'J', 'behavior': 'tap', 'phrase': '体感攻击',
-                      'source': 'voice:mobile_voice:phone-a'}]
+                      'source': 'voice:mobile_voice:phone-a', 'command_id': shared_voice_command_id('攻击')}]
     service.disconnect('mobile_voice:phone-a')
     assert 'voice:mobile_voice:phone-a' in cleared
     assert service.status()['connected'] is False
