@@ -5168,6 +5168,18 @@ class NativeCameraService:
                     for name in ("color_frame_interval_ms", "color_exposure_ms", "color_gain")
                     if (value := _finite((self._latest_depth or {}).get(name))) > 0
                 } if self.selected_backend == "kinect" else {},
+                "depth_tracking": {
+                    "body_frames": (self._latest_depth or {}).get("body_frames", 0),
+                    "body_frame_valid": bool((self._latest_depth or {}).get("body_valid")),
+                    "body_age_ms": (self._latest_depth or {}).get("body_age_ms"),
+                    "tracked_bodies": (self._latest_depth or {}).get("tracked_body_count", 0),
+                    "matched_frame_bodies": len((self._latest_depth or {}).get("bodies", [])),
+                    "reliable_anchor_counts": [
+                        sum(kinect_camera._valid_depth_point(body.get("points", {}).get(name))
+                            for name in ("left_shoulder", "right_shoulder", "left_hip", "right_hip"))
+                        for body in (self._latest_depth or {}).get("bodies", [])
+                    ],
+                } if self.selected_backend == "kinect" else {},
                 "pose_frame_age_ms": round(max(0.0, (now - self.last_inference_at) * 1000.0)) if self.last_inference_at else None,
                 "total_latency_ms": self._round_or_none(self.last_latency_ms),
                 "dropped_frames": int(self.dropped_frames),
