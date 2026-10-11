@@ -113,8 +113,9 @@ class LocalApi:
             self.profile["overrides"] = body["overrides"]
             for key, value in body["overrides"].items():
                 group, name = key.split(".", 1)
-                if group == "zone" and value:
-                    self.profile["bindings"]["zones"][name] = value
+                groups = {"zone": "zones", "motion": "motions", "pose": "poses", "voice": "voice"}
+                if group in groups:
+                    self.profile["bindings"][groups[group]][name] = value if value is not None else {"disabled": True}
             if self.hold_overrides:
                 self.held_overrides = route
                 return
@@ -284,9 +285,9 @@ def test_emergency_stop_wins_over_late_output_settings_response(desktop):
     page.select_option("#outputMode", "gamepad")
     page.wait_for_timeout(50)
     assert api.held_output is not None
-    page.click("#stopBtn")
-    # 按钮会先更新，急停还要刷新输入；等它完成，避免成功提示覆盖迟到请求的中断提示。
-    page.wait_for_function("notice.textContent.includes('识别已停止')")
+    page.click("#mainActionBtn")
+    # 等暂停确认后再放回旧请求，验证旧设置不能覆盖暂停结果。
+    page.wait_for_function("notice.textContent.includes('控制已暂停')")
     assert "暂停" not in page.locator("#mainActionBtn").inner_text()
     route, old_data = api.held_output
     api.fulfill(route, old_data)
@@ -394,7 +395,7 @@ def test_touch_narrow_windows_and_all_settings_panes_stay_within_width(mock_brow
                     page.evaluate("stereoViews.hidden=false;for(const c of stereoViews.querySelectorAll('canvas')){c.width=640;c.height=360}")
                 measured = page.evaluate("({width:document.documentElement.scrollWidth,inner:innerWidth})")
                 assert measured["width"] <= width + 1 and measured["inner"] <= width + 1, (width, view, pane, measured)
-    assert page.evaluate("getComputedStyle(stopBtn).minHeight") == "44px"
+    assert page.evaluate("getComputedStyle(mainActionBtn).minHeight") == "44px"
     context.close()
 
 

@@ -128,11 +128,11 @@ function renderCalibrationOverlay(hs={}){
 export function renderMainStatus(){
   serviceReady=kernelConnected&&outputConnected;
   const main=$('#mainActionBtn');
-  setProperty(main,'disabled',!serviceReady||actionBusy||zoneEditMode);
-  setText(main,output.enabled?'暂停控制':'开始控制');
-  setClass(main,'running',!!output.enabled);setClass(main,'primary',!output.enabled);
+  setProperty(main,'disabled',!output.enabled&&(!serviceReady||actionBusy||zoneEditMode));
+  setText($('#mainActionLabel'),output.enabled?'暂停控制':'开始控制');
+  setClass(main,'running',!!output.enabled);setClass(main,'primary',!output.enabled);setClass(main,'stop',!!output.enabled);
   // 服务连着的时候什么都不说；断了才冒出来。
-  setText($('#serviceStatus'),S.sourceConnecting?'正在准备识别，请稍候…':serviceReady?'本地服务已连接':'服务断开，可重试停止识别');
+  setText($('#serviceStatus'),S.sourceConnecting?'正在准备识别，请稍候…':serviceReady?'本地服务已连接':'服务断开，可按 F9 重试暂停控制');
   setClass($('#serviceStatus'),'online',serviceReady||!!S.sourceConnecting);setClass($('#serviceStatus'),'offline',!serviceReady&&!S.sourceConnecting);
   if(isVisible(viewer)){renderViewerMessage();renderReadiness();renderConflicts()}
 }
@@ -141,7 +141,7 @@ export function renderMainStatus(){
 function renderViewerMessage(){
   const hint=$('#hint');if(!hint)return;
   const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
-  const [title,detail]=S.sourceConnecting?['正在准备识别','相机启动可能需要几十秒，请稍候']:!live?[sourceMode==='phone'?'等手机连上':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':'在「设置 → 设备」里选择摄像头，或点「开始识别」']
+  const [title,detail]=S.sourceConnecting?['正在准备识别','相机启动可能需要几十秒，请稍候']:!live?[sourceMode==='phone'?'等手机连上':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':'点下方「开始识别」，或在「设置 → 设备」里选择摄像头']
     :sourceMode==='computer'&&cameraRunning&&cameraInfo.picture_black?['摄像头画面全黑',cameraInfo.camera_virtual?'请启动虚拟摄像头的画面来源，或换一个摄像头':'请检查镜头遮挡，或换一个摄像头']
     :!currentPoseMap?['站到镜头前','头和双肩入镜就能开始']:['',''];
   setProperty(hint,'hidden',!title);
@@ -189,7 +189,7 @@ function renderReadiness(){
     const text=sec>=3600?`${Math.floor(sec/3600)}:${pad(Math.floor(sec/60)%60)}:${pad(sec%60)}`:`${pad(Math.floor(sec/60))}:${pad(sec%60)}`;
     if($('#runElapsed').textContent!==text)$('#runElapsed').textContent=text;
     const sub=$('#runSub'),lost=!posed;
-    setText(sub,lost?'看不到人了，站回镜头前':feetOut?feetHint:`${gameProfile.selected?.name||''} · F9 随时停`);setClass(sub,'warn',lost||feetOut);
+    setText(sub,lost?'看不到人了，站回镜头前':feetOut?feetHint:`${gameProfile.selected?.name||''} · F9 暂停控制`);setClass(sub,'warn',lost||feetOut);
   }else runStartedAt=0;
 }
 

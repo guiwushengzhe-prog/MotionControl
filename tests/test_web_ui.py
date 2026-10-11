@@ -188,6 +188,40 @@ def test_modes_create_copy_edit_switch_and_reload(mode_ui):
     assert ui.errors == []
 
 
+def test_delete_motion_mapping_is_persistent_and_only_affects_selected_mode(mode_ui):
+    ui, _ = mode_ui
+    page = ui.page
+    default = page.request.get(ui.base + '/api/game-profiles/selected?mode=DEFAULT').json()['profile']['bindings']
+    mode_id = _new_mode(page, '步行')
+    page.click('#mapTabs [data-tab="body"]')
+    row = page.locator('.binding-row[data-trigger="motion.march"]')
+    row.locator('.binding-remove').click()
+    sync_api.expect(row).to_have_count(0)
+    deleted = page.request.get(ui.base + '/api/game-profiles/selected?mode=' + mode_id).json()['profile']
+    assert deleted['overrides']['motion.march'] is None
+    assert deleted['bindings']['motions']['march'] == {'disabled': True}
+    assert page.request.get(ui.base + '/api/game-profiles/selected?mode=DEFAULT').json()['profile']['bindings'] == default
+    card = page.locator('.pose-library-item[data-id="march"]')
+    sync_api.expect(card).to_be_visible()
+    sync_api.expect(card.locator('.custom-pose-key')).to_have_text('加到映射')
+    page.reload()
+    page.wait_for_function("currentGameName.textContent === '界面模式测试'")
+    _go(page, 'games')
+    page.click(f'#modeTabs [data-mode-id="{mode_id}"]')
+    page.wait_for_function("id => document.querySelector('#modeTabs [aria-selected=true]').dataset.modeId === id", arg=mode_id)
+    page.click('#mapTabs [data-tab="body"]')
+    sync_api.expect(row).to_have_count(0)
+    card.locator('.custom-pose-key').click()
+    sync_api.expect(row).to_be_visible()
+    row.locator('.binding-type').select_option('keyboard')
+    with page.expect_response(lambda response: response.url.endswith('/api/game-profiles/overrides') and response.request.method == 'POST'):
+        row.locator('.binding-target').press('W')
+    page.wait_for_function("profileSaveStatus.textContent === '已保存'")
+    saved = page.request.get(ui.base + '/api/game-profiles/selected?mode=' + mode_id).json()['profile']
+    assert saved['bindings']['motions']['march']['action']['target'] == 'W'
+    assert ui.errors == []
+
+
 def test_mode_targets_shared_voice_rename_delete_and_reset(mode_ui):
     ui, _ = mode_ui
     page = ui.page

@@ -155,6 +155,16 @@ def test_emergency_releases_output_before_kernel_cleanup(application, monkeypatc
     assert seen.index("release") < seen.index("cleanup")
 
 
+def test_global_f9_only_pauses_output_and_preserves_recognition(application, monkeypatch):
+    app, seen = application, []
+    monkeypatch.setattr(app.OUTPUT, "emergency_stop", lambda: seen.append("release") or {"enabled": False})
+    monkeypatch.setattr(app.KERNEL, "cancel_calibration", lambda *args: None)
+    monkeypatch.setattr(app.RUNTIME, "stop_body", lambda: seen.append("camera stopped"))
+    monkeypatch.setattr(app.VOICE, "disconnect", lambda: seen.append("voice stopped"))
+    assert app.HOTKEYS.emergency_stop()["enabled"] is False
+    assert seen == ["release"]
+
+
 def test_output_command_waiting_for_lock_cannot_resume_after_emergency(application, monkeypatch):
     app = application
     entered = threading.Event()

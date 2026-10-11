@@ -51,7 +51,7 @@ if ($running -and $running.StatusCode -eq 200) {
                 -Method Post -ContentType 'application/json' -Body '{"source":"computer","enabled":true}' -TimeoutSec 55 | Out-Null
         }
     } catch {
-        Write-Host "摄像头未能自动启动，可在设备页重试：$($_.Exception.Message)"
+        Write-Host "摄像头未能自动启动，可在首页画面下方重试识别：$($_.Exception.Message)"
     }
     Write-Host 'MotionControl 已在运行，正在打开控制页面。'
     Start-Process 'http://127.0.0.1:8766/'
