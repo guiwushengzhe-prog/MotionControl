@@ -281,7 +281,7 @@ def stop_recognition_all() -> dict:
         return {**runtime_status(), **_audio_payload(), "output": result}
 
 
-HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=stop_recognition_all)
+HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
 
 
 def _note_voice_trigger(action: dict) -> None:

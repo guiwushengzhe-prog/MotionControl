@@ -4,7 +4,7 @@ import {createTutorial} from '../tutorial.js';
 import {fistHands,intentAction,renderBodyDescs,zoneFit} from './body.js';
 import {cloudRefresh,loadCloudEndpoint} from './cloud.js';
 import {$,api,autosaver,clamp,configurationOperation,isVisible,notice,post} from './core.js';
-import {CAMERA_REQUEST_TIMEOUT,emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraDepth,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,selectCamera,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,syncCameraDeviceRow,updateInputConfig,updateOutputConfig} from './devices.js';
+import {CAMERA_REQUEST_TIMEOUT,emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraDepth,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,selectCamera,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,stopRecognition,syncCameraDeviceRow,updateInputConfig,updateOutputConfig} from './devices.js';
 import {cancelPoseRecord,refreshPoseRecord,refreshRecordings,refreshTriggerRecord,startPoseRecord} from './diagnostics.js';
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
@@ -100,11 +100,12 @@ function tutorialState(){
 }
 
 async function handleMainAction(){
-  if(output.enabled){await setOutput(false);return}
+  const stops=emergencyStops;
   // 麦克风或手持端就绪不代表已选摄像头正在识别。
   if(!sessionStarted){
     await setSource($('#poseSource').value,true);
   }
+  if(stops!==emergencyStops)return;
   await setOutput(true);
 }
 
@@ -214,19 +215,18 @@ const voiceSaver=autosaver(saveVoiceMappings,'voiceSaveStatus','retryVoiceBtn');
 
 document.querySelectorAll('[data-view],[data-go]').forEach(el=>el.addEventListener('click',()=>showView(el.dataset.view||el.dataset.go)));
 bind('cameraStepGo',()=>{
-  showView('devices');if(currentView!=='devices')return;
-  showSettingsPane('devices');
   const phone=$('#poseSource').value==='phone';
-  if(phone)openPhoneCode();
+  showView(phone?'devices':'play');if(currentView!==(phone?'devices':'play'))return;
+  if(phone){showSettingsPane('devices');openPhoneCode()}
   const target=phone?$('#phoneConnectPanel'):$('#sourceStartBtn');
   target.focus({preventScroll:true});target.scrollIntoView({block:'start',behavior:'instant'});
 });
 
-bind('mainActionBtn',handleMainAction);
+$('#mainActionBtn').addEventListener('click',()=>output.enabled?void emergencyStop():void runAction(handleMainAction));
 
 bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
 
-$('#sourceStopBtn').addEventListener('click',()=>void emergencyStop());
+$('#sourceStopBtn').addEventListener('click',()=>void stopRecognition());
 
 $('#audioSource').addEventListener('change',e=>runAction(async()=>{
   const value=e.target.value;
@@ -331,7 +331,6 @@ for(const [id,key] of [['verticalDeadzone','deadzone']]){
   input.addEventListener('change',()=>runAction(async()=>{renderKernelState(await post('/api/vertical-look',{[key]:Number(input.value)/100}))}));
 }
 
-$('#stopBtn').addEventListener('click',emergencyStop);
 
 bind('calBtn',async()=>{await setOutput(false);await startCalibration()});
 bind('centerBtn',centerHead);

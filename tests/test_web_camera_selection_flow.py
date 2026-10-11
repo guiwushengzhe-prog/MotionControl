@@ -19,24 +19,28 @@ def devices_page(desktop):
 def test_select_starts_automatically_and_pause_keeps_recognizing(desktop):
     page, api = devices_page(desktop), desktop.api
     page.select_option("#cameraDevice", "1")
+    page.click('nav [data-view="play"]')
     expect(page.locator("#sourceStopBtn")).to_be_visible()
     expect(page.locator("#sourceStartBtn")).to_be_hidden()
-    expect(page.locator("#mainActionBtn")).to_have_text("开始控制")
+    expect(page.locator("#mainActionLabel")).to_have_text("开始控制")
     assert api.runtime["camera"]["running"]
     assert api.output["enabled"] is False
     page.click("#mainActionBtn")
-    expect(page.locator("#mainActionBtn")).to_have_text("暂停控制")
+    expect(page.locator("#mainActionLabel")).to_have_text("暂停控制")
     # 控制中可选回另一台相机，完成后继续控制。
+    page.click('nav [data-view="devices"]')
+    page.click('#settingsNav [data-pane="devices"]')
     with page.expect_response(lambda r: "/api/camera/config" in r.url and r.request.method == "POST"):
         page.select_option("#cameraDevice", "0")
     page.wait_for_function("!cameraDevice.disabled")
-    expect(page.locator("#mainActionBtn")).to_have_text("暂停控制")
+    expect(page.locator("#mainActionLabel")).to_have_text("暂停控制")
     assert api.runtime["camera"]["camera_device"] == "0"
     assert page.locator("#cameraDevice option").count() == 2
     page.click("#mainActionBtn")
-    expect(page.locator("#mainActionBtn")).to_have_text("开始控制")
+    expect(page.locator("#mainActionLabel")).to_have_text("开始控制")
     assert api.runtime["camera"]["running"]
-    page.click("#stopBtn")
+    page.click('nav [data-view="play"]')
+    page.click("#sourceStopBtn")
     expect(page.locator("#sourceStartBtn")).to_be_visible()
     expect(page.locator("#sourceStopBtn")).to_be_hidden()
     assert not api.runtime["camera"]["running"]
@@ -47,7 +51,7 @@ def test_select_starts_automatically_and_pause_keeps_recognizing(desktop):
 def test_f9_prevents_resume_when_camera_selection_response_arrives_late(desktop):
     page, api = devices_page(desktop), desktop.api
     page.click("#mainActionBtn")
-    expect(page.locator("#mainActionBtn")).to_have_text("暂停控制")
+    expect(page.locator("#mainActionLabel")).to_have_text("暂停控制")
     held = []
     def delayed(route):
         if route.request.method == "POST":
@@ -65,9 +69,9 @@ def test_f9_prevents_resume_when_camera_selection_response_arrives_late(desktop)
         "camera": {"running": True, "camera_device": "1"}, "kernel": api.runtime["kernel"],
     })
     page.wait_for_function("!cameraDevice.disabled")
-    expect(page.locator("#mainActionBtn")).to_have_text("开始控制")
+    expect(page.locator("#mainActionLabel")).to_have_text("开始控制")
     assert api.output["enabled"] is False
-    assert not api.runtime["camera"]["running"]
+    assert api.runtime["camera"]["running"]
     starts = [(p, b) for p, b in api.requests if p == "/api/output/config" and b.get("enabled")]
     assert len(starts) == 1
 
@@ -81,7 +85,7 @@ def test_first_control_click_connects_and_enables_and_source_choice_applies(desk
     page.evaluate("""async()=>{await (await import('/js/voice.js')).refreshVoice();
       await (await import('/js/devices.js')).refreshInput()}""")
     page.click("#mainActionBtn")
-    expect(page.locator("#mainActionBtn")).to_have_text("暂停控制")
+    expect(page.locator("#mainActionLabel")).to_have_text("暂停控制")
     assert api.runtime["camera"]["running"]
     assert api.output["enabled"]
     page.click('nav [data-view="devices"]')
@@ -100,7 +104,7 @@ def test_camera_start_failure_does_not_enable_output(desktop):
     page.route('**/api/input/source', lambda route: api.fulfill(route, {'error': '选中的摄像头无法启动'}, status=400))
     page.click('#mainActionBtn')
     expect(page.locator('#notice')).to_contain_text('选中的摄像头无法启动')
-    expect(page.locator('#mainActionBtn')).to_have_text('开始控制')
+    expect(page.locator('#mainActionLabel')).to_have_text('开始控制')
     assert not api.output['enabled']
     assert not any(path=='/api/output/config' and body.get('enabled') for path, body in api.requests)
 
@@ -115,6 +119,6 @@ def test_stop_while_first_camera_start_is_pending_never_enables_output(desktop):
     page.keyboard.press('F9')
     api.fulfill(held[0], {'body_mode':'computer','camera':{'running':True},'kernel':api.runtime['kernel']})
     page.wait_for_function("!document.getElementById('mainActionBtn').disabled")
-    expect(page.locator('#mainActionBtn')).to_have_text('开始控制')
+    expect(page.locator('#mainActionLabel')).to_have_text('开始控制')
     assert not api.output['enabled']
     assert not any(path=='/api/output/config' and body.get('enabled') for path, body in api.requests)

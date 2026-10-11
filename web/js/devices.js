@@ -225,7 +225,7 @@ export function renderStereo(data){
   calibrate.disabled=!data.enabled||data.state==='solving';
   let status;
   if(!data.enabled)status=data.body_mode==='phone'?'未开启':'未开启：双目以手机为主画面，先把摄像头来源切到手机';
-  else if(!data.pc_camera_running)status=data.pc_camera_error?'电脑摄像头打不开：'+data.pc_camera_error:'已开启：在「设备」里点「开始识别」，电脑摄像头会一起打开';
+  else if(!data.pc_camera_running)status=data.pc_camera_error?'电脑摄像头打不开：'+data.pc_camera_error:'已开启：在首页画面下方点「开始识别」，电脑摄像头会一起打开';
   else if(data.message&&(busy||data.state==='failed'||/标定/.test(data.message)))status=data.message;
   else if(!data.calibrated)status='还没有标定：站到平时玩的位置，点「标定」，然后活动双臂 30 秒';
   else status='运行中';
@@ -344,6 +344,7 @@ function setCameraConnecting(connecting){
 
 export async function selectCamera(device){
   const resume=output.enabled;
+  const stops=emergencyStops;
   await setOutput(false);
   const epoch=++kernelEpoch;
   ++S.inputEpoch;setCameraConnecting(true);
@@ -355,7 +356,7 @@ export async function selectCamera(device){
     renderCameraDevices(null,result.camera_index,result);renderCameraDepth(result);
     renderKernelState(result);await refreshInput();
     if(epoch!==kernelEpoch)throw new Error('相机切换已被停止');
-    if(resume)await setOutput(true);
+    if(resume&&stops===emergencyStops)await setOutput(true);
     notice('摄像头已切换，识别已开始');
   }finally{
     setCameraConnecting(false);await refreshCameraConfig();await refreshPerformance();
@@ -446,6 +447,18 @@ export async function setOutput(enabled){
 }
 
 export async function emergencyStop(){
+  ++S.outputEpoch;++emergencyStops;
+  try{
+    const result=await post('/api/output/stop',{},CAMERA_REQUEST_TIMEOUT);
+    if(result.enabled!==false)throw new Error('服务尚未确认');
+    ++S.outputEpoch;renderOutput(result);
+    notice('控制已暂停，所有体感输出已松开');
+  }catch(error){
+    notice('还没确认停下：'+error.message+'。再按一次 F9');
+  }
+}
+
+export async function stopRecognition(){
   ++S.outputEpoch;++kernelEpoch;++S.inputEpoch;++emergencyStops;
   try{
     const result=await post('/api/input/stop',{},CAMERA_REQUEST_TIMEOUT);
@@ -454,7 +467,7 @@ export async function emergencyStop(){
     await refreshInput();await refreshPerformance();
     notice('识别已停止，所有体感输出已松开');
   }catch(error){
-    notice('还没确认停下：'+error.message+'。再按一次 F9');
+    notice('还没确认停止识别：'+error.message+'。请重试停止识别');
   }
 }
 

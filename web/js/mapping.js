@@ -1,7 +1,7 @@
 // 本游戏：选游戏、按键映射的每一行、保存。
 import {$,api,configurationOperation,notice,positionPopup,post,registerDraftFlusher,setAttribute,setClass,setProperty,setText,syncChildren} from './core.js';
 import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,VOICE_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
-import {paintPoseMissingNotice} from './library.js';
+import {paintCustomPoseScores,paintPoseLibrary,paintPoseMissingNotice} from './library.js';
 import {kernelState,renderKernelZones} from './play.js';
 import {currentView,showSettingsPane,showView,togglePanel} from './shell.js';
 import {gameProfile,profileDirty} from './state.js';
@@ -48,9 +48,10 @@ function bindingFor(trigger){
   return trigger.defaultBinding||null;
 }
 
-function selectedMotionIdsFromRows(){
+function selectedMotionIdsFromRows(excludeTrigger=null){
   const selected=new Set();
   document.querySelectorAll('.binding-row[data-trigger^="motion."]').forEach(row=>{
+    if(row.dataset.trigger===excludeTrigger)return;
     if(row.querySelector('.binding-type')?.value)selected.add(String(row.dataset.trigger).slice('motion.'.length));
   });
   return selected;
@@ -406,7 +407,7 @@ export async function applySelectedProfile(){
   });
 }
 
-async function profileOperation(operation,{recoverConflict=false}={}){
+async function profileOperation(operation,{recoverConflict=false,skipDrafts=[]}={}){
   return configurationOperation(async()=>{
     const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn,#modeTabs button,#addModeBtn,#modeMenuBtn,#renameModeBtn,#removeModeBtn,#playModeBtn')];
     const disabled=controls.map(el=>el.disabled);
@@ -414,7 +415,7 @@ async function profileOperation(operation,{recoverConflict=false}={}){
     controls.forEach(el=>{el.disabled=true});
     try{await operation()}
     finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]});renderModeTabs()}
-  },{skipDrafts:recoverConflict?[saveProfileBindings]:[]});
+  },{skipDrafts:recoverConflict?[saveProfileBindings]:skipDrafts});
 }
 
 export function makeTypeSelect(binding,{allowNone=true}={}){
@@ -1019,6 +1020,13 @@ function buildBindingRow(trigger){
     phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=game?normalizeGameVoicePhrase(binding?.phrase||trigger.phrase||''):(binding?.phrase||trigger.phrase||'');phrase.placeholder=game?'说什么，例如：爬绳':'完整口令';phrase.title=game?'直接说这句，不用唤醒词':'说出的完整口令';name.append(phrase);watchVoicePhrase(phrase);
   }else name.textContent=trigger.name;
   const tags=document.createElement('span');tags.className='binding-tags';name.append(tags);
+  if(isBodyTrigger(trigger)){
+    const remove=document.createElement('button');remove.type='button';remove.className='binding-remove';
+    remove.textContent='删除';remove.title='从当前模式的映射列表删除，动作库保留';
+    remove.setAttribute('aria-label',trigger.name+' 从映射删除');
+    remove.addEventListener('click',()=>removeBodyBinding(trigger).catch(error=>notice(error.message||'删除失败，请重试')));
+    name.append(remove);
+  }
   const type=makeTypeSelect(action?{action}:binding);
   const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;fillTargetControl(target,type.value,action?.target??'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
   const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
@@ -1205,9 +1213,10 @@ export function readBindingAction(container,trigger,ordinal=''){
   return action;
 }
 
-function readProfileOverrides(){
+function readProfileOverrides(excludeTrigger=null){
   const overrides=structuredClone(gameProfile.overrides);
   for(const trigger of profileTriggers()){
+    if(trigger.key===excludeTrigger)continue;
     if(!profileDirty.has(trigger.key))continue;
     const row=document.querySelector(`.binding-row[data-trigger="${trigger.key}"]`);if(!row)continue;
     const type=row.querySelector('.binding-type')?.value||'';
@@ -1241,9 +1250,34 @@ function readProfileOverrides(){
     }
     overrides[trigger.key]=override;
   }
-  const conflicts=motionConflictsForSelection(selectedMotionIdsFromRows());
+  const conflicts=motionConflictsForSelection(selectedMotionIdsFromRows(excludeTrigger));
   if(conflicts.length)throw new Error(`动作冲突：${motionConflictText(conflicts)}。开合跳与双手举过头只能选择一个`);
   return overrides;
+}
+
+async function removeBodyBinding(trigger){
+  if(profileSwitching)return;
+  const profile_id=gameProfile.selected.selected_id||gameProfile.selected.id;
+  const mode_id=gameProfile.selected.mode?.id||null;
+  clearTimeout(profileAutoSaveTimer);
+  await profileOperation(async()=>{
+    clearTimeout(profileAutoSaveTimer);
+    if(profileFlight)await profileFlight;
+    if((gameProfile.selected.selected_id||gameProfile.selected.id)!==profile_id||(gameProfile.selected.mode?.id||null)!==mode_id){
+      throw new Error('游戏或模式已切换，请在当前映射列表重新删除');
+    }
+    // 被删除的行可以尚未填完；其它行的编辑和这次删除一起保存。
+    const overrides=readProfileOverrides(trigger.key);overrides[trigger.key]=null;
+    const data=await post('/api/game-profiles/overrides',{profile_id,mode_id,overrides});
+    gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
+    gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
+    profileDirty.clear();++profileRevision;profileConflict=false;
+    shownBodyRows.keys.delete(trigger.key);expandedRows.delete(trigger.key);
+    $('#profileSaveStatus').textContent='';$('#profileSaveStatus').classList.remove('error');$('#retryProfileSaveBtn').hidden=true;
+    renderProfileHeader();renderProfileBindingRows();paintPoseLibrary();paintCustomPoseScores();
+    await refreshVoiceCommands();
+    notice(`已从本模式映射删除：${trigger.name}`);
+  },{skipDrafts:[saveProfileBindings]});
 }
 
 export async function saveProfileBindings(){

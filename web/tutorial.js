@@ -35,13 +35,14 @@ function connectGuide(s, memo, now) {
   if (s.cameraReady && !repick) { memo.noFrameSince = 0; return null; }
 
   if (s.view !== 'devices') {
-    return s.view === 'play'
-      ? {target: '.checklist [data-go="devices"]', say: repick ? '点「去连接」，换一个摄像头' : '点「去连接」'}
-      : {target: NAV_DEVICES, say: '点「设置」'};
+    if (s.view === 'play' && s.sourcePick !== 'phone' && !s.cameraError && !s.cameraRunning && !repick) {
+      return {target: '#sourceStartBtn', say: '点画面下方「开始识别」'};
+    }
+    return {target: NAV_DEVICES, say: repick ? '点「设置」，换一个摄像头' : '点「设置」'};
   }
 
   if (s.sourcePick === 'phone') {
-    if (s.source !== 'phone') return {target: '#sourceStartBtn', say: '点「开始识别」'};
+    if (s.source !== 'phone') return {target: NAV_PLAY, say: '回到开始页，点画面下方「开始识别」'};
     return {
       target: ['#poseSource', '#mobileStatus'], say: '打开手机上的 MotionControl',
       hint: `选「固定摄像头」，点「连接并开始」 · ${s.usbTether ? '数据线已接通' : '手机和电脑连同一个 WiFi'}`,
@@ -51,12 +52,12 @@ function connectGuide(s, memo, now) {
   // 下面都是「电脑摄像头」。
   if (s.phoneStreaming) return {target: '#poseSource', say: '来源改成「手机摄像头」', hint: '手机已经在传画面了'};
   if (s.modelOk === false) return {target: '#poseSource', say: '来源改成「手机摄像头」', hint: '这台电脑的识别模型没装好，电脑摄像头认不出人'};
-  if (repick) return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '选择另一个摄像头，会自动开始识别'};
+  if (repick) return {target: '#cameraDeviceRow', say: '选择另一个摄像头，会自动开始识别'};
 
   if (s.cameraRunning) {
     memo.noFrameSince = memo.noFrameSince || now;
     return now - memo.noFrameSince > 5000
-      ? {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '这个摄像头没有画面，换一个', hint: '选中后自动开始识别'}
+      ? {target: '#cameraDeviceRow', say: '这个摄像头没有画面，换一个', hint: '选中后自动开始识别'}
       : {target: '#cameraDeviceRow', say: '等画面出来…'};
   }
   memo.noFrameSince = 0;
@@ -67,16 +68,16 @@ function connectGuide(s, memo, now) {
   if (s.scan === 'running') return {target: '#cameraDeviceRow', say: '正在找这台电脑的摄像头…'};
   if (s.cameraError) {
     return s.scanCount > 1
-      ? {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '换一个摄像头再连', hint: '刚才那个打不开'}
-      : {target: ['#poseSource', '#sourceStartBtn'], say: '摄像头打不开', hint: '关掉正在用摄像头的软件再连；没有摄像头就改用「手机摄像头」'};
+      ? {target: '#cameraDeviceRow', say: '换一个摄像头再连', hint: '刚才那个打不开'}
+      : {target: '#poseSource', say: '摄像头打不开', hint: '关掉占用摄像头的软件后到首页重试；没有摄像头就改用「手机摄像头」'};
   }
   if (s.scan === 'done' && s.scanCount === 0) {
     return {target: ['#poseSource', '#cameraScanBtn'], say: '没找到摄像头', hint: '被别的软件占着就关掉它再点「扫描」；没有就改用「手机摄像头」'};
   }
   if (s.scanCount > 1) {
-    return {target: ['#cameraDeviceRow', '#sourceStartBtn'], say: '选择一个摄像头，会自动开始识别', hint: `找到 ${s.scanCount} 个；画面里不是你就换一个`};
+    return {target: '#cameraDeviceRow', say: '选择一个摄像头，会自动开始识别', hint: `找到 ${s.scanCount} 个；画面里不是你就换一个`};
   }
-  return {target: '#sourceStartBtn', say: '点「开始识别」', hint: s.scanCount === 1 ? '找到 1 个摄像头' : ''};
+  return {target: NAV_PLAY, say: '回到开始页，点画面下方「开始识别」', hint: s.scanCount === 1 ? '找到 1 个摄像头' : ''};
 }
 
 // 人在不在画面里、站得够不够远。只看头和双肩：程序第一次定位也只要这三样。
@@ -275,13 +276,13 @@ const STEPS = [
   },
   {
     id: 'stop',
-    name: '停止识别',
-    doneSay: '✓ 全停了',
+    name: '暂停控制',
+    doneSay: '✓ 控制已暂停，识别继续',
     guide(s, memo) {
       if (memo.stopsBefore === undefined) memo.stopsBefore = s.stops;
-      return {target: '#stopBtn', ready: true, say: '按 F9', hint: '或者点「停止识别」'};
+      return {target: '#mainActionBtn', ready: true, say: '按 F9', hint: '或者点顶部「暂停控制」；摄像头识别继续'};
     },
-    // 数的是急停真的被触发了几次，而不是输出关没关：点「暂停游戏控制」也会关，但那不是急停。
+    // 确认用户触发了暂停，避免把开始前输出默认关闭误判为完成。
     check: (s, memo) => ({ok: s.stops > (memo.stopsBefore ?? s.stops)}),
   },
 ];

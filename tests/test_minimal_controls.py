@@ -31,7 +31,7 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
     app = read_web_js(ROOT)
     # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩（动作测试也并在这里），
     # 本游戏 = 换游戏会变的，设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
-    for required in ['id="appVersion"', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', '停止识别 <kbd>F9</kbd>', '通用口令', '挪动区域', 'profileBindingRows']:
+    for required in ['id="appVersion"', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', 'id="mainActionLabel"', '<kbd>F9</kbd>', 'id="sourceStopBtn"', '通用口令', '挪动区域', 'profileBindingRows']:
         assert required in page
     # 头部姿态的实验菜单已去掉，正常界面固定使用三维头姿，不再让人二选一。
     assert 'id="headAlgorithm"' not in page
@@ -101,7 +101,7 @@ def test_first_start_no_longer_records_a_reference_scene():
     app = read_web_js(ROOT)
     assert 'ensureInitialSceneLayout' not in app
     assert '/api/scene/' not in app
-    assert 'if(output.enabled){await setOutput(false);return}' in app
+    assert 'output.enabled?void emergencyStop():void runAction(handleMainAction)' in app
     # 麦克风或手持端就绪不代表已选摄像头在识别：开始控制总是先启动已选的身体来源。
     assert '!inputStatus.handheld_connected&&!voiceInputReady' not in app
     assert "if(!sessionStarted){\n    await setSource($('#poseSource').value,true);" in app

@@ -217,8 +217,7 @@ nav { display: flex; gap: .125rem; padding: .125rem; border-radius: .5625rem; ba
 #currentGameName { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .btn.cta { min-height: 2.125rem; padding: 0 1.125rem; border-radius: 1.0625rem; }
 /* 正在控制时按钮变成「暂停」：灰底加一个绿点，一眼看得出现在是开着的。 */
-.btn.cta.running { background: var(--chip); color: var(--text); }
-.btn.cta.running::before { content: ""; width: .5rem; height: .5rem; border-radius: 50%; background: var(--ok-strong); animation: live 1.6s infinite; }
+.btn.cta.running { background: var(--danger-tint); color: var(--danger); }
 @keyframes live { 0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, .6) } 70% { box-shadow: 0 0 0 .4375rem rgba(52, 199, 89, 0) } 100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0) } }
 
 .menu-wrap { position: relative; }
@@ -439,6 +438,8 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
   min-height: 3.375rem; padding: .5625rem .625rem .5625rem 1rem; }
 .trigger-name { display: flex; align-items: center; flex-wrap: wrap; gap: .375rem; min-width: 0; font-weight: 500; }
 .binding-tags { display: contents; }
+.binding-remove { padding: .25rem .375rem; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--danger); font-size: .75rem; font-weight: 400; white-space: nowrap; }
+.binding-remove:hover:not(:disabled) { background: var(--danger-tint); }
 /* 输出类型和键位拼成一个控件：左边是「键盘/手柄/鼠标…」，右边是键。 */
 .binding-output { display: flex; align-items: stretch; min-width: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
   background: var(--fill); transition: border-color .15s, box-shadow .15s; }
@@ -925,7 +926,7 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 @media (pointer: coarse) {
-  .btn, .icon-btn, .tab, .binding-more, .settings-nav button, .voice-release-option, .zone-point-option { min-height: 2.75rem; }
+  .btn, .btn.cta, .icon-btn, .tab, .binding-more, .binding-remove, .settings-nav button, .voice-release-option, .zone-point-option { min-height: 2.75rem; }
   .icon-btn, .binding-more { min-width: 2.75rem; }
   .zone-handle::after { content: ""; position: absolute; inset: -.875rem; }
   .pose-drop { opacity: 1; width: 2.5rem; height: 2.5rem; }
