@@ -34,6 +34,21 @@ def normalize_region_rect(raw) -> dict:
     return values
 
 
+def normalize_follow_rect(raw) -> dict:
+    """相对躯干的矩形；不是画面坐标，因此允许负值和超出画面。"""
+    if not isinstance(raw, dict):
+        raise ValueError("跟随区域缺少身体比例")
+    out = {}
+    for key in ("x1", "x2", "y1", "y2"):
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > 100:
+            raise ValueError("跟随区域比例无效")
+        out[key] = float(value)
+    if out["x2"] - out["x1"] < .001 or out["y2"] - out["y1"] < .001:
+        raise ValueError("跟随区域宽高必须大于零")
+    return out
+
+
 def normalize_regions(raw) -> list[dict]:
     if not isinstance(raw, list) or len(raw) > MAX_CUSTOM_REGIONS:
         raise ValueError(f"每个游戏最多新增 {MAX_CUSTOM_REGIONS} 个区域")
@@ -43,6 +58,13 @@ def normalize_regions(raw) -> list[dict]:
         if not isinstance(item, dict) or not is_region_id(item.get("id")) or item["id"] in seen:
             raise ValueError("自定义区域编号无效或重复，不能操作内置区域")
         seen.add(item["id"])
-        result.append({"id": item["id"], "name": normalize_region_name(item.get("name")),
-                       "rect": normalize_region_rect(item.get("rect"))})
+        normalized = {"id": item["id"], "name": normalize_region_name(item.get("name")),
+                      "rect": normalize_region_rect(item.get("rect"))}
+        if "mode" in item:
+            if item["mode"] not in ("fixed", "following"):
+                raise ValueError("区域模式只能是跟随或固定")
+            normalized["mode"] = item["mode"]
+            if item["mode"] == "following":
+                normalized["follow"] = normalize_follow_rect(item.get("follow"))
+        result.append(normalized)
     return result

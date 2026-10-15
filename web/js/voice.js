@@ -5,6 +5,8 @@ import {fillBehaviorControl,fillTargetControl,makeKeyCaptureInput,makeTypeSelect
 import {gameProfile} from './state.js';
 
 export let voiceInputReady=false;
+export let voiceInputIssue='正在准备';
+export let voiceInputTarget='audio';
 export let voiceCatalog=[];
 
 export const voice={status:null};
@@ -166,8 +168,10 @@ function renderVoiceStatus(s=voice.status){
   const partial=String(s.last_partial||s.partial||'').trim();
   const phrase=String(s.last_final||s.final||s.last_command||'').trim();
   // 就绪后不再常驻说明；未就绪时保留原因。识别结果浮在页面底下。
-  const voiceText=ready?''
-    :!s.available||!has?'语音模型没装好':!connected?(s.source_kind==='phone'?'等手机连上':'麦克风没打开'):'麦克风没声音，或者还在准备';
+  const voiceText=ready?'':String(s.last_error||'').trim()
+    ||(!s.available||!has?'语音模型没装好':!connected?(s.source_kind==='phone'?'等手机连上':'麦克风没打开'):'麦克风没声音，或者还在准备');
+  voiceInputIssue=voiceText;
+  voiceInputTarget=!s.available||!has?'voice':'audio';
   if($('#voiceStatus').textContent!==voiceText)$('#voiceStatus').textContent=voiceText;
   setProperty($('#voiceStatus'),'hidden',!voiceText);
   announceVoice(s,phrase);
@@ -177,6 +181,7 @@ function renderVoiceStatus(s=voice.status){
   // 换游戏、装别人的配置带进来的口令没经过输入框，这里兜底照实说。
   const unheard=$('#voiceUnheard');if(unheard){const list=s.unheard||[];setProperty(unheard,'hidden',!list.length);setText(unheard,list.length?`这几句口令里有语音认不出的字，说了也听不到：${list.slice(0,6).map(item=>`${item.phrase}（${(item.chars||[]).join('、')}）`).join('；')}${list.length>6?` 等 ${list.length} 句`:''}。换个说法。`:'')}
   const diag=$('#voiceDiagnostic');setText(diag,[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`实时识别：${partial||'—'}`,`最后完成：${phrase||'—'}`,`电脑执行：${s.last_executed===true?'已执行':s.last_executed===false?'未执行':'未确认'}`,`错误：${s.last_error||'—'}`].join('\n'));
+  document.dispatchEvent(new Event('motioncontrol:voice-state'));
 }
 
 /* 内置和自定义急停都沿用可选唤醒词；自定义急停独立保存，不分享。 */
@@ -245,7 +250,7 @@ function announceVoice(s,phrase){
   else if(s.last_executed===false)notice(`听到「${phrase}」，没执行${s.last_error?`：${s.last_error}`:''}`);
 }
 
-export async function refreshVoice(){const revision=voiceRevision;try{const data=await api('/api/voice/status');if(revision===voiceRevision){voice.status=data;renderVoiceStatus(data)}return true}catch{if(revision===voiceRevision){voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认';$('#voiceStatus').hidden=false}return false}}
+export async function refreshVoice(){const revision=voiceRevision;try{const data=await api('/api/voice/status');if(revision===voiceRevision){voice.status=data;renderVoiceStatus(data)}return true}catch{if(revision===voiceRevision){voiceInputReady=false;voiceInputIssue='语音状态无法确认';setText($('#voicePill'),'未确认');setProperty($('#voicePill'),'className','tag warn');$('#voiceStatus').textContent=voiceInputIssue;$('#voiceStatus').hidden=false;document.dispatchEvent(new Event('motioncontrol:voice-state'))}return false}}
 
 function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='mode')return targetLabel(action);if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandNames(action.target).join('、')}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 

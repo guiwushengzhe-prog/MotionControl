@@ -31,7 +31,7 @@ def test_main_ui_stays_compact_and_settings_hold_complex_options():
     app = read_web_js(ROOT)
     # 三个标签的名字就是这一版的信息架构：开始 = 现在要玩（动作测试也并在这里），
     # 本游戏 = 换游戏会变的，设置 = 换游戏不用动的。改名字等于改架构，所以钉在这里。
-    for required in ['id="appVersion"', '开始', '本游戏', '设置', '站好并校准', '恢复跟随', '重设正前方', 'id="mainActionLabel"', '<kbd>F9</kbd>', 'id="sourceStopBtn"', '通用口令', '挪动区域', 'profileBindingRows']:
+    for required in ['id="appVersion"', '开始', '本游戏', '设置', '站好并校准', '固定触发框', '重设正前方', 'id="mainActionLabel"', '<kbd>F9</kbd>', 'id="sourceStopBtn"', '通用口令', '调整区域', 'profileBindingRows']:
         assert required in page
     # 头部姿态的实验菜单已去掉，正常界面固定使用三维头姿，不再让人二选一。
     assert 'id="headAlgorithm"' not in page
@@ -799,15 +799,16 @@ def test_foot_and_hand_zones_do_not_overlap_each_other(monkeypatch):
         kernel.close()
 
 
-def test_adjusting_zones_freezes_them_first_and_can_be_undone():
-    """挪动区域先把跟随框定住（一直在动的东西没法拖）；取消回到点之前，恢复跟随随时能点。"""
+def test_adjusting_zones_uses_reference_without_freezing_and_can_be_cancelled():
+    """参考图编辑不改变运行位置模式，取消不写配置。"""
     page = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
     app = read_web_js(ROOT)
-    assert 'id="followZonesBtn"' in page and 'id="zoneMoveHereBtn"' in page
-    opener = app[app.index('async function openFrozenZoneEditor()'):]
-    assert "post('/api/zones/freeze',{frozen:true})" in opener.split('\n}')[0]
-    cancel = app[app.index('async function cancelLiveZones()'):].split('\n}')[0]
-    assert "post('/api/zones/freeze',{frozen:false})" in cancel
+    assert 'id="followZonesBtn"' in page and 'id="zoneMoveHereBtn"' not in page
+    opener = app[app.index('async function openLiveZoneEditor('):].split('\n}')[0]
+    assert "api('/api/zones/editor')" in opener
+    assert '/api/zones/freeze' not in opener
+    cancel = app[app.index('async function cancelLiveZones()'):app.index('async function followZones()')]
+    assert "post(" not in cancel
 
 
 def test_start_script_detects_wireless_adb_devices_too():

@@ -31,7 +31,8 @@ from motioncontrol.head_control import (
     HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION,
 )
 from motioncontrol_shared.profile_schema import DEFAULT_MODE_NAME, flatten_bindings
-from motioncontrol_shared.regions import is_region_id, normalize_regions
+from motioncontrol_shared.regions import is_region_id, normalize_regions, normalize_region_rect
+from motioncontrol.zone_layout import body_anchor as layout_anchor, editor_reference, editor_rect, relative_rect, screen_rect, normalize_anchor as normalize_layout_anchor
 from motioncontrol_shared.pose_points import MP_NAMES, trigger_point_groups
 from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
@@ -555,6 +556,7 @@ class ControlKernel:
         self.frozen_rects: dict[str, dict] = {}
         # 定住那一刻人站在哪（见 _body_anchor），「区域挪到我这里」按它搬框。
         self.frozen_anchor: dict | None = None
+        self.following_layout: dict[str, dict] = {}
         # Provisional head-jump target anchor.  It deliberately does not track
         # the nose frame by frame: a jump lifts the whole body, so a fast
         # follower carries the target upward and the nose can never enter it.
@@ -802,6 +804,7 @@ class ControlKernel:
         self.action_chain.configure(data.get("action_chain", DEFAULT_ACTION_CHAIN))
         # 量过身的区域。坏了、缺了都回到默认大小，不影响启动。
         self.zone_fit = normalize_zone_fit(data.get("zone_fit"))
+        self.following_layout = self._normalize_following_layout(data.get("zone_following_layout"))
         mode = str(data.get("zone_trigger_mode", "")).strip().lower()
         mode = LEGACY_ZONE_TRIGGER_MODES.get(mode, mode)
         if mode in ZONE_TRIGGER_MODES:
@@ -914,6 +917,7 @@ class ControlKernel:
             "zone_freeze": {"frozen": bool(self.zones_frozen),
                             "rects": self.frozen_rects,
                             "anchor": self.frozen_anchor},
+            "zone_following_layout": self.following_layout,
         }
         return payload
 
@@ -1634,7 +1638,129 @@ class ControlKernel:
         return rects
 
     def _custom_region_rects_locked(self) -> dict[str, dict]:
-        return {ident: copy.deepcopy(item["rect"]) for ident, item in self.custom_regions.items()}
+        anchor = layout_anchor(self.latest_pose, self.width, self.height)
+        return {ident: screen_rect(item["follow"], anchor)
+                if item.get("mode") == "following" and anchor else copy.deepcopy(item["rect"])
+                for ident, item in self.custom_regions.items()}
+
+    @staticmethod
+    def _normalize_following_layout(raw) -> dict:
+        if not isinstance(raw, dict):
+            return {}
+        result = {}
+        for name, item in raw.items():
+            if name not in RUNTIME_BODY_ZONES or not isinstance(item, dict):
+                continue
+            values = {key: _finite(item.get(key), math.nan) for key in ("dx", "dy", "sx", "sy")}
+            if (all(math.isfinite(value) for value in values.values()) and
+                    abs(values["dx"]) <= 100 and abs(values["dy"]) <= 100 and
+                    .001 <= values["sx"] <= 100 and .001 <= values["sy"] <= 100):
+                result[name] = values
+        return result
+
+    def zone_editor(self) -> dict:
+        """一次打开取一份稳定的比例参照，估算骨骼不进入识别输入。"""
+        with self._lock:
+            pose = self.latest_pose
+            session = self.zone_fit_session
+            if session is not None and session.reference_pose:
+                pose = session.reference_pose
+            reference = editor_reference(pose, self.width, self.height, self.zone_fit)
+            if session is not None and session.reference_pose:
+                reference["source"] = "measured"
+            base = self._compute_body_zones(reference["pose"], time.monotonic(), reference=True,
+                                            apply_layout=False)
+            reference["base_rects"] = {name: editor_rect(rect) for name, rect in base.items() if name in RUNTIME_BODY_ZONES}
+            rects = self._frozen_zone_rects_locked() if self.zones_frozen else self._compute_body_zones(
+                reference["pose"], time.monotonic(), reference=True)
+            anchor = reference["anchor"]
+            for ident, item in self.custom_regions.items():
+                rects[ident] = screen_rect(item["follow"], anchor) if item.get("mode") == "following" else copy.deepcopy(item["rect"])
+            rects = {name: editor_rect(rect) for name, rect in rects.items() if name in RUNTIME_BODY_ZONES or name in self.custom_regions}
+            modes = {name: self.custom_regions[name].get("mode", "fixed") if name in self.custom_regions
+                     else "fixed" if self.zones_frozen else "following" for name in rects}
+            # 越界的跟随框在编辑器中画成可拖动的最小框；原样保存应保留原比例，不偷偷裁剪。
+            reference["display_rects"] = copy.deepcopy(rects)
+            reference["modes"] = copy.deepcopy(modes)
+            return {"width": self.width, "height": self.height,
+                    "builtin_mode": "fixed" if self.zones_frozen else "following", "rects": rects,
+                    "modes": modes,
+                    "reference": reference}
+
+    def prepare_zone_layout(self, rects, modes, reference) -> tuple[dict, list[dict]]:
+        """纯校验和换算，不修改内存或文件，供跨文件事务一次提交。"""
+        if not isinstance(rects, dict) or not isinstance(modes, dict):
+            raise ValueError("区域布局和模式必须是对象")
+        if not isinstance(reference, dict):
+            raise ValueError("缺少区域编辑参考")
+        anchor = normalize_layout_anchor(reference.get("anchor"))
+        unknown = (set(rects) | set(modes)) - set(RUNTIME_BODY_ZONES) - set(self.custom_regions)
+        if unknown:
+            raise KeyError("布局中有已经删掉的区域")
+        if set(modes) - set(rects):
+            raise ValueError("修改区域模式时必须同时提供矩形")
+        if any(mode not in ("following", "fixed") for mode in modes.values()):
+            raise ValueError("区域模式只能是跟随或固定")
+        normalized = {name: normalize_region_rect(rect) for name, rect in rects.items()}
+        unchanged = {name for name, rect in normalized.items()
+                     if rect == reference.get("display_rects", {}).get(name)
+                     and modes.get(name, reference.get("modes", {}).get(name)) == reference.get("modes", {}).get(name)}
+        builtin_modes = {modes[name] for name in modes if name in RUNTIME_BODY_ZONES}
+        if len(builtin_modes) > 1:
+            raise ValueError("内置区域应统一跟随或固定")
+        builtin_mode = next(iter(builtin_modes), "fixed" if self.zones_frozen else "following")
+        if builtin_mode != ("fixed" if self.zones_frozen else "following") and not set(RUNTIME_BODY_ZONES).issubset(rects):
+            raise ValueError("切换内置区域模式时应提供全部内置区域")
+        layout = copy.deepcopy(self.following_layout)
+        fixed = copy.deepcopy(self.frozen_rects)
+        bases = reference.get("base_rects") or {}
+        for name, rect in normalized.items():
+            if name not in RUNTIME_BODY_ZONES:
+                continue
+            if name in unchanged:
+                continue
+            if builtin_mode == "fixed":
+                fixed[name] = rect
+            else:
+                base = bases.get(name)
+                if not isinstance(base, dict):
+                    raise ValueError("缺少内置区域的原始比例参考，请重新打开调整")
+                base = normalize_region_rect(base)
+                layout[name] = {"dx": ((rect["x1"] + rect["x2"]) - (base["x1"] + base["x2"])) / (2 * anchor["ux"]),
+                                "dy": ((rect["y1"] + rect["y2"]) - (base["y1"] + base["y2"])) / (2 * anchor["uy"]),
+                                "sx": (rect["x2"] - rect["x1"]) / (base["x2"] - base["x1"]),
+                                "sy": (rect["y2"] - rect["y1"]) / (base["y2"] - base["y1"])}
+        if len(self._normalize_following_layout(layout)) != len(layout):
+            raise ValueError("调整后的区域比例超出合理范围")
+        custom = copy.deepcopy(list(self.custom_regions.values()))
+        for item in custom:
+            ident = item["id"]
+            if ident not in normalized:
+                continue
+            if ident in unchanged:
+                continue
+            item["rect"] = normalized[ident]
+            item["mode"] = modes.get(ident, item.get("mode", "fixed"))
+            if item["mode"] == "following":
+                item["follow"] = relative_rect(item["rect"], anchor)
+            else:
+                item.pop("follow", None)
+        return {"following_layout": layout, "zones_frozen": builtin_mode == "fixed",
+                "frozen_rects": fixed if builtin_mode == "fixed" else {},
+                "frozen_anchor": {"x": anchor["x"], "y": anchor["y"], "scale": anchor["uy"]}}, normalize_regions(custom)
+
+    def apply_zone_layout(self, prepared: dict) -> None:
+        with self._lock:
+            for name, value in prepared.items():
+                setattr(self, name, copy.deepcopy(value))
+            self.zone_rects = self._frozen_zone_rects_locked() if self.zones_frozen else self._compute_body_zones(
+                self.latest_pose or {}, time.monotonic())
+            self.zone_rects.update(self._custom_region_rects_locked())
+            if self._persist:
+                # 用户明确保存布局时必须报告写盘失败，交给服务器事务回滚两份文件。
+                from motioncontrol.config_transaction import atomic_bytes
+                atomic_bytes(self._general_settings_path(), json.dumps(
+                    self.general_settings_payload(), ensure_ascii=False, indent=2).encode("utf-8"))
 
     def configure_regions(self, regions: list[dict]) -> dict:
         """安装当前游戏共用的独立框；只清掉删除或移动的框，立即松开它们的键。"""
@@ -1644,7 +1770,8 @@ class ControlKernel:
             if normalized == previous:
                 return self.status_locked(time.monotonic())
             changed = {ident for ident in previous
-                       if ident not in normalized or previous[ident]["rect"] != normalized[ident]["rect"]}
+                       if ident not in normalized or any(previous[ident].get(key) != normalized[ident].get(key)
+                                                       for key in ("rect", "mode", "follow"))}
             for ident in changed:
                 self.zone_state.pop(ident, None)
                 self.zone_rects.pop(ident, None)
@@ -1944,7 +2071,8 @@ class ControlKernel:
             anchor["y"] = float(target["y"])
         return anchor
 
-    def _compute_body_zones(self, pose_map: dict[str, dict], now: float, *, reference: bool = False) -> dict[str, dict]:
+    def _compute_body_zones(self, pose_map: dict[str, dict], now: float, *, reference: bool = False,
+                            apply_layout: bool = True) -> dict[str, dict]:
         # Preserve the original 0.5 response at 30 FPS. Timestamped native and
         # mobile streams use elapsed sampling time, independent of arrival jitter.
         sampled = self._pose_sample_time_locked(now) if self.pose_sample_at is not None else None
@@ -1953,6 +2081,20 @@ class ControlKernel:
             smooth_dt = max(0.0, sampled - self._zone_smoothing_at)
         if not reference:
             self._zone_smoothing_at = sampled
+        previous_rects = self.zone_rects
+        if self.following_layout:
+            anchor = layout_anchor(pose_map, self.width, self.height)
+            if anchor:
+                previous_rects = copy.deepcopy(previous_rects)
+                for name, adjustment in self.following_layout.items():
+                    if name not in previous_rects:
+                        continue
+                    current = previous_rects[name]
+                    cx = (current["x1"] + current["x2"]) / 2 - adjustment["dx"] * anchor["ux"]
+                    cy = (current["y1"] + current["y2"]) / 2 - adjustment["dy"] * anchor["uy"]
+                    hw = (current["x2"] - current["x1"]) / (2 * adjustment["sx"])
+                    hh = (current["y2"] - current["y1"]) / (2 * adjustment["sy"])
+                    previous_rects[name] = {"x1": cx - hw, "x2": cx + hw, "y1": cy - hh, "y2": cy + hh}
         # 参考系（胯、肩、头中心、左右朝向、尺子）和量身用的是同一份，见 zone_fit.py。
         frame = body_frame(pose_map, self.width, self.height)
         if frame is None:
@@ -1989,7 +2131,7 @@ class ControlKernel:
                     "y1": 0.0,
                     "y2": _clamp(hand_bottom, 0.0, 1.0),
                 }
-                old = None if reference else self.zone_rects.get(name)
+                old = None if reference else previous_rects.get(name)
                 rects[name] = self._smooth_rect(old, next_rect, dt=smooth_dt)
 
             # A small rise of the head/nose into the space above it is a
@@ -2008,7 +2150,7 @@ class ControlKernel:
                 anchor["y"] - (fit["headJump"]["rise"] + HEAD_JUMP_HALF_H) * torso_px / ih,
                 0.52 * torso_px, 2 * HEAD_JUMP_HALF_H * torso_px, iw, ih,
             )
-            rects["headJump"] = self._smooth_rect(None if reference else self.zone_rects.get("headJump"), jump_rect, dt=smooth_dt)
+            rects["headJump"] = self._smooth_rect(None if reference else previous_rects.get("headJump"), jump_rect, dt=smooth_dt)
 
             # Provisional look-gate region for first-run UX. It intentionally
             # exists only while no fixed Scene Layout has been captured. Once
@@ -2033,8 +2175,20 @@ class ControlKernel:
                     floor_y - foot["lift"] * torso_px / ih,
                     2 * foot["half_w"] * torso_px, 2 * foot["half_h"] * torso_px, iw, ih,
                 )
-                old = None if reference else self.zone_rects.get(name)
+                old = None if reference else previous_rects.get(name)
                 rects[name] = self._smooth_rect(old, next_rect, dt=smooth_dt)
+        if apply_layout and self.following_layout:
+            anchor = layout_anchor(pose_map, self.width, self.height)
+            if anchor:
+                for name, adjustment in self.following_layout.items():
+                    if name not in rects:
+                        continue
+                    base = rects[name]
+                    cx = (base["x1"] + base["x2"]) / 2 + adjustment["dx"] * anchor["ux"]
+                    cy = (base["y1"] + base["y2"]) / 2 + adjustment["dy"] * anchor["uy"]
+                    hw = (base["x2"] - base["x1"]) * adjustment["sx"] / 2
+                    hh = (base["y2"] - base["y1"]) * adjustment["sy"] / 2
+                    rects[name] = {"x1": cx - hw, "x2": cx + hw, "y1": cy - hh, "y2": cy + hh}
         # Keep old zone ids visible to older clients/tests, but make each one
         # refer to the exact same merged hand geometry rather than creating a
         # second trigger area.
@@ -2356,6 +2510,7 @@ class ControlKernel:
                 "zones_frozen": self.zones_frozen,
                 "frozen_rects": self.frozen_rects,
                 "frozen_anchor": self.frozen_anchor,
+                "following_layout": self.following_layout,
                 "regions": list(self.custom_regions.values()),
                 "zone_trigger_mode": self.zone_trigger_mode,
                 "march_algorithm": self.march_algorithm,
@@ -3532,6 +3687,7 @@ class ControlKernel:
             rect = self.zone_rects.get(name) if mapped or custom else None
             if custom:
                 state.update(name=self.custom_regions[name]["name"], custom=True)
+            state["mode"] = self.custom_regions[name].get("mode", "fixed") if custom else "fixed" if self.zones_frozen else "following"
             zones[name] = {"rect": _snapshot_copy(rect), **state}
         # Keep the old four identifiers in status for clients that have not yet
         # learned the merged names. They are aliases only; no second trigger is

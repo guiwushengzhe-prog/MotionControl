@@ -49,15 +49,17 @@
 </div>
 <div class="viewer-foot">
 <div aria-label="身体动作" class="range-targets" id="rangeTargets"></div>
-<div class="viewer-tools"><button class="btn link" id="sourceStartBtn" title="开启所选摄像头和麦克风的识别">开始识别</button><button class="btn link" hidden="" id="sourceStopBtn" title="停止识别，释放摄像头和麦克风，同时暂停控制">停止识别</button><button class="btn link" id="centerBtn" title="把你现在的朝向当作正前方">重设正前方</button><button class="btn link" id="adjustZonesBtn" title="把框定住，拖动改位置和大小">挪动区域</button><button class="btn link" hidden="" id="followZonesBtn" title="区域现在定住了，点这里让它重新跟着你走">恢复跟随</button><button class="btn link" id="overlayBtn" title="在游戏画面上叠一个小窗">悬浮窗</button></div>
+<div class="viewer-tools"><button class="btn link" id="sourceStartBtn" title="开启所选摄像头和麦克风的识别">开始识别</button><button class="btn link" hidden="" id="sourceStopBtn" title="停止识别，释放摄像头和麦克风，同时暂停控制">停止识别</button><button class="btn link" id="centerBtn" title="把你现在的朝向当作正前方">重设正前方</button><button class="btn link" id="adjustZonesBtn">调整区域</button><button class="btn link" id="followZonesBtn">固定触发框</button><button class="btn link" id="voiceCommandsBtn">查看口令</button><button class="btn link" id="overlayBtn" title="在游戏画面上叠一个小窗">悬浮窗</button></div>
 </div>
 </section>
 <p class="banner warn" hidden="" id="misfireHint" role="status"><span></span><button class="btn" id="misfireHintGo" type="button">去录一下</button><button class="btn link" id="misfireHintDismiss" type="button">先不用</button></p>
 <p class="banner warn" hidden="" id="resourceHint" role="status"><span></span><button class="btn" hidden="" id="resourceHintBoost" title="需要管理员权限，会弹出 Windows 确认" type="button">提高 Kinect 服务优先级</button><button class="btn" hidden="" id="resourceHintModel" type="button">改用标准精度</button><button class="btn" hidden="" id="resourceHintDepth" type="button">关闭深度</button><button class="btn link" id="resourceHintDismiss" type="button">知道了</button></p>
 
 <section class="card zone-edit-bar" hidden="" id="zoneEditBar">
-<div class="zone-edit-text"><b>挪动区域</b><span id="zoneEditHint">拖框移动，拖四个角改大小。调整时体感输出暂停。</span></div>
-<div class="zone-edit-tools"><button class="btn" id="zoneMoveHereBtn" title="整组框按你现在站的位置搬过来，大小不变">挪到我这里</button><button class="btn" id="zoneEditFollowBtn">恢复跟随</button><button class="btn" id="cancelLiveZonesBtn">取消</button><button class="btn primary" id="saveLiveZonesBtn">保存</button></div>
+<div class="zone-edit-head"><div class="zone-edit-text"><b>调整区域</b></div><div class="zone-edit-tools"><button class="btn" id="cancelLiveZonesBtn">取消</button><button class="btn primary" id="saveLiveZonesBtn">保存</button></div></div>
+<div class="zone-reference-viewer rect-editing zone-editing" id="zoneReferenceViewer"><canvas id="zoneReferenceCanvas" aria-label="人物骨骼与手脚侧举估算范围参考图"></canvas><div class="zone-reference-zones" id="zoneReferenceZones"></div></div>
+<div class="zone-edit-settings"><label>区域<select id="zoneEditSelection" aria-label="调整的区域"></select></label><label>位置方式<select id="zoneEditPositionMode" aria-label="区域位置方式"><option value="following">跟随身体</option><option value="fixed">固定画面</option></select></label></div>
+<p class="zone-reference-legend" id="zoneEditHint">实线为已识别骨骼；虚线为估算骨骼和侧举范围。</p>
 </section>
 </div>
 
@@ -65,7 +67,7 @@
 <section class="card control-card" id="readyCard">
 <h2 class="card-title" id="readyTitle">准备</h2>
 <ol class="checklist">
-<li class="step" data-step="camera"><span class="dot"></span><div class="step-main"><b>摄像头</b><span class="step-sub" id="cameraStepSub"></span></div><button class="btn link" hidden="" id="cameraStepGo">去连接</button></li>
+<li class="step" data-step="camera"><span class="dot"></span><div class="step-main"><b>设备</b><span class="step-sub" id="cameraStepSub"></span></div><button class="btn link" hidden="" id="cameraStepGo">去连接</button></li>
 <li class="step" data-step="phone" hidden=""><span class="dot"></span><div class="step-main"><b>手机</b><span class="step-sub" id="phoneStepSub"></span></div></li>
 <li class="step" data-step="pose"><span class="dot"></span><div class="step-main"><b>人体</b><span class="step-sub" id="poseStepSub"></span></div></li>
 <li class="step" data-step="game"><span class="dot"></span><div class="step-main"><b>游戏</b><span class="step-sub" id="gameStepSub"></span></div><button class="btn link" data-go="games">更换</button></li>
@@ -84,11 +86,7 @@
 <div class="home-fitness-metrics"><div><b id="homeFitnessMinutes">—</b><span>活动分钟</span></div><div><b id="homeFitnessSteps">—</b><span>步数</span></div><div><b id="homeFitnessKcal">—</b><span>估算千卡</span></div></div>
 <p class="card-sub" id="homeFitnessHint"></p>
 </section>
-<section class="card control-voice">
-<div class="card-head"><h2 class="card-title">语音</h2><span class="tag" id="voicePill">语音</span></div>
-<p class="card-sub" hidden="" id="voiceStatus"></p>
-<button class="btn link flush" id="voiceCommandsBtn">查看口令</button>
-</section>
+<div hidden=""><span id="voicePill">准备中</span><span hidden="" id="voiceStatus"></span></div>
 <section class="card recent-card" hidden="" id="recentCard">
 <h2 class="card-title">最近触发</h2>
 <div class="range-log" id="rangeLog"></div>
@@ -150,7 +148,7 @@
 </div>
 <p class="banner warn" hidden="" id="poseMissingNotice" role="status"><span></span><button class="btn" id="poseMissingGo" type="button">去下载</button></p>
 <fieldset id="mappingFields"><div class="binding-list" id="profileBindingRows"></div></fieldset>
-<div class="zone-actions" id="zoneActions"><button class="mapping-add-card" id="addRegionBtn" type="button">＋ 新增区域</button><div aria-label="新增区域类型" class="mapping-add-options" hidden="" id="regionAddOptions"></div></div>
+<div class="zone-actions" id="zoneActions"><button class="mapping-add-card" id="addRegionBtn" type="button">＋ 新增区域</button></div>
 <button class="mapping-add-card add-voice" hidden="" id="addGameVoiceBtn" type="button">＋ 添加口令</button>
 
 <section class="library" hidden="" id="poseLibraryPanel">
@@ -324,9 +322,9 @@
 </div>
 </div>
 <div class="group" id="zoneTriggerSettings">
-<h2 class="group-title">区域怎么算按下</h2>
+<h2 class="group-title">区域框触发模式</h2>
 <div class="list">
-<div class="row stack"><select aria-label="区域怎么算按下" class="seg-select" id="zoneTriggerMode"><option value="smart">智能</option><option value="simple">进去就按</option></select><span class="sub" id="zoneTriggerDesc"></span></div>
+<div class="row stack"><select aria-label="区域框触发模式" class="seg-select" id="zoneTriggerMode"><option value="smart">智能</option><option value="simple">灵敏</option></select><span class="sub" id="zoneTriggerDesc"></span></div>
 <div class="row smart-only"><div class="row-main"><span class="name">录我的动作</span><span class="sub" id="intentStatus">还没录过</span></div><button class="btn" id="intentRecordBtn">录我的动作</button></div>
 <details class="row-details smart-only" hidden="" id="intentReport"><summary>体检报告</summary><div id="intentReportBody"></div></details>
 </div>

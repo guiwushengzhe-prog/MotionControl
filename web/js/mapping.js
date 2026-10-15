@@ -2,7 +2,7 @@
 import {$,api,configurationOperation,notice,positionPopup,post,registerDraftFlusher,setAttribute,setClass,setProperty,setText,syncChildren} from './core.js';
 import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,VOICE_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,draftGameVoiceSlots,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseLibrary,paintPoseMissingNotice} from './library.js';
-import {kernelState,renderKernelZones} from './play.js';
+import {kernelState,openLiveZoneEditor,renderKernelZones} from './play.js';
 import {currentView,showSettingsPane,showView,togglePanel} from './shell.js';
 import {gameProfile,profileDirty} from './state.js';
 import {isGameVoiceKey,normalizeGameVoicePhrase,refreshVoiceCommands,voiceCatalog,voiceCommandId,voiceCommandIds,voiceCommandName,voiceCommandNames,watchVoicePhrase} from './voice.js';
@@ -17,6 +17,7 @@ let profileRevision=0;
 export let profileSwitching=false;
 let profileConflict=false;
 let profileSearchRevision=0;
+const regionNameDrafts=new Map();
 registerDraftFlusher(saveProfileBindings);
 
 // 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
@@ -364,60 +365,57 @@ async function nextMode(){
 
 function renderRegionActions(){
   setProperty($('#zoneActions'),'hidden',mapTab!=='zones');
-  const restorable=BASE_PROFILE_TRIGGERS.some(trigger=>trigger.group==='zones'&&!regionRowWanted(trigger));
-  setProperty($('#addRegionBtn'),'disabled',profileSwitching||!gameProfile.selected||((gameProfile.selected.regions?.length||0)>=12&&!restorable));
-}
-
-function chooseRegionToAdd(){
-  if(profileSwitching)return;
-  const removed=BASE_PROFILE_TRIGGERS.filter(trigger=>trigger.group==='zones'&&!regionRowWanted(trigger));
-  const options=$('#regionAddOptions');
-  if(!removed.length){options.hidden=true;return addRegion()}
-  options.replaceChildren();
-  for(const trigger of removed){
-    const button=document.createElement('button');button.type='button';button.className='btn';button.textContent='＋ '+trigger.name;
-    button.addEventListener('click',()=>{options.hidden=true;revealBindingRow(trigger.key)});options.append(button);
-  }
-  const custom=document.createElement('button');custom.type='button';custom.className='btn';custom.textContent='＋ 独立区域';
-  custom.disabled=(gameProfile.selected.regions?.length||0)>=12;
-  custom.addEventListener('click',()=>{options.hidden=true;addRegion().catch(error=>notice(error.message))});options.append(custom);
-  options.hidden=false;
+  setProperty($('#addRegionBtn'),'disabled',profileSwitching||!gameProfile.selected||(gameProfile.selected.regions?.length||0)>=12);
 }
 
 async function addRegion(){
   if(profileSwitching)return;
   const profile_id=gameProfile.selected?.selected_id;if(!profile_id)return;
+  let region;
   await profileOperation(async()=>{
     const previous=new Set((gameProfile.selected.regions||[]).map(region=>region.id));
     const data=await post('/api/game-profiles/regions',{op:'add',profile_id});
     acceptModeProfile(data);showMapTab('zones');
-    const region=(data.profile.regions||[]).filter(item=>!previous.has(item.id)).at(-1);
-    const row=region&&document.querySelector(`.binding-row[data-trigger="zone.${region.id}"]`);
-    row?.scrollIntoView({block:'center'});row?.querySelector('.binding-type')?.focus();
-    notice('已新建区域，请设置按键；在开始页点「挪动区域」调整位置');
+    region=(data.profile.regions||[]).filter(item=>!previous.has(item.id)).at(-1);
   });
+  if(region){showView('play');await openLiveZoneEditor({selectedId:region.id})}
 }
 
-async function renameRegion(trigger){
-  if(profileSwitching)return;
-  const name=prompt('区域改成什么名字？',trigger.name);if(name===null)return;
-  const profile_id=gameProfile.selected.selected_id;
-  await profileOperation(async()=>{
-    acceptModeProfile(await post('/api/game-profiles/regions',{op:'update',profile_id,id:trigger.id,name}));
-  });
+async function saveRegionNameDrafts(profile_id,excludeRegion=null){
+  for(const [id,draft] of [...regionNameDrafts]){
+    if(id===excludeRegion)continue;
+    if(draft.profile_id!==profile_id)throw new Error('游戏已切换，区域名称尚未保存');
+    const name=draft.name.trim();
+    if(!name)throw new Error('区域名称不能为空');
+    const data=await post('/api/game-profiles/regions',{op:'update',profile_id,id,name});
+    gameProfile.selected.regions=data.profile.regions;
+    if(regionNameDrafts.get(id)===draft){regionNameDrafts.delete(id);profileDirty.delete('region-name.'+id)}
+  }
+  syncRuleTriggerChoices();
 }
 
 async function removeRegion(trigger){
   if(profileSwitching)return;
   if(!confirm(`删除「${trigger.name}」？这个游戏所有模式都会删除该区域及它的映射。`))return;
   const profile_id=gameProfile.selected.selected_id;
+  const mode_id=gameProfile.selected.mode?.id||null;
+  clearTimeout(profileAutoSaveTimer);
   await profileOperation(async()=>{
+    clearTimeout(profileAutoSaveTimer);
+    if(profileFlight)await profileFlight;
+    if(gameProfile.selected.selected_id!==profile_id||(gameProfile.selected.mode?.id||null)!==mode_id)throw new Error('游戏或模式已切换，请重新删除区域');
+    await saveRegionNameDrafts(profile_id,trigger.id);
+    if([...profileDirty].some(key=>key!==trigger.key&&!key.startsWith('region-name.'))){
+      const data=await post('/api/game-profiles/overrides',{profile_id,mode_id,overrides:readProfileOverrides(trigger.key)});
+      gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
+    }
     acceptModeProfile(await post('/api/game-profiles/regions',{op:'remove',profile_id,id:trigger.id}));
+    regionNameDrafts.delete(trigger.id);profileDirty.clear();++profileRevision;
     notice('已从这个游戏的所有模式删除该区域');
-  });
+  },{skipDrafts:[saveProfileBindings]});
 }
 
-$('#addRegionBtn')?.addEventListener('click',()=>Promise.resolve(chooseRegionToAdd()).catch(error=>notice(error.message||'新增区域失败，请重试')));
+$('#addRegionBtn')?.addEventListener('click',()=>addRegion().catch(error=>notice(error.message||'新增区域失败，请重试')));
 
 function refreshModeTargets(){
   document.querySelectorAll('.binding-target-box').forEach(box=>{
@@ -502,7 +500,7 @@ export async function applySelectedProfile(){
 
 async function profileOperation(operation,{recoverConflict=false,skipDrafts=[]}={}){
   return configurationOperation(async()=>{
-    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn,#modeTabs button,#addModeBtn,#modeMenuBtn,#renameModeBtn,#removeModeBtn,#playModeBtn,#addRegionBtn,#regionAddOptions button,#addGameVoiceBtn,.region-rename,.region-remove,.binding-remove')];
+    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn,#modeTabs button,#addModeBtn,#modeMenuBtn,#renameModeBtn,#removeModeBtn,#playModeBtn,#addRegionBtn,#addGameVoiceBtn,.region-remove,.binding-remove')];
     const disabled=controls.map(el=>el.disabled);
     profileSwitching=true;
     controls.forEach(el=>{el.disabled=true});
@@ -1116,6 +1114,18 @@ function buildBindingRow(trigger){
   if(trigger.group==='voice'){
     const game=isGameVoiceKey(trigger.key);
     phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=game?normalizeGameVoicePhrase(binding?.phrase||trigger.phrase||''):(binding?.phrase||trigger.phrase||'');phrase.placeholder=game?'说什么，例如：爬绳':'完整口令';phrase.title=game?'直接说这句，不用唤醒词':'说出的完整口令';name.append(phrase);watchVoicePhrase(phrase);
+  }else if(trigger.custom&&trigger.group==='zones'){
+    const input=document.createElement('input');input.className='region-name-input';input.type='text';input.maxLength=24;
+    input.value=regionNameDrafts.get(trigger.id)?.name??trigger.name;input.setAttribute('aria-label','区域名称');
+    input.addEventListener('input',event=>{
+      event.stopPropagation();
+      regionNameDrafts.set(trigger.id,{profile_id:gameProfile.selected.selected_id,name:input.value});
+      profileDirty.add('region-name.'+trigger.id);profileRevision++;
+      clearTimeout(profileAutoSaveTimer);$('#profileSaveStatus').textContent='正在保存…';
+      profileAutoSaveTimer=setTimeout(()=>saveProfileBindings().catch(()=>{}),350);
+    });
+    input.addEventListener('change',event=>event.stopPropagation());
+    name.append(input);
   }else name.textContent=trigger.name;
   const tags=document.createElement('span');tags.className='binding-tags';name.append(tags);
   if(!trigger.custom){
@@ -1126,7 +1136,7 @@ function buildBindingRow(trigger){
     name.append(remove);
   }
   if(trigger.custom&&trigger.group==='zones'){
-    for(const[caption,className,handler]of [['改名','region-rename',renameRegion],['删除','region-remove binding-remove',removeRegion]]){
+    for(const[caption,className,handler]of [['删除','region-remove binding-remove',removeRegion]]){
       const button=document.createElement('button');button.type='button';button.className=className;button.textContent=caption;
       button.setAttribute('aria-label',trigger.name+' '+caption);
       button.addEventListener('click',()=>handler(trigger).catch(error=>notice(error.message||'区域操作失败，请重试')));
@@ -1244,7 +1254,6 @@ export function showMapTab(tab){
   $('#poseLibraryPanel').hidden=mapTab!=='body';
   document.querySelectorAll('[data-tab-caption]').forEach(el=>{el.hidden=el.dataset.tabCaption!==mapTab});
   renderRegionActions();
-  $('#regionAddOptions').hidden=true;
   updateMapCounts();
 }
 
@@ -1398,6 +1407,7 @@ async function removeMappingBinding(trigger){
     if((gameProfile.selected.selected_id||gameProfile.selected.id)!==profile_id||(gameProfile.selected.mode?.id||null)!==mode_id){
       throw new Error('游戏或模式已切换，请在当前映射列表重新删除');
     }
+    await saveRegionNameDrafts(profile_id);
     // 被删除的行可以尚未填完；其它行的编辑和这次删除一起保存。
     const overrides=readProfileOverrides(trigger.key);overrides[trigger.key]=null;
     const data=await post('/api/game-profiles/overrides',{profile_id,mode_id,overrides});
@@ -1420,9 +1430,12 @@ export async function saveProfileBindings(){
   const id=gameProfile.selected.selected_id||gameProfile.selected.id,revision=profileRevision;
   $('#profileSaveStatus').textContent='正在保存…';$('#retryProfileSaveBtn').hidden=true;
   profileFlight=(async()=>{
-    const data=await post('/api/game-profiles/overrides',{profile_id:id,mode_id:gameProfile.selected.mode?.id||null,overrides:readProfileOverrides()});
-    gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
-    gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
+    await saveRegionNameDrafts(id);
+    if([...profileDirty].some(key=>!key.startsWith('region-name.'))){
+      const data=await post('/api/game-profiles/overrides',{profile_id:id,mode_id:gameProfile.selected.mode?.id||null,overrides:readProfileOverrides()});
+      gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
+      gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
+    }
     if(revision===profileRevision)profileDirty.clear();
     modeSyncBlocked='';
     renderProfileHeader();await refreshVoiceCommands();

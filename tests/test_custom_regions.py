@@ -287,7 +287,7 @@ def test_tap_fires_once_per_entry_and_existing_regions_still_work(region_kernel)
 
 def api_add(app, **fields):
     code, data = post(app, "/api/game-profiles/regions", {
-        "op": "add", "profile_id": app.PROFILES.selected_id(), "rect": RECT, **fields})
+        "op": "add", "profile_id": app.PROFILES.selected_id(), "rect": RECT, "mode": "fixed", **fields})
     assert code == 200, data
     return data["profile"]["regions"][-1]
 

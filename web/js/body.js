@@ -36,9 +36,9 @@ export function renderZoneFit(k=kernelState||{}){
 // 定住了没有、区域怎么算按下：电脑那边说了算，这里只照着画。
 export function renderZoneFreeze(k=kernelState||{}){
   const frozen=!!k.zones_frozen;
-  const follow=$('#followZonesBtn');if(follow)follow.hidden=!frozen||zoneEditMode;
+  const follow=$('#followZonesBtn');if(follow){follow.hidden=zoneEditMode;follow.textContent=frozen?'恢复跟随':'固定触发框';follow.title=frozen?'让触发框重新跟着身体移动':'将触发框固定在画面位置'}
   const adjust=$('#adjustZonesBtn');
-  if(adjust){const text=frozen?'调整定住的区域':'挪动区域';if(adjust.textContent!==text)adjust.textContent=text}
+  if(adjust)adjust.textContent='调整区域';
   const mode=$('#zoneTriggerMode');
   if(mode&&k.zone_trigger_mode&&document.activeElement!==mode&&mode.value!==k.zone_trigger_mode)mode.value=k.zone_trigger_mode;
   for(const [id,key] of [['verticalDeadzone','deadzone']]){
@@ -51,7 +51,7 @@ export function renderZoneFreeze(k=kernelState||{}){
 }
 
 // 二选一的设置底下一句话，跟着选的那个变。
-const ZONE_MODE_DESC={smart:'分辨是故意伸进框，还是做动作时顺路扫过；最多多等 0.25 秒',simple:'进框就按、出框就松；反应最快，也最容易误按'};
+const ZONE_MODE_DESC={smart:'可防误触，最多有0.25秒延迟',simple:'容易误触，无延迟'};
 
 const MARCH_DESC={legacy:'稳，停步稍慢',responsive:'交替抬脚时提前响应，停步更快'};
 
@@ -125,7 +125,7 @@ function renderIntentReport(report){
   }
   const idle=Object.entries(report.idle||{}).map(([zone,n])=>`${ZONE_BODY_CN[zone]||zone} ${n} 次`);
   if(idle.length)rows.push(line(['随便动动','',`误按 ${idle.join('、')}：框离站着的位置太近，量一下身`],true));
-  body.innerHTML=`<p>用你录的动作、按这个游戏现在的绑定，用智能判定重放了一遍：做动作时误按 ${pct(sum.misfire_rate)}，故意按漏掉 ${pct(sum.miss_rate)}，按下平均比「进去就按」慢 ${ms(sum.p50_ms)}（最慢的一成 ${ms(sum.p95_ms)}）。</p>`
+  body.innerHTML=`<p>用你录的动作、按这个游戏现在的绑定，用智能判定重放了一遍：做动作时误按 ${pct(sum.misfire_rate)}，故意按漏掉 ${pct(sum.miss_rate)}，按下平均比「灵敏」慢 ${ms(sum.p50_ms)}（最慢的一成 ${ms(sum.p95_ms)}）。</p>`
     +(rows.length?`<table>${rows.join('')}</table>`:'<p>这个游戏里没有绑了键、又录过的框和动作。</p>')
     +'<p class="fineprint">只算这个游戏里绑了键的框和动作。样本少的时候一两次就是很大的百分比，看次数比看百分比准。</p>';
 }
@@ -174,6 +174,6 @@ $('#zoneTriggerMode')?.addEventListener('change',e=>runAction(async()=>{
   const status=$('#zoneTriggerStatus');
   try{
     renderKernelState(await post('/api/zones/trigger-mode',{mode:e.target.value}));
-    flashStatus(status,e.target.value==='simple'?'已改成进去就按':'已改成智能');
+    flashStatus(status,e.target.value==='simple'?'已改成灵敏':'已改成智能');
   }catch(error){status.textContent='没改成：'+error.message;renderZoneFreeze();throw error}
 }));
