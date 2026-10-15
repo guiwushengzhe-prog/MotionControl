@@ -47,6 +47,9 @@ def _get(url: str, timeout: float = 2.0) -> bytes:
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
     user = tmp_path_factory.mktemp("ui-user")
+    # 空目录现在默认开电脑来源；界面测试固定等手机，避免抢占真实摄像头和麦克风。
+    (user / "general_settings.json").write_text(
+        json.dumps({"body_source": "phone", "audio_source": "phone"}), encoding="utf-8")
     port, admin = _free_port(), _free_port()
     env = {**os.environ, "MOTIONCONTROL_USER_DIR": str(user), "PYTHONUTF8": "1"}
     log_path = user / "server.log"
@@ -526,3 +529,79 @@ def test_first_use_tips_point_at_the_small_menus(browser, server):
         assert page.locator(".coach-tip").count() == 0, "看过一次就不再出现"
     finally:
         context.close()
+
+
+def test_head_speed_and_curve_save_and_survive_reload(ui):
+    """速度上限和曲线都经真实设置接口保存，刷新不能回退。"""
+    page = ui.page
+    _go(page, "devices")
+    page.click('#settingsNav [data-pane="view"]')
+    source = page.locator("#viewHorizontalSource")
+    sync_api.expect(source).to_be_enabled()
+    with page.expect_response(lambda r: r.url.endswith("/api/view-control") and r.request.method == "POST"):
+        source.select_option("roll_tilt")
+    sync_api.expect(page.locator("#speedX")).to_be_enabled()
+    assert page.locator("#speedX").get_attribute("max") == "200"
+    with page.expect_response(lambda r: r.url.endswith("/api/head/config") and r.request.method == "POST"):
+        page.locator("#speedX").press("End")
+    assert page.request.get(ui.base + "/api/kernel/status").json()["kernel"]["head"]["sensitivity_x"] == 200
+    gamma = page.locator("#headCurveGamma")
+    assert (gamma.get_attribute("min"), gamma.get_attribute("max")) == ("1", "3")
+    with page.expect_response(lambda r: r.url.endswith("/api/head/config") and r.request.method == "POST"):
+        gamma.press("Home")
+    linear = page.locator("#headCurveLine").get_attribute("d")
+    assert linear and gamma.input_value() == "1"
+    with page.expect_response(lambda r: r.url.endswith("/api/head/config") and r.request.method == "POST"):
+        gamma.press("End")
+    assert gamma.input_value() == "3"
+    assert page.locator("#headCurveLine").get_attribute("d") != linear
+    saved = page.request.get(ui.base + "/api/kernel/status").json()["kernel"]["head"]
+    assert saved["sensitivity_x"] == 200 and saved["horizontal_curve_gamma"] == 3
+    page.reload()
+    page.wait_for_function("currentGameName.textContent !== '正在读取…'")
+    _go(page, "devices")
+    page.click('#settingsNav [data-pane="view"]')
+    sync_api.expect(page.locator("#speedX")).to_have_value("200")
+    sync_api.expect(gamma).to_have_value("3")
+    assert ui.errors == []
+
+
+def test_head_curve_handles_hide_for_legacy_and_fit_narrow_view(ui):
+    """两侧控制点同步保存，拖动可改曲线；旧方案不显示无效的曲线设置。"""
+    page = ui.page
+    _go(page, "devices")
+    page.click('#settingsNav [data-pane="view"]')
+    source = page.locator("#viewHorizontalSource")
+    sync_api.expect(source).to_be_enabled()
+    with page.expect_response(lambda r: r.url.endswith("/api/view-control") and r.request.method == "POST"):
+        source.select_option("head_responsive")
+    left = page.locator('#headCurvePlot [data-curve-side="-1"]')
+    right = page.locator('#headCurvePlot [data-curve-side="1"]')
+    with page.expect_response(lambda r: r.url.endswith("/api/head/config") and r.request.method == "POST"):
+        left.press("Home")
+    sync_api.expect(right).to_have_attribute("aria-valuenow", "1.00")
+    with page.expect_response(lambda r: r.url.endswith("/api/head/config") and r.request.method == "POST"):
+        right.press("End")
+    sync_api.expect(left).to_have_attribute("aria-valuenow", "3.00")
+    before = page.locator("#headCurveLine").get_attribute("d")
+    right.scroll_into_view_if_needed()
+    point = right.bounding_box()
+    assert point is not None
+    x, y = point["x"] + point["width"] / 2, point["y"] + point["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    with page.expect_response(lambda r: r.url.endswith("/api/head/config") and r.request.method == "POST"):
+        page.mouse.move(x, y - 15, steps=3)
+        page.mouse.up()
+    gamma = float(page.locator("#headCurveGamma").input_value())
+    assert 1 <= gamma < 3
+    assert page.locator("#headCurveLine").get_attribute("d") != before
+    saved = page.request.get(ui.base + "/api/kernel/status").json()["kernel"]["head"]
+    assert saved["horizontal_curve_gamma"] == pytest.approx(gamma)
+    page.set_viewport_size({"width": 390, "height": 844})
+    width = page.evaluate("[document.documentElement.scrollWidth, innerWidth]")
+    assert width[0] <= width[1] + 1, f"视角曲线在窄屏上横向溢出：{width}"
+    with page.expect_response(lambda r: r.url.endswith("/api/view-control") and r.request.method == "POST"):
+        source.select_option("head_turn")
+    sync_api.expect(page.locator("#headCurvePanel")).to_be_hidden()
+    assert ui.errors == []

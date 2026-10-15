@@ -434,7 +434,7 @@ $('#strength').addEventListener('change',()=>runAction(async()=>{
   await updateOutputConfig({mouse_speed_x:600*gain,mouse_speed_y:450*gain,gamepad_gain:gain});
 }));
 
-for(const id of ['verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','invertY']){
+for(const id of ['verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','headCurveGamma','invertY']){
   $('#'+id).addEventListener('input',()=>{headSaver.dirty();syncControlLabels()});
   $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels()});
 }

@@ -24,8 +24,9 @@ def head_value(c, tilt, yaw, now):
 def test_head_start_reverse_and_stop_use_the_current_frame(fps, source):
     c = ResponsiveHeadControl()
     tilt, yaw = (8., 0.) if source == 'tilt' else (0., .5)
-    assert head_value(c, tilt, yaw, 1.) > .15
-    assert head_value(c, -tilt, -yaw, 1. + 1 / fps) < -.15
+    expected = ((8. - 3.) / (18. - 3.)) ** 2 if source == 'tilt' else ((.5 - .22) / (1. - .22)) ** 2
+    assert head_value(c, tilt, yaw, 1.) == pytest.approx(expected)
+    assert head_value(c, -tilt, -yaw, 1. + 1 / fps) == pytest.approx(-expected)
     assert head_value(c, 0., 0., 1. + 2 / fps) == 0.
 
 
@@ -76,9 +77,9 @@ def test_head_curve_is_fine_near_center_monotone_and_bounded(source):
                       25 / 18 if source == 'yaw' else 0., 1.27) > .99
 
 
-def test_head_moderate_deflection_is_more_responsive_without_shrinking_the_stop_zone():
+def test_head_moderate_deflection_uses_the_curve_without_shrinking_the_stop_zone():
     c = ResponsiveHeadControl()
-    assert .20 < head_value(c, 7.5, 0., 1.) < .30
+    assert head_value(c, 7.5, 0., 1.) == pytest.approx(((7.5 - 3.) / (18. - 3.)) ** 2)
     assert head_value(c, 2.9, 0., 1.04) == 0
     assert head_value(c, 3.3, 0., 1.08) == 0
     assert head_value(c, 3.5, 0., 1.12) > 0
@@ -134,15 +135,16 @@ def test_return_braking_does_not_treat_calibration_jitter_as_a_return(source):
 def test_return_braking_cannot_hand_control_to_a_weaker_opposite_signal():
     c = ResponsiveHeadControl()
     assert head_value(c, -14., .26, 1.) < 0
-    assert head_value(c, -8., .26, 1.02) <= 0
+    braked = head_value(c, -8., .26, 1.02)
+    assert braked <= 0
     assert c.source == 'tilt'
     assert c.return_brake > .8
     # 保持偏转仍持续转向；帧中断或信号缺失会清除回正历史。
-    assert head_value(c, -8., .26, 1.06) < -.15
-    assert head_value(c, -8., .26, 2.) < -.15
+    assert head_value(c, -8., .26, 1.06) < braked
+    assert head_value(c, -8., .26, 2.) == pytest.approx(-1 / 9)
     assert c.return_brake == 0
     assert head_value(c, math.nan, math.nan, 2.04) == 0
-    assert head_value(c, -8., 0., 2.08) < -.15
+    assert head_value(c, -8., 0., 2.08) == pytest.approx(-1 / 9)
 
 
 def full_head(tmp_path, monkeypatch):

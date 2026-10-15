@@ -5,6 +5,7 @@ import {invalidateKernelRequests,kernelEpoch,noteOutputMix} from './devices.js';
 import {mergeOwnsSticks,renderKernelState} from './play.js';
 import {tutorial} from './shell.js';
 import {S,head,output} from './state.js';
+import {initHeadCurve,renderHeadCurve} from './head-curve.js';
 
 export let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'};
 let viewControlSaving=false;
@@ -47,10 +48,11 @@ export function renderViewControl(force=false){
   // 抬头低头的手感只在选了它的时候列出来。
   setProperty($('#headPitchSettings'),'hidden',vertical!=='head');
   const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='';
+  renderHeadCurve();
 }
 
 export function initViewControl(){
-  fillViewControlOptions();renderViewControl();
+  fillViewControlOptions();initHeadCurve();renderViewControl();
   // 弹不弹、弹哪个由教学自己定：从没看过就带着做基础；基础走完后的下一次打开，让人挑一次别的。
   tutorial.autoOpen();
 }
@@ -153,7 +155,7 @@ export async function saveViewControlAxis(axis){
   }finally{setViewControlBusy(false);S.headDirty=false;renderViewControl(true)}
 }
 
-export function syncControlLabels(){head.algorithm='pnp';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.invertY=$('#invertY').checked;setText($('#deadzoneValue'),Math.round(head.deadzone*100)+'%');setText($('#speedXValue'),head.sensitivityX+'%');setText($('#speedYValue'),head.sensitivityY+'%');output.strength=Number($('#strength').value);setText($('#strengthValue'),output.strength+'%')}
+export function syncControlLabels(){head.algorithm='pnp';head.verticalExclusive=!!$('#verticalExclusive')?.checked;head.bodyMotionGuard=!!$('#bodyMotionGuard')?.checked;head.deadzone=Number($('#deadzone').value)/100;head.sensitivityX=Number($('#speedX').value);head.sensitivityY=Number($('#speedY').value);head.horizontalCurveGamma=Number($('#headCurveGamma').value);head.invertY=$('#invertY').checked;setText($('#deadzoneValue'),Math.round(head.deadzone*100)+'%');setText($('#speedXValue'),head.sensitivityX+'%');setText($('#speedYValue'),head.sensitivityY+'%');setText($('#headCurveGammaValue'),head.horizontalCurveGamma.toFixed(2));output.strength=Number($('#strength').value);setText($('#strengthValue'),output.strength+'%');renderHeadCurve()}
 
 export async function pushHeadConfig(){
   syncControlLabels();
@@ -161,7 +163,7 @@ export async function pushHeadConfig(){
   try{
     const data=await post('/api/head/config',{
     algorithm:head.algorithm,horizontal_algorithm:head.horizontalAlgorithm,deadzone:head.deadzone,
-    sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,enabled:head.enabled,
+    sensitivity_x:head.sensitivityX,sensitivity_y:head.sensitivityY,horizontal_curve_gamma:head.horizontalCurveGamma,enabled:head.enabled,
     invert_y:head.invertY,vertical_look_source:head.verticalLookEnabled?'head':'off',
     vertical_exclusive:head.verticalExclusive,body_motion_guard:head.bodyMotionGuard,
   });

@@ -5,10 +5,10 @@ import math
 TILT_SPAN_DEG = 18.0
 
 
-def gentle_turn_rate(amount):
+def gentle_turn_rate(amount, gamma=2.0):
     """死区外的小幅偏转便于微调，随角度平滑提速，最大速度保持不变。"""
     amount = max(0.0, min(1.0, amount))
-    return amount * (.55 + .45 * amount)
+    return amount ** max(1.0, min(3.0, float(gamma)))
 
 
 def eye_line_tilt(pose, width, height):
@@ -48,7 +48,8 @@ class RollTiltControl:
         self.state = "CENTER"
         self.threshold = 2.0
 
-    def update(self, angle, now, *, center, noise, deadzone, motion_deadzone_scale=1.0):
+    def update(self, angle, now, *, center, noise, deadzone, motion_deadzone_scale=1.0,
+               curve_gamma=2.0):
         if not all(math.isfinite(v) for v in (angle, center, noise, now)):
             self.reset()
             self.state = "TILT_UNAVAILABLE"
@@ -60,15 +61,18 @@ class RollTiltControl:
         delta = angle - center
         self.threshold = max(2.0, TILT_SPAN_DEG * deadzone, 3.0 * max(0.0, noise))
         self.threshold *= max(1.0, min(1.2, motion_deadzone_scale))
+        threshold = self.threshold
         release = self.threshold * .65
         if abs(delta) <= release:
             self.reset()
+            self.threshold = threshold
             return 0.0
         desired = 1 if delta > 0 else -1
         if self.direction and desired != self.direction:
             # Stop the old direction on the crossing frame, even if a frame
             # skipped the neutral zone. The other side must qualify afresh.
             self.reset()
+            self.threshold = threshold
             return 0.0
         alpha = 1.0 - math.exp(-dt / .045) if dt else 1.0
         self.filtered = delta if self.filtered is None else self.filtered + alpha * (delta - self.filtered)
@@ -85,4 +89,4 @@ class RollTiltControl:
             self.direction = desired
         amount = max(0.0, min(1.0, (abs(self.filtered) - self.threshold) / max(1.0, TILT_SPAN_DEG - self.threshold)))
         self.state = "TILT_RIGHT" if self.direction > 0 else "TILT_LEFT"
-        return self.direction * gentle_turn_rate(amount)
+        return self.direction * gentle_turn_rate(amount, curve_gamma)

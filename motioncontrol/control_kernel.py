@@ -1129,13 +1129,15 @@ class ControlKernel:
     def configure_head(self, *, algorithm=None, deadzone=None, sensitivity_x=None,
                        sensitivity_y=None, enabled=None, invert_x=None, invert_y=None,
                        horizontal_algorithm=None, vertical_look_source=None,
-                       vertical_exclusive=None, body_motion_guard=None) -> dict:
+                       vertical_exclusive=None, body_motion_guard=None,
+                       horizontal_curve_gamma=None) -> dict:
         with self._lock:
             self.head_controller.configure(
                 algorithm=algorithm,
                 deadzone=deadzone,
                 sensitivity_x=sensitivity_x,
                 sensitivity_y=sensitivity_y,
+                horizontal_curve_gamma=horizontal_curve_gamma,
                 enabled=enabled,
                 invert_x=invert_x,
                 invert_y=invert_y,

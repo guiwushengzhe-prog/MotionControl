@@ -96,6 +96,7 @@ DEFAULT_CONFIG = {
     "deadzone": 0.10,
     "sensitivity_x": 58.0,
     "sensitivity_y": 46.0,
+    "horizontal_curve_gamma": 2.0,
 }
 
 # Internal shaping; deliberately not exposed as a large tuning panel.
@@ -2794,6 +2795,7 @@ class HeadController:
         deadzone: float | None = None,
         sensitivity_x: float | None = None,
         sensitivity_y: float | None = None,
+        horizontal_curve_gamma: float | None = None,
         enabled: bool | None = None,
         invert_x: bool | None = None,
         invert_y: bool | None = None,
@@ -2849,9 +2851,11 @@ class HeadController:
         if deadzone is not None:
             self.config["deadzone"] = _clamp(deadzone, 0.03, 0.25)
         if sensitivity_x is not None:
-            self.config["sensitivity_x"] = _clamp(sensitivity_x, 20.0, 120.0)
+            self.config["sensitivity_x"] = _clamp(sensitivity_x, 20.0, 200.0)
         if sensitivity_y is not None:
             self.config["sensitivity_y"] = _clamp(sensitivity_y, 15.0, 100.0)
+        if horizontal_curve_gamma is not None:
+            self.config["horizontal_curve_gamma"] = _clamp(horizontal_curve_gamma, 1.0, 3.0)
         if enabled is not None:
             self.config["enabled"] = bool(enabled)
             if not self.config["enabled"]:
@@ -3802,6 +3806,7 @@ class HeadController:
                 noise_tilt=self.noise_tilt, noise_yaw=self.noise_yaw,
                 yaw_span=span_x, deadzone=float(self.config["deadzone"]),
                 motion_deadzone_scale=self.motion_deadzone_scale,
+                curve_gamma=float(self.config["horizontal_curve_gamma"]),
             ) if math.isfinite(self.center_tilt) else 0.0
             raw_x = intent_raw_x = sign * self._responsive_head.raw
             self._runtime_raw_x = self._runtime_intent_raw_x = raw_x
@@ -3812,6 +3817,7 @@ class HeadController:
                 self.tilt_angle, now, center=self.center_tilt, noise=self.noise_tilt,
                 deadzone=float(self.config["deadzone"]),
                 motion_deadzone_scale=self.motion_deadzone_scale,
+                curve_gamma=float(self.config["horizontal_curve_gamma"]),
             )
             self._last_intent_drive = vx
             self._last_evidence_scale = 1.0 if math.isfinite(self.tilt_angle) and math.isfinite(self.center_tilt) else 0.0
@@ -4115,6 +4121,7 @@ class HeadController:
             "effective_deadzone_y": round(self.effective_deadzone_y, 4),
             "sensitivity_x": round(float(self.config["sensitivity_x"]), 2),
             "sensitivity_y": round(float(self.config["sensitivity_y"]), 2),
+            "horizontal_curve_gamma": round(float(self.config["horizontal_curve_gamma"]), 3),
             "calibrated": bool(self.calibrated),
             "calibration_from_last_session": bool(self.calibrated and self.calibration_from_last_session),
             "calibrating": bool(self.calibrating),
@@ -4206,8 +4213,9 @@ class HeadController:
                 "invert_y": bool(params.get("invert_y", False)),
                 "horizontal_algorithm": horizontal_algorithm,
                 "deadzone": _clamp(params.get("deadzone", DEFAULT_CONFIG["deadzone"]), 0.03, 0.25),
-                "sensitivity_x": _clamp(params.get("sensitivity_x", DEFAULT_CONFIG["sensitivity_x"]), 20.0, 120.0),
+                "sensitivity_x": _clamp(params.get("sensitivity_x", DEFAULT_CONFIG["sensitivity_x"]), 20.0, 200.0),
                 "sensitivity_y": _clamp(params.get("sensitivity_y", DEFAULT_CONFIG["sensitivity_y"]), 15.0, 100.0),
+                "horizontal_curve_gamma": _clamp(params.get("horizontal_curve_gamma", DEFAULT_CONFIG["horizontal_curve_gamma"]), 1.0, 3.0),
             })
             # Start from an uncalibrated state, then install the last complete
             # calibration if this file carries one for the same estimator.
