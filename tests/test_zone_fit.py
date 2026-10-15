@@ -290,6 +290,10 @@ def test_the_kernel_applies_saves_and_remembers_the_fit(isolated_user_data):
         assert status["custom"] is True
         assert status["measured_at_unix"] is not None
         fitted = kernel.zone_fit["zones"]
+        reference = kernel.body_reference
+        assert status["body_reference_ready"]
+        assert reference["source"]["kind"] == "zone_fit"
+        assert all(len(reference["reaches"][zone]) >= 5 for zone in ("leftHand", "rightHand", "leftFoot", "rightFoot"))
     finally:
         kernel.close()
 
@@ -299,6 +303,8 @@ def test_the_kernel_applies_saves_and_remembers_the_fit(isolated_user_data):
     again = ControlKernel(Output())
     try:
         assert again.zone_fit["zones"] == fitted, "重启之后要还是量出来的那一份"
+        assert again.body_reference == reference
+        assert len(again.zone_editor()["reference"]["ranges"]) == 4
         again.reset_zone_fit()
         assert is_default(again.zone_fit)
     finally:
@@ -318,6 +324,26 @@ def test_cancelling_changes_nothing(isolated_user_data):
         kernel.cancel_zone_fit()
         assert kernel.status()["zone_fit"]["state"] == "cancelled"
         assert is_default(kernel.zone_fit)
+    finally:
+        kernel.close()
+
+
+def test_full_body_fit_does_not_accept_half_body_or_replace_saved_reference(isolated_user_data):
+    from motioncontrol.body_reference import make_reference
+    kernel = ControlKernel(Output())
+    kernel.width, kernel.height = W, H
+    old = make_reference([person()], W, H, {"kind": "test"})
+    kernel.body_reference = old
+    try:
+        session = ZoneFitSession({}, 0.0)
+        half = {name: point for name, point in person().items() if "ankle" not in name}
+        for index in range(90):
+            session.update(half, W, H, index/FPS)
+        assert session.phase == "stand"
+        assert session.issue == "full_body_hidden"
+        assert session.standing_poses == []
+        assert kernel.body_reference == old
+        assert not (isolated_user_data / "body_reference.json").exists()
     finally:
         kernel.close()
 

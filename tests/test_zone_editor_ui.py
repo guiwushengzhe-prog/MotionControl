@@ -26,6 +26,21 @@ def _open(ui, ident):
     return ui.page.locator(f'#zoneReferenceZones .zone[data-zone="{ident}"]')
 
 
+def test_add_region_without_full_reference_opens_fit_without_creating(mode_ui):
+    ui, _ = mode_ui
+    page = ui.page
+    before = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]["regions"]
+    page.route("**/api/zones/editor", lambda route: route.fulfill(json={"reference": {"ready": False}}))
+    page.click("#addRegionBtn")
+    sync_api.expect(page.locator("#tour")).to_be_visible()
+    sync_api.expect(page.locator("#tourStep")).to_contain_text("量身")
+    sync_api.expect(page.locator("#zoneEditBar")).to_be_hidden()
+    after = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]["regions"]
+    assert after == before
+    page.click("#tourCloseBtn")
+    assert ui.errors == []
+
+
 def test_reference_edit_cancel_has_no_layout_write_or_freeze(mode_ui):
     ui, _ = mode_ui
     region = _region(ui)
@@ -35,7 +50,7 @@ def test_reference_edit_cancel_has_no_layout_write_or_freeze(mode_ui):
     page.on("request", lambda request: writes.append(request.url)
             if request.method == "POST" and "/api/zones/" in request.url else None)
     zone = _open(ui, region["id"])
-    sync_api.expect(page.locator("#zoneEditHint")).to_contain_text("估算")
+    sync_api.expect(page.locator("#zoneEditHint")).to_contain_text("完整身体比例")
     assert page.locator("#zoneMoveHereBtn").count() == 0
     assert "调整时体感输出暂停" not in page.locator("#zoneEditBar").inner_text()
     zone.press("ArrowDown")
@@ -113,8 +128,10 @@ def test_reference_pointer_move_corner_resize_and_narrow_layout(mode_ui):
     assert initial
     page.mouse.move(initial["x"] + initial["width"] / 2, initial["y"] + initial["height"] / 2)
     page.mouse.down()
+    assert page.locator("#zoneReferenceZones .zone:visible").count() == 1
     page.mouse.move(initial["x"] + initial["width"] / 2 + 18, initial["y"] + initial["height"] / 2 + 12, steps=4)
     page.mouse.up()
+    assert page.locator("#zoneReferenceZones .zone:visible").count() > 1
     moved = zone.bounding_box()
     assert moved["x"] == pytest.approx(initial["x"] + 18, abs=1)
     assert moved["y"] == pytest.approx(initial["y"] + 12, abs=1)
@@ -122,6 +139,7 @@ def test_reference_pointer_move_corner_resize_and_narrow_layout(mode_ui):
     assert corner
     page.mouse.move(corner["x"] + corner["width"] / 2, corner["y"] + corner["height"] / 2)
     page.mouse.down()
+    assert page.locator("#zoneReferenceZones .zone:visible").count() == 1
     page.mouse.move(corner["x"] + corner["width"] / 2 + 15, corner["y"] + corner["height"] / 2 + 15, steps=4)
     page.mouse.up()
     resized = zone.bounding_box()

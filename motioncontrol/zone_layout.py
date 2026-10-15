@@ -5,6 +5,7 @@ import copy
 import math
 
 from motioncontrol.zone_fit import body_frame
+from motioncontrol.body_reference import reach_sectors
 
 
 def normalize_anchor(raw):
@@ -69,44 +70,27 @@ def editor_rect(rect):
     return result
 
 
-def editor_reference(pose, width, height, fit):
+def editor_reference(pose, width, height, fit, saved=None):
     source_pose = copy.deepcopy(pose or {})
     anchor = body_anchor(source_pose, width, height)
-    source = "current" if body_frame(source_pose, width, height) else "estimated"
     if anchor is None:
         anchor = {"x": .5, "y": .52, "ux": .20, "uy": .23}
-        source = "default"
-    ls, rs = source_pose.get("left_shoulder", {}), source_pose.get("right_shoulder", {})
-    direction = 1 if ls.get("x", 1) >= rs.get("x", 0) else -1
-    def at(x, y):
-        return {"x": anchor["x"] + x * anchor["ux"],
-                "y": anchor["y"] + y * anchor["uy"], "score": .5, "estimated": True}
-    result = {"nose": at(0, -1.45)}
-    ranges = []
-    for side, sign in (("left", direction), ("right", -direction)):
-        for part, x, y in (("ear", .16, -1.44), ("shoulder", .40, -1),
-                           ("elbow", .56, -.40), ("wrist", .57, .18),
-                           ("hip", .24, 0), ("knee", .25, .85), ("ankle", .26, 1.68)):
-            result[f"{side}_{part}"] = at(sign * x, y)
-        for kind, x, y, rx, ry in (("hand", .4, -1, 1.15, 1.15), ("foot", .24, 0, 1.1, 1.75)):
-            center = at(sign * x, y)
-            chain = ("shoulder", "elbow", "wrist") if kind == "hand" else ("hip", "knee", "ankle")
-            joints = [source_pose.get(f"{side}_{part}") for part in chain]
-            visible = all(isinstance(point, dict) and point.get("score", point.get("visibility", 0)) >= .42
-                          and 0 <= point.get("x", -1) <= 1 and 0 <= point.get("y", -1) <= 1 for point in joints)
-            if visible:
-                length = sum(math.hypot((a["x"] - b["x"]) * width, (a["y"] - b["y"]) * height)
-                             for a, b in zip(joints, joints[1:]))
-                if length > 10:
-                    rx = length / max(1, width) / anchor["ux"]
-                    ry = length / max(1, height) / anchor["uy"]
-            ranges.append({"side": side, "kind": kind, "cx": center["x"], "cy": center["y"],
-                           "rx": rx * anchor["ux"], "ry": ry * anchor["uy"], "source": "estimated",
-                           "basis": "landmarks" if visible else "body_proportions"})
-    for name, point in source_pose.items():
-        if (isinstance(point, dict) and point.get("score", point.get("visibility", 0)) >= .42
-                and all(isinstance(point.get(key), (int, float)) and math.isfinite(point[key]) for key in ("x", "y"))
-                and 0 <= point["x"] <= 1 and 0 <= point["y"] <= 1):
-            result[name] = {**point, "estimated": False}
-    return {"anchor": anchor, "pose": result, "source": source, "ranges": ranges,
+    result = copy.deepcopy(saved["pose"]) if saved else {}
+    return {"anchor": anchor, "pose": result, "source": "measured" if saved else "none",
+            "ready": saved is not None, "ranges": reach_sectors(saved) if saved else [],
+            "recording": copy.deepcopy(saved.get("source")) if saved else None,
             "measured_at_unix": fit.get("measured_at_unix")}
+
+
+def layout_reference_pose(pose, anchor, width, height):
+    # 仅为无人时提供可编辑的默认框位置，不绘制或输入识别。
+    if body_frame(pose or {}, width, height):
+        return pose
+    result = {}
+    for side, sign in (("left", 1), ("right", -1)):
+        for part, x, y in (("ear", .16, -1.44), ("shoulder", .40, -1),
+                           ("hip", .24, 0), ("ankle", .26, 1.68)):
+            result[f"{side}_{part}"] = {"x": anchor["x"] + sign*x*anchor["ux"],
+                                       "y": anchor["y"] + y*anchor["uy"], "score": .5}
+    result["nose"] = {"x": anchor["x"], "y": anchor["y"] - 1.45*anchor["uy"], "score": .5}
+    return result

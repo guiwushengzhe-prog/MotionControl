@@ -50,6 +50,10 @@ def server(tmp_path_factory):
     # 空目录现在默认开电脑来源；界面测试固定等手机，避免抢占真实摄像头和麦克风。
     (user / "general_settings.json").write_text(
         json.dumps({"body_source": "phone", "audio_source": "phone"}), encoding="utf-8")
+    from motioncontrol.body_reference import make_reference
+    from test_zone_fit import person
+    (user / "body_reference.json").write_text(json.dumps(
+        make_reference([person()], 640, 480, {"kind": "test"})), encoding="utf-8")
     port, admin = _free_port(), _free_port()
     env = {**os.environ, "MOTIONCONTROL_USER_DIR": str(user), "PYTHONUTF8": "1"}
     log_path = user / "server.log"
@@ -734,7 +738,7 @@ def test_the_start_page_says_when_the_feet_are_out_of_the_picture(ui):
 
 
 def test_the_fist_algorithm_can_be_switched_and_is_kept(ui):
-    """视角 → 手感里选握拳识别方式：切到旧版就存下，刷新后还是旧版，说明跟着变。"""
+    """握拳方式切换保存刷新；不再显示误导为必须硬件深度的说明。"""
     page = ui.page
     _go(page, "devices")
     page.click('#settingsNav [data-pane="view"]')
@@ -742,7 +746,7 @@ def test_the_fist_algorithm_can_be_switched_and_is_kept(ui):
     select.wait_for(state="visible")
     page.wait_for_function("!document.querySelector('#handMouseGripAlgorithm').disabled")
     assert select.input_value() == "steady"
-    assert "深度" in page.locator("#handMouseGripDesc").inner_text()
+    assert page.locator("#handMouseGripDesc").count() == 0
     select.select_option("classic")
     page.wait_for_function("document.querySelector('#handMouseSaveStatus').textContent.includes('已保存')")
     saved = json.loads(_get(ui.base + "/api/hand-mouse/config"))["hand_mouse"]["config"]
@@ -752,7 +756,7 @@ def test_the_fist_algorithm_can_be_switched_and_is_kept(ui):
     _go(page, "devices")
     page.click('#settingsNav [data-pane="view"]')
     page.wait_for_function("document.querySelector('#handMouseGripAlgorithm').value === 'classic'")
-    assert "10 月 10 日之前" in page.locator("#handMouseGripDesc").inner_text()
+    assert page.locator("#handMouseGripDesc").count() == 0
     select.select_option("steady")
     page.wait_for_function("document.querySelector('#handMouseSaveStatus').textContent.includes('已保存')")
     assert ui.errors == []

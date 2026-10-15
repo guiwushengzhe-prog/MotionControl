@@ -122,6 +122,27 @@ def test_native_closed_and_open_override_opposite_finger_predictions_and_loss_re
         kernel.close()
 
 
+def test_steady_grip_moves_and_releases_without_hardware_or_model_depth():
+    kernel, output = kernel_with_hand_mouse(grip_algorithm="steady")
+    def plain_hand(curl):
+        return [{key: value for key, value in point.items() if key != "z"}
+                for point in fingers(curl=curl)]
+    try:
+        kernel.handle_pose_map("computer_camera", body(), width=640, height=480,
+                               hands={"right": plain_hand(1)})
+        state = kernel.hand_mouse_controller.status()
+        assert state["engaged"] and state["grip_source"] == "hand"
+        kernel.handle_pose_map("computer_camera", body(wrist=(.85, .4)), width=640, height=480,
+                               hands={"right": plain_hand(1)})
+        assert output.applied[-1] != (0, 0)
+        kernel.handle_pose_map("computer_camera", body(wrist=(.85, .4)), width=640, height=480,
+                               hands={"right": plain_hand(2)})
+        assert not kernel.hand_mouse_controller.engaged
+        assert output.applied[-1] == (0, 0)
+    finally:
+        kernel.close()
+
+
 def test_point_source_change_recentres_held_hand_without_mouse_jump():
     kernel, output = kernel_with_hand_mouse()
     try:

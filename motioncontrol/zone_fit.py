@@ -28,6 +28,7 @@ import math
 import statistics
 import time
 from typing import Any
+from motioncontrol.body_reference import complete_pose, visible_pose
 
 ZONE_FIT_VERSION = 1
 
@@ -360,6 +361,9 @@ class ZoneFitSession:
         # 内核装上了哪几个握拳阈值（量完之后由内核填）。
         self.applied_grip: dict[str, float] = {}
         self.reference_pose: dict | None = None
+        self.standing_poses: list[dict] = []
+        self.reference_size = (640, 480)
+        self.reach_samples: dict[str, list[dict]] = {zone: [] for zone in ("leftHand", "rightHand", "leftFoot", "rightFoot")}
         self.foot_reference_poses: dict[str, dict] = {}
         self.applied_regions: list[str] = []
 
@@ -395,6 +399,16 @@ class ZoneFitSession:
             self._recent_nose.append((now, frame["nose"]["y"], frame["uy"]))
             self._recent_nose = [item for item in self._recent_nose if now - item[0] <= 2.0]
         phase = self.phases[self.phase_index]
+        if phase == "stand" and not complete_pose(pose_map):
+            self.standing_poses.clear()
+            self._stand.clear()
+            self.reached_at = None
+        if phase == "stand" and complete_pose(pose_map):
+            if self.reference_size != (width, height):
+                self.standing_poses.clear()
+            self.reference_size = (width, height)
+            self.standing_poses.append(visible_pose(pose_map))
+            self.standing_poses = self.standing_poses[-60:]
         grip = self._grip_reading(phase, grips) if phase not in BODY_PHASES else None
         seen = grip is not None if phase not in BODY_PHASES else (
             frame is not None and self._phase_can_see(phase, pose_map or {}, frame))
@@ -403,6 +417,8 @@ class ZoneFitSession:
             if now - self.lost_since >= LOST_ISSUE_S:
                 if phase not in BODY_PHASES:
                     self.issue = "hand_hidden"
+                elif phase == "stand":
+                    self.issue = "full_body_hidden"
                 elif frame is not None and phase in ("leftFoot", "rightFoot"):
                     self.issue = "feet_hidden"
                 else:
@@ -432,7 +448,7 @@ class ZoneFitSession:
 
     def _phase_can_see(self, phase: str, pose_map: dict, frame: dict) -> bool:
         if phase == "stand":
-            return frame["head_center"] is not None and frame["nose"] is not None
+            return complete_pose(pose_map) and frame["head_center"] is not None
         if phase == "hands":
             return frame["head_center"] is not None
         if phase in ("leftFoot", "rightFoot"):
@@ -478,6 +494,7 @@ class ZoneFitSession:
             sample = self._hand_sample(pose_map, frame, zone)
             if sample is not None:
                 self._hands[zone].append(sample)
+                self._record_reach(pose_map, frame, zone)
         if self.reached_at is None and all(self.hand_reached(zone) for zone in self._hands
                                           if zone not in self.preserved_zones):
             self.reached_at = now
@@ -507,12 +524,21 @@ class ZoneFitSession:
     def _measure_foot(self, zone: str, pose_map: dict, frame: dict, now: float) -> None:
         sample = self._foot_sample(pose_map, frame, zone)
         if sample is not None:
+            self._record_reach(pose_map, frame, zone)
             if not self._feet or sample[0] <= min(item[0] for item in self._feet):
                 self.foot_reference_poses[zone] = copy.deepcopy(pose_map)
             self._feet.append(sample)
         rest = self._foot_rest(zone)
         if self.reached_at is None and rest is not None and any(item[0] - rest >= FOOT_REACH_MIN for item in self._feet):
             self.reached_at = now
+
+    def _record_reach(self, pose_map, frame, zone):
+        side = "left" if zone.startswith("left") else "right"
+        point = visible_pose(pose_map).get(f"{side}_{'wrist' if zone.endswith('Hand') else 'ankle'}")
+        if point:
+            self.reach_samples[zone].append({"x": (point["x"]-frame["hip"]["x"])/frame["ux"],
+                                             "y": (point["y"]-frame["hip"]["y"])/frame["uy"]})
+            self.reach_samples[zone] = self.reach_samples[zone][-120:]
 
     def _measure_jump(self, pose_map: dict, frame: dict, now: float) -> None:
         if self._jump_base is None:

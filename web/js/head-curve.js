@@ -7,12 +7,23 @@ let latest={},plotSignature='',dragging=null;
 
 function thresholds(){
   const noise=Math.max(0,Number(latest.noise_tilt_deg)||0),scale=clamp(Number(latest.motion_deadzone_scale)||1,1,1.2);
+  const ready=!!(latest.horizontal_calibrated??latest.calibrated)&&latest.noise_tilt_deg!=null&&Number.isFinite(Number(latest.noise_tilt_deg));
+  const responsive=head.horizontalAlgorithm==='head_responsive',floor=responsive?3:2,setting=SPAN*head.deadzone*(responsive?1.5:1);
+  const limit=floor>=Math.max(setting,3*noise)-1e-9?'minimum':3*noise>=setting-1e-9?'noise':'setting';
   if(head.horizontalAlgorithm==='head_responsive'){
-    const stop=Math.max(3,SPAN*head.deadzone*1.5,3*noise)*scale;
-    return {start:stop+Math.max(.45,.15*noise)*scale,stop};
+    const stop=Math.max(floor,setting,3*noise)*scale;
+    return {start:stop+Math.max(.45,.15*noise)*scale,stop,ready,limit,scale};
   }
-  const start=Math.max(2,SPAN*head.deadzone,3*noise)*scale;
-  return {start,stop:start};
+  const start=Math.max(floor,setting,3*noise)*scale;
+  return {start,stop:start,ready,limit,scale};
+}
+
+function renderThresholdNote({start,stop,ready,limit,scale},visible){
+  if(!visible){setText($('#headThresholdStatus'),'转动超过中心稳定区时开始转向；调大更稳，调小更灵敏。');return}
+  if(!ready){setText($('#headThresholdStatus'),'校准后显示实际起转角度。');return}
+  const angle=`侧倾超过 ${start.toFixed(1)}° 开始转向${head.horizontalAlgorithm==='head_responsive'?`，回到 ${stop.toFixed(1)}° 内停止`:''}`;
+  const reason=limit==='noise'?'当前受校准防抖限制，继续调低滑杆不会更灵敏':limit==='minimum'?'已到最低起转角度':'调大更稳，调小更灵敏';
+  setText($('#headThresholdStatus'),`${angle}；${reason}。${scale>1?'动作防抖暂时提高起转角度。':''}`);
 }
 
 export function horizontalCurveValue(angle,start,stop,gamma,speed){
@@ -26,12 +37,13 @@ export function renderHeadCurve(status){
   const panel=$('#headCurvePanel');if(!panel)return;
   const choice=$('#viewHorizontalSource')?.value;
   const visible=['roll_tilt','head_responsive'].includes(choice||head.horizontalAlgorithm);
+  const threshold=thresholds(),{start,stop,ready}=threshold;
+  renderThresholdNote(threshold,visible);
   setProperty(panel,'hidden',!visible);if(!visible)return;
   const gamma=clamp(Number(head.horizontalCurveGamma)||2,1,3),speed=Math.max(20,Number(head.sensitivityX)||58);
-  const {start,stop}=thresholds(),shownStart=Math.min(SPAN,start);
-  const minimum=SPAN*head.deadzone,noise=3*Math.max(0,Number(latest.noise_tilt_deg)||0);
-  const noiseLimited=noise>Math.max(head.horizontalAlgorithm==='head_responsive'?3:2,minimum*(head.horizontalAlgorithm==='head_responsive'?1.5:1));
-  setText($('#headThresholdStatus'),`${Math.round(head.deadzone*100)}% 是最低稳定区设置 → 当前约 ${start.toFixed(1)}° 起转${noiseLimited?'（当前受校准防抖门槛限制，小幅调整可能不改变角度）':'；滑杆越大，起转门槛越高'}。`);
+  const shownStart=Math.min(SPAN,start);
+  setText($('#headCurveGammaStatus'),gamma===1?'起转后，转动角度越大，速度按比例增加。':'小角度转得慢，大角度提速快；数值越大，前后差别越明显。最高速度不变。');
+  setText($('#headCurveSummary'),!ready?'校准后显示实际起转角度；灰色为起转前稳定区预览。':start>=SPAN?'当前稳定区已覆盖 18° 量程，图示范围内不会启动转向。':`约 ${start.toFixed(1)}° 起转，18° 达到 ${speed}% 设定最高速度；灰色为起转前稳定区。`);
   const signature=JSON.stringify([gamma,speed,start,stop]);
   if(signature!==plotSignature){
     plotSignature=signature;
@@ -53,7 +65,6 @@ export function renderHeadCurve(status){
       setAttribute(handle,'aria-valuenow',gamma.toFixed(2));
       setAttribute(handle,'aria-valuetext',`弯曲程度 ${gamma.toFixed(2)}，左右同步`);
     }
-    setText($('#headCurveSummary'),start>=SPAN?'当前稳定区已覆盖 18° 量程，图示范围内不会启动转向。':`横轴：侧倾角度 · 纵轴：转向速度。约 ${start.toFixed(1)}° 起转，18° 达到 ${speed}% 目标速度；灰色为起转前稳定区。`);
   }
   const disabled=$('#headCurveGamma').disabled;
   setProperty($('#resetHeadCurve'),'disabled',disabled);

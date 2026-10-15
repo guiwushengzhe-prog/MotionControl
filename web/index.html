@@ -266,7 +266,7 @@
 <div class="row head-only"><label class="row-main" for="deadzone"><span class="name">中心稳定区</span><span class="sub" id="headThresholdStatus"></span></label><div class="range-in"><input aria-label="中心稳定区" id="deadzone" max="25" min="3" type="range" value="10"/><b id="deadzoneValue">10%</b></div></div>
 <div class="head-curve head-only" id="headCurvePanel">
 <div class="head-curve-heading"><span>左右加速曲线</span><button class="btn link" id="resetHeadCurve" type="button">恢复推荐</button></div>
-<p class="head-curve-help">上下拖动蓝点，或用下方滑杆调整；左右同步。</p>
+<p class="head-curve-help">上下拖动蓝点调整，左右同步。</p>
 <svg aria-label="侧倾角度与转向速度曲线" class="head-curve-plot" id="headCurvePlot" role="group" viewBox="0 0 640 280">
 <title>横轴为侧倾角度，纵轴为转向速度；灰色区域内不启动转向</title>
 <rect class="head-curve-deadzone" id="headCurveDeadzone" x="300" y="24" width="40" height="216"/>
@@ -281,12 +281,12 @@
 <circle aria-label="拖动调整左侧加速曲线" aria-valuemax="3" aria-valuemin="1" aria-valuenow="2" class="head-curve-handle" data-curve-side="-1" r="9" role="slider" tabindex="0"/>
 <circle aria-label="拖动调整右侧加速曲线" aria-valuemax="3" aria-valuemin="1" aria-valuenow="2" class="head-curve-handle" data-curve-side="1" r="9" role="slider" tabindex="0"/>
 </svg>
-<div class="row"><label class="row-main" for="headCurveGamma"><span class="name">加速弯曲</span><span class="sub">越大越便于小幅微调，接近两端时提速越明显</span></label><div class="range-in"><input aria-label="左右加速曲线弯曲程度" id="headCurveGamma" max="3" min="1" step="0.05" type="range" value="2"/><b id="headCurveGammaValue">2.00</b></div></div>
-<p class="head-curve-help" id="headCurveSummary">灰色区为实际起转门槛，曲线显示起转后的目标速度。</p>
+<div class="row"><label class="row-main" for="headCurveGamma"><span class="name">加速弯曲</span><span class="sub" id="headCurveGammaStatus"></span></label><div class="range-in"><input aria-label="左右加速曲线弯曲程度" id="headCurveGamma" max="3" min="1" step="0.05" type="range" value="2"/><b id="headCurveGammaValue">2.00</b></div></div>
+<p class="head-curve-help" id="headCurveSummary">校准后显示实际起转角度。</p>
 </div>
 <div class="row hand-only"><label class="row-main" for="handMouseSensitivity">握拳灵敏度</label><div class="range-in"><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"/><b id="handMouseSensitivityValue">—</b></div></div>
 <div class="row hand-only"><label class="row-main" for="handMouseDeadzone"><span class="name">握拳中心死区</span><span class="sub">握住后手在这个范围内不转</span></label><div class="range-in"><input id="handMouseDeadzone" max="0.6" min="0" step="0.02" type="range"/><b id="handMouseDeadzoneValue">—</b></div></div>
-<div class="row hand-only"><label class="row-main" for="handMouseGripAlgorithm"><span class="name">握拳识别方式</span><span class="sub" id="handMouseGripDesc"></span></label><span class="sel"><select id="handMouseGripAlgorithm"><option value="steady">新版</option><option value="classic">旧版</option></select></span></div>
+<div class="row hand-only"><label class="row-main" for="handMouseGripAlgorithm"><span class="name">握拳识别方式</span></label><span class="sel"><select id="handMouseGripAlgorithm"><option value="steady">新版</option><option value="classic">旧版</option></select></span></div>
 <div class="row head-only"><label class="row-main" for="bodyMotionGuard"><span class="name">做动作时稳住视角</span><span class="sub">身体晃动时扩大稳定区，明显转头仍可转向</span></label><input class="switch" id="bodyMotionGuard" type="checkbox"/></div>
 </div>
 <p class="group-foot" hidden="" id="handMouseStatus"></p>

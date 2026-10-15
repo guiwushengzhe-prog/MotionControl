@@ -105,6 +105,7 @@ CLASSIFICATION = {
     "pose_actions": USER_CONFIGURATION,
     "scene_layout": SPATIAL_CALIBRATION,
     "scene_reference": SPATIAL_CALIBRATION,
+    "body_reference": SPATIAL_CALIBRATION,
     # 运动记录和身体数据是"你的"，换台电脑要还在——但不走配置包：它有自己的接口
     # （/api/v1/fitness），只传摘要、按锻炼合并，见 motioncontrol_shared.fitness_schema。
     "fitness": USER_CONFIGURATION,
