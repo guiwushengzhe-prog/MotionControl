@@ -351,7 +351,7 @@ function intentDoneSay(rec = {}) {
   const short = steps.filter(step => !step.skipped && step.target && step.count < step.target).map(step => step.name);
   if (!steps.length || skipped.length === steps.length) return '一项都没录到';
   const tail = skipped.length ? ` · ${skipped.slice(0, 3).join('、')}${skipped.length > 3 ? ' 等' : ''}跳过了` : short.length ? ` · ${short[0]}没做够次数，也存下了` : '';
-  return `✓ 录好了，体检报告在「设置 → 身体识别」${tail}`;
+  return `✓ 录好了，体检报告在「设置 → 体感 → 身体识别」${tail}`;
 }
 
 const EXTRAS = [

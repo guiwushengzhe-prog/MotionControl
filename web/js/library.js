@@ -8,6 +8,7 @@ import {S,gameProfile} from './state.js';
 
 export let poseLibrary=[];
 export let customPoses=[];
+export let removedBuiltinPoses=[];
 
 /* --- 自定义姿势 ---------------------------------------------------------
  * 摆一个姿势录下来，之后做出同样的动作就触发。
@@ -300,7 +301,15 @@ function renderCustomPoses() {
     adjust.textContent = '调整';
     const open = expandedPoses.has(item.id);
     adjust.setAttribute('aria-expanded', String(open));
-    source.append(origin, adjust);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn pose-library-remove';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => removeCustomPose(item));
+    const sourceActions = document.createElement('span');
+    sourceActions.className = 'pose-library-source-actions';
+    sourceActions.append(adjust, remove);
+    source.append(origin, sourceActions);
 
     const panel = document.createElement('div');
     panel.className = 'custom-pose-panel';
@@ -417,15 +426,9 @@ function renderCustomPoses() {
     toggle.addEventListener('change', () => updateCustomPose(item.id, { enabled: toggle.checked }));
     enabled.append('启用', toggle);
 
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'btn link danger';
-    remove.textContent = '删除';
-    remove.addEventListener('click', () => removeCustomPose(item));
-
     const actions = document.createElement('div');
     actions.className = 'custom-pose-actions';
-    actions.append(enabled, remove);
+    actions.append(enabled);
 
     const hint = document.createElement('p');
     hint.className = 'fineprint';
@@ -511,21 +514,25 @@ export async function refreshPoseLibrary({rebuild=true}={}) {
   });
   const data = await api('/api/pose/library');
   poseLibrary = data.library || [];
+  removedBuiltinPoses = data.removed_builtin || [];
   ratingNames = data.rating_names || ratingNames;
   bodyPartNames = data.body_part_names || bodyPartNames;
   poseLibraryNames.cloud = {...poseLibraryNames.cloud, ...(data.cloud_names || {})};
   poseLibraryNames.retired = data.retired || {};
   if (data.error) poseCloudSay(data.error, 'error');
   renderPoseLibrary();
+  renderBuiltinRestore();
   // 映射表可能在动作库读回来之前就画好了，那时下载的动作还不在触发器里。
   if(rebuild&&gameProfile.selected&&poseLibrary.some(item=>item.source==='cloud'))await configurationOperation(async()=>{renderProfileBindingRows()});
   paintPoseMissingNotice();
 }
 
 /** 下载或删掉一个动作之后：映射表里多一行或少一行。先把没存的改动落盘，再重画。 */
-async function afterPoseLibraryChange(library) {
-  poseLibrary = library || poseLibrary;
+async function afterPoseLibraryChange(data) {
+  poseLibrary = data.library || poseLibrary;
+  removedBuiltinPoses = data.removed_builtin || [];
   renderPoseLibrary();
+  renderBuiltinRestore();
   await saveProfileBindings();
   renderProfileBindingRows();
   paintPoseMissingNotice();
@@ -623,20 +630,20 @@ function renderPoseLibrary() {
     how.className = 'pose-library-how';
     how.textContent = item.how;
 
-    // 从哪来：自带的删不掉；下载的写第几版，能删。
+    // 自带、下载的动作都能删；自带的可从下面的官方动作库直接恢复。
     const source = document.createElement('div');
     source.className = 'pose-library-source';
     if (item.source === 'cloud') {
       source.append(`官方 · 第 ${item.revision} 版`);
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'btn pose-library-remove';
-      remove.textContent = '删除';
-      remove.addEventListener('click', () => removePoseAction(item));
-      source.append(remove);
     } else {
       source.textContent = '自带';
     }
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn pose-library-remove';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => removePoseAction(item));
+    source.append(remove);
     // 会扫过哪些框不写在卡片上：绑了键以后，那个框「更多」里会写。
     card.append(poseDemo(item.demo), poseCardBody(head, how, poseRatings(item)), source);
     poseLibraryEl.appendChild(card);
@@ -646,13 +653,14 @@ function renderPoseLibrary() {
 
 async function removePoseAction(item) {
   const bound = triggerMapped(item.trigger);
-  const warning = bound ? '这个游戏里它绑着键，删掉后那一行会失效，直到重新下载。' : '以后要用再从官方动作库下载。';
+  const restore = item.source === 'builtin' ? '恢复' : '下载';
+  const warning = bound ? `删掉后停止触发，已有按键映射保留。以后可从官方动作库${restore}。` : `以后要用再从官方动作库${restore}。`;
   if (!confirm(`删掉「${item.name}」？${warning}`)) return;
   try {
     await configurationOperation(async()=>{
     const data = await post('/api/pose/remove', { id: item.id });
     poseCloudSay(`已删掉「${item.name}」`);
-    await afterPoseLibraryChange(data.library);
+    await afterPoseLibraryChange(data);
     });
   } catch (error) { poseCloudSay(error.message, 'error'); }
 }
@@ -679,7 +687,53 @@ async function openPoseCloud() {
   const button = document.getElementById('poseCloudBtn');
   if (panel) panel.hidden = false;
   button?.setAttribute('aria-expanded', 'true');
+  renderBuiltinRestore();
   await refreshPoseCloud();
+}
+
+function renderBuiltinRestore() {
+  const panel = document.getElementById('poseCloudPanel');
+  if (!panel) return;
+  let list = document.getElementById('poseBuiltinRestore');
+  if (!list) {
+    list = document.createElement('div');
+    list.id = 'poseBuiltinRestore';
+    list.className = 'pose-library';
+    list.setAttribute('aria-label', '已删除的自带动作');
+    panel.insertBefore(list, poseCloudEl);
+  }
+  list.hidden = !removedBuiltinPoses.length;
+  list.replaceChildren();
+  for (const item of removedBuiltinPoses) {
+    const card = document.createElement('div');
+    card.className = 'pose-library-item';
+    card.dataset.id = item.id;
+    const name = document.createElement('span');
+    name.className = 'pose-library-name';
+    name.textContent = item.name;
+    const how = document.createElement('div');
+    how.className = 'pose-library-how';
+    how.textContent = item.how;
+    const source = document.createElement('div');
+    source.className = 'pose-library-source';
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'btn primary';
+    restore.textContent = '恢复';
+    restore.addEventListener('click', async () => {
+      restore.disabled = true;
+      try {
+        await configurationOperation(async () => {
+          const data = await post('/api/pose/builtin/restore', {id: item.id});
+          await afterPoseLibraryChange(data);
+          notice(`已恢复「${item.name}」`);
+        });
+      } catch (error) { restore.disabled = false; notice(error.message); }
+    });
+    source.append('自带 · 已删除', restore);
+    card.append(poseDemo(item.demo), poseCardBody(name, how, poseRatings(item)), source);
+    list.appendChild(card);
+  }
 }
 
 async function refreshPoseCloud(background=false) {
@@ -792,7 +846,7 @@ async function installPoseAction(item, button) {
     item.installed_revision = item.revision;
     item.update_available = false;
     poseCloudSay(`「${item.name}」已下载，点它卡片上的「加到映射」绑键`);
-    await afterPoseLibraryChange(data.library);
+    await afterPoseLibraryChange(data);
     });
   } catch (error) {
     button.disabled = false;
@@ -815,7 +869,7 @@ export function paintPoseMissingNotice() {
     const items = gameProfile.selected?.bindings?.[group] || {};
     for (const [id, binding] of Object.entries(items)) {
       if (!binding || binding.disabled || !binding.action?.target) continue;
-      if (id.startsWith('custom') || known.has(`${prefix}.${id}`) || id in poseLibraryNames.retired) continue;
+      if (id.startsWith('custom') || known.has(`${prefix}.${id}`) || id in poseLibraryNames.retired || removedBuiltinPoses.some(item => item.id === id)) continue;
       missing.push(poseLibraryNames.cloud[id] || MOTION_CONFLICT_NAMES[id] || id);
     }
   }

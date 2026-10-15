@@ -144,7 +144,7 @@ def mode_ui(ui):
 def _new_mode(page, name):
     page.once("dialog", lambda dialog: dialog.accept(name))
     page.click("#addModeBtn")
-    page.wait_for_function("name => document.querySelector('#currentModeName').textContent === name && document.querySelector('#modeEditStatus').textContent.includes('正在编辑并使用「' + name + '」')", arg=name)
+    page.wait_for_function("name => document.querySelector('#currentModeName').textContent === name && document.querySelector('#modeTabs [aria-selected=true]').textContent.includes(name) && document.querySelector('#modeEditStatus').hidden", arg=name)
     return page.locator('#modeTabs [aria-selected="true"]').get_attribute("data-mode-id")
 
 
@@ -243,7 +243,7 @@ def test_mode_targets_shared_voice_rename_delete_and_reset(mode_ui):
     page.click("#modeMenuBtn")
     page.once("dialog", lambda dialog: dialog.accept("驾驶"))
     page.click("#renameModeBtn")
-    page.wait_for_function("document.querySelector('#modeEditStatus').textContent.includes('「驾驶」')")
+    page.wait_for_function("currentModeName.textContent === '驾驶' && modeEditStatus.hidden")
     sync_api.expect(row.locator(".binding-target")).to_contain_text("切到 驾驶")
     _go(page, "devices")
     page.click('[data-pane="voice"]')
@@ -289,7 +289,7 @@ def test_background_mode_switch_saves_old_draft_before_following(mode_ui):
     with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/overrides") and r.request.method == "POST"):
         pending[0].continue_()
     page.unroute("**/api/game-profiles/overrides")
-    page.wait_for_function("modeEditStatus.textContent === '正在编辑并使用「骑车」'")
+    page.wait_for_function("currentModeName.textContent === '骑车' && document.querySelector('#modeTabs [aria-selected=true]').textContent.includes('骑车') && modeEditStatus.hidden")
     sync_api.expect(row).to_have_value("E")
     old = page.request.get(ui.base + "/api/game-profiles/selected?mode=" + drive).json()["profile"]
     current = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]
@@ -322,7 +322,7 @@ def test_mode_selection_stops_when_draft_save_fails(mode_ui):
     page.click("#retryProfileSaveBtn")
     page.wait_for_function("profileSaveStatus.textContent === '已保存'")
     page.click('#modeTabs [data-mode-id="DEFAULT"]')
-    page.wait_for_function("currentModeName.textContent === '默认' && modeEditStatus.textContent === '正在编辑并使用「默认」'")
+    page.wait_for_function("currentModeName.textContent === '默认' && modeEditStatus.hidden")
     assert len(changes) == 1
     assert ui.errors == []
 
@@ -343,6 +343,82 @@ def _set_region_key(page, row, key):
     with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/overrides") and r.request.method == "POST"):
         row.locator(".binding-target").press(key)
     page.wait_for_function("profileSaveStatus.textContent === '已保存'")
+
+
+def test_region_mapping_delete_restore_and_compact_add_controls(mode_ui):
+    ui, _ = mode_ui
+    page = ui.page
+    sync_api.expect(page.locator('#profileMeta')).to_be_hidden()
+    sync_api.expect(page.locator('#modeEditStatus')).to_be_hidden()
+    assert page.locator('#addModeBtn').evaluate("el=>getComputedStyle(el).borderRadius") == page.locator('#modeTabs button').first.evaluate("el=>getComputedStyle(el).borderRadius")
+    add = page.locator('#addRegionBtn').bounding_box()
+    mappings = page.locator('#profileBindingRows').bounding_box()
+    assert abs(add['width'] - mappings['width']) < 2 and add['height'] < 80
+    assert '独立区域可单独设键' not in page.locator('#zoneActions').inner_text()
+    row = page.locator('.binding-row[data-trigger="zone.leftHand"]')
+    row.locator('.binding-remove').click()
+    sync_api.expect(row).to_have_count(0)
+    profile = page.request.get(ui.base + '/api/game-profiles/selected').json()['profile']
+    assert profile['overrides']['zone.leftHand'] is None
+    page.reload()
+    page.wait_for_function("currentGameName.textContent === '界面模式测试'")
+    _go(page, 'games')
+    sync_api.expect(row).to_have_count(0)
+    page.click('#addRegionBtn')
+    page.locator('#regionAddOptions').get_by_role('button', name='＋ 左手区', exact=True).click()
+    sync_api.expect(row).to_be_visible()
+    _set_region_key(page, row, 'H')
+    page.reload()
+    page.wait_for_function("currentGameName.textContent === '界面模式测试'")
+    _go(page, 'games')
+    sync_api.expect(row.locator('.binding-target')).to_have_value('H')
+    assert ui.errors == []
+
+
+def test_game_voice_add_thirteenth_delete_and_reuse_slot(mode_ui):
+    ui, _ = mode_ui
+    page = ui.page
+    page.click('#mapTabs [data-tab="voice"]')
+    sync_api.expect(page.locator('[data-tab-caption="voice"]')).to_have_count(0)
+    assert page.locator('.binding-group[data-group="voice"] .binding-row:visible').count() == 12
+    page.click('#addGameVoiceBtn')
+    row = page.locator('.binding-row[data-trigger="voice.game.profile_slot_13"]')
+    sync_api.expect(row).to_be_visible()
+    row.locator('.voice-trigger-phrase').fill('快速整理背包')
+    _set_region_key(page, row, 'T')
+    commands = page.request.get(ui.base + '/api/voice/commands').json()['commands']
+    assert any(item['id'] == 'game.profile_slot_13' and item['phrase'] == '快速整理背包' for item in commands)
+    page.reload()
+    page.wait_for_function("currentGameName.textContent === '界面模式测试'")
+    _go(page, 'games')
+    page.click('#mapTabs [data-tab="voice"]')
+    sync_api.expect(row.locator('.voice-trigger-phrase')).to_have_value('快速整理背包')
+    sync_api.expect(row.locator('.binding-target')).to_have_value('T')
+    first = page.locator('.binding-row[data-trigger="voice.game.profile_slot_01"]')
+    first.locator('.binding-remove').click()
+    sync_api.expect(first).to_be_hidden()
+    page.reload()
+    page.wait_for_function("currentGameName.textContent === '界面模式测试'")
+    _go(page, 'games')
+    page.click('#mapTabs [data-tab="voice"]')
+    sync_api.expect(first).to_be_hidden()
+    page.click('#addGameVoiceBtn')
+    sync_api.expect(first).to_be_visible()
+    first.locator('.voice-trigger-phrase').fill('打开补给箱')
+    _set_region_key(page, first, 'U')
+    profile = page.request.get(ui.base + '/api/game-profiles/selected').json()['profile']
+    assert profile['bindings']['voice']['game.profile_slot_01']['phrase'] == '打开补给箱'
+    assert profile['bindings']['voice']['game.profile_slot_13']['action']['target'] == 'T'
+    row.locator('.binding-remove').click()
+    sync_api.expect(row).to_be_hidden()
+    page.click('#addGameVoiceBtn')
+    sync_api.expect(row).to_be_visible()
+    row.locator('.voice-trigger-phrase').fill('快速补充弹药')
+    _set_region_key(page, row, 'Y')
+    profile = page.request.get(ui.base + '/api/game-profiles/selected').json()['profile']
+    assert profile['bindings']['voice']['game.profile_slot_13']['phrase'] == '快速补充弹药'
+    assert profile['bindings']['voice']['game.profile_slot_13']['action']['target'] == 'Y'
+    assert ui.errors == []
 
 
 def test_custom_region_add_map_rename_and_reload(mode_ui):
@@ -537,7 +613,7 @@ def test_changing_game_is_one_searchable_list(ui):
 def test_settings_sections_and_contextual_groups(ui):
     page = ui.page
     _go(page, "devices")
-    for pane in ("view", "body", "voice", "lab", "devices"):
+    for pane in ("view", "voice", "lab", "devices"):
         page.click(f'#settingsNav [data-pane="{pane}"]')
         visible = page.eval_on_selector_all(".settings-pane", "els => els.filter(el => !el.hidden).map(el => el.dataset.pane)")
         assert visible == [pane]
@@ -546,6 +622,8 @@ def test_settings_sections_and_contextual_groups(ui):
     assert page.locator("#personalVoicePanel").is_visible()
     assert page.locator("#macroPanel").is_visible()
     assert page.locator('#settingsNav [data-pane="macro"]').count() == 0
+    assert page.locator('#settingsNav [data-pane="body"]').count() == 0
+    assert page.locator('#settingsNav [data-pane="view"]').inner_text() == "体感"
     assert page.locator("#headAlgorithm, #cameraBackend").count() == 0
     page.click('#settingsNav [data-pane="devices"]')
     # 小入口始终可用，二维码按需展开。
@@ -620,14 +698,15 @@ def test_the_start_page_follows_what_is_happening(ui):
 
 
 def test_the_start_page_says_when_the_feet_are_out_of_the_picture(ui):
-    """踏步绑了键、脚踝出了画面：准备卡片那一步点名，告诉人往后站。"""
+    """脚踝出画时只显示简短提示，重新入镜后恢复已识别。"""
     page = ui.page
     bindings = {"motion.march": {"action": {"type": "keyboard", "target": "W"}}}
     _fake_live_state(page, feet_in_view=False, effective_bindings=bindings)
     step = page.locator('.checklist [data-step="pose"]')
     # 还没认出人时这一步也是警告样式，所以等的是提示文字本身。
     shows = "document.querySelector('.checklist [data-step=\"pose\"]').textContent.includes('%s')"
-    page.wait_for_function(shows % "往后站")
+    page.wait_for_function(shows % "脚没入镜")
+    assert "踏步和脚区认不出" not in step.inner_text()
     assert "warn" in step.get_attribute("class")
     page.unroute("**/api/kernel/status")
     _fake_live_state(page, feet_in_view=True, effective_bindings=bindings)

@@ -429,6 +429,10 @@ def _execute_voice_action(action: dict) -> dict:
         # 从后台命令队列来的「切换模式」（区域、动作、姿势或口令触发的）。内核分发时
         # 已经记过身体触发，口令在排队前记过，这里只管切。
         return switch_game_mode(action.get("target", ""))
+    command_id = str(action.get("command_id", "")).strip()
+    binding = KERNEL.control_bindings.get(f"voice.{command_id}") if command_id else None
+    if isinstance(binding, dict) and binding.get("disabled"):
+        return {"executed": False, "reason": "当前游戏未启用这条语音"}
     _note_voice_trigger(action)
     if str(action.get("type", "")).lower() == "mode":
         # 通用口令选了「切换模式」。
@@ -883,8 +887,8 @@ CLOUD_POSE_LIBRARY_ENDPOINT = ""
 def _apply_pose_actions() -> None:
     """下载或删掉一个动作之后：动作库登记、内核识别一起换。"""
     docs = POSE_ACTIONS.docs()
-    pose_library.register(docs)
-    KERNEL.configure_pose_actions(docs)
+    pose_library.register(docs, POSE_ACTIONS.disabled_builtin)
+    KERNEL.configure_pose_actions(docs, POSE_ACTIONS.disabled_builtin)
 
 
 _apply_pose_actions()
@@ -1313,12 +1317,19 @@ def voice_command_catalog() -> dict:
     # 口令现在做什么，跟着当前模式。
     profile = _active_profile() if "PROFILES" in globals() else {"bindings": {}}
     voice_bindings = profile.get("bindings", {}).get("voice", {})
-    base_phrases = {item["id"]: item.get("phrase", "") for item in VOICE._commands_for({})}
+    base_commands = {item["id"]: item for item in VOICE._commands_for({})}
+    for number in range(1, 10):
+        old_id, canonical_id = f"game.profile_slot_{number}", f"game.profile_slot_{number:02d}"
+        if old_id in voice_bindings and canonical_id not in voice_bindings and canonical_id in base_commands:
+            base_commands[old_id] = {**base_commands.pop(canonical_id), "id": old_id}
+    base_phrases = {ident: item.get("phrase", "") for ident, item in base_commands.items()}
+    catalog_commands = {**base_commands, **{item["id"]: item for item in VOICE.command_registry.values()}}
     commands = []
     # Use the same registry VoiceService actually parses.  Keeping a second UI
     # catalog here allowed a phrase to be shown even when the recognizer did
     # not own it, or to display a stale default after the vocabulary changed.
-    for item in VOICE.command_registry.values():
+    # 删除的旧槽位仍提供元信息供界面恢复，识别端只注册当前模式启用的短语。
+    for item in catalog_commands.values():
         if not isinstance(item, dict) or not item.get("phrase"):
             continue
         kind = str(item.get("kind", ""))
@@ -1849,6 +1860,8 @@ class AdminHandler(_BaseHandler):
             self._send_json({
                 "version": VERSION,
                 "library": pose_library.library_payload(),
+                "removed_builtin": [pose_library.entry_payload(entry) for entry in pose_library.BUILTIN
+                                    if entry["id"] in POSE_ACTIONS.disabled_builtin],
                 "rating_names": pose_library.RATING_NAMES,
                 "body_part_names": pose_library.BODY_PART_NAMES,
                 "retired": pose_library.RETIRED,
@@ -2194,7 +2207,7 @@ class AdminHandler(_BaseHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
-        if route in ("/api/pose/cloud/install", "/api/pose/remove"):
+        if route in ("/api/pose/cloud/install", "/api/pose/remove", "/api/pose/builtin/restore"):
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "pose library is loopback-only"}, 403)
                 return
@@ -2206,11 +2219,15 @@ class AdminHandler(_BaseHandler):
                 with PROFILE_UPDATE_LOCK:
                     if downloaded is not None:
                         POSE_ACTIONS.install(*downloaded, expected_id=ident)
+                    elif route == "/api/pose/builtin/restore":
+                        POSE_ACTIONS.restore_builtin(ident)
                     elif not POSE_ACTIONS.remove(ident):
-                        self._send_json({"ok": False, "error": "这个动作没有下载过"}, 404)
+                        self._send_json({"ok": False, "error": "这个动作不在本机动作库里"}, 404)
                         return
                     _apply_pose_actions()
-                self._send_json({"ok": True, "library": pose_library.library_payload()})
+                self._send_json({"ok": True, "library": pose_library.library_payload(),
+                                 "removed_builtin": [pose_library.entry_payload(entry) for entry in pose_library.BUILTIN
+                                                     if entry["id"] in POSE_ACTIONS.disabled_builtin]})
             except CloudError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 502)
             except PoseDownloadError as exc:

@@ -58,6 +58,8 @@ DEFAULT_MODE_NAME = "默认"
 # 默认模式之外最多再加几个。
 MAX_GAME_MODES = 8
 MODE_NAME_MAX = 12
+MAX_GAME_VOICE_SLOTS = 64
+GAME_VOICE_SLOT_PREFIX = "game.profile_slot_"
 _MODE_ID_RE = re.compile(r"^mode-[0-9a-f]{8}$")
 # 映射表里能选的系统功能。白名单：电脑端按名字执行，云端校验别人上传的配置也照这
 # 一份。两类语音都使用下面的 VOICE_SYSTEM_TARGETS；身体映射的界面和校验都只认这组
@@ -337,6 +339,13 @@ def _normalize_body_rule_trigger(value, label: str) -> str:
 
 
 def _validate_body_rule(group: str, ident: str, binding: dict) -> None:
+    if group == "voice" and ident.startswith(GAME_VOICE_SLOT_PREFIX):
+        number = ident[len(GAME_VOICE_SLOT_PREFIX):]
+        if (not number.isascii() or not number.isdigit() or
+                not 1 <= int(number) <= MAX_GAME_VOICE_SLOTS or
+                ident not in {f"{GAME_VOICE_SLOT_PREFIX}{int(number):02d}",
+                              f"{GAME_VOICE_SLOT_PREFIX}{int(number)}"}):
+            raise ValueError(f"本游戏口令编号必须为 01 到 {MAX_GAME_VOICE_SLOTS}")
     if "alternate_mode" not in binding:
         return
     if group not in {"motions", "poses"}:
@@ -412,6 +421,7 @@ def _merge_bindings(base: dict, overrides: dict) -> dict:
         if not group or not ident:
             continue
         if value is None:
+            _validate_body_rule(group, ident, {"disabled": True})
             merged[group][ident] = {"disabled": True}
             continue
         default_behavior = "tap" if group in {"poses", "voice"} else "hold"
@@ -487,6 +497,7 @@ def normalize_override_entry(trigger: str, value):
     if not group or not ident:
         return None
     if value is None:
+        _validate_body_rule(group, ident, {"disabled": True})
         return group, ident, {"disabled": True}
     default_behavior = "tap" if group in {"poses", "voice"} else "hold"
     normalized = normalize_binding(value, default_behavior=default_behavior,

@@ -101,7 +101,8 @@ def make_replay_kernel(snapshot: dict):
         # 安装区域时的状态快照可能缓存默认触发点；恢复绑定后按实际选择重建。
         kernel._zone_point_groups.clear()
         kernel.motion_config = copy.deepcopy(snapshot.get("motion_config") or [])
-        kernel._install_pose_actions_locked(copy.deepcopy(snapshot.get("pose_actions") or []))
+        kernel._install_pose_actions_locked(copy.deepcopy(snapshot.get("pose_actions") or []),
+                                            snapshot.get("disabled_builtin_actions") or [])
         poses = snapshot.get("custom_poses")
         if poses:
             store = CustomPoseStore.__new__(CustomPoseStore)
@@ -408,7 +409,8 @@ class ZoneLearner:
 def learning_signature(snapshot: dict, index: dict) -> str:
     payload = {key: snapshot.get(key) for key in (
         "control_bindings", "motion_config", "zone_fit", "zones_frozen", "frozen_rects",
-        "frozen_anchor", "zone_trigger_mode", "march_algorithm", "hand_mouse", "action_chain")}
+        "frozen_anchor", "zone_trigger_mode", "march_algorithm", "hand_mouse", "action_chain",
+        "disabled_builtin_actions")}
     payload["pose_actions"] = sorted((doc.get("id"), doc.get("revision")) for doc in snapshot.get("pose_actions") or [])
     payload["custom_poses"] = snapshot.get("custom_poses")
     payload["index"] = index

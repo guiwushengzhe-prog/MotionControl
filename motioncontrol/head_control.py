@@ -3223,7 +3223,7 @@ class HeadController:
                 self._recompute_deadzone()
                 if "继续使用上一次有效个人校准" not in self.notice:
                     if self.center_quality == "噪声较大":
-                        self.notice = "校准完成 · 噪声较大，已自动扩大稳定区；需要更灵敏可重新校准"
+                        self.notice = "校准完成 · " + self._calibration_noise_hint()
                     else:
                         self.notice = f"校准完成 · 质量{self.center_quality}"
                     if personal_required and not self.personal_pnp_active and self.config["algorithm"] == "pnp":
@@ -3493,6 +3493,22 @@ class HeadController:
         auto_y = (3.2 * self.noise_pitch / span_y + 0.015) if span_y > 0 else base
         self.effective_deadzone_x = _clamp(max(base, auto_x), 0.03, 0.28)
         self.effective_deadzone_y = _clamp(max(base, auto_y), 0.03, 0.30)
+
+    def _calibration_noise_hint(self) -> str:
+        """只在当前左右通道确实受校准噪声限制时，说明稳定区已扩大。"""
+        base = float(self.config["deadzone"])
+        policy = self.config["horizontal_algorithm"]
+        if policy == "roll_tilt":
+            expanded = 3.0 * max(0.0, self.noise_tilt) > max(2.0, TILT_SPAN_DEG * base)
+        elif policy == "head_responsive":
+            span_x, _ = self._span()
+            expanded = (
+                3.0 * max(0.0, self.noise_tilt) > max(3.0, TILT_SPAN_DEG * base * 1.5)
+                or 3.5 * max(0.0, self.noise_yaw) / span_x > max(.22, base * 1.8)
+            )
+        else:
+            expanded = self.effective_deadzone_x > base
+        return "因校准噪声较大，已扩大稳定区" if expanded else "因校准噪声较大，建议重新校准"
 
     def _axis_curve(self, norm: float, axis: str) -> float:
         if axis == "x":
@@ -3984,7 +4000,7 @@ class HeadController:
             elapsed = None
             remaining = None
             origin = "沿用上次校准" if self.calibration_from_last_session else "已校准"
-            quality = f"{origin} · 质量{self.center_quality}"
+            quality = f"{origin} · {self._calibration_noise_hint()}" if self.center_quality == "噪声较大" else f"{origin} · 质量{self.center_quality}"
         else:
             elapsed = None
             remaining = None

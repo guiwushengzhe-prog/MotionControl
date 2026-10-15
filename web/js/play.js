@@ -188,7 +188,7 @@ function renderReadiness(){
   const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk);
   // 脚踝出了画面，踏步和脚区就认不出抬脚。只在它们绑了键时提，不算进"还差几步"。
   const feetOut=posed&&kernelState?.feet_in_view===false&&['motion.march','zone.leftFoot','zone.rightFoot'].some(triggerMapped);
-  const feetHint='脚没入镜，踏步和脚区认不出：往后站或把摄像头放低';
+  const feetHint='脚没入镜';
   setStep('pose',posed&&!feetOut?'done':(cameraOk?'warn':''),posed?(feetOut?feetHint:'已识别'):'站到镜头前，头和双肩入镜');
   setStep('game',gameProfile.selected?'done':'',gameProfile.selected?.name||'正在读取…');
   // 握拳管左右时不用校准头；这一步照样列着，写明用不着。
