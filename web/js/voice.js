@@ -165,10 +165,11 @@ function renderVoiceStatus(s=voice.status){
   setText($('#voicePill'),ready?'在听':(connected?'准备中':'没开'));setProperty($('#voicePill'),'className','tag '+(ready?'ok':(connected?'warn':'plain')));
   const partial=String(s.last_partial||s.partial||'').trim();
   const phrase=String(s.last_final||s.final||s.last_command||'').trim();
-  // 卡片上只写怎么说；没准备好时写卡在哪。听到的那一句浮在页面底下，几秒后自己走。
-  const voiceText=ready?(currentVoiceWakeWord(s)?`通用和系统口令先说「${currentVoiceWakeWord(s)}」；本游戏口令直接说`:'通用、系统、本游戏口令直接说')
+  // 就绪后不再常驻说明；未就绪时保留原因。识别结果浮在页面底下。
+  const voiceText=ready?''
     :!s.available||!has?'语音模型没装好':!connected?(s.source_kind==='phone'?'等手机连上':'麦克风没打开'):'麦克风没声音，或者还在准备';
   if($('#voiceStatus').textContent!==voiceText)$('#voiceStatus').textContent=voiceText;
+  setProperty($('#voiceStatus'),'hidden',!voiceText);
   announceVoice(s,phrase);
   const modelPath=s.model_path||s.command_model_path||'—';const mp=$('#voiceModelPath');setText(mp,'模型：'+modelPath);setProperty(mp,'title',modelPath);
   renderPersonalVoice(s);
@@ -244,7 +245,7 @@ function announceVoice(s,phrase){
   else if(s.last_executed===false)notice(`听到「${phrase}」，没执行${s.last_error?`：${s.last_error}`:''}`);
 }
 
-export async function refreshVoice(){const revision=voiceRevision;try{const data=await api('/api/voice/status');if(revision===voiceRevision){voice.status=data;renderVoiceStatus(data)}return true}catch{if(revision===voiceRevision){voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认'}return false}}
+export async function refreshVoice(){const revision=voiceRevision;try{const data=await api('/api/voice/status');if(revision===voiceRevision){voice.status=data;renderVoiceStatus(data)}return true}catch{if(revision===voiceRevision){voiceInputReady=false;$('#voiceStatus').textContent='语音状态无法确认';$('#voiceStatus').hidden=false}return false}}
 
 function voiceActionLabel(action){if(!action)return '当前游戏未启用';if(action.type==='mode')return targetLabel(action);if(action.type==='system')return '系统功能 · '+(SYSTEM_TARGET_NAMES.get(action.target)||action.target||'');if(action.type==='voice_release')return `${ACTION_TYPE_LABELS.voice_release} · ${voiceCommandNames(action.target).join('、')}`;return `${ACTION_TYPE_LABELS[action.type]||action.type} · ${targetLabel(action)} · ${{tap:'点按',hold:'持续按住',release:'松开'}[action.behavior||'tap']||'点按'}`}
 

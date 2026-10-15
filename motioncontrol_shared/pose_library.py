@@ -275,17 +275,24 @@ def canonical_bytes(doc: dict) -> bytes:
 # --- 登记 -------------------------------------------------------------------
 
 _registered: dict[str, dict] = {}
+_disabled_builtin: set[str] = set()
 
 
-def register(docs) -> None:
+def register(docs, disabled_builtin=()) -> None:
     """换掉整份登记：电脑端给本机装了的，云端给全部官方动作。都要先过 normalize_action。"""
     _registered.clear()
+    _disabled_builtin.clear()
+    _disabled_builtin.update(set(disabled_builtin) & BUILTIN_IDS)
     for doc in docs:
         _registered[doc["id"]] = doc
 
 
 def registered() -> dict[str, dict]:
     return dict(_registered)
+
+
+def disabled_builtins() -> set[str]:
+    return set(_disabled_builtin)
 
 
 def _entry_from_doc(doc: dict) -> dict:
@@ -301,7 +308,7 @@ def _entry_from_doc(doc: dict) -> dict:
 
 def entries() -> list[dict]:
     """现在有的动作：内置的在前，登记进来的按登记顺序。"""
-    return [{**entry, "source": "builtin"} for entry in BUILTIN] + [_entry_from_doc(doc) for doc in _registered.values()]
+    return [{**entry, "source": "builtin"} for entry in BUILTIN if entry["id"] not in _disabled_builtin] + [_entry_from_doc(doc) for doc in _registered.values()]
 
 
 def get(ident: str) -> dict | None:

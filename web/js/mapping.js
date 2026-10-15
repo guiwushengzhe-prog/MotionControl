@@ -1,6 +1,6 @@
 // 本游戏：选游戏、按键映射的每一行、保存。
 import {$,api,configurationOperation,notice,positionPopup,post,registerDraftFlusher,setAttribute,setClass,setProperty,setText,syncChildren} from './core.js';
-import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,VOICE_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
+import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,VOICE_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,draftGameVoiceSlots,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseLibrary,paintPoseMissingNotice} from './library.js';
 import {kernelState,renderKernelZones} from './play.js';
 import {currentView,showSettingsPane,showView,togglePanel} from './shell.js';
@@ -28,7 +28,7 @@ export function revealBindingRow(triggerKey){
   // 也高亮不出来。先切过去再找。
   if(currentView!=='games')showView('games');
   // 没绑键的身体动作平时不在表里（见 shownBodyRows），点过来就是要绑它，现加一行。
-  const row=document.querySelector(`.binding-row[data-trigger="${triggerKey}"]`)||addBodyRow(triggerKey);
+  const row=document.querySelector(`.binding-row[data-trigger="${triggerKey}"]`)||addMappingRow(triggerKey);
   if(!row){notice('这个动作还没出现在映射表里，刷新一下页面再试');return}
   row.hidden=false;showMapTab(row.closest('.binding-group')?.dataset.group||mapTab);
   row.scrollIntoView({behavior:'smooth',block:'center'});
@@ -118,7 +118,7 @@ function profileMetaText(profile){
   const appid=profile.appid||profile.steam_appid||'';
   // 自己加的游戏不是「实验配置」——那句话说的是自动生成的那两百个没人试过，而
   // 这一个是他自己建的，本来就该自己调，说它"实验"只会让人以为是软件出的问题。
-  if(profile.source==='custom')return appid?`自己加的 · Steam ${appid}`:'自己加的';
+  if(profile.source==='custom')return appid?`Steam ${appid}`:'';
   const source=profile.source||{};
   return [appid?`Steam ${appid}`:'',source.verified?'已验证':''].filter(Boolean).join(' · ');
 }
@@ -131,6 +131,7 @@ function renderProfileHeader(){
   $('#profileGameName').textContent=p?.name||'未选择游戏';
   $('#currentGameName').textContent=p?.name||'未选择游戏';
   $('#profileMeta').textContent=profileMetaText(p);
+  $('#profileMeta').hidden=!$('#profileMeta').textContent;
   // 「自动生成」说的是那两百个没人试过的；自己加的不算。
   $('#profileUnverified').hidden=!p||mine||Boolean(p.source?.verified);
   renderGameLaunch();
@@ -295,7 +296,8 @@ export function renderCurrentMode(mode){
   for(const button of $('#modeTabs').children){
     setProperty(button.querySelector('.mode-live'),'hidden',(button.dataset.modeId==='DEFAULT'?null:button.dataset.modeId)!==active.id);
   }
-  setText($('#modeEditStatus'),!modeProfileMismatch()?`正在编辑并使用「${active.name}」`
+  setProperty($('#modeEditStatus'),'hidden',!modeProfileMismatch());
+  setText($('#modeEditStatus'),!modeProfileMismatch()?''
     :modeSyncBlocked===modeSyncKey()?`已使用「${active.name}」，请先重试保存「${editing.name}」的修改`
     :`正在同步「${active.name}」的映射…`);
   followActiveMode();
@@ -362,7 +364,24 @@ async function nextMode(){
 
 function renderRegionActions(){
   setProperty($('#zoneActions'),'hidden',mapTab!=='zones');
-  setProperty($('#addRegionBtn'),'disabled',profileSwitching||!gameProfile.selected||(gameProfile.selected.regions?.length||0)>=12);
+  const restorable=BASE_PROFILE_TRIGGERS.some(trigger=>trigger.group==='zones'&&!regionRowWanted(trigger));
+  setProperty($('#addRegionBtn'),'disabled',profileSwitching||!gameProfile.selected||((gameProfile.selected.regions?.length||0)>=12&&!restorable));
+}
+
+function chooseRegionToAdd(){
+  if(profileSwitching)return;
+  const removed=BASE_PROFILE_TRIGGERS.filter(trigger=>trigger.group==='zones'&&!regionRowWanted(trigger));
+  const options=$('#regionAddOptions');
+  if(!removed.length){options.hidden=true;return addRegion()}
+  options.replaceChildren();
+  for(const trigger of removed){
+    const button=document.createElement('button');button.type='button';button.className='btn';button.textContent='＋ '+trigger.name;
+    button.addEventListener('click',()=>{options.hidden=true;revealBindingRow(trigger.key)});options.append(button);
+  }
+  const custom=document.createElement('button');custom.type='button';custom.className='btn';custom.textContent='＋ 独立区域';
+  custom.disabled=(gameProfile.selected.regions?.length||0)>=12;
+  custom.addEventListener('click',()=>{options.hidden=true;addRegion().catch(error=>notice(error.message))});options.append(custom);
+  options.hidden=false;
 }
 
 async function addRegion(){
@@ -398,7 +417,7 @@ async function removeRegion(trigger){
   });
 }
 
-$('#addRegionBtn')?.addEventListener('click',()=>addRegion().catch(error=>notice(error.message||'新增区域失败，请重试')));
+$('#addRegionBtn')?.addEventListener('click',()=>Promise.resolve(chooseRegionToAdd()).catch(error=>notice(error.message||'新增区域失败，请重试')));
 
 function refreshModeTargets(){
   document.querySelectorAll('.binding-target-box').forEach(box=>{
@@ -483,12 +502,12 @@ export async function applySelectedProfile(){
 
 async function profileOperation(operation,{recoverConflict=false,skipDrafts=[]}={}){
   return configurationOperation(async()=>{
-    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn,#modeTabs button,#addModeBtn,#modeMenuBtn,#renameModeBtn,#removeModeBtn,#playModeBtn,#addRegionBtn,.region-rename,.region-remove')];
+    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn,#modeTabs button,#addModeBtn,#modeMenuBtn,#renameModeBtn,#removeModeBtn,#playModeBtn,#addRegionBtn,#regionAddOptions button,#addGameVoiceBtn,.region-rename,.region-remove,.binding-remove')];
     const disabled=controls.map(el=>el.disabled);
     profileSwitching=true;
     controls.forEach(el=>{el.disabled=true});
     try{await operation()}
-    finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]});renderModeTabs();renderRegionActions()}
+    finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]});renderModeTabs();renderRegionActions();updateMapCounts()}
   },{skipDrafts:recoverConflict?[saveProfileBindings]:skipDrafts});
 }
 
@@ -808,6 +827,11 @@ function bodyRowWanted(trigger){
   return !!(binding&&!binding.disabled)||shownBodyRows.keys.has(trigger.key);
 }
 
+function regionRowWanted(trigger){
+  const deleted=Object.prototype.hasOwnProperty.call(gameProfile.overrides||{},trigger.key)&&bindingFor(trigger)?.disabled;
+  return trigger.custom||!deleted||shownBodyRows.keys.has(trigger.key);
+}
+
 // 卡片上那个键位按钮：绑了写键，表里有这一行但没绑写「未映射」，表里还没有写「加到映射」。
 export function libraryKeyLabel(triggerKey){
   const trigger=profileTriggers().find(item=>item.key===triggerKey);
@@ -1094,15 +1118,15 @@ function buildBindingRow(trigger){
     phrase=document.createElement('input');phrase.className='voice-trigger-phrase';phrase.type='text';phrase.value=game?normalizeGameVoicePhrase(binding?.phrase||trigger.phrase||''):(binding?.phrase||trigger.phrase||'');phrase.placeholder=game?'说什么，例如：爬绳':'完整口令';phrase.title=game?'直接说这句，不用唤醒词':'说出的完整口令';name.append(phrase);watchVoicePhrase(phrase);
   }else name.textContent=trigger.name;
   const tags=document.createElement('span');tags.className='binding-tags';name.append(tags);
-  if(isBodyTrigger(trigger)){
+  if(!trigger.custom){
     const remove=document.createElement('button');remove.type='button';remove.className='binding-remove';
-    remove.textContent='删除';remove.title='从当前模式的映射列表删除，动作库保留';
+    remove.textContent='删除';remove.title='从当前模式的映射列表删除';
     remove.setAttribute('aria-label',trigger.name+' 从映射删除');
-    remove.addEventListener('click',()=>removeBodyBinding(trigger).catch(error=>notice(error.message||'删除失败，请重试')));
+    remove.addEventListener('click',()=>removeMappingBinding(trigger).catch(error=>notice(error.message||'删除失败，请重试')));
     name.append(remove);
   }
   if(trigger.custom&&trigger.group==='zones'){
-    for(const[caption,className,handler]of [['改名','region-rename',renameRegion],['删除区域','region-remove',removeRegion]]){
+    for(const[caption,className,handler]of [['改名','region-rename',renameRegion],['删除','region-remove binding-remove',removeRegion]]){
       const button=document.createElement('button');button.type='button';button.className=className;button.textContent=caption;
       button.setAttribute('aria-label',trigger.name+' '+caption);
       button.addEventListener('click',()=>handler(trigger).catch(error=>notice(error.message||'区域操作失败，请重试')));
@@ -1204,8 +1228,9 @@ export function updateMapCounts(){
     const n=[...document.querySelectorAll(`.binding-group[data-group="${group}"] .binding-row`)].filter(row=>!row.hidden).length;
     el.textContent=n?String(n):'';
   }
-  const hiddenVoice=document.querySelector('.binding-group[data-group="voice"] .binding-row[hidden]');
-  $('#addGameVoiceBtn').hidden=mapTab!=='voice'||!hiddenVoice;
+  $('#addGameVoiceBtn').hidden=mapTab!=='voice';
+  const allVoiceRows=[...document.querySelectorAll('.binding-group[data-group="voice"] .binding-row')];
+  $('#addGameVoiceBtn').disabled=profileSwitching||!gameProfile.selected||(allVoiceRows.length>=64&&allVoiceRows.every(row=>!row.hidden));
 }
 
 function syncBodyGroup(){updateMapCounts()}
@@ -1219,14 +1244,16 @@ export function showMapTab(tab){
   $('#poseLibraryPanel').hidden=mapTab!=='body';
   document.querySelectorAll('[data-tab-caption]').forEach(el=>{el.hidden=el.dataset.tabCaption!==mapTab});
   renderRegionActions();
+  $('#regionAddOptions').hidden=true;
   updateMapCounts();
 }
 
 // 从动作库、自定义动作、开始页点过来，而表里还没有这一行：现加一行，不整表重画——
 // 重画会冲掉别的行里还没存的改动。
-function addBodyRow(triggerKey){
-  const trigger=profileTriggers().find(t=>t.key===triggerKey&&isBodyTrigger(t));
-  const rows=document.querySelector('.binding-group[data-group="body"] .binding-group-rows');
+function addMappingRow(triggerKey){
+  const trigger=profileTriggers().find(t=>t.key===triggerKey);
+  const group=isBodyTrigger(trigger||{})?'body':trigger?.group;
+  const rows=document.querySelector(`.binding-group[data-group="${group}"] .binding-group-rows`);
   if(!trigger||!rows)return null;
   rows.querySelector('.profile-empty')?.remove();
   const row=buildBindingRow(trigger);rows.appendChild(row);shownBodyRows.keys.add(trigger.key);
@@ -1234,9 +1261,31 @@ function addBodyRow(triggerKey){
   return row;
 }
 
-// 本游戏口令有十二个空位，没用的先不列：列十二行「不绑」，要找的那一行反而看不见。
+export function addGameVoiceRow(){
+  if(profileSwitching||!gameProfile.selected)return;
+  let row=document.querySelector('.binding-group[data-group="voice"] .binding-row[hidden]');
+  if(!row){
+    const used=new Set(profileTriggers().filter(trigger=>trigger.group==='voice').map(trigger=>Number(trigger.id.replace('game.profile_slot_',''))));
+    let index=1;while(index<=64&&used.has(index))index++;
+    if(index>64){notice('每个模式最多添加64条口令');return}
+    const id=`game.profile_slot_${String(index).padStart(2,'0')}`;
+    draftGameVoiceSlots.set(id,{id,base_phrase:'',phrase:'',scope:'game'});
+    row=addMappingRow('voice.'+id);
+  }
+  if(!row)return;
+  const id=row.dataset.trigger.slice('voice.'.length);
+  if(!profileTriggers().some(trigger=>trigger.key===row.dataset.trigger)){
+    draftGameVoiceSlots.set(id,{id,base_phrase:'',phrase:'',scope:'game'});
+  }
+  shownBodyRows.keys.add(row.dataset.trigger);row.hidden=false;
+  row.closest('.binding-group-rows')?.querySelector('.profile-empty')?.remove();
+  updateMapCounts();row.scrollIntoView({block:'nearest'});row.querySelector('.voice-trigger-phrase')?.focus();
+}
+
+// 未使用或已删除的口令先收起；新增可复用空位，也可在随附十二条之外继续添加。
 function voiceSlotUsed(trigger){
   const binding=bindingFor(trigger);
+  if(binding?.disabled)return false;
   return !!(String(binding?.phrase||trigger.phrase||'').trim()||(binding&&!binding.disabled&&binding.action));
 }
 
@@ -1246,7 +1295,7 @@ export function renderProfileBindingRows(){
   const box=$('#profileBindingRows');if(!box)return;box.replaceChildren();
   if(!gameProfile.selected){const group=document.createElement('div');group.className='binding-group';group.append(emptyNote('还没有可编辑的游戏配置。'));box.append(group);return}
   const profileId=(gameProfile.selected.selected_id||gameProfile.selected.id)+':'+(gameProfile.selected.mode?.id||'DEFAULT');
-  if(shownBodyRows.profile!==profileId){shownBodyRows.profile=profileId;shownBodyRows.keys.clear()}
+  if(shownBodyRows.profile!==profileId){shownBodyRows.profile=profileId;shownBodyRows.keys.clear();draftGameVoiceSlots.clear()}
   const triggers=profileTriggers();
   const groups=[
     {id:'zones',filter:t=>t.group==='zones',empty:'没有区域'},
@@ -1255,13 +1304,13 @@ export function renderProfileBindingRows(){
   ];
   for(const group of groups){
     const all=triggers.filter(group.filter);
-    const items=group.id==='body'?all.filter(bodyRowWanted):all;
+    const items=group.id==='body'?all.filter(bodyRowWanted):group.id==='zones'?all.filter(regionRowWanted):all;
     const wrap=document.createElement('div');wrap.className='binding-group';wrap.dataset.group=group.id;
     const rows=document.createElement('div');rows.className='binding-group-rows';
     let shown=0;
     for(const trigger of items){
       const row=buildBindingRow(trigger);
-      if(group.id==='voice'&&!voiceSlotUsed(trigger))row.hidden=true;else shown++;
+      if(group.id==='voice'&&!voiceSlotUsed(trigger)&&!shownBodyRows.keys.has(trigger.key))row.hidden=true;else shown++;
       rows.appendChild(row);
     }
     if(!shown)rows.prepend(emptyNote(group.empty));
@@ -1338,7 +1387,7 @@ function readProfileOverrides(excludeTrigger=null){
   return overrides;
 }
 
-async function removeBodyBinding(trigger){
+async function removeMappingBinding(trigger){
   if(profileSwitching)return;
   const profile_id=gameProfile.selected.selected_id||gameProfile.selected.id;
   const mode_id=gameProfile.selected.mode?.id||null;
@@ -1356,6 +1405,7 @@ async function removeBodyBinding(trigger){
     gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
     profileDirty.clear();++profileRevision;profileConflict=false;
     shownBodyRows.keys.delete(trigger.key);expandedRows.delete(trigger.key);
+    if(trigger.group==='voice')draftGameVoiceSlots.delete(trigger.id);
     $('#profileSaveStatus').textContent='';$('#profileSaveStatus').classList.remove('error');$('#retryProfileSaveBtn').hidden=true;
     renderProfileHeader();renderProfileBindingRows();paintPoseLibrary();paintCustomPoseScores();
     await refreshVoiceCommands();

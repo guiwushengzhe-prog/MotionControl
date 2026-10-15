@@ -27,7 +27,7 @@ import json
 import os
 from pathlib import Path
 
-from motioncontrol_shared.pose_library import RETIRED, canonical_bytes, normalize_action
+from motioncontrol_shared.pose_library import BUILTIN_IDS, RETIRED, canonical_bytes, normalize_action
 
 SCHEMA = "motioncontrol.installed_pose_actions.v1"
 # 一个动作文件实测 3 KB 上下。远大于这个的不会是动作文件。
@@ -86,6 +86,7 @@ class PoseActionStore:
         self.public_key = public_key
         # 编号 → {"doc": 动作文件, "document": 原始字节的 base64, "signature": 签名}
         self.items: dict[str, dict] = {}
+        self.disabled_builtin: set[str] = set()
         self.last_error = ""
         self._load()
 
@@ -101,6 +102,8 @@ class PoseActionStore:
             self.last_error = "下载的动作文件版本不认识，已忽略"
             return
         dropped = []
+        self.disabled_builtin = {str(ident) for ident in (data.get("disabled_builtin") or [])
+                                 if str(ident) in BUILTIN_IDS}
         for item in data.get("actions", []):
             if not isinstance(item, dict):
                 continue
@@ -117,6 +120,7 @@ class PoseActionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps({
             "schema": SCHEMA,
+            "disabled_builtin": sorted(self.disabled_builtin),
             "actions": [{"document": item["document"], "signature": item["signature"]}
                         for item in self.items.values()],
         }, ensure_ascii=False, indent=2)
@@ -145,7 +149,29 @@ class PoseActionStore:
         return doc
 
     def remove(self, ident: str) -> bool:
+        if ident in BUILTIN_IDS:
+            if ident in self.disabled_builtin:
+                return False
+            self.disabled_builtin.add(ident)
+            try:
+                self._save()
+            except Exception:
+                self.disabled_builtin.discard(ident)
+                raise
+            return True
         if self.items.pop(str(ident), None) is None:
             return False
         self._save()
         return True
+
+    def restore_builtin(self, ident: str) -> None:
+        if ident not in BUILTIN_IDS:
+            raise PoseDownloadError("这个动作不是自带动作")
+        if ident not in self.disabled_builtin:
+            return
+        self.disabled_builtin.remove(ident)
+        try:
+            self._save()
+        except Exception:
+            self.disabled_builtin.add(ident)
+            raise

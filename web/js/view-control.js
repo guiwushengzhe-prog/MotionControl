@@ -1,4 +1,4 @@
-// 设置 → 视角：左右、上下方案，头控和握拳的手感。
+// 设置 → 体感 → 视角控制：左右、上下方式，头控和握拳的手感。
 import {VIEW_CONTROL_CONTENT} from '../view-control-guide.js';
 import {$,api,configurationBusy,configurationOperation,flashStatus,post,setProperty,setText} from './core.js';
 import {invalidateKernelRequests,kernelEpoch,noteOutputMix} from './devices.js';
@@ -69,7 +69,7 @@ function renderHandMouse(state){
   handMouseConfig={...handMouseConfig,...c};
   // 合流模式下摇杆归物理手柄，手控鼠标接不上任何东西——勾着不起作用比灰着更糟。
   const blocked=mergeOwnsSticks();
-  // 握拳的松紧阈值不在这里手调了：「身体识别 → 量身 → 只量握拳」量出来的就是这两个值。
+  // 握拳的松紧阈值在「体感 → 身体识别 → 量身 → 只量握拳」测量。
   for(const [id,value] of [['handMouseSensitivity',c.sensitivity],['handMouseDeadzone',c.deadzone]]){
     if(value!==undefined&&document.activeElement!==$('#'+id))setProperty($('#'+id),'value',String(value));
   }

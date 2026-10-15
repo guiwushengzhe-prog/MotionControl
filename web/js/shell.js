@@ -10,7 +10,7 @@ import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
 import {openPhoneCode} from './phone-connect.js';
-import {addCustomGame,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
+import {addCustomGame,addGameVoiceRow,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
 import {addZoneHandles,cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
 import {initUpdates,refreshUpdates} from './updates.js';
@@ -322,7 +322,7 @@ liveZoneLayer.addEventListener('keydown',e=>{
   e.preventDefault();rectEdit.selected=zone.dataset.zone;nudgeRect(zone.dataset.zone,e.key,e.shiftKey);
 });
 
-// 抬头低头的中心稳定区。在「设置 → 视角」里，拖完就存。
+// 抬头低头的中心稳定区。在「设置 → 体感」里，拖完就存。
 for(const [id,key] of [['verticalDeadzone','deadzone']]){
   const input=$('#'+id);if(!input)continue;
   input.addEventListener('input',()=>{$('#'+id+'Value').textContent=input.value+'%'});
@@ -518,6 +518,8 @@ applyTheme(document.documentElement.dataset.theme||'auto');
 // 设置页左边的分类，一次只看一类。
 export let currentSettingsPane='devices';
 export function showSettingsPane(name){
+  const bodyTarget=name==='body';
+  if(bodyTarget)name='view';
   if(name==='macro')name='voice';
   const known=[...document.querySelectorAll('.settings-pane')].some(pane=>pane.dataset.pane===name);
   const pane=known?name:'devices';
@@ -527,6 +529,7 @@ export function showSettingsPane(name){
   if(pane==='lab'){void refreshPoseRecord();void refreshRecordings()}
   if(pane==='view')void ensureViewControlReady();
   renderVisibleState();
+  if(bodyTarget){const section=$('#bodySettings');section.focus({preventScroll:true});section.scrollIntoView({block:'start',behavior:'instant'})}
 }
 
 document.querySelectorAll('#settingsNav [data-pane]').forEach(button=>button.addEventListener('click',()=>{showSettingsPane(button.dataset.pane);window.scrollTo(0,0)}));
@@ -534,11 +537,7 @@ document.querySelectorAll('#settingsNav [data-pane]').forEach(button=>button.add
 // 本游戏：区域 / 身体动作 / 口令三个页签。
 document.querySelectorAll('#mapTabs [data-tab]').forEach(button=>button.addEventListener('click',()=>showMapTab(button.dataset.tab)));
 
-$('#addGameVoiceBtn').addEventListener('click',()=>{
-  const row=document.querySelector('.binding-group[data-group="voice"] .binding-row[hidden]');if(!row)return;
-  row.hidden=false;row.closest('.binding-group-rows')?.querySelector('.profile-empty')?.remove();
-  updateMapCounts();row.querySelector('.voice-trigger-phrase')?.focus();
-});
+$('#addGameVoiceBtn').addEventListener('click',addGameVoiceRow);
 
 // 动作库能收起来：绑好了就不用每次都看一墙卡片。
 const LIBRARY_KEY='motioncontrol_library_open';

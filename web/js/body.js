@@ -1,4 +1,4 @@
-// 设置 → 身体识别：量身、区域怎么算按下、录我的动作、原地踏步。
+// 设置 → 体感 → 身体识别：量身、区域怎么算按下、录我的动作、原地踏步。
 import {$,escapeHtml,flashStatus,notice,post} from './core.js';
 import {setOutput} from './devices.js';
 import {profileTriggers} from './labels.js';
@@ -27,8 +27,8 @@ export function renderZoneFit(k=kernelState||{}){
   const day=t=>{const d=new Date(Number(t)*1000);return`${d.getMonth()+1}月${d.getDate()}日`};
   const zones=!fit.custom?'区域：默认大小':fit.measured_at_unix?`区域：${day(fit.measured_at_unix)}按你的身体量过`:'区域：按你的身体量过';
   const hands=fistHands();
-  const grip=!hands.length?'握拳控制没开':fit.grip_measured_at_unix?`握拳：${day(fit.grip_measured_at_unix)}量过`:'握拳：还没量过，认不准就量一下';
-  const text=`${zones}${k.zones_frozen?' · 圈固定，量身可直接更新':''} · ${grip}`;if(status.textContent!==text)status.textContent=text;
+  const grip=!hands.length?'':fit.grip_measured_at_unix?`握拳：${day(fit.grip_measured_at_unix)}量过`:'握拳：还没量过，认不准就量一下';
+  const text=`${zones}${k.zones_frozen?' · 圈固定，量身可直接更新':''}${grip?' · '+grip:''}`;if(status.textContent!==text)status.textContent=text;
   $('#zoneFitResetRow').hidden=!fit.custom;
   $('#zoneFitGripRow').hidden=!hands.length;
 }

@@ -387,7 +387,7 @@ def test_touch_narrow_windows_and_all_settings_panes_stay_within_width(mock_brow
         page.set_viewport_size({"width": width, "height": 700})
         for view in ("play", "games", "devices"):
             page.click(f'nav [data-view="{view}"]')
-            panes = ("devices", "view", "body", "voice", "lab") if view == "devices" else (None,)
+            panes = ("devices", "view", "voice", "lab") if view == "devices" else (None,)
             for pane in panes:
                 if pane:
                     page.click(f'#settingsNav [data-pane="{pane}"]')

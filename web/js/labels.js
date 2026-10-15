@@ -1,5 +1,5 @@
 // 按键、触发器、动作的名字和写法。圈上、卡片上、大字里都从这里取，说法才一致。
-import {customPoses,poseLibrary} from './library.js';
+import {customPoses,poseLibrary,removedBuiltinPoses} from './library.js';
 import {kernelState} from './play.js';
 import {gameProfile} from './state.js';
 import {voiceCatalog,voiceCommandNames,voiceCommandPhrases} from './voice.js';
@@ -150,10 +150,13 @@ export const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.ST
 
 export const SYSTEM_TARGET_NAMES=new Map([...VOICE_SYSTEM_TARGETS,...BINDING_SYSTEM_TARGETS,['HEAD.CALIBRATE','开始校准']]);
 
+export const draftGameVoiceSlots=new Map();
+
 export function profileTriggers(){
   // The stable slots are the one editable voice group. Their command IDs stay
   // unchanged for older phones while the spoken phrase lives in the profile.
-  const voiceTriggers=voiceCatalog
+  const catalogIds=new Set(voiceCatalog.map(item=>item.id));
+  const voiceTriggers=[...voiceCatalog,...[...draftGameVoiceSlots.values()].filter(item=>!catalogIds.has(item.id))]
     .filter(item=>!item.system_fixed&&String(item.id||'').startsWith('game.profile_slot_'))
     .map(item=>({
       key:`voice.${item.id}`,group:'voice',id:item.id,
@@ -174,7 +177,8 @@ export function profileTriggers(){
   const regions=(gameProfile.selected?.regions||[]).map(region=>({
     key:`zone.${region.id}`,group:'zones',id:region.id,name:region.name,custom:true,
   }));
-  return [...BASE_PROFILE_TRIGGERS,...regions,...downloadedTriggers,...customPoseTriggers,...voiceTriggers];
+  const baseTriggers=BASE_PROFILE_TRIGGERS.filter(item=>item.group!=='motions'||!removedBuiltinPoses.some(removed=>removed.id===item.id));
+  return [...baseTriggers,...regions,...downloadedTriggers,...customPoseTriggers,...voiceTriggers];
 }
 
 export function targetLabel(action){

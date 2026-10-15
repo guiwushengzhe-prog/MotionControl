@@ -82,11 +82,11 @@
 <section class="card home-fitness" id="homeFitnessCard">
 <div class="card-head"><h2 class="card-title" id="homeFitnessTitle">今日运动</h2><button class="btn link" id="homeFitnessGo">查看记录</button></div>
 <div class="home-fitness-metrics"><div><b id="homeFitnessMinutes">—</b><span>活动分钟</span></div><div><b id="homeFitnessSteps">—</b><span>步数</span></div><div><b id="homeFitnessKcal">—</b><span>估算千卡</span></div></div>
-<p class="card-sub" id="homeFitnessHint">开始控制后自动记录</p>
+<p class="card-sub" id="homeFitnessHint"></p>
 </section>
 <section class="card control-voice">
 <div class="card-head"><h2 class="card-title">语音</h2><span class="tag" id="voicePill">语音</span></div>
-<p class="card-sub" id="voiceStatus">正在检查…</p>
+<p class="card-sub" hidden="" id="voiceStatus"></p>
 <button class="btn link flush" id="voiceCommandsBtn">查看口令</button>
 </section>
 <section class="card recent-card" hidden="" id="recentCard">
@@ -138,7 +138,7 @@
 
 <div class="mode-toolbar">
 <div aria-label="游戏模式" class="mode-tabs" id="modeTabs" role="tablist"></div>
-<button class="btn link" id="addModeBtn" type="button">＋ 新建模式</button>
+<button aria-label="新建模式" class="mode-add" id="addModeBtn" type="button">＋ 新建模式</button>
 <div class="menu-wrap"><button aria-expanded="false" aria-haspopup="menu" aria-label="模式更多操作" class="icon-btn" id="modeMenuBtn" type="button" title="模式更多操作">⋯</button>
 <div class="menu" hidden="" id="modeMenu" role="menu"><button class="menu-item" id="renameModeBtn" role="menuitem">改模式名</button><button class="menu-item danger" id="removeModeBtn" role="menuitem">删除这个模式</button></div></div>
 </div>
@@ -149,10 +149,9 @@
 <button aria-pressed="false" data-tab="voice" type="button">口令<span class="n" data-count="voice"></span></button>
 </div>
 <p class="banner warn" hidden="" id="poseMissingNotice" role="status"><span></span><button class="btn" id="poseMissingGo" type="button">去下载</button></p>
-<div class="zone-actions" id="zoneActions"><button class="btn link" id="addRegionBtn" type="button">＋ 新增区域</button><span class="sub">独立区域可单独设键；在开始页「挪动区域」调整位置和大小。</span></div>
-<p class="tab-caption" data-tab-caption="voice" hidden="">直接说，不用唤醒词。</p>
 <fieldset id="mappingFields"><div class="binding-list" id="profileBindingRows"></div></fieldset>
-<button class="btn link add-voice" hidden="" id="addGameVoiceBtn" type="button">＋ 添加口令</button>
+<div class="zone-actions" id="zoneActions"><button class="mapping-add-card" id="addRegionBtn" type="button">＋ 新增区域</button><div aria-label="新增区域类型" class="mapping-add-options" hidden="" id="regionAddOptions"></div></div>
+<button class="mapping-add-card add-voice" hidden="" id="addGameVoiceBtn" type="button">＋ 添加口令</button>
 
 <section class="library" hidden="" id="poseLibraryPanel">
 <div class="library-head"><h2 class="section-title">动作库</h2><span class="library-count" id="libraryCount"></span><span class="spacer"></span><button class="btn link" hidden="" id="customPoseScoresBtn" type="button">显示相似度</button><button aria-controls="libraryBody" aria-expanded="true" class="btn link" id="libToggle" type="button">收起</button></div>
@@ -185,8 +184,7 @@
 <section class="page settings" data-panel="devices" hidden="" id="devicesPanel">
 <nav aria-label="设置分类" class="settings-nav" id="settingsNav">
 <button aria-current="true" data-pane="devices"><span class="side-ico" style="--ico:#0a84ff"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="3"></rect><circle cx="12" cy="13.5" r="3.5"></circle><path d="M9 7l1.5-3h3L15 7"></path></svg></span>设备</button>
-<button data-pane="view"><span class="side-ico" style="--ico:#5e5ce6"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M15.5 8.5l-2 5-5 2 2-5z"></path></svg></span>视角</button>
-<button data-pane="body"><span class="side-ico" style="--ico:#28b04e"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.8" r="2"></circle><path d="M5 9h14M12 9v6M12 15l-4 6M12 15l4 6"></path></svg></span>身体识别</button>
+<button data-pane="view"><span class="side-ico" style="--ico:#28b04e"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.8" r="2"></circle><path d="M5 9h14M12 9v6M12 15l-4 6M12 15l4 6"></path></svg></span>体感</button>
 <button data-pane="voice"><span class="side-ico" style="--ico:#ff375f"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></span>语音和宏</button>
 <button data-pane="fitness"><span class="side-ico" style="--ico:#ff375f"><svg viewBox="0 0 24 24"><path d="M20.8 4.8a5.5 5.5 0 0 0-7.8 0L12 5.9l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.4a5.5 5.5 0 0 0 0-7.8z"></path></svg></span>运动记录</button>
 <button data-pane="studio"><span class="side-ico" style="--ico:#af52de"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="12" height="14" rx="3"></rect><path d="M15 10l6-4v12l-6-4"></path></svg></span>录制与直播</button>
@@ -252,8 +250,10 @@
 </div>
 </section>
 
-<section class="settings-pane" data-pane="view" hidden="" id="headSettings">
-<h1 class="pane-title">视角</h1>
+<section class="settings-pane" data-pane="view" hidden="" id="somaticSettings">
+<h1 class="pane-title">体感</h1>
+<section aria-labelledby="viewControlTitle" class="settings-section" id="headSettings">
+<h2 class="settings-section-title" id="viewControlTitle">视角控制</h2>
 <div class="group">
 <div class="list">
 <div class="row"><label class="row-main" for="viewHorizontalSource"><span class="name">左右</span><span class="sub" id="viewHorizontalDesc"></span></label><span class="sel"><select id="viewHorizontalSource"><option value="roll_tilt">头部侧倾</option></select></span></div>
@@ -265,10 +265,10 @@
 <h2 class="group-title">手感</h2>
 <div class="list">
 <div class="row head-only"><label class="row-main" for="speedX"><span class="name">左右速度</span><span class="sub">大角度偏转时的最高转向速度</span></label><div class="range-in"><input aria-label="左右视角速度" id="speedX" max="200" min="20" step="2" type="range" value="58"/><b id="speedXValue">58%</b></div></div>
-<div class="row head-only"><label class="row-main" for="deadzone"><span class="name">中心稳定区</span><span class="sub" id="headThresholdStatus">百分比设置与实际起转角度共同显示在这里</span></label><div class="range-in"><input aria-label="中心稳定区" id="deadzone" max="25" min="3" type="range" value="10"/><b id="deadzoneValue">10%</b></div></div>
+<div class="row head-only"><label class="row-main" for="deadzone"><span class="name">中心稳定区</span><span class="sub" id="headThresholdStatus"></span></label><div class="range-in"><input aria-label="中心稳定区" id="deadzone" max="25" min="3" type="range" value="10"/><b id="deadzoneValue">10%</b></div></div>
 <div class="head-curve head-only" id="headCurvePanel">
 <div class="head-curve-heading"><span>左右加速曲线</span><button class="btn link" id="resetHeadCurve" type="button">恢复推荐</button></div>
-<p class="head-curve-help">中心附近慢调，大幅侧倾加速。上下拖动蓝点，或用下方滑杆调整；左右同步。</p>
+<p class="head-curve-help">上下拖动蓝点，或用下方滑杆调整；左右同步。</p>
 <svg aria-label="侧倾角度与转向速度曲线" class="head-curve-plot" id="headCurvePlot" role="group" viewBox="0 0 640 280">
 <title>横轴为侧倾角度，纵轴为转向速度；灰色区域内不启动转向</title>
 <rect class="head-curve-deadzone" id="headCurveDeadzone" x="300" y="24" width="40" height="216"/>
@@ -289,7 +289,7 @@
 <div class="row hand-only"><label class="row-main" for="handMouseSensitivity">握拳灵敏度</label><div class="range-in"><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"/><b id="handMouseSensitivityValue">—</b></div></div>
 <div class="row hand-only"><label class="row-main" for="handMouseDeadzone"><span class="name">握拳中心死区</span><span class="sub">握住后手在这个范围内不转</span></label><div class="range-in"><input id="handMouseDeadzone" max="0.6" min="0" step="0.02" type="range"/><b id="handMouseDeadzoneValue">—</b></div></div>
 <div class="row hand-only"><label class="row-main" for="handMouseGripAlgorithm"><span class="name">握拳识别方式</span><span class="sub" id="handMouseGripDesc"></span></label><span class="sel"><select id="handMouseGripAlgorithm"><option value="steady">新版</option><option value="classic">旧版</option></select></span></div>
-<div class="row head-only"><label class="row-main" for="bodyMotionGuard"><span class="name">做动作时稳住视角</span><span class="sub">身体运动时略增大稳定区，明显转头仍可转向；保持姿势时恢复正常</span></label><input class="switch" id="bodyMotionGuard" type="checkbox"/></div>
+<div class="row head-only"><label class="row-main" for="bodyMotionGuard"><span class="name">做动作时稳住视角</span><span class="sub">身体晃动时扩大稳定区，明显转头仍可转向</span></label><input class="switch" id="bodyMotionGuard" type="checkbox"/></div>
 </div>
 <p class="group-foot" hidden="" id="handMouseStatus"></p>
 <p class="group-foot"><span class="statusline" id="headSaveStatus" role="status"></span><span class="statusline" id="handMouseSaveStatus" role="status"></span><button class="btn link" hidden="" id="retryHeadBtn">重试保存</button></p>
@@ -298,22 +298,22 @@
 <h2 class="group-title">抬头低头</h2>
 <div class="list">
 <div class="row"><label class="row-main" for="speedY">上下速度</label><div class="range-in"><input aria-label="抬头低头的上下速度" id="speedY" max="100" min="15" step="2" type="range" value="46"/><b id="speedYValue">46%</b></div></div>
-<div class="row"><label class="row-main" for="verticalDeadzone"><span class="name">中心稳定区</span><span class="sub">头在这个范围内不动</span></label><div class="range-in"><input aria-label="抬头低头的中心稳定区" id="verticalDeadzone" max="22" min="3" step="1" type="range" value="10"/><b id="verticalDeadzoneValue">10%</b></div></div>
+<div class="row"><label class="row-main" for="verticalDeadzone"><span class="name">中心稳定区</span><span class="sub">回到这个范围内停止转向</span></label><div class="range-in"><input aria-label="抬头低头的中心稳定区" id="verticalDeadzone" max="22" min="3" step="1" type="range" value="10"/><b id="verticalDeadzoneValue">10%</b></div></div>
 <div class="row"><label class="row-main" for="invertY">方向反转</label><input class="switch" id="invertY" type="checkbox"/></div>
 <div class="row"><label class="row-main" for="verticalExclusive">上下时暂停左右</label><input class="switch" id="verticalExclusive" type="checkbox"/></div>
 </div>
 </div>
 </section>
 
-<section class="settings-pane" data-pane="body" hidden="">
-<h1 class="pane-title">身体识别</h1>
+<section aria-labelledby="bodySettingsTitle" class="settings-section" id="bodySettings" tabindex="-1">
+<h2 class="settings-section-title" id="bodySettingsTitle">身体识别</h2>
 <div class="group" id="recognitionModels">
 <h2 class="group-title">识别模型</h2>
 <div class="list">
 <div class="row"><label class="row-main" for="poseModelSelect"><span class="name">识别精度</span><span class="sub" id="poseModelStatus">自动按实际识别速度选择</span></label><span class="sel"><select id="poseModelSelect" aria-label="电脑识别精度"><option value="auto">自动（推荐）</option><option value="full">标准</option><option value="heavy">高精度</option></select></span></div>
-<div class="row"><div class="row-main"><span class="name">手势识别</span><span class="sub" id="gestureModelStatus">需要握拳等手势功能时自动加载</span></div><span class="tag plain">按需启用</span></div>
+<div class="row"><div class="row-main"><span class="name">手势识别</span><span class="sub" id="gestureModelStatus">需要握拳等手势功能时自动加载</span></div></div>
 </div>
-<p class="group-foot">标准适合优先保持帧率；高精度需要更多计算。自动模式会根据实际识别速度选择。</p>
+<p class="group-foot">标准优先保持帧率，高精度需要更多计算。</p>
 </div>
 <div class="group" id="zoneFitSettings">
 <h2 class="group-title">量身</h2>
@@ -339,6 +339,7 @@
 </div>
 <p class="group-foot" id="marchSaveStatus" role="status"></p>
 </div>
+</section>
 </section>
 
 <section class="settings-pane" data-pane="voice" hidden="" id="commandsPanel">

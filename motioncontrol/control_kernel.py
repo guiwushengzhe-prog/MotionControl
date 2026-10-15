@@ -636,6 +636,7 @@ class ControlKernel:
         # 从云端下载的动作：编号 → 动作文件（含识别规则）。原地踏步、小腿向后抬起、
         # 跳跃是写在下面的代码，不在这里。见 configure_pose_actions。
         self.pose_actions: dict[str, dict] = {}
+        self.disabled_builtin_actions: set[str] = set()
         self._motion_rules: dict[str, dict] = {}
         self._motion_rule_order: list[str] = []
         self._pose_rules: dict[str, dict] = {}
@@ -680,16 +681,15 @@ class ControlKernel:
         self.pose_confidence: dict[str, float] = {}
         # 下载的姿势（双手交叉……）装上时建条目，自己录的姿势第一次见到时建。
         self.pose_debounce: dict[str, dict] = {}
+        # 上一帧去抖前的判定，用来处理动作经过区域的情况。
+        self.motion_raw: dict[str, bool] = {}
         # 默认装上动作库里已经登记的（电脑端启动时登记本机下载过的）。
-        self._install_pose_actions_locked(pose_library.registered().values())
+        self._install_pose_actions_locked(pose_library.registered().values(), pose_library.disabled_builtins())
         # 用户自己录的姿势。id 是运行时才知道的，所以去抖条目按需建。
         # 存取在 custom_poses.CustomPoseStore 里，由 server.py 装进来——内核不碰
         # 文件，这样测试里可以直接塞一个假的。
         self.custom_pose_store = None
         self.custom_pose_scores: dict[str, float] = {}
-        # 上一帧各个动作的原始判定（去抖之前）。圈在动作之前算，要让圈的时候看的
-        # 是它——见 _zone_yield_locked。
-        self.motion_raw: dict[str, bool] = {}
         # 用户自己建的键盘宏。和上面一样，文件不归内核管，由 server.py 装进来。
         self.macro_store = None
         # 最近触发过什么。做一个动作、摆一个姿势、说一句口令，到底有没有生效、按的
@@ -1353,6 +1353,8 @@ class ControlKernel:
             names.setdefault(entry["id"], entry["name"])
         out = []
         for ident in (*BUILTIN_MOTIONS, *self._motion_rules):
+            if ident in self.disabled_builtin_actions:
+                continue
             out.append((f"motion.{ident}", names.get(ident, ident)))
         for ident in self._pose_rules:
             out.append((f"pose.{ident}", names.get(ident, ident)))
@@ -2348,6 +2350,7 @@ class ControlKernel:
                 "control_bindings": self.control_bindings,
                 "motion_config": self.motion_config,
                 "pose_actions": list(self.pose_actions.values()),
+                "disabled_builtin_actions": sorted(self.disabled_builtin_actions),
                 "custom_poses": list(getattr(store, "poses", []) or []) if store is not None else [],
                 "zone_fit": self.zone_fit,
                 "zones_frozen": self.zones_frozen,
@@ -2463,13 +2466,13 @@ class ControlKernel:
 
     # ---------- 从云端下载的动作 ----------
 
-    def configure_pose_actions(self, docs) -> None:
+    def configure_pose_actions(self, docs, disabled_builtin=()) -> None:
         """换成这一批下载过的动作（校验过的动作文件）。没在这里面的就认不出来。"""
         with self._lock:
-            self._install_pose_actions_locked(docs)
+            self._install_pose_actions_locked(docs, disabled_builtin)
             self._dispatch_controls_locked(time.monotonic())
 
-    def _install_pose_actions_locked(self, docs) -> None:
+    def _install_pose_actions_locked(self, docs, disabled_builtin=()) -> None:
         actions = {doc["id"]: doc for doc in docs}
         motion_rules = {ident: doc["rule"] for ident, doc in actions.items() if doc["group"] == "motion"}
         pose_rules_ = {ident: doc["rule"] for ident, doc in actions.items() if doc["group"] == "pose"}
@@ -2477,6 +2480,9 @@ class ControlKernel:
         motion_order = pose_rules.evaluation_order(motion_rules)
         pose_order = pose_rules.evaluation_order(pose_rules_)
         removed = set(self.pose_actions) - set(actions)
+        disabled = set(disabled_builtin) & pose_library.BUILTIN_IDS
+        changed_builtin = self.disabled_builtin_actions ^ disabled
+        self.disabled_builtin_actions = disabled
         self.pose_actions = actions
         self._motion_rules, self._motion_rule_order = motion_rules, motion_order
         self._pose_rules, self._pose_rule_order = pose_rules_, pose_order
@@ -2496,6 +2502,18 @@ class ControlKernel:
                 ident, {"active": False, "on_since": 0.0, "off_since": 0.0})
         for ident in pose_rules_:
             self.pose_debounce.setdefault(ident, {"active": False, "on": 0, "off": 0})
+        for ident in changed_builtin:
+            self.motion_active.discard(ident)
+            self.motion_raw[ident] = False
+            self.motion_debounce[ident] = {"active": False, "on": 0, "off": 0}
+            self.body_motion_action_risk.discard(ident)
+            self.body_motion_action_risk_debounce[ident] = {"active": False, "on_since": 0.0, "off_since": 0.0}
+        if "march" in changed_builtin:
+            self.step.clear()
+            self.step.update(_fresh_step())
+            self._responsive_march.reset()
+        if "jump" in changed_builtin:
+            self._jump.reset()
 
     def _motion_risk_timing(self, ident: str) -> tuple[float, float]:
         if ident in BODY_MOTION_ACTION_RISK_TIMING:
@@ -2797,6 +2815,9 @@ class ControlKernel:
             self.step.update(_fresh_step())
             self._responsive_march.reset()
 
+        march_raw = march_raw and "march" not in self.disabled_builtin_actions
+        calf_raw = calf_raw and "calf_back" not in self.disabled_builtin_actions
+        jump_raw = jump_raw and "jump" not in self.disabled_builtin_actions
         raw_motion = {"march": march_raw, "calf_back": calf_raw, "jump": jump_raw}
         raw_motion.update({ident: result["raw"] for ident, result in rules.items()})
         self.motion_raw = dict(raw_motion)
@@ -2954,6 +2975,8 @@ class ControlKernel:
 
     def _effective_binding_locked(self, trigger: str) -> dict | None:
         prefix, _, ident = trigger.partition(".")
+        if prefix == "motion" and ident in self.disabled_builtin_actions:
+            return None
         if prefix == "zone" and is_region_id(ident) and ident not in self.custom_regions:
             return None
         binding = self.control_bindings.get(trigger)

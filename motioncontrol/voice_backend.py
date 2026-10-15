@@ -17,12 +17,13 @@ from pathlib import Path
 from typing import Callable
 
 from motioncontrol_shared.mapping_schema import shared_voice_command_id
+from motioncontrol_shared.profile_schema import GAME_VOICE_SLOT_PREFIX, MAX_GAME_VOICE_SLOTS
 
 SYSTEM_HEAD_CALIBRATION_START = "HEAD_CALIBRATION_START"
 VOICE_TIMEOUT_SECONDS = 1.5
 WAKE_COMMAND_WINDOW_SECONDS = 3.5
-# 每个游戏自己的 12 句口令。其余内置口令都是系统功能，不跟游戏走。
-PROFILE_SLOT_PREFIX = "game.profile_slot_"
+# 旧版自带 12 个稳定编号；新增口令沿用同一类编号，随游戏映射保存。
+PROFILE_SLOT_PREFIX = GAME_VOICE_SLOT_PREFIX
 MAX_AUDIO_FRAME_BYTES = 256 * 1024
 MAX_AUDIO_AGE_SECONDS = 0.5
 AUDIO_QUEUE_CAPACITY = 8
@@ -521,11 +522,39 @@ class VoiceService:
         """
         commands = copy.deepcopy(self._catalog)
         voice_bindings = bindings.get("voice", {}) if isinstance(bindings, dict) else {}
+        voice_bindings = voice_bindings if isinstance(voice_bindings, dict) else {}
         by_id = {str(item.get("id")): item for item in commands}
+        # 历史配置用过未补零的 1～9，保留它的原编号并替代对应随附槽位。
+        # 两种写法都明确配置时以规范编号为准，不能注册成两条同名口令。
+        for number in range(1, 10):
+            old_id, canonical_id = f"{PROFILE_SLOT_PREFIX}{number}", f"{PROFILE_SLOT_PREFIX}{number:02d}"
+            if old_id in voice_bindings and canonical_id not in voice_bindings:
+                command = by_id.pop(canonical_id, None)
+                if command is not None:
+                    command["id"] = old_id
+                    by_id[old_id] = command
         for command_id, binding in (voice_bindings.items() if isinstance(voice_bindings, dict) else []):
+            suffix = str(command_id)[len(PROFILE_SLOT_PREFIX):] if self._is_game_profile_command(command_id) else ""
+            if (len(suffix) == 1 and suffix in "123456789" and
+                    f"{PROFILE_SLOT_PREFIX}{int(suffix):02d}" in voice_bindings):
+                continue
             command = by_id.get(str(command_id))
-            if command is None or not isinstance(binding, dict): continue
+            if not isinstance(binding, dict): continue
             phrase = str(binding.get("phrase", "")).strip()
+            if command is None and self._is_game_profile_command(command_id):
+                number = str(command_id)[len(PROFILE_SLOT_PREFIX):]
+                if (number.isascii() and number.isdigit() and
+                        1 <= int(number) <= MAX_GAME_VOICE_SLOTS and
+                        str(command_id) in {f"{PROFILE_SLOT_PREFIX}{int(number):02d}",
+                                            f"{PROFILE_SLOT_PREFIX}{int(number)}"} and
+                        phrase and not binding.get("disabled") and isinstance(binding.get("action"), dict)):
+                    # 和旧槽位一样只提供稳定入口，最终输出始终由当前模式的绑定决定。
+                    command = {"id": str(command_id), "label": f"当前游戏功能{int(number)}",
+                               "kind": "keyboard", "default_target": "F1", "cooldown_ms": 700,
+                               "phrase": phrase, "synonyms": []}
+                    commands.append(command)
+                    by_id[str(command_id)] = command
+            if command is None: continue
             if phrase:
                 if self._is_game_profile_command(command_id):
                     phrase = self._without_wake_word(phrase)
@@ -541,6 +570,10 @@ class VoiceService:
                     elif self.system_wake_word and not compact_text(alias).startswith(compact_text(self.system_wake_word)):
                         alias = f"{self.system_wake_word}{alias}"
                     command["synonyms"].append(alias)
+        commands = [command for command in commands if not (
+            self._is_game_profile_command(command.get("id")) and
+            isinstance(voice_bindings.get(str(command.get("id"))), dict) and
+            voice_bindings[str(command.get("id"))].get("disabled"))]
         for command in commands:
             if self._is_game_profile_command(command.get("id")):
                 command["phrase"] = self._without_wake_word(str(command.get("phrase", "")))
@@ -1047,6 +1080,8 @@ class VoiceService:
         # Legacy callers without a dispatcher still resolve at execute_action.
         voice_bindings = self._profile_bindings.get("voice", {})
         binding = voice_bindings.get(cid) if isinstance(voice_bindings, dict) else None
+        if isinstance(binding, dict) and binding.get("disabled"):
+            return {"matched": False, "reason": "command_disabled", "command_id": cid}
         bound_action = binding.get("action") if isinstance(binding, dict) else None
         if (self.on_system_command is not None and kind != "system" and
                 isinstance(bound_action, dict) and bound_action.get("type") == "system" and

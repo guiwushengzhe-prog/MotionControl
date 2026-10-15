@@ -109,7 +109,7 @@ if(pane){
     const actual=goal==='steps'?number(today.steps):goal==='kcal'?number(today.estimated_kcal):number(today.active_seconds)/60;
     const target=number(profile[{minutes:'goal_active_minutes',steps:'goal_steps',kcal:'goal_kcal'}[goal]])||1;
     setText(el('homeFitnessHint'),data.error||(active?'自动记录中'+hr:
-      `今日目标 ${Math.min(100,Math.floor(actual/target*100))}% · 开始控制后自动记录`));
+      `今日目标 ${Math.min(100,Math.floor(actual/target*100))}%`));
   }
   form.addEventListener('input',()=>{editing=true});
   // 年龄、性别不填就是 null；别的都是数（主目标是字）。
