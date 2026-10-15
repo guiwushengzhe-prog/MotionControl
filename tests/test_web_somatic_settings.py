@@ -65,6 +65,28 @@ def test_somatic_view_and_body_model_save_on_one_page_and_reload(ui):
     assert ui.errors == []
 
 
+def test_stability_slider_reaches_fifty_percent_and_keeps_saved_value(ui):
+    page = ui.page
+    _go(page, "devices")
+    page.click('#settingsNav [data-pane="view"]')
+    source = page.locator("#viewHorizontalSource")
+    sync_api.expect(source).to_be_enabled()
+    with page.expect_response(lambda response: response.url.endswith("/api/view-control") and response.request.method == "POST"):
+        source.select_option("roll_tilt")
+    slider = page.locator("#deadzone")
+    sync_api.expect(slider).to_be_enabled()
+    assert slider.get_attribute("max") == "50"
+    with page.expect_response(lambda response: response.url.endswith("/api/head/config") and response.request.method == "POST"):
+        slider.press("End")
+    assert page.request.get(ui.base + "/api/kernel/status").json()["kernel"]["head"]["deadzone"] == .5
+    page.reload()
+    page.wait_for_function("currentGameName.textContent !== '正在读取…'")
+    _go(page, "devices")
+    page.click('#settingsNav [data-pane="view"]')
+    sync_api.expect(slider).to_have_value("50")
+    assert ui.errors == []
+
+
 def test_legacy_body_entry_opens_somatic_and_focuses_body_group(ui):
     page = ui.page
     page.set_viewport_size({"width": 390, "height": 844})

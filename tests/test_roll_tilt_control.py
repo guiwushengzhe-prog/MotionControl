@@ -73,6 +73,21 @@ def test_nod_translation_and_yaw_estimator_do_not_steer_roll(tmp_path, monkeypat
         assert c.update(eyes(0., offset_y=.03 * math.sin(i)), 640, 480, now=1 + i * .04)[0] == 0.
 
 
+@pytest.mark.parametrize('setting,threshold,saved', [
+    (.03, 4.725, .03), (.25, 4.725, .25), (.30, 5.4, .30), (.50, 9., .50), (.75, 9., .50),
+])
+def test_expanded_stability_range_overcomes_noise_and_survives_restart(tmp_path, monkeypatch, setting, threshold, saved):
+    c = controller(tmp_path, monkeypatch)
+    c.noise_tilt = 1.575
+    c.configure(deadzone=setting)
+    for index in range(6):
+        c.update(eyes(0.), 640, 480, now=1+index*.04)
+    assert c.status()['tilt_deadzone_deg'] == pytest.approx(threshold)
+    assert c.config['deadzone'] == saved
+    reloaded = HeadController(tmp_path / 'head.json')
+    assert reloaded.config['deadzone'] == saved
+
+
 def test_calibration_records_tilt_and_mode_switch_preserves_original_yaw(tmp_path, monkeypatch):
     c = controller(tmp_path, monkeypatch)
     c.start_center(1.)

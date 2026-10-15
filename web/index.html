@@ -49,7 +49,7 @@
 </div>
 <div class="viewer-foot">
 <div aria-label="身体动作" class="range-targets" id="rangeTargets"></div>
-<div class="viewer-tools"><button class="btn link" id="sourceStartBtn" title="开启所选摄像头和麦克风的识别">开始识别</button><button class="btn link" hidden="" id="sourceStopBtn" title="停止识别，释放摄像头和麦克风，同时暂停控制">停止识别</button><button class="btn link" id="centerBtn" title="把你现在的朝向当作正前方">重设正前方</button><button class="btn link" id="adjustZonesBtn">调整区域</button><button class="btn link" id="followZonesBtn">固定触发框</button><button class="btn link" id="voiceCommandsBtn">查看口令</button><button class="btn link" id="overlayBtn" title="在游戏画面上叠一个小窗">悬浮窗</button></div>
+<div class="viewer-tools"><button class="btn link" id="sourceStartBtn" title="开启所选摄像头和麦克风的识别">开始识别</button><button class="btn link" hidden="" id="sourceStopBtn" title="停止识别，释放摄像头和麦克风，同时暂停控制">停止识别</button><button class="btn link" id="adjustZonesBtn">调整区域</button><button class="btn link" id="followZonesBtn">固定触发框</button><button class="btn link" id="voiceCommandsBtn">查看口令</button><button class="btn link" id="overlayBtn" title="在游戏画面上叠一个小窗">悬浮窗</button></div>
 </div>
 </section>
 <p class="banner warn" hidden="" id="misfireHint" role="status"><span></span><button class="btn" id="misfireHintGo" type="button">去录一下</button><button class="btn link" id="misfireHintDismiss" type="button">先不用</button></p>
@@ -71,7 +71,7 @@
 <li class="step" data-step="phone" hidden=""><span class="dot"></span><div class="step-main"><b>手机</b><span class="step-sub" id="phoneStepSub"></span></div></li>
 <li class="step" data-step="pose"><span class="dot"></span><div class="step-main"><b>人体</b><span class="step-sub" id="poseStepSub"></span></div></li>
 <li class="step" data-step="game"><span class="dot"></span><div class="step-main"><b>游戏</b><span class="step-sub" id="gameStepSub"></span></div><button class="btn link" data-go="games">更换</button></li>
-<li class="step" data-step="cal"><span class="dot"></span><div class="step-main"><b>校准</b><span class="step-sub" id="calStatus">首次定位只需头部和双肩入镜</span></div><button class="btn" id="calBtn">站好并校准</button></li>
+<li class="step" data-step="cal"><span class="dot"></span><div class="step-main"><b>校准</b><span class="step-sub" id="calStatus">首次定位只需头部和双肩入镜</span></div><div id="calibrationActionsHost"><div class="menu-wrap calibration-actions"><button class="btn" id="calBtn">站好并校准</button><button class="btn calibration-more" id="calMenuBtn" type="button" aria-label="更多校准操作" aria-expanded="false" aria-haspopup="menu" aria-controls="calMenu" disabled>⌄</button><div class="menu" id="calMenu" role="menu" hidden><button class="menu-item" id="centerBtn" role="menuitem" title="只更新正前方，保留已测量的防抖参数" disabled>重设正前方</button></div></div></div></li>
 </ol>
 <div class="conflicts" hidden="" id="setupConflicts"></div>
 </section>
@@ -80,6 +80,7 @@
 <div class="run-time" id="runElapsed">00:00</div>
 <p class="run-sub" id="runSub">F9 暂停控制</p>
 <p class="run-sub" id="runMode">模式：默认</p>
+<div id="runCalibrationActions"></div>
 </section>
 <section class="card home-fitness" id="homeFitnessCard">
 <div class="card-head"><h2 class="card-title" id="homeFitnessTitle">今日运动</h2><button class="btn link" id="homeFitnessGo">查看记录</button></div>
@@ -263,7 +264,7 @@
 <h2 class="group-title">手感</h2>
 <div class="list">
 <div class="row head-only"><label class="row-main" for="speedX"><span class="name">左右速度</span><span class="sub">大角度偏转时的最高转向速度</span></label><div class="range-in"><input aria-label="左右视角速度" id="speedX" max="200" min="20" step="2" type="range" value="58"/><b id="speedXValue">58%</b></div></div>
-<div class="row head-only"><label class="row-main" for="deadzone"><span class="name">中心稳定区</span><span class="sub" id="headThresholdStatus"></span></label><div class="range-in"><input aria-label="中心稳定区" id="deadzone" max="25" min="3" type="range" value="10"/><b id="deadzoneValue">10%</b></div></div>
+<div class="row head-only"><label class="row-main" for="deadzone"><span class="name">中心稳定区</span><span class="sub" id="headThresholdStatus"></span></label><div class="range-in"><input aria-label="中心稳定区" id="deadzone" max="50" min="3" type="range" value="10"/><b id="deadzoneValue">10%</b></div></div>
 <div class="head-curve head-only" id="headCurvePanel">
 <div class="head-curve-heading"><span>左右加速曲线</span><button class="btn link" id="resetHeadCurve" type="button">恢复推荐</button></div>
 <p class="head-curve-help">上下拖动蓝点调整，左右同步。</p>

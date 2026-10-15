@@ -90,24 +90,22 @@ def reach_sectors(reference):
     pose, width, height = reference["pose"], reference["width"], reference["height"]
     reaches = reference.get("reaches")
     if not isinstance(reaches, dict):
-        return []
+        reaches = {}
     shoulder_delta = pose["left_shoulder"]["x"] - pose["right_shoulder"]["x"]
     if abs(shoulder_delta) * width < 1:
         return []
     result = []
     for side in ("left", "right"):
         outward = (1 if shoulder_delta > 0 else -1) * (1 if side == "left" else -1)
-        for kind, suffix, chain, maximum in (
-            ("hand", "Hand", ("shoulder", "elbow", "wrist"), 160.),
-            ("foot", "Foot", ("hip", "knee", "ankle"), 85.),
+        for kind, suffix, chain, maximum, default_end in (
+            ("hand", "Hand", ("shoulder", "elbow", "wrist"), 160., 110.),
+            ("foot", "Foot", ("hip", "knee", "ankle"), 85., 45.),
         ):
             samples = reaches.get(side + suffix)
             if not isinstance(samples, list):
-                continue
+                samples = []
             samples = [point for point in samples if isinstance(point, dict)
                        and all(_finite(point.get(axis)) and -5 <= point[axis] <= 5 for axis in ("x", "y"))]
-            if len(samples) < 5:
-                continue
             joints = [pose[f"{side}_{part}"] for part in chain]
             lengths = [math.hypot((a["x"] - b["x"]) * width, (a["y"] - b["y"]) * height)
                        for a, b in zip(joints, joints[1:])]
@@ -115,8 +113,6 @@ def reach_sectors(reference):
                 continue
             center = joints[0]
             samples = [point for point in samples if outward * (point["x"] - center["x"]) * width >= -1.]
-            if len(samples) < 5:
-                continue
 
             def angle(point):
                 # 零度向下，九十度水平外举；身体内侧的样本不扩到另一侧。
@@ -125,9 +121,14 @@ def reach_sectors(reference):
                 return math.degrees(math.atan2(max(0., dx), dy))
 
             start = min(maximum, max(0., angle(joints[-1])))
-            angles = sorted(angle(point) for point in samples)
-            peak = angles[math.ceil(.9*len(angles))-1]
-            end = min(maximum, max(start, peak) + 10.)
+            if len(samples) >= 5:
+                angles = sorted(angle(point) for point in samples)
+                peak = angles[math.ceil(.9*len(angles))-1]
+                end = min(maximum, max(start, peak) + 10.)
+                basis = "sampled"
+            else:
+                # 完整实测骨架可提供保守工程参考，不宣称个人极限或实际采样边界。
+                end, basis = default_end, "reference_default"
             if end - start < 1:
                 continue
             radius = sum(lengths)
@@ -140,7 +141,7 @@ def reach_sectors(reference):
                                "y": center["y"] + ry * math.cos(theta)})
             result.append({"side": side, "kind": kind, "cx": center["x"], "cy": center["y"],
                            "rx": rx, "ry": ry, "start_angle": start, "end_angle": end,
-                           "points": points})
+                           "basis": basis, "points": points})
     return result
 
 
