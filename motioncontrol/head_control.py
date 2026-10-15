@@ -3499,7 +3499,11 @@ class HeadController:
         base = float(self.config["deadzone"])
         policy = self.config["horizontal_algorithm"]
         if policy == "roll_tilt":
-            expanded = 3.0 * max(0.0, self.noise_tilt) > max(2.0, TILT_SPAN_DEG * base)
+            baseline = max(2.0, TILT_SPAN_DEG * base)
+            compensated = max(baseline, 3.0 * max(0.0, self.noise_tilt))
+            if compensated > baseline:
+                return f"噪声补偿：起转 {baseline:g}° → {compensated:.1f}°"
+            expanded = False
         elif policy == "head_responsive":
             span_x, _ = self._span()
             expanded = (
@@ -3507,7 +3511,9 @@ class HeadController:
                 or 3.5 * max(0.0, self.noise_yaw) / span_x > max(.22, base * 1.8)
             )
         else:
-            expanded = self.effective_deadzone_x > base
+            baseline = _clamp(max(base * .58, .055), .045, .18)
+            compensated = _clamp(max(self.effective_deadzone_x * .58, .055), .045, .18)
+            expanded = compensated > baseline
         return "因校准噪声较大，已扩大稳定区" if expanded else "因校准噪声较大，建议重新校准"
 
     def _axis_curve(self, norm: float, axis: str) -> float:
@@ -3999,7 +4005,7 @@ class HeadController:
         elif self.calibrated:
             elapsed = None
             remaining = None
-            origin = "沿用上次校准" if self.calibration_from_last_session else "已校准"
+            origin = "已载入上次校准" if self.calibration_from_last_session else "已校准"
             quality = f"{origin} · {self._calibration_noise_hint()}" if self.center_quality == "噪声较大" else f"{origin} · 质量{self.center_quality}"
         else:
             elapsed = None
