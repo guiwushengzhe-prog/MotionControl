@@ -363,6 +363,13 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .zone-reference-zones { pointer-events: none; }
 .zone-reference-zones .zone { transform: none; border-color: #64aaff; background: rgba(10,132,255,.10); }
 .zone-reference-zones .zone.following { border-color: #52caa6; }
+.zone-reference-points { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.reference-point { position: absolute; width: 1.375rem; height: 1.375rem; padding: 0; border: 0; border-radius: 50%; background: transparent; display: grid; place-items: center; transform: translate(-50%, -50%); pointer-events: auto; cursor: pointer; }
+.reference-point::after { content: ""; width: .5rem; height: .5rem; border: 1px solid var(--bg); border-radius: 50%; background: var(--text); }
+.reference-point[aria-pressed="true"]::after { width: .75rem; height: .75rem; background: var(--accent); box-shadow: 0 0 0 .1875rem var(--tint); }
+.reference-point:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 2; }
+.reference-point span { display: none; position: absolute; bottom: calc(100% + .125rem); padding: .125rem .375rem; border-radius: .25rem; background: var(--pop); color: var(--text); font-size: .75rem; white-space: nowrap; pointer-events: none; }
+.reference-point:hover span, .reference-point:focus-visible span { display: block; }
 .zone-edit-settings { display: flex; flex-wrap: wrap; gap: .75rem; width: 100%; }
 .zone-edit-settings label { display: flex; align-items: center; gap: .5rem; color: var(--text-2); }
 .zone-edit-settings select { max-width: 16rem; }

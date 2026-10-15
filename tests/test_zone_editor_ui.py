@@ -131,7 +131,7 @@ def test_reference_pointer_move_corner_resize_and_narrow_layout(mode_ui):
     assert page.locator("#zoneReferenceZones .zone:visible").count() == 1
     page.mouse.move(initial["x"] + initial["width"] / 2 + 18, initial["y"] + initial["height"] / 2 + 12, steps=4)
     page.mouse.up()
-    assert page.locator("#zoneReferenceZones .zone:visible").count() > 1
+    assert page.locator("#zoneReferenceZones .zone:visible").count() == 1
     moved = zone.bounding_box()
     assert moved["x"] == pytest.approx(initial["x"] + 18, abs=1)
     assert moved["y"] == pytest.approx(initial["y"] + 12, abs=1)
