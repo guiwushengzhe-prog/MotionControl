@@ -2678,6 +2678,7 @@ class AdminHandler(_BaseHandler):
                     deadzone=body.get("deadzone"),
                     sensitivity_x=body.get("sensitivity_x"),
                     sensitivity_y=body.get("sensitivity_y"),
+                    horizontal_curve_gamma=body.get("horizontal_curve_gamma"),
                     enabled=body.get("enabled"),
                     invert_x=body.get("invert_x"), invert_y=body.get("invert_y"),
                     horizontal_algorithm=body.get("horizontal_algorithm"),

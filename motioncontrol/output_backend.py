@@ -1017,7 +1017,9 @@ class OutputManager:
     def apply(self, x: float, y: float = 0.0) -> None:
         now = time.monotonic()
         with self._lock:
-            x = max(-1.0, min(1.0, float(x)))
+            # 头部左右速度可到 200%；只有鼠标允许超出归一化摇杆的物理范围。
+            x_limit = 2.0 if self.mode == "mouse" else 1.0
+            x = max(-x_limit, min(x_limit, float(x)))
             y = max(-1.0, min(1.0, float(y)))
             dt = now - self.last_update if self.last_update else 1 / 30
             dt = max(0.0, min(0.08, dt))
@@ -1048,7 +1050,10 @@ class OutputManager:
                         if self.mouse.last_error:
                             raise RuntimeError(self.mouse.last_error)
                 else:
-                    self._ensure_pad().set_right_stick(x * self.gamepad_gain, y * self.gamepad_gain)
+                    self._ensure_pad().set_right_stick(
+                        max(-1.0, min(1.0, x * self.gamepad_gain)),
+                        max(-1.0, min(1.0, y * self.gamepad_gain)),
+                    )
                 self.last_error = None
             except Exception as exc:
                 self.last_error = str(exc)

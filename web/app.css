@@ -888,6 +888,19 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
 .tour-cursor svg { fill: #fff; stroke: #1c1c1e; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 .125rem .1875rem rgba(0, 0, 0, .65)); }
 .tour-cursor span { margin-top: 1.125rem; padding: 1px .4375rem; border-radius: 62.4375rem; background: var(--accent); color: #fff; font-size: .6875rem; font-weight: 700; white-space: nowrap; }
 
+.head-curve { padding: 1rem 1.125rem .5rem; border-top: 1px solid var(--separator, #38383a); }
+.head-curve-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-weight: 600; }
+.head-curve-help { margin: .25rem 0 .5rem; color: var(--text-2); font-size: .8125rem; line-height: 1.5; }
+.head-curve-plot { display: block; width: 100%; max-height: 21rem; overflow: visible; }
+.head-curve-grid { fill: none; stroke: var(--separator, #48484a); stroke-width: 1; }
+.head-curve-deadzone { fill: var(--fill-2, #303033); opacity: .7; }
+.head-curve-line { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.head-curve-label { fill: var(--text-2); font-size: 13px; }
+.head-curve-handle { fill: var(--accent); stroke: var(--text, #fff); stroke-width: 2; cursor: ns-resize; touch-action: none; }
+.head-curve-handle:focus-visible { stroke-width: 4; outline: none; }
+.head-curve-handle[aria-disabled="true"] { opacity: .5; cursor: default; }
+.head-curve .row { padding-inline: 0; }
+
 /* --- 窄屏 ------------------------------------------------------------------ */
 @media (max-width: 1100px) {
   .layout { grid-template-columns: minmax(0, 1fr) 18.125rem; }

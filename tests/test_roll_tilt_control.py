@@ -115,10 +115,10 @@ def test_tilt_does_not_require_yaw_estimator_to_be_valid_after_calibration(tmp_p
 def test_gentle_turn_curve_is_continuous_progressive_and_has_no_speed_jump():
     values = [gentle_turn_rate(index / 1000) for index in range(1001)]
     assert values[0] == 0 and values[-1] == 1
-    assert all(0 < b - a < .0015 for a, b in zip(values, values[1:]))
-    assert 0 < values[100] < .07
-    assert .35 < values[500] < .4
-    assert .65 < values[750] < .7
+    assert all(0 < b - a < .002 for a, b in zip(values, values[1:]))
+    assert values[100] == pytest.approx(.01)
+    assert values[500] == pytest.approx(.25)
+    assert values[750] == pytest.approx(.5625)
     assert all(value <= index / 1000 for index, value in enumerate(values))
 
 

@@ -25,7 +25,7 @@ class ResponsiveHeadControl:
         self.return_brake = 0.0
         self.raw = 0.0
 
-    def _channel(self, delta, start, stop, source):
+    def _channel(self, delta, start, stop, source, curve_gamma):
         if not math.isfinite(delta) or abs(delta) <= stop:
             self.directions[source] = 0
             return 0.0
@@ -36,7 +36,7 @@ class ResponsiveHeadControl:
         self.directions[source] = direction
         amount = min(1.0, (abs(delta) - stop) / max(.1, 1.0 - stop))
         # 中心附近便于细调，大幅动作加速；连续、单调，不突然跳到高速。
-        curved = gentle_turn_rate(amount)
+        curved = gentle_turn_rate(amount, curve_gamma)
         return math.copysign(curved, delta)
 
     def _return_brake(self, delta, dt, noise, source):
@@ -60,7 +60,7 @@ class ResponsiveHeadControl:
         return confidence * (1.0 - math.exp(-(.28 * self.return_speed[source]) ** 2))
 
     def update(self, tilt, yaw, now, *, center_tilt, noise_tilt, noise_yaw, yaw_span, deadzone,
-               motion_deadzone_scale=1.0):
+               motion_deadzone_scale=1.0, curve_gamma=2.0):
         if not math.isfinite(now):
             self.reset()
             return 0.0
@@ -85,8 +85,8 @@ class ResponsiveHeadControl:
         tilt_delta = (tilt - center_tilt) / TILT_SPAN_DEG if all(
             math.isfinite(v) for v in (tilt, center_tilt)) else math.nan
         tilt_value = self._channel(tilt_delta, self.tilt_threshold / TILT_SPAN_DEG,
-                                   self.tilt_stop_threshold / TILT_SPAN_DEG, "tilt")
-        yaw_value = self._channel(yaw, self.yaw_threshold, self.yaw_stop_threshold, "yaw")
+                                   self.tilt_stop_threshold / TILT_SPAN_DEG, "tilt", curve_gamma)
+        yaw_value = self._channel(yaw, self.yaw_threshold, self.yaw_stop_threshold, "yaw", curve_gamma)
         brakes = {
             "tilt": self._return_brake(tilt_delta, dt, max(0.0, noise_tilt) / TILT_SPAN_DEG, "tilt"),
             "yaw": self._return_brake(yaw, dt, max(0.0, noise_yaw) / yaw_span, "yaw"),

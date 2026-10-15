@@ -9,6 +9,7 @@ import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode} from './mappi
 import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runAction} from './shell.js';
 import {S,gameProfile,head,output} from './state.js';
 import {handMouseConfig,renderViewControl,syncControlLabels} from './view-control.js';
+import {renderHeadCurve} from './head-curve.js';
 import {voiceInputReady} from './voice.js';
 
 export let currentPoseMap=null;
@@ -285,8 +286,8 @@ export function renderKernelState(runtime,force=false){
     const tilt=Number(hs.tilt_deadzone_deg),stop=Number(hs.responsive_tilt_stop_deg);
     const valid=(hs.horizontal_calibrated??hs.calibrated)&&Number.isFinite(tilt)&&tilt>0;
     setText(threshold,valid&&['roll_tilt','head_responsive'].includes(hs.horizontal_algorithm)
-      ? `已结合个人校准 · 侧倾约 ${tilt.toFixed(1)}° 起转${Number.isFinite(stop)&&stop>0?`，回到 ${stop.toFixed(1)}° 内停止`:''}${motionScale>1.01?' · 运动时略扩大':''}`
-      : '结合个人校准，头在这个范围内不转');
+      ? `当前设置 ${Math.round(Number(hs.deadzone??.1)*100)}% → 实际侧倾约 ${tilt.toFixed(1)}° 起转${Number.isFinite(stop)&&stop>0?`，回到 ${stop.toFixed(1)}° 内停止`:''}；校准抖动较大时，实际门槛会提高${motionScale>1.01?' · 运动时略扩大':''}`
+      : '百分比设置决定最低稳定区，实际起转角度还会结合个人校准');
   }
   renderViewHud(hs,guardBlocked);
   if(hs.calibrated!==undefined){
@@ -298,7 +299,7 @@ export function renderKernelState(runtime,force=false){
     renderCalibrationOverlay(hs);
   }
   if(hs.algorithm&&(force||(!S.headDirty&&!document.activeElement?.closest('#headSettings,[data-pane="lab"]')))){
-    const signature=JSON.stringify([hs.algorithm,hs.horizontal_algorithm,hs.deadzone,hs.sensitivity_x,hs.sensitivity_y,hs.enabled,hs.invert_y,k.vertical_look?.enabled,k.vertical_look?.exclusive_axes,hs.vertical_exclusive_axes,k.vertical_look?.body_motion_guard]);
+    const signature=JSON.stringify([hs.algorithm,hs.horizontal_algorithm,hs.deadzone,hs.sensitivity_x,hs.sensitivity_y,hs.horizontal_curve_gamma,hs.enabled,hs.invert_y,k.vertical_look?.enabled,k.vertical_look?.exclusive_axes,hs.vertical_exclusive_axes,k.vertical_look?.body_motion_guard]);
     if(force||signature!==headConfigSignature){
     headConfigSignature=signature;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
@@ -310,10 +311,12 @@ export function renderKernelState(runtime,force=false){
     if($('#bodyMotionGuard'))$('#bodyMotionGuard').checked=head.bodyMotionGuard;
     $('#deadzone').value=Math.round(Number(hs.deadzone||.10)*100);
     $('#speedX').value=Number(hs.sensitivity_x||58);$('#speedY').value=Number(hs.sensitivity_y||46);
+    $('#headCurveGamma').value=Number(hs.horizontal_curve_gamma??2);
     // 头控开没开由「左右」那个下拉决定（选头部方案 = 开，选握拳或关闭 = 关），这里只记下来。
     head.enabled=!!hs.enabled;$('#invertY').checked=!!hs.invert_y;syncControlLabels();renderViewControl();
     }
   }
+  renderHeadCurve(hs);
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
   sessionStarted=sourceMode==='phone'?inputStatus.body_enabled!==false:cameraRunning;
