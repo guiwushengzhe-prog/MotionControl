@@ -1,11 +1,11 @@
 // 开始页：画面、区域框、准备卡片、触发大字、挪动区域、悬浮窗。
 import {renderIntent,renderMisfireHint,renderZoneFit,renderZoneFreeze} from './body.js';
-import {$,agoText,api,clamp,fitCanvas,isVisible,notice,post,setAttribute,setClass,setProperty,setStyle,setText,syncChildren} from './core.js';
+import {$,agoText,api,clamp,configurationOperation,fitCanvas,isVisible,notice,post,setAttribute,setClass,setProperty,setStyle,setText,syncChildren} from './core.js';
 import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMerge,renderCameraDepth,syncCameraDeviceRow} from './devices.js';
 import {renderTriggerRecord} from './diagnostics.js';
 import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,bodyZones,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseCountdown,paintPoseLibrary} from './library.js';
-import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode} from './mapping.js';
+import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode,renderProfileBindingRows} from './mapping.js';
 import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runAction,showView,tutorial} from './shell.js';
 import {S,gameProfile,head,output} from './state.js';
 import {handMouseConfig,renderViewControl,syncControlLabels} from './view-control.js';
@@ -34,6 +34,7 @@ let liveZoneDrag=null;
 let latestRuntime=null;
 let latestConfigRevision=-1;
 let poseCaptureSignature='',zoneFreezeSignature='';
+let editorPointRender=[];
 
 const canvas = $('#canvas');
 
@@ -63,7 +64,7 @@ const RECT_EDIT_ZONE_IDS=['leftHand','rightHand','leftFoot','rightFoot','headJum
 
 const RECT_EDIT_MIN=.02;
 
-export const rectEdit={rects:{},selected:'',profileId:null,modes:{},reference:{},viewport:{x1:0,y1:0,x2:1,y2:1},width:640,height:480};
+export const rectEdit={rects:{},selected:'',profileId:null,modeId:null,modes:{},triggerChoices:{},pointChanges:{},pointLabels:{},reference:{},viewport:{x1:0,y1:0,x2:1,y2:1},width:640,height:480};
 
 function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
   target.save();target.setTransform(1,0,0,1,0,0);target.clearRect(0,0,w,h);
@@ -425,16 +426,18 @@ export async function ensureZoneReference(){
 export async function openLiveZoneEditor({selectedId=''}={}){
   if(zoneEditMode){if(typeof selectedId==='string'&&rectEdit.rects[selectedId])selectEditorRegion(selectedId);return}
   await setOutput(false);
-  const data=await api('/api/zones/editor');
-  if(data.reference?.ready===false){showView('play');tutorial.openLesson('fit',$('#adjustZonesBtn'),{needReference:true});return}
-  const rects=structuredClone(data.rects||{});
-  if(!Object.keys(rects).length)throw new Error('先在「本游戏 → 区域」添加区域');
-  Object.assign(rectEdit,{rects,profileId:data.profile_id,modes:{...data.modes},reference:data.reference||{},width:data.width||640,height:data.height||480});
-  rectEdit.selected=typeof selectedId==='string'&&rects[selectedId]?selectedId:Object.keys(rects)[0];
-  fitReferenceViewport();zoneEditMode=true;$('#zoneEditBar').hidden=false;
-  renderReferenceCanvas();renderEditorZones();renderZoneFreeze();renderMainStatus();
-  $('#zoneEditBar').scrollIntoView({block:'center'});
-  $('#zoneReferenceZones').querySelector(`[data-zone="${rectEdit.selected}"]`)?.focus({preventScroll:true});
+  return configurationOperation(async()=>{
+    const data=await api('/api/zones/editor');
+    if(data.reference?.ready===false){showView('play');tutorial.openLesson('fit',$('#adjustZonesBtn'),{needReference:true});return}
+    const rects=structuredClone(data.rects||{});
+    if(!Object.keys(rects).length)throw new Error('先在「本游戏 → 区域」添加区域');
+    Object.assign(rectEdit,{rects,profileId:data.profile_id,modeId:data.mode_id??null,modes:{...data.modes},triggerChoices:structuredClone(data.trigger_choices||{}),pointChanges:{},pointLabels:data.point_labels||gameProfile.zonePointLabels||{},reference:data.reference||{},width:data.width||640,height:data.height||480});
+    rectEdit.selected=typeof selectedId==='string'&&rects[selectedId]?selectedId:Object.keys(rects)[0];
+    fitReferenceViewport();zoneEditMode=true;$('#zoneEditBar').hidden=false;
+    renderEditorZones();renderZoneFreeze();renderMainStatus();
+    $('#zoneEditBar').scrollIntoView({block:'center'});
+    $('#zoneReferenceZones').querySelector(`[data-zone="${rectEdit.selected}"]`)?.focus({preventScroll:true});
+  });
 }
 
 function closeLiveZoneEditor(){
@@ -491,14 +494,65 @@ function renderReferenceCanvas(){
     g.setLineDash([]);g.strokeStyle=ink;g.lineWidth=Math.max(2,w/640*3);
     g.beginPath();g.moveTo(x.x*w,x.y*h);g.lineTo(y.x*w,y.y*h);g.stroke();
   }
-  g.setLineDash([]);
-  for(const p of Object.values(pose)){
-    const at=referencePoint(p.x,p.y);g.fillStyle=ink;g.beginPath();g.arc(at.x*w,at.y*h,Math.max(2,w/200),0,Math.PI*2);g.fill();
+  for(const [a,b] of editorPointChoice().trigger_segments||[]){
+    if(!pose[a]||!pose[b])continue;
+    const p=referencePoint(pose[a].x,pose[a].y),q=referencePoint(pose[b].x,pose[b].y);
+    g.strokeStyle=style.getPropertyValue('--accent').trim()||'#0a84ff';g.lineWidth=Math.max(3,w/160);
+    g.beginPath();g.moveTo(p.x*w,p.y*h);g.lineTo(q.x*w,q.y*h);g.stroke();
   }
+  g.setLineDash([]);
   $('#zoneEditHint').textContent=rectEdit.reference.ranges?.length?'按保存的完整身体比例调整；扇形为侧举参考，可通过量身更新。':'按保存的完整身体比例调整；可重新量身补齐手脚侧举参考。';
 }
 
 function editorRegionName(id){return gameProfile.selected?.regions?.find(r=>r.id===id)?.name||bodyZones()[id]?.body||id}
+
+function editorPointChoice(){return rectEdit.triggerChoices[rectEdit.selected]||{trigger_points:[],trigger_segments:[]}}
+
+function selectedEditorPoints(choice=editorPointChoice()){
+  return new Set([...(choice.trigger_points||[]),...(choice.trigger_segments||[]).flat()]);
+}
+
+function clickedEditorPoint(event,fallback){
+  if(!event.detail)return fallback;
+  const box=$('#zoneReferencePoints').getBoundingClientRect();
+  let closest=fallback,distance=Infinity;
+  for(const [id,point] of Object.entries(rectEdit.reference.pose||{})){
+    if(!rectEdit.pointLabels[id])continue;
+    const p=referencePoint(point.x,point.y),d=(event.clientX-box.left-p.x*box.width)**2+(event.clientY-box.top-p.y*box.height)**2;
+    if(d<distance){closest=id;distance=d}
+  }
+  return closest;
+}
+
+function renderEditorPoints(){
+  const version=[rectEdit.selected,rectEdit.triggerChoices[rectEdit.selected],rectEdit.reference,rectEdit.viewport,previewMirrored];
+  if(version.every((value,index)=>editorPointRender[index]===value))return;
+  editorPointRender=version;renderReferenceCanvas();
+  const layer=$('#zoneReferencePoints'),pose=rectEdit.reference.pose||{},choice=editorPointChoice(),selected=selectedEditorPoints(choice);
+  const label=id=>rectEdit.pointLabels[id]||id;
+  for(const old of [...layer.children])if(!pose[old.dataset.point])old.remove();
+  for(const [id,point] of Object.entries(pose)){
+    if(!rectEdit.pointLabels[id])continue;
+    let button=layer.querySelector(`[data-point="${id}"]`);
+    if(!button){button=document.createElement('button');button.type='button';button.className='reference-point';button.dataset.point=id;button.append(document.createElement('span'));button.addEventListener('click',event=>toggleEditorPoint(clickedEditorPoint(event,id)));layer.append(button)}
+    const p=referencePoint(point.x,point.y);
+    setStyle(button,'left',p.x*100+'%');setStyle(button,'top',p.y*100+'%');
+    setAttribute(button,'aria-label',label(id));setAttribute(button,'aria-pressed',String(selected.has(id)));setProperty(button,'title',label(id)+'：点击选择，再点取消');setText(button.firstChild,label(id));
+  }
+  const segments=choice.trigger_segments||[],linked=new Set(segments.flat()),groups=(choice.trigger_points||[]).filter(id=>!linked.has(id)).map(label);
+  const graph=new Map();for(const [a,b] of segments){if(!graph.has(a))graph.set(a,new Set());if(!graph.has(b))graph.set(b,new Set());graph.get(a).add(b);graph.get(b).add(a)}
+  const seen=new Set();for(const start of graph.keys()){if(seen.has(start))continue;const todo=[start],members=[];while(todo.length){const id=todo.pop();if(seen.has(id))continue;seen.add(id);members.push(label(id));todo.push(...graph.get(id))}groups.push(members.join('＋')+'（同时进入）')}
+  setText($('#zoneEditTriggerStatus'),groups.length?'触发部位：'+groups.join('；')+'。点击骨骼点选择，再点取消。':'未选触发部位，点击骨骼点选择。');
+}
+
+export function toggleEditorPoint(id){
+  if(!zoneEditMode||!rectEdit.rects[rectEdit.selected]||!rectEdit.pointLabels[id])return;
+  const choice=editorPointChoice(),selected=selectedEditorPoints(choice);
+  const remove=selected.has(id);if(remove)selected.delete(id);else selected.add(id);
+  const next={trigger_points:[...selected],trigger_segments:(choice.trigger_segments||[]).filter(pair=>!remove||!pair.includes(id))};
+  rectEdit.triggerChoices[rectEdit.selected]=next;rectEdit.pointChanges[rectEdit.selected]=structuredClone(next);
+  renderEditorPoints();
+}
 
 function renderEditorZones(){
   if(!zoneEditMode)return;
@@ -511,11 +565,12 @@ function renderEditorZones(){
     setAttribute(el,'aria-label',name+'，方向键移动，Shift 加方向键改大小');
     setText(el.querySelector('strong'),zoneKeyLabel(id,bodyZones()[id]||{body:name}));setText(el.querySelector('small'),name);
     setClass(el,'selected',rectEdit.selected===id);setClass(el,'following',rectEdit.modes[id]==='following');
-    setStyle(el,'display',liveZoneDrag&&liveZoneDrag.id!==id?'none':'grid');setStyle(el,'left',d.left*100+'%');setStyle(el,'top',d.top*100+'%');setStyle(el,'width',(d.right-d.left)*100+'%');setStyle(el,'height',(d.bottom-d.top)*100+'%');
+    setStyle(el,'display',rectEdit.selected!==id?'none':'grid');setStyle(el,'left',d.left*100+'%');setStyle(el,'top',d.top*100+'%');setStyle(el,'width',(d.right-d.left)*100+'%');setStyle(el,'height',(d.bottom-d.top)*100+'%');
   }
   const ids=Object.keys(rectEdit.rects);
   if([...selection.options].map(o=>o.value).join()!==ids.join())selection.replaceChildren(...ids.map(id=>new Option(editorRegionName(id),id)));
   selection.value=rectEdit.selected;$('#zoneEditPositionMode').value=rectEdit.modes[rectEdit.selected]||'fixed';
+  renderEditorPoints();
 }
 
 export function selectEditorRegion(id){if(rectEdit.rects[id]){rectEdit.selected=id;renderEditorZones()}}
@@ -571,14 +626,16 @@ export function moveLiveZoneDrag(e){if(zoneEditMode&&liveZoneDrag&&e.pointerId==
 export function endLiveZoneDrag(e){if(!liveZoneDrag)return;if(e?.pointerId!==undefined&&liveZoneDrag.pointerId!==e.pointerId)return;liveZoneDrag=null;renderEditorZones()}
 
 function acceptZoneLayout(data){
-  if(data.profile)gameProfile.selected=data.profile;
+  if(data.profile){gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{}}
   if(data.runtime)renderKernelState(data.runtime);else if(data.kernel)renderKernelState(data);else return refreshKernel();
 }
 
 export async function saveLiveZones(){
-  if(rectEdit.profileId!==gameProfile.selected?.selected_id)throw new Error('游戏已经切换，请取消后重新调整区域');
-  const data=await post('/api/zones/layout',{profile_id:rectEdit.profileId,rects:rectEdit.rects,modes:rectEdit.modes,reference:rectEdit.reference});
-  await acceptZoneLayout(data);closeLiveZoneEditor();notice('区域已保存。');
+  return configurationOperation(async()=>{
+    if(rectEdit.profileId!==gameProfile.selected?.selected_id)throw new Error('游戏已经切换，请取消后重新调整区域');
+    const data=await post('/api/zones/layout',{profile_id:rectEdit.profileId,mode_id:rectEdit.modeId,rects:rectEdit.rects,modes:rectEdit.modes,reference:rectEdit.reference,trigger_choices:rectEdit.pointChanges});
+    await acceptZoneLayout(data);renderProfileBindingRows();closeLiveZoneEditor();notice('区域已保存。');
+  });
 }
 
 export async function cancelLiveZones(){closeLiveZoneEditor()}

@@ -1701,9 +1701,14 @@ class ControlKernel:
             # 越界的跟随框在编辑器中画成可拖动的最小框；原样保存应保留原比例，不偷偷裁剪。
             reference["display_rects"] = copy.deepcopy(rects)
             reference["modes"] = copy.deepcopy(modes)
+            choices = {name: {
+                "trigger_points": list(self._zone_point_binding_locked(name).get(
+                    "trigger_points", self.runtime_body_zones[name]["points"])),
+                "trigger_segments": copy.deepcopy(self._zone_point_binding_locked(name).get("trigger_segments", [])),
+            } for name in rects}
             return {"width": width, "height": height,
                     "builtin_mode": "fixed" if self.zones_frozen else "following", "rects": rects,
-                    "modes": modes,
+                    "modes": modes, "trigger_choices": choices, "mode_id": self.game_mode.get("id"),
                     "reference": reference}
 
     def prepare_zone_layout(self, rects, modes, reference) -> tuple[dict, list[dict]]:

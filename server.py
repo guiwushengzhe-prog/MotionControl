@@ -53,7 +53,7 @@ from motioncontrol.game_launch import is_administrator, launch_as_administrator,
 from motioncontrol import kinect_camera
 from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
-from motioncontrol_shared.profile_schema import action_catalog
+from motioncontrol_shared.profile_schema import action_catalog, normalize_binding
 from motioncontrol_shared.mapping_schema import DEFAULT_EMERGENCY_STOP, shared_voice_command_id
 from motioncontrol_shared.pose_points import POSE_CONNECTIONS, POSE_POINT_LABELS
 from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
@@ -1172,6 +1172,10 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_
         previous_voice_modes = copy.deepcopy(VOICE._mode_bindings)
         previous_layout = {name: copy.deepcopy(getattr(KERNEL, name)) for name in
                            ("following_layout", "zones_frozen", "frozen_rects", "frozen_anchor", "_general_raw")}
+        previous_controls = {name: copy.deepcopy(getattr(KERNEL, name)) for name in
+                             ("zone_state", "zone_rects", "trigger_previous", "_rule_previous", "_mode_held",
+                              "_sequence_next", "_selected_active", "_voice_rule_pulses", "action_chain",
+                              "action_chain_result")} if zone_layout else None
         runtime_updated = False
         try:
             with file_transaction(
@@ -1212,6 +1216,16 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_
                 KERNEL.configure_regions(previous_profile.get("regions", []))
                 KERNEL.configure_bindings(previous_bindings, mode=previous_profile["mode"])
                 VOICE.configure_profile_bindings(previous_voice, previous_voice_modes)
+                if previous_controls is not None:
+                    for name, value in previous_controls.items():
+                        setattr(KERNEL, name, value)
+                    # 原触发边沿已恢复，只补回旧按住；待处理口令留给原来的下一帧。
+                    pending = KERNEL._voice_rule_pulses
+                    KERNEL._voice_rule_pulses = set()
+                    try:
+                        KERNEL._dispatch_controls_locked(time.monotonic())
+                    finally:
+                        KERNEL._voice_rule_pulses = pending
             SYSTEM_COMMANDS.invalidate()
             raise
 
@@ -1816,7 +1830,8 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "区域只能在这台电脑上修改"}, 403)
                 return
             with PROFILE_UPDATE_LOCK:
-                self._send_json({"ok": True, "profile_id": PROFILES.selected_id(), **KERNEL.zone_editor()})
+                self._send_json({"ok": True, "profile_id": PROFILES.selected_id(), **KERNEL.zone_editor(),
+                                 "mode_id": _active_mode_id(), "point_labels": POSE_POINT_LABELS})
             return
         if route == "/api/action-chain/config":
             self._send_json({"version": VERSION, **KERNEL.status()["action_chain"]})
@@ -2419,12 +2434,36 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "区域只能在这台电脑上修改"}, 403)
                 return
             try:
-                with _profile_configuration_transaction(preserve_controls=True, zone_layout=True):
+                with PROFILE_UPDATE_LOCK, PROFILES._lock, VOICE._lock, KERNEL._lock:
                     PROFILES._check_region_profile(body.get("profile_id"))
+                    profile = _active_profile()
+                    if "mode_id" in body and body["mode_id"] != profile["mode"]["id"]:
+                        raise ProfileSelectionChanged("当前模式已改变，区域未保存。请重新打开调整")
+                    overrides = None
+                    if "trigger_choices" in body:
+                        choices = body["trigger_choices"]
+                        if not isinstance(choices, dict):
+                            raise ValueError("区域触发点设置必须是对象")
+                        unknown = set(choices) - set(RUNTIME_BODY_ZONES) - set(KERNEL.custom_regions)
+                        if unknown:
+                            raise KeyError("触发点设置中有已经删掉的区域")
+                        overrides = copy.deepcopy(profile["overrides"])
+                        for name, fields in choices.items():
+                            if not isinstance(fields, dict) or set(fields) - {"trigger_points", "trigger_segments"}:
+                                raise ValueError("区域只能修改触发点和触发连线")
+                            if not fields:
+                                continue
+                            binding = copy.deepcopy(profile["bindings"].get("zones", {}).get(name, {"disabled": True}))
+                            binding.update(fields)
+                            overrides[f"zone.{name}"] = normalize_binding(binding, default_behavior="hold")
                     prepared, regions = KERNEL.prepare_zone_layout(body.get("rects"), body.get("modes", {}), body.get("reference"))
-                    PROFILES.set_regions(PROFILES.selected_id(), regions)
-                    KERNEL.configure_regions(regions)
-                    KERNEL.apply_zone_layout(prepared)
+                    with _profile_configuration_transaction(preserve_controls=True, zone_layout=True):
+                        PROFILES.set_regions(PROFILES.selected_id(), regions)
+                        if overrides is not None:
+                            PROFILES.set_overrides(overrides, profile_id=profile["selected_id"],
+                                                  mode_id=profile["mode"]["id"], check=VOICE.check_profile_phrases)
+                        KERNEL.configure_regions(regions)
+                        KERNEL.apply_zone_layout(prepared)
                 broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
                 if broadcaster is not None:
                     broadcaster(_phone_control_payload())
