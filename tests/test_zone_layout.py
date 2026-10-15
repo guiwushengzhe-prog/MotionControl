@@ -82,7 +82,8 @@ def test_editor_uses_saved_full_body_without_adapting_to_current_half_body(regio
     editor = kernel.zone_editor()
     assert editor["reference"]["source"] == "measured"
     assert editor["reference"]["pose"] == kernel.body_reference["pose"]
-    assert editor["reference"]["ranges"] == []
+    assert len(editor["reference"]["ranges"]) == 4
+    assert all(sector["basis"] == "reference_default" for sector in editor["reference"]["ranges"])
     assert kernel.latest_pose == before
     assert not kernel.zones_frozen
     prepared, _ = kernel.prepare_zone_layout(editor["rects"], editor["modes"], editor["reference"])

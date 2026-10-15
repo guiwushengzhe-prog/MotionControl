@@ -127,16 +127,28 @@ def test_recording_knee_angle_is_measured_in_pixels(tmp_path):
     assert extract_recording_reference(path) is None, "宽画面相同归一化侧移实际是100像素弯腿"
 
 
-def test_reach_sectors_need_samples_and_valid_complete_bone_chains():
+def test_complete_reference_without_reach_samples_gets_four_conservative_sectors():
     raw = reference()
-    assert reach_sectors(raw) == []
+    sectors = reach_sectors(raw)
+    assert len(sectors) == 4
+    assert all(item["basis"] == "reference_default" for item in sectors)
+    assert {item["end_angle"] for item in sectors if item["kind"] == "hand"} == {110}
+    assert {item["end_angle"] for item in sectors if item["kind"] == "foot"} == {45}
+    assert all(0 < item["end_angle"] - item["start_angle"] < 180 for item in sectors)
+    del raw["pose"]["left_ankle"]
+    assert reach_sectors(raw) == [], "不完整的半身参考仍不补成人体"
+
+
+def test_reach_sectors_use_defaults_for_insufficient_samples_and_skip_invalid_bones():
+    raw = reference()
     raw["reaches"] = {"leftHand": [{"x": .1, "y": .2}] * 4,
                       "rightFoot": [{"x": math.inf, "y": .8}] * 5}
-    assert reach_sectors(raw) == []
+    assert all(item["basis"] == "reference_default" for item in reach_sectors(raw))
     raw["reaches"]["leftHand"].append({"x": .1, "y": .2})
-    assert len(reach_sectors(raw)) == 1
+    sampled, = [item for item in reach_sectors(raw) if item["basis"] == "sampled"]
+    assert sampled["side"] == "left" and sampled["kind"] == "hand"
     raw["pose"]["left_elbow"] = dict(raw["pose"]["left_shoulder"])
-    assert reach_sectors(raw) == []
+    assert len(reach_sectors(raw)) == 3
 
 
 def test_reach_sectors_are_symmetric_limited_and_use_pixel_bone_lengths():
@@ -147,6 +159,7 @@ def test_reach_sectors_are_symmetric_limited_and_use_pixel_bone_lengths():
                       "rightFoot": [{"x": 1.2, "y": -4}] * 5}
     sectors = {(item["side"], item["kind"]): item for item in reach_sectors(raw)}
     assert len(sectors) == 4
+    assert all(item["basis"] == "sampled" for item in sectors.values())
     for kind, maximum in (("hand", 160), ("foot", 85)):
         left, right = sectors["left", kind], sectors["right", kind]
         assert left["end_angle"] == maximum
@@ -170,7 +183,24 @@ def test_reach_sectors_follow_mirrored_shoulders_and_reject_bad_samples():
         point["x"] = 1 - point["x"]
     raw["reaches"] = {"leftHand": [{"x": .95, "y": .2}] * 5
                       + [{"x": 6, "y": .2}, {"x": True, "y": .1}, {"x": .8, "y": math.nan}]}
-    sector, = reach_sectors(raw)
+    sector, = [item for item in reach_sectors(raw) if item["basis"] == "sampled"]
     assert sector["side"] == "left"
     assert sector["end_angle"] == pytest.approx(100)
     assert all(point["x"] >= sector["cx"] - 1e-9 for point in sector["points"])
+
+
+def test_sampled_reach_uses_ninetieth_percentile_instead_of_one_extreme_frame():
+    raw = reference()
+    raw["reaches"] = {"leftHand": []}
+    for degrees in [20] * 9 + [160]:
+        theta = math.radians(degrees)
+        raw["reaches"]["leftHand"].append({"x": .4 - .15 * math.sin(theta),
+                                           "y": .2 + .20 * math.cos(theta)})
+    sector, = [item for item in reach_sectors(raw) if item["basis"] == "sampled"]
+    assert sector["end_angle"] == pytest.approx(30)
+
+
+def test_default_sector_does_not_wrap_when_saved_limb_is_already_raised():
+    raw = reference()
+    raw["pose"]["left_wrist"].update(x=.4, y=.1)
+    assert all(item["side"] != "left" or item["kind"] != "hand" for item in reach_sectors(raw))

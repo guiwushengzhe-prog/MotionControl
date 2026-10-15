@@ -208,6 +208,8 @@ function renderReadiness(){
   const running=!!output.enabled;
   setProperty($('#readyCard'),'hidden',running&&!setupConflicts().length);
   setProperty($('#runCard'),'hidden',!running);
+  const calibrationActions=document.querySelector('.calibration-actions'),calibrationHost=$(running?'#runCalibrationActions':'#calibrationActionsHost');
+  if(calibrationActions&&calibrationHost&&calibrationActions.parentElement!==calibrationHost)calibrationHost.append(calibrationActions);
   if(running){
     if(!runStartedAt)runStartedAt=Date.now();
     const sec=Math.floor((Date.now()-runStartedAt)/1000),pad=n=>String(n).padStart(2,'0');
@@ -308,6 +310,9 @@ export function renderKernelState(runtime,force=false){
   renderViewHud(hs,guardBlocked);
   if(hs.calibrated!==undefined){
     setText($('#calBtn'),hs.calibrating?'取消校准':(hs.horizontal_calibrated??hs.calibrated)?'重新校准':'站好并校准');
+    const canCenter=!!(hs.horizontal_calibrated??hs.calibrated)&&!hs.calibrating;
+    setProperty($('#calMenuBtn'),'disabled',!canCenter);setProperty($('#centerBtn'),'disabled',!canCenter);
+    if(!canCenter){setProperty($('#calMenu'),'hidden',true);setAttribute($('#calMenuBtn'),'aria-expanded','false')}
     const handHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand);
     if(hs.calibrating||(!handHorizontal&&hs.enabled))setText($('#calStatus'),hs.calibrating?(hs.notice||hs.quality||'正在校准'):(hs.notice||hs.quality||'看着屏幕中心站好，约 8 秒'));
     const missingPoints=(hs.frozen22_missing_points||[]).join('、');
@@ -490,7 +495,7 @@ function renderReferenceCanvas(){
   for(const p of Object.values(pose)){
     const at=referencePoint(p.x,p.y);g.fillStyle=ink;g.beginPath();g.arc(at.x*w,at.y*h,Math.max(2,w/200),0,Math.PI*2);g.fill();
   }
-  $('#zoneEditHint').textContent=rectEdit.reference.ranges?.length?'按量身保存的身体比例调整；扇形为手脚侧举参考。':'按保存的完整身体比例调整；可重新量身补齐手脚侧举参考。';
+  $('#zoneEditHint').textContent=rectEdit.reference.ranges?.length?'按保存的完整身体比例调整；扇形为侧举参考，可通过量身更新。':'按保存的完整身体比例调整；可重新量身补齐手脚侧举参考。';
 }
 
 function editorRegionName(id){return gameProfile.selected?.regions?.find(r=>r.id===id)?.name||bodyZones()[id]?.body||id}

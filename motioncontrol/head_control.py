@@ -2849,7 +2849,7 @@ class HeadController:
                 self.personal_pnp_active = False
                 self._reset_filters()
         if deadzone is not None:
-            self.config["deadzone"] = _clamp(deadzone, 0.03, 0.25)
+            self.config["deadzone"] = _clamp(deadzone, 0.03, 0.50)
         if sensitivity_x is not None:
             self.config["sensitivity_x"] = _clamp(sensitivity_x, 20.0, 200.0)
         if sensitivity_y is not None:
@@ -4234,7 +4234,7 @@ class HeadController:
                 "invert_x": bool(params.get("invert_x", DEFAULT_CONFIG["invert_x"])),
                 "invert_y": bool(params.get("invert_y", False)),
                 "horizontal_algorithm": horizontal_algorithm,
-                "deadzone": _clamp(params.get("deadzone", DEFAULT_CONFIG["deadzone"]), 0.03, 0.25),
+                "deadzone": _clamp(params.get("deadzone", DEFAULT_CONFIG["deadzone"]), 0.03, 0.50),
                 "sensitivity_x": _clamp(params.get("sensitivity_x", DEFAULT_CONFIG["sensitivity_x"]), 20.0, 200.0),
                 "sensitivity_y": _clamp(params.get("sensitivity_y", DEFAULT_CONFIG["sensitivity_y"]), 15.0, 100.0),
                 "horizontal_curve_gamma": _clamp(params.get("horizontal_curve_gamma", DEFAULT_CONFIG["horizontal_curve_gamma"]), 1.0, 3.0),

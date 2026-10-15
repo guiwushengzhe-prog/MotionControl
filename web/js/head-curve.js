@@ -9,21 +9,21 @@ function thresholds(){
   const noise=Math.max(0,Number(latest.noise_tilt_deg)||0),scale=clamp(Number(latest.motion_deadzone_scale)||1,1,1.2);
   const ready=!!(latest.horizontal_calibrated??latest.calibrated)&&latest.noise_tilt_deg!=null&&Number.isFinite(Number(latest.noise_tilt_deg));
   const responsive=head.horizontalAlgorithm==='head_responsive',floor=responsive?3:2,setting=SPAN*head.deadzone*(responsive?1.5:1);
-  const limit=floor>=Math.max(setting,3*noise)-1e-9?'minimum':3*noise>=setting-1e-9?'noise':'setting';
+  const adaptive=Math.max(floor,3*noise)*scale;
   if(head.horizontalAlgorithm==='head_responsive'){
     const stop=Math.max(floor,setting,3*noise)*scale;
-    return {start:stop+Math.max(.45,.15*noise)*scale,stop,ready,limit,scale};
+    return {start:stop+Math.max(.45,.15*noise)*scale,stop,ready,scale,setting,adaptive};
   }
   const start=Math.max(floor,setting,3*noise)*scale;
-  return {start,stop:start,ready,limit,scale};
+  return {start,stop:start,ready,scale,setting,adaptive};
 }
 
-function renderThresholdNote({start,stop,ready,limit,scale},visible){
+function renderThresholdNote({start,stop,ready,scale,setting,adaptive},visible){
   if(!visible){setText($('#headThresholdStatus'),'转动超过中心稳定区时开始转向；调大更稳，调小更灵敏。');return}
   if(!ready){setText($('#headThresholdStatus'),'校准后显示实际起转角度。');return}
-  const angle=`侧倾超过 ${start.toFixed(1)}° 开始转向${head.horizontalAlgorithm==='head_responsive'?`，回到 ${stop.toFixed(1)}° 内停止`:''}`;
-  const reason=limit==='noise'?'当前受校准防抖限制，继续调低滑杆不会更灵敏':limit==='minimum'?'已到最低起转角度':'调大更稳，调小更灵敏';
-  setText($('#headThresholdStatus'),`${angle}；${reason}。${scale>1?'动作防抖暂时提高起转角度。':''}`);
+  const responsive=head.horizontalAlgorithm==='head_responsive';
+  const deadzones=`设定死区 ${setting.toFixed(1)}°，自适应防抖死区 ${adaptive.toFixed(1)}°。实际死区 ${stop.toFixed(1)}°。`;
+  setText($('#headThresholdStatus'),`${deadzones}${responsive?`${start.toFixed(1)}° 起转，回到 ${stop.toFixed(1)}° 内停止。`:''}${scale>1?`动作防抖临时扩大 ${Number(((scale-1)*100).toFixed(2))}%。`:''}`);
 }
 
 export function horizontalCurveValue(angle,start,stop,gamma,speed){

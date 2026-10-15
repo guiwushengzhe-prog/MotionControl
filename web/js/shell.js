@@ -491,7 +491,7 @@ function closeMenus(except){
   });
 }
 
-for(const [buttonId,menuId] of [['helpBtn','helpMenu'],['gameMenuBtn','gameMenu']]){
+for(const [buttonId,menuId] of [['helpBtn','helpMenu'],['gameMenuBtn','gameMenu'],['calMenuBtn','calMenu']]){
   const button=$('#'+buttonId),menu=$('#'+menuId);
   button.addEventListener('click',event=>{event.stopPropagation();const open=menu.hidden;closeMenus(menu);menu.hidden=!open;button.setAttribute('aria-expanded',String(open))});
   menu.addEventListener('click',event=>{if(event.target.closest('.menu-item'))closeMenus()});

@@ -382,6 +382,9 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .step-main b { font-size: .875rem; font-weight: 550; }
 .step-sub { color: var(--text-2); font-size: .7812rem; line-height: 1.45; }
 .step.warn .step-sub { color: var(--warn); }
+.calibration-actions { display: inline-flex; flex: none; align-items: stretch; }
+.calibration-actions > #calBtn { border-radius: .5rem 0 0 .5rem; }
+.calibration-actions > .calibration-more { min-width: 1.75rem; padding-inline: .375rem; border-left: 1px solid var(--line); border-radius: 0 .5rem .5rem 0; }
 .conflicts { display: grid; gap: .5rem; margin: .375rem 0 .25rem; }
 .conflict { display: flex; align-items: center; gap: .625rem; padding: .625rem .75rem; border-radius: var(--radius); background: var(--warn-tint); color: var(--warn); font-size: .7812rem; }
 .conflict span { flex: 1; }
