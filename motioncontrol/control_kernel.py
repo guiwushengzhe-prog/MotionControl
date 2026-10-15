@@ -1545,7 +1545,7 @@ class ControlKernel:
             fit["measured_at_unix"] = round(time.time(), 3)
         self.zone_fit = normalize_zone_fit(fit)
         self._general_raw["zone_fit"] = self.zone_fit
-        if len(session.standing_poses) >= 10:
+        if len(session.standing_poses) >= 5:
             reference = make_reference(session.standing_poses, *session.reference_size,
                                        {"kind": "zone_fit", "frames": len(session.standing_poses)})
             if reference:
