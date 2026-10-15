@@ -187,6 +187,7 @@ def _active_profile() -> dict:
     return PROFILES.effective_profile(_active_mode_id())
 
 
+KERNEL.configure_regions(PROFILES.effective_profile().get("regions", []))
 KERNEL.configure_bindings(PROFILES.effective_profile().get("bindings", {}))
 
 
@@ -202,6 +203,7 @@ def _apply_effective_profile() -> dict:
     GAME_MODE.update(game=profile["selected_id"], id=profile["mode"]["id"])
     with VOICE._lock, KERNEL._lock:
         VOICE._release_locked(VOICE.source_id)
+        KERNEL.configure_regions(profile.get("regions", []))
         KERNEL.configure_bindings(profile.get("bindings", {}), mode=profile["mode"])
         VOICE.configure_profile_bindings(profile.get("bindings", {}), PROFILES.mode_bindings())
     return profile
@@ -1100,11 +1102,12 @@ def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
     by_profile = document.get("overrides_by_profile", {})
     launch_modes = document.get("launch_mode_by_profile", {})
     game_modes = document.get("modes_by_profile", {})
+    game_regions = document.get("regions_by_profile", {})
     for custom_game in document.get("custom_games", []):
         if not game_id or custom_game["id"] == game_id:
             PROFILES.import_custom_game(custom_game)
     if game_id:
-        if game_id not in by_profile and game_id not in launch_modes and game_id not in game_modes:
+        if game_id not in by_profile and game_id not in launch_modes and game_id not in game_modes and game_id not in game_regions:
             raise ValueError(f"这份配置里没有 {game_id} 的映射")
         wanted = {game_id: by_profile[game_id]} if game_id in by_profile else {}
         final_selection = game_id
@@ -1113,13 +1116,19 @@ def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
         final_selection = str(document.get("selected_id", "")) or None
 
     applied = []
+    for profile_id, regions in game_regions.items():
+        if game_id and profile_id != game_id:
+            continue
+        PROFILES.set_regions(profile_id, regions)
+        applied.append(profile_id)
     for profile_id, overrides in wanted.items():
         # set_overrides only accepts the currently selected profile, so each
         # game is selected before its overrides are written. Both steps
         # validate; neither touches the file directly.
         PROFILES.select(profile_id)
         PROFILES.set_overrides(overrides, profile_id=profile_id, check=VOICE.check_profile_phrases)
-        applied.append(profile_id)
+        if profile_id not in applied:
+            applied.append(profile_id)
 
     # 默认按键没改过的游戏也可能有模式，不能依赖 overrides_by_profile 里有它。
     # 带了模式就整组换上；没带（旧格式）就留着本机原有的模式。
@@ -1144,7 +1153,7 @@ def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
 
 
 @contextmanager
-def _profile_configuration_transaction():
+def _profile_configuration_transaction(*, preserve_controls: bool = False):
     """Commit files and both binding consumers together, or restore all three."""
     global MOTION_CONFIG, CONFIG_REVISION
     with PROFILE_UPDATE_LOCK, PROFILES._lock, VOICE._lock, KERNEL._lock:
@@ -1156,6 +1165,7 @@ def _profile_configuration_transaction():
         previous_game_mode = dict(GAME_MODE)
         previous_voice = copy.deepcopy(VOICE._profile_bindings)
         previous_voice_modes = copy.deepcopy(VOICE._mode_bindings)
+        runtime_updated = False
         try:
             with file_transaction(
                 [PROFILES.selection_path, PROFILES.custom_games_path, MOTION_CONFIG_FILE],
@@ -1163,13 +1173,18 @@ def _profile_configuration_transaction():
             ):
                 yield
                 profile = _active_profile()
+                runtime_updated = True
+                KERNEL.configure_regions(profile.get("regions", []))
                 if (profile["selected_id"] == previous_profile["selected_id"]
-                        and profile.get("bindings", {}) == previous_bindings
+                        and (preserve_controls or profile.get("bindings", {}) == previous_bindings)
                         and MOTION_CONFIG == previous_motions):
                     # 改的是未使用模式或模式名字：保留当前按住、点按边沿和循环状态。
                     # 语音只在所有模式的口令合集真的变化时重建，改键、改名不重建。
                     GAME_MODE.update(game=profile["selected_id"], id=profile["mode"]["id"])
-                    KERNEL.game_mode = copy.deepcopy(profile["mode"])
+                    if profile.get("bindings", {}) != previous_bindings:
+                        KERNEL.switch_bindings(profile.get("bindings", {}), mode=profile["mode"])
+                    else:
+                        KERNEL.game_mode = copy.deepcopy(profile["mode"])
                     VOICE.switch_profile_bindings(profile.get("bindings", {}), mode_bindings=PROFILES.mode_bindings())
                 else:
                     KERNEL.configure_motions(MOTION_CONFIG)
@@ -1180,10 +1195,12 @@ def _profile_configuration_transaction():
             PROFILES._selection = previous_selection
             PROFILES._custom = previous_custom
             MOTION_CONFIG = previous_motions
-            KERNEL.configure_motions(previous_motions)
             GAME_MODE.update(previous_game_mode)
-            KERNEL.configure_bindings(previous_bindings, mode=previous_profile["mode"])
-            VOICE.configure_profile_bindings(previous_voice, previous_voice_modes)
+            if not preserve_controls or runtime_updated:
+                KERNEL.configure_motions(previous_motions)
+                KERNEL.configure_regions(previous_profile.get("regions", []))
+                KERNEL.configure_bindings(previous_bindings, mode=previous_profile["mode"])
+                VOICE.configure_profile_bindings(previous_voice, previous_voice_modes)
             SYSTEM_COMMANDS.invalidate()
             raise
 
@@ -1204,6 +1221,8 @@ def _install_game_bundle(document: dict) -> dict:
         if "custom_game" in document:
             PROFILES.import_custom_game(document["custom_game"])
         PROFILES.select(game_id)
+        if "regions" in document:
+            PROFILES.set_regions(game_id, document["regions"])
         PROFILES.set_overrides(document.get("overrides", {}), profile_id=game_id,
                                check=VOICE.check_profile_phrases)
         if "modes" in document:
@@ -2314,6 +2333,41 @@ class AdminHandler(_BaseHandler):
                 self._send_json(response)
             except ProfileSelectionChanged as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 409)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/game-profiles/regions":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "区域只能在这台电脑上修改"}, 403)
+                return
+            try:
+                op = str(body.get("op", ""))
+                made = None
+                SYSTEM_COMMANDS.invalidate()
+                with _profile_configuration_transaction(preserve_controls=True):
+                    profile_id = body.get("profile_id")
+                    if op == "add":
+                        made = PROFILES.add_region(profile_id, name=body.get("name"), rect=body.get("rect"))
+                    elif op == "update":
+                        made = PROFILES.update_region(profile_id, str(body.get("id", "")),
+                                                      name=body.get("name"), rect=body.get("rect"))
+                    elif op == "remove":
+                        PROFILES.remove_region(profile_id, str(body.get("id", "")))
+                    elif op == "layout":
+                        PROFILES.update_region_rects(profile_id, body.get("rects"))
+                    else:
+                        raise ValueError("不支持的区域操作")
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
+                profile = _active_profile()
+                self._send_json({"ok": True, "profile": profile, "active_mode": profile["mode"],
+                                 "config_revision": CONFIG_REVISION,
+                                 **({"region": made} if made is not None else {})})
+            except ProfileSelectionChanged as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 409)
+            except KeyError as exc:
+                self._send_json({"ok": False, "error": str(exc.args[0] if exc.args else exc)}, 404)
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return

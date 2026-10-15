@@ -36,6 +36,7 @@ from .mapping_schema import (
 )
 from .motion_conflicts import validate_motion_config
 from .profile_schema import normalize_modes, normalize_overrides
+from .regions import normalize_regions
 from .profile_versions import (
     GAME_BUNDLE_SCHEMA,
     MOTION_MAPPINGS_SCHEMA,
@@ -119,6 +120,13 @@ def _normalize_profile_selection(raw) -> dict:
         if len({item["id"] for item in games}) != len(games):
             raise ValueError("自建游戏编号重复")
         result["custom_games"] = sorted(games, key=lambda item: item["id"])
+    if "regions_by_profile" in data:
+        by_game = data["regions_by_profile"]
+        if not isinstance(by_game, dict) or any(not isinstance(game_id, str) or not game_id.strip() for game_id in by_game):
+            raise ValueError("游戏区域数据无效：regions_by_profile")
+        regions = {game_id.strip(): normalize_regions(items) for game_id, items in by_game.items()}
+        if any(regions.values()):
+            result["regions_by_profile"] = {game_id: items for game_id, items in regions.items() if items}
     return result
 
 
@@ -213,6 +221,10 @@ def _normalize_game_bundle(raw) -> dict:
         result["launch_mode"] = raw["launch_mode"]
     if raw.get("modes"):
         result["modes"] = normalize_modes(raw["modes"])
+    if "regions" in raw:
+        regions = normalize_regions(raw["regions"])
+        if regions:
+            result["regions"] = regions
     if "custom_game" in raw:
         game = _normalize_custom_game(raw["custom_game"])
         if game["id"] != result["game_id"]:

@@ -135,6 +135,7 @@ function renderProfileHeader(){
   $('#profileUnverified').hidden=!p||mine||Boolean(p.source?.verified);
   renderGameLaunch();
   renderModeTabs();
+  renderRegionActions();
   refreshModeTargets();
   syncProfileZoneLabels();
 }
@@ -225,7 +226,7 @@ export async function searchProfiles(){
 }
 
 export async function refreshProfile(){
-  const [selected,actions]=await Promise.all([api('/api/game-profiles/selected?mode=DEFAULT'),api('/api/output/actions')]);
+  const [selected,actions]=await Promise.all([api('/api/game-profiles/selected'),api('/api/output/actions')]);
   gameProfile.selected=selected.profile||null;gameProfile.actions=actions.actions||{};gameProfile.overrides=gameProfile.selected?.overrides||{};
   gameProfile.activeMode=selected.active_mode||{id:null,name:'默认'};
   gameLaunch=selected.launch||null;
@@ -235,8 +236,30 @@ export async function refreshProfile(){
   renderProfileHeader();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
 }
 
-// 编辑标签和实际控制的模式分别保存。点标签只读那套映射，开始页按钮才切输出。
+// 标签就是正在使用的模式；后台切换也先保存旧草稿，再跟随实际模式。
 let modeTabsSignature='';
+let modeSyncFlight=null,modeSyncBlocked='',modeSyncRetryAt=0;
+function modeProfileMismatch(){
+  const editing=gameProfile.selected?.mode,active=gameProfile.activeMode;
+  return !!editing&&(editing.id!==active.id||editing.name!==active.name);
+}
+function modeSyncKey(){return JSON.stringify([gameProfile.selected?.selected_id,gameProfile.selected?.mode,gameProfile.activeMode,profileRevision])}
+
+function followActiveMode(){
+  if(!modeProfileMismatch()||profileSwitching||modeSyncFlight||Date.now()<modeSyncRetryAt)return;
+  const key=modeSyncKey();if(modeSyncBlocked===key)return;
+  modeSyncFlight=profileOperation(async()=>{
+    // 不用轮询带来的旧编号选模式，取执行这一刻后台真正正在使用的那份。
+    acceptModeProfile(await api('/api/game-profiles/selected'));
+    await refreshVoiceCommands();
+    modeSyncBlocked='';
+  }).catch(error=>{
+    if(profileDirty.size)modeSyncBlocked=modeSyncKey();
+    modeSyncRetryAt=Date.now()+1500;
+    notice(`模式已在后台切换，暂未更新映射：${error.message}`);
+  }).finally(()=>{modeSyncFlight=null;renderModeTabs()});
+}
+
 function renderModeTabs(){
   const profile=gameProfile.selected,box=$('#modeTabs'),modes=profile?.modes||[{id:null,name:'默认'}];
   const signature=JSON.stringify([profile?.selected_id,modes]);
@@ -247,7 +270,7 @@ function renderModeTabs(){
       button.setAttribute('role','tab');button.setAttribute('aria-controls','mappingFields');
       button.append(document.createTextNode(mode.name));
       const live=document.createElement('span');live.className='mode-live';live.textContent='使用中';button.append(live);
-      button.addEventListener('click',()=>editMode(mode.id).catch(error=>notice(error.message)));return button;
+      button.addEventListener('click',()=>selectMode(mode.id).catch(error=>notice(error.message)));return button;
     }));
   }
   const editing=profile?.mode||{id:null,name:'默认'},active=gameProfile.activeMode;
@@ -256,7 +279,6 @@ function renderModeTabs(){
     setAttribute(button,'aria-selected',id===editing.id);
     setProperty(button.querySelector('.mode-live'),'hidden',id!==active.id);
   }
-  setText($('#modeEditStatus'),editing.id===active.id?`正在编辑并使用「${editing.name}」`:`正在编辑「${editing.name}」 · 当前控制：${active.name}`);
   setProperty($('#modeMenuBtn'),'hidden',!editing.id);
   setProperty($('#addModeBtn'),'disabled',modes.length>=9||profileSwitching);
   renderCurrentMode(active);
@@ -268,26 +290,36 @@ export function renderCurrentMode(mode){
   setText($('#currentModeName'),active.name||'默认');
   setText($('#runMode'),`模式：${active.name||'默认'}`);
   setProperty($('#playModeBtn'),'disabled',profileSwitching||(gameProfile.selected?.modes?.length||1)<2);
-  // 状态轮询不重建映射表，不冲掉正在编辑的内容。
+  // 状态轮询只报实际模式。映射重建经同一保存队列，不能冲掉旧模式草稿。
   const editing=gameProfile.selected?.mode||{id:null,name:'默认'};
   for(const button of $('#modeTabs').children){
     setProperty(button.querySelector('.mode-live'),'hidden',(button.dataset.modeId==='DEFAULT'?null:button.dataset.modeId)!==active.id);
   }
-  setText($('#modeEditStatus'),editing.id===active.id?`正在编辑并使用「${editing.name}」`:`正在编辑「${editing.name}」 · 当前控制：${active.name}`);
+  setText($('#modeEditStatus'),!modeProfileMismatch()?`正在编辑并使用「${active.name}」`
+    :modeSyncBlocked===modeSyncKey()?`已使用「${active.name}」，请先重试保存「${editing.name}」的修改`
+    :`正在同步「${active.name}」的映射…`);
+  followActiveMode();
 }
 
 function acceptModeProfile(data){
   gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
   gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
+  if(data.launch)gameLaunch=data.launch;
   shownBodyRows.keys.clear();
   renderProfileHeader();renderProfileBindingRows();
 }
 
-async function editMode(id){
-  if(profileSwitching||id===(gameProfile.selected?.mode?.id||null))return;
+async function activateMode(target,profile_id){
+  await post('/api/game-profiles/mode',{target:target||'DEFAULT',profile_id});
+  acceptModeProfile(await api('/api/game-profiles/selected'));
+  await refreshVoiceCommands();
+}
+
+async function selectMode(id){
+  if(profileSwitching||(id===(gameProfile.selected?.mode?.id||null)&&id===gameProfile.activeMode.id))return;
+  const profile_id=gameProfile.selected.selected_id;
   await profileOperation(async()=>{
-    const data=await api('/api/game-profiles/selected?mode='+encodeURIComponent(id||'DEFAULT'));
-    acceptModeProfile(data);
+    await activateMode(id,profile_id);
   });
 }
 
@@ -297,7 +329,8 @@ async function addMode(){
   if(name===null)return;
   await profileOperation(async()=>{
     const data=await post('/api/game-profiles/modes',{op:'add',name,profile_id:gameProfile.selected.selected_id,copy_from:gameProfile.selected.mode?.id||null});
-    acceptModeProfile(data);notice(`已新建「${data.profile.mode.name}」，正在使用的模式不变`);
+    await activateMode(data.profile.mode.id,gameProfile.selected.selected_id);
+    notice(`已新建「${data.profile.mode.name}」`);
   });
 }
 
@@ -305,7 +338,8 @@ async function renameMode(){
   const mode=gameProfile.selected?.mode;if(profileSwitching||!mode?.id)return;
   const name=prompt('模式改成什么名字？',mode.name);if(name===null)return;
   await profileOperation(async()=>{
-    acceptModeProfile(await post('/api/game-profiles/modes',{op:'rename',id:mode.id,name,profile_id:gameProfile.selected.selected_id}));
+    await post('/api/game-profiles/modes',{op:'rename',id:mode.id,name,profile_id:gameProfile.selected.selected_id});
+    acceptModeProfile(await api('/api/game-profiles/selected'));
   });
 }
 
@@ -313,18 +347,58 @@ async function removeMode(){
   const mode=gameProfile.selected?.mode;if(profileSwitching||!mode?.id)return;
   if(!confirm(`删除「${mode.name}」及它的按键？如果正在使用，会回到默认模式。`))return;
   await profileOperation(async()=>{
-    acceptModeProfile(await post('/api/game-profiles/modes',{op:'remove',id:mode.id,profile_id:gameProfile.selected.selected_id}));
+    await post('/api/game-profiles/modes',{op:'remove',id:mode.id,profile_id:gameProfile.selected.selected_id});
+    acceptModeProfile(await api('/api/game-profiles/selected'));
   });
 }
 
 async function nextMode(){
   if(profileSwitching)return;
   await profileOperation(async()=>{
-    const data=await post('/api/game-profiles/mode',{target:'NEXT',profile_id:gameProfile.selected.selected_id});
-    renderCurrentMode(data.active_mode);notice(`已切到「${data.active_mode.name}」`);
-    await refreshVoiceCommands();
+    await activateMode('NEXT',gameProfile.selected.selected_id);
+    notice(`已切到「${gameProfile.activeMode.name}」`);
   });
 }
+
+function renderRegionActions(){
+  setProperty($('#zoneActions'),'hidden',mapTab!=='zones');
+  setProperty($('#addRegionBtn'),'disabled',profileSwitching||!gameProfile.selected||(gameProfile.selected.regions?.length||0)>=12);
+}
+
+async function addRegion(){
+  if(profileSwitching)return;
+  const profile_id=gameProfile.selected?.selected_id;if(!profile_id)return;
+  await profileOperation(async()=>{
+    const previous=new Set((gameProfile.selected.regions||[]).map(region=>region.id));
+    const data=await post('/api/game-profiles/regions',{op:'add',profile_id});
+    acceptModeProfile(data);showMapTab('zones');
+    const region=(data.profile.regions||[]).filter(item=>!previous.has(item.id)).at(-1);
+    const row=region&&document.querySelector(`.binding-row[data-trigger="zone.${region.id}"]`);
+    row?.scrollIntoView({block:'center'});row?.querySelector('.binding-type')?.focus();
+    notice('已新建区域，请设置按键；在开始页点「挪动区域」调整位置');
+  });
+}
+
+async function renameRegion(trigger){
+  if(profileSwitching)return;
+  const name=prompt('区域改成什么名字？',trigger.name);if(name===null)return;
+  const profile_id=gameProfile.selected.selected_id;
+  await profileOperation(async()=>{
+    acceptModeProfile(await post('/api/game-profiles/regions',{op:'update',profile_id,id:trigger.id,name}));
+  });
+}
+
+async function removeRegion(trigger){
+  if(profileSwitching)return;
+  if(!confirm(`删除「${trigger.name}」？这个游戏所有模式都会删除该区域及它的映射。`))return;
+  const profile_id=gameProfile.selected.selected_id;
+  await profileOperation(async()=>{
+    acceptModeProfile(await post('/api/game-profiles/regions',{op:'remove',profile_id,id:trigger.id}));
+    notice('已从这个游戏的所有模式删除该区域');
+  });
+}
+
+$('#addRegionBtn')?.addEventListener('click',()=>addRegion().catch(error=>notice(error.message||'新增区域失败，请重试')));
 
 function refreshModeTargets(){
   document.querySelectorAll('.binding-target-box').forEach(box=>{
@@ -409,12 +483,12 @@ export async function applySelectedProfile(){
 
 async function profileOperation(operation,{recoverConflict=false,skipDrafts=[]}={}){
   return configurationOperation(async()=>{
-    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn,#modeTabs button,#addModeBtn,#modeMenuBtn,#renameModeBtn,#removeModeBtn,#playModeBtn')];
+    const controls=[...document.querySelectorAll('#profileResults button,#resetProfileBindingsBtn,#profileSelect,#customGameAddBtn,#customGameRenameBtn,#customGameRemoveBtn,#modeTabs button,#addModeBtn,#modeMenuBtn,#renameModeBtn,#removeModeBtn,#playModeBtn,#addRegionBtn,.region-rename,.region-remove')];
     const disabled=controls.map(el=>el.disabled);
     profileSwitching=true;
     controls.forEach(el=>{el.disabled=true});
     try{await operation()}
-    finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]});renderModeTabs()}
+    finally{profileSwitching=false;controls.forEach((el,index)=>{if(el.isConnected)el.disabled=disabled[index]});renderModeTabs();renderRegionActions()}
   },{skipDrafts:recoverConflict?[saveProfileBindings]:skipDrafts});
 }
 
@@ -764,7 +838,7 @@ function buildZonePointPicker(trigger,binding){
   const menu=document.createElement('div');menu.className='zone-point-menu';menu.setAttribute('aria-label',trigger.name+' 触发点与连线');
   const choices=document.createElement('select');choices.multiple=true;choices.hidden=true;choices.className='zone-trigger-choices';
   choices.dataset.explicit=binding&&('trigger_points'in binding||'trigger_segments'in binding)?'1':'0';
-  const points=new Set(binding?.trigger_points??gameProfile.zoneDefaultPoints?.[trigger.id]??[]);
+  const points=new Set(binding?.trigger_points??gameProfile.zoneDefaultPoints?.[trigger.id]??(trigger.custom?['left_wrist','right_wrist']:[]));
   const segments=new Set((binding?.trigger_segments||[]).map(pair=>edgeKey(...pair)));
   let mode='lines',gesture=null;
   const tools=document.createElement('div');tools.className='zone-point-tools';
@@ -1027,6 +1101,14 @@ function buildBindingRow(trigger){
     remove.addEventListener('click',()=>removeBodyBinding(trigger).catch(error=>notice(error.message||'删除失败，请重试')));
     name.append(remove);
   }
+  if(trigger.custom&&trigger.group==='zones'){
+    for(const[caption,className,handler]of [['改名','region-rename',renameRegion],['删除区域','region-remove',removeRegion]]){
+      const button=document.createElement('button');button.type='button';button.className=className;button.textContent=caption;
+      button.setAttribute('aria-label',trigger.name+' '+caption);
+      button.addEventListener('click',()=>handler(trigger).catch(error=>notice(error.message||'区域操作失败，请重试')));
+      name.append(button);
+    }
+  }
   const type=makeTypeSelect(action?{action}:binding);
   const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;fillTargetControl(target,type.value,action?.target??'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
   const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
@@ -1136,6 +1218,7 @@ export function showMapTab(tab){
   document.querySelectorAll('#profileBindingRows .binding-group').forEach(group=>{group.hidden=group.dataset.group!==mapTab});
   $('#poseLibraryPanel').hidden=mapTab!=='body';
   document.querySelectorAll('[data-tab-caption]').forEach(el=>{el.hidden=el.dataset.tabCaption!==mapTab});
+  renderRegionActions();
   updateMapCounts();
 }
 
@@ -1291,6 +1374,7 @@ export async function saveProfileBindings(){
     gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
     gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
     if(revision===profileRevision)profileDirty.clear();
+    modeSyncBlocked='';
     renderProfileHeader();await refreshVoiceCommands();
   })();
   try{await profileFlight}

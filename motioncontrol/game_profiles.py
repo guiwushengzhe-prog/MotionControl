@@ -20,6 +20,9 @@ from pathlib import Path
 from motioncontrol_shared.catalog import catalog_entry, load_catalog, load_profile
 from motioncontrol.user_paths import user_path
 from motioncontrol_shared.motion_conflicts import validate_motion_bindings
+from motioncontrol_shared.regions import (
+    MAX_CUSTOM_REGIONS, is_region_id, normalize_region_name, normalize_region_rect, normalize_regions,
+)
 from motioncontrol_shared.profile_schema import (
     DEFAULT_MODE_NAME,
     MAX_GAME_MODES,
@@ -114,6 +117,11 @@ class GameProfileStore:
             for items in game_modes.values()
         ):
             raise ValueError("游戏模式数据无效，原文件已保留")
+        regions = data.get("regions_by_profile", {})
+        if not isinstance(regions, dict) or any(not isinstance(key, str) or not key for key in regions):
+            raise ValueError("游戏区域数据无效，原文件已保留")
+        for items in regions.values():
+            normalize_regions(items)
         return data
 
     def _save_selection(self, selection: dict) -> None:
@@ -263,6 +271,7 @@ class GameProfileStore:
             selection["overrides_by_profile"].pop(ident, None)
             selection.get("launch_mode_by_profile", {}).pop(ident, None)
             selection.get("modes_by_profile", {}).pop(ident, None)
+            selection.get("regions_by_profile", {}).pop(ident, None)
             # 正选着它就退回通用档，否则界面会指向一个已经不存在的游戏。
             if selection["selected_id"] == ident:
                 selection["selected_id"] = "generic-xbox"
@@ -371,7 +380,121 @@ class GameProfileStore:
             profile["mode"] = {"id": mode["id"], "name": mode["name"]} if mode else {"id": None, "name": DEFAULT_MODE_NAME}
             profile["modes"] = [{"id": None, "name": DEFAULT_MODE_NAME},
                                 *({"id": item["id"], "name": item["name"]} for item in modes)]
+            profile["regions"] = copy.deepcopy(self._selection.get("regions_by_profile", {}).get(selected_id, []))
             return profile
+
+    # 独立框的名称和位置跟着游戏，各模式只保存它们的按键与触发点。
+    def _check_region_profile(self, profile_id: str) -> str:
+        if not isinstance(profile_id, str) or profile_id != self._selection["selected_id"]:
+            raise ProfileSelectionChanged("当前游戏已改变，区域未保存。请重新选择游戏后重试")
+        return profile_id
+
+    def _regions_for(self, profile_id: str) -> list[dict]:
+        return self._selection.get("regions_by_profile", {}).get(profile_id, [])
+
+    def set_regions(self, profile_id: str, regions: list[dict]) -> None:
+        """安装已校验的游戏区域；云端导入也使用同一份规则。"""
+        normalized = normalize_regions(regions)
+        with self._lock:
+            self.get_profile(profile_id)
+            selection = copy.deepcopy(self._selection)
+            by_game = selection.setdefault("regions_by_profile", {})
+            if normalized:
+                by_game[profile_id] = normalized
+            else:
+                by_game.pop(profile_id, None)
+            if not by_game:
+                selection.pop("regions_by_profile", None)
+            self._save_selection(selection)
+
+    def add_region(self, profile_id: str, name=None, rect=None) -> dict:
+        with self._lock:
+            selected = self._check_region_profile(profile_id)
+            items = copy.deepcopy(self._regions_for(selected))
+            if len(items) >= MAX_CUSTOM_REGIONS:
+                raise ValueError(f"每个游戏最多新增 {MAX_CUSTOM_REGIONS} 个区域")
+            if name is None:
+                names = {item["name"] for item in items}
+                number = next(i for i in range(1, MAX_CUSTOM_REGIONS + 2) if f"自定义区域{i}" not in names)
+                name = f"自定义区域{number}"
+            if rect is None:
+                offset = .035 * (len(items) % 5)
+                rect = {"x1": .35 + offset, "x2": .55 + offset,
+                        "y1": .35 + offset, "y2": .55 + offset}
+            ident = "user_" + uuid.uuid4().hex[:8]
+            while any(item["id"] == ident for item in items):
+                ident = "user_" + uuid.uuid4().hex[:8]
+            item = {"id": ident, "name": normalize_region_name(name), "rect": normalize_region_rect(rect)}
+            self.set_regions(selected, [*items, item])
+            return copy.deepcopy(item)
+
+    def update_region(self, profile_id: str, ident: str, name=None, rect=None) -> dict:
+        with self._lock:
+            selected = self._check_region_profile(profile_id)
+            items = copy.deepcopy(self._regions_for(selected))
+            if not is_region_id(ident):
+                raise ValueError("只能修改自定义区域，不能操作内置区域")
+            item = next((item for item in items if item["id"] == ident), None)
+            if item is None:
+                raise KeyError("这个区域已经删掉了")
+            if name is not None:
+                item["name"] = normalize_region_name(name)
+            if rect is not None:
+                item["rect"] = normalize_region_rect(rect)
+            self.set_regions(selected, items)
+            return copy.deepcopy(item)
+
+    def update_region_rects(self, profile_id: str, rects: dict) -> dict:
+        with self._lock:
+            selected = self._check_region_profile(profile_id)
+            if not isinstance(rects, dict):
+                raise ValueError("区域布局必须是矩形列表")
+            items = copy.deepcopy(self._regions_for(selected))
+            by_id = {item["id"]: item for item in items}
+            for ident, rect in rects.items():
+                if not is_region_id(ident):
+                    raise ValueError("布局中只能包含自定义区域")
+                if ident not in by_id:
+                    raise KeyError("布局中有已经删掉的区域")
+                by_id[ident]["rect"] = normalize_region_rect(rect)
+            self.set_regions(selected, items)
+            return self.effective_profile()
+
+    def remove_region(self, profile_id: str, ident: str) -> dict:
+        with self._lock:
+            selected = self._check_region_profile(profile_id)
+            if not is_region_id(ident):
+                raise ValueError("只能删除自定义区域，不能操作内置区域")
+            items = self._regions_for(selected)
+            if not any(item["id"] == ident for item in items):
+                raise KeyError("这个区域已经删掉了")
+            selection = copy.deepcopy(self._selection)
+            remaining = [item for item in items if item["id"] != ident]
+            by_game = selection.get("regions_by_profile", {})
+            if remaining:
+                by_game[selected] = remaining
+            else:
+                by_game.pop(selected, None)
+            if not by_game:
+                selection.pop("regions_by_profile", None)
+            trigger = f"zone.{ident}"
+
+            def clean(overrides):
+                result = copy.deepcopy(overrides)
+                result.pop(trigger, None)
+                for binding in result.values():
+                    if isinstance(binding, dict) and (binding.get("alternate_when") == trigger or binding.get("reset_trigger") == trigger):
+                        for key in ("alternate_mode", "alternate_when", "alternate_action", "reset_trigger", "extra_actions"):
+                            binding.pop(key, None)
+                return result
+
+            overrides = selection["overrides_by_profile"]
+            if selected in overrides:
+                overrides[selected] = clean(overrides[selected])
+            for mode in selection.get("modes_by_profile", {}).get(selected, []):
+                mode["overrides"] = clean(mode.get("overrides", {}))
+            self._save_selection(selection)
+            return self.effective_profile()
 
     # ---- 模式：同一个游戏的几套按键 -----------------------------------------
     #

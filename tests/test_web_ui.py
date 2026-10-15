@@ -144,7 +144,7 @@ def mode_ui(ui):
 def _new_mode(page, name):
     page.once("dialog", lambda dialog: dialog.accept(name))
     page.click("#addModeBtn")
-    page.wait_for_function("name => document.querySelector('#modeEditStatus').textContent.includes('「' + name + '」')", arg=name)
+    page.wait_for_function("name => document.querySelector('#currentModeName').textContent === name && document.querySelector('#modeEditStatus').textContent.includes('正在编辑并使用「' + name + '」')", arg=name)
     return page.locator('#modeTabs [aria-selected="true"]').get_attribute("data-mode-id")
 
 
@@ -156,18 +156,19 @@ def _set_mode_key(page, key):
     page.wait_for_function("document.querySelector('#profileSaveStatus').textContent === '已保存'")
 
 
-def test_modes_create_copy_edit_switch_and_reload(mode_ui):
+def test_modes_create_copy_select_use_and_reload(mode_ui):
     ui, game_id = mode_ui
     page = ui.page
     default = page.request.get(ui.base + "/api/game-profiles/selected?mode=DEFAULT").json()["profile"]["bindings"]
     drive = _new_mode(page, "开车")
     _set_mode_key(page, "F")
-    assert page.locator("#currentModeName").inner_text() == "默认", "点编辑标签不会切输出"
+    assert page.locator("#currentModeName").inner_text() == "开车", "新建模式立即使用"
     ride = _new_mode(page, "骑车")
     assert page.locator('.binding-row[data-trigger="zone.rightHand"] .binding-target').input_value() == "F", "复制当前编辑模式"
     _set_mode_key(page, "E")
     page.click(f'#modeTabs [data-mode-id="{drive}"]')
     page.wait_for_function("document.querySelector('.binding-row[data-trigger=\"zone.rightHand\"] .binding-target').value === 'F'")
+    assert page.request.get(ui.base + "/api/kernel/status").json()["kernel"]["game_mode"]["id"] == drive
     page.click('#modeTabs [data-mode-id="DEFAULT"]')
     page.wait_for_function("document.querySelector('#modeTabs [data-mode-id=DEFAULT]').getAttribute('aria-selected') === 'true'")
     assert page.request.get(ui.base + "/api/game-profiles/selected?mode=DEFAULT").json()["profile"]["bindings"] == default
@@ -181,9 +182,10 @@ def test_modes_create_copy_edit_switch_and_reload(mode_ui):
     page.reload()
     page.wait_for_function("document.querySelector('#currentGameName').textContent === '界面模式测试'")
     _go(page, "games")
-    assert page.locator('#modeTabs [data-mode-id="DEFAULT"]').get_attribute("aria-selected") == "true"
+    assert page.locator(f'#modeTabs [data-mode-id="{ride}"]').get_attribute("aria-selected") == "true"
     assert page.locator('#modeTabs [role="tab"]').count() == 3
-    assert page.locator("#currentModeName").inner_text() == "骑车", "网页刷新不打断正在使用的模式"
+    assert page.locator("#currentModeName").inner_text() == "骑车", "网页刷新继续显示并使用当前模式"
+    assert page.locator('.binding-row[data-trigger="zone.rightHand"] .binding-target').input_value() == "E"
     # 换游戏再回来相当于运行状态重置，不会从上次的骑车模式继续。
     page.request.post(ui.base + "/api/game-profiles/select", data={"id": "generic-xbox"})
     page.request.post(ui.base + "/api/game-profiles/select", data={"id": game_id})
@@ -242,7 +244,7 @@ def test_mode_targets_shared_voice_rename_delete_and_reset(mode_ui):
     page.once("dialog", lambda dialog: dialog.accept("驾驶"))
     page.click("#renameModeBtn")
     page.wait_for_function("document.querySelector('#modeEditStatus').textContent.includes('「驾驶」')")
-    assert "切到 驾驶" in row.locator(".binding-target").inner_text()
+    sync_api.expect(row.locator(".binding-target")).to_contain_text("切到 驾驶")
     _go(page, "devices")
     page.click('[data-pane="voice"]')
     page.click("#addVoiceBtn")
@@ -254,7 +256,6 @@ def test_mode_targets_shared_voice_rename_delete_and_reset(mode_ui):
     # 空草稿不提交，离开前清掉类型，防止干扰模式删除。
     shared.locator(".voice-type").select_option("keyboard")
     _go(page, "games")
-    page.click("#playModeBtn")
     page.wait_for_function("document.querySelector('#currentModeName').textContent === '驾驶'")
     page.click("#modeMenuBtn")
     page.once("dialog", lambda dialog: dialog.accept())
@@ -262,6 +263,181 @@ def test_mode_targets_shared_voice_rename_delete_and_reset(mode_ui):
     page.wait_for_function("document.querySelector('#modeTabs').children.length === 1")
     assert page.locator("#currentModeName").inner_text() == "默认"
     assert page.locator("#modeMenuBtn").is_hidden()
+    assert ui.errors == []
+
+
+def test_background_mode_switch_saves_old_draft_before_following(mode_ui):
+    """后台切换遇到旧草稿在途，先存回旧模式，再显示当前模式，不能串键。"""
+    ui, game_id = mode_ui
+    page = ui.page
+    drive = _new_mode(page, "开车")
+    _set_mode_key(page, "F")
+    ride = _new_mode(page, "骑车")
+    _set_mode_key(page, "E")
+    page.click(f'#modeTabs [data-mode-id="{drive}"]')
+    row = page.locator('.binding-row[data-trigger="zone.rightHand"] .binding-target')
+    sync_api.expect(row).to_have_value("F")
+    pending = []
+    page.route("**/api/game-profiles/overrides", lambda route: pending.append(route))
+    with page.expect_request(lambda r: r.url.endswith("/api/game-profiles/overrides") and r.method == "POST"):
+        row.press("G")
+    switched = page.request.post(ui.base + "/api/game-profiles/mode", data={"target": ride, "profile_id": game_id})
+    assert switched.ok
+    page.wait_for_function("currentModeName.textContent === '骑车'")
+    assert row.input_value() == "G", "旧草稿还没存完时保留原编辑内容"
+    assert len(pending) == 1, "轮询不能重复排入保存请求"
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/overrides") and r.request.method == "POST"):
+        pending[0].continue_()
+    page.unroute("**/api/game-profiles/overrides")
+    page.wait_for_function("modeEditStatus.textContent === '正在编辑并使用「骑车」'")
+    sync_api.expect(row).to_have_value("E")
+    old = page.request.get(ui.base + "/api/game-profiles/selected?mode=" + drive).json()["profile"]
+    current = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]
+    assert old["bindings"]["zones"]["rightHand"]["action"]["target"] == "G"
+    assert current["mode"]["id"] == ride
+    assert current["bindings"]["zones"]["rightHand"]["action"]["target"] == "E"
+    assert ui.errors == []
+
+
+def test_mode_selection_stops_when_draft_save_fails(mode_ui):
+    """保存失败时不向后台切模式，重试成功后再允许切换。"""
+    ui, _ = mode_ui
+    page = ui.page
+    drive = _new_mode(page, "开车")
+    _set_mode_key(page, "F")
+    changes = []
+    page.on("request", lambda request: changes.append(request)
+            if request.url.endswith("/api/game-profiles/mode") and request.method == "POST" else None)
+    page.route("**/api/game-profiles/overrides", lambda route: route.fulfill(
+        status=500, json={"ok": False, "error": "模拟保存失败"}))
+    row = page.locator('.binding-row[data-trigger="zone.rightHand"] .binding-target')
+    row.press("G")
+    page.click('#modeTabs [data-mode-id="DEFAULT"]')
+    sync_api.expect(page.locator("#profileSaveStatus")).to_contain_text("没保存上")
+    assert changes == []
+    assert page.request.get(ui.base + "/api/kernel/status").json()["kernel"]["game_mode"]["id"] == drive
+    assert page.locator("#currentModeName").inner_text() == "开车"
+    sync_api.expect(row).to_have_value("G")
+    page.unroute("**/api/game-profiles/overrides")
+    page.click("#retryProfileSaveBtn")
+    page.wait_for_function("profileSaveStatus.textContent === '已保存'")
+    page.click('#modeTabs [data-mode-id="DEFAULT"]')
+    page.wait_for_function("currentModeName.textContent === '默认' && modeEditStatus.textContent === '正在编辑并使用「默认」'")
+    assert len(changes) == 1
+    assert ui.errors == []
+
+
+def _new_region(page):
+    page.click('#mapTabs [data-tab="zones"]')
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST") as reply:
+        page.click("#addRegionBtn")
+    assert reply.value.ok
+    region = reply.value.json()["profile"]["regions"][-1]
+    row = page.locator(f'.binding-row[data-trigger="zone.{region["id"]}"]')
+    sync_api.expect(row).to_be_visible()
+    return region, row
+
+
+def _set_region_key(page, row, key):
+    row.locator(".binding-type").select_option("keyboard")
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/overrides") and r.request.method == "POST"):
+        row.locator(".binding-target").press(key)
+    page.wait_for_function("profileSaveStatus.textContent === '已保存'")
+
+
+def test_custom_region_add_map_rename_and_reload(mode_ui):
+    """区域初始不绑键，能选完整骨骼点，名称和映射刷新仍在。"""
+    ui, _ = mode_ui
+    page = ui.page
+    region, row = _new_region(page)
+    assert region["id"].startswith("user_")
+    assert row.locator(".binding-type").input_value() == ""
+    _set_region_key(page, row, "K")
+    row.locator(".binding-more").click()
+    picker = row.locator(".zone-point-picker")
+    picker.locator("summary").click()
+    assert picker.locator(".zone-point-option").count() == 33
+    assert set(picker.locator(".zone-trigger-choices option").evaluate_all("items => items.filter(x => x.selected).map(x => x.value)")) == {"left_wrist", "right_wrist"}
+    picker.locator('[data-mode="points"]').click()
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/overrides") and r.request.method == "POST"):
+        picker.locator('.zone-point-option[data-point="nose"]').click()
+    picker.locator("summary").click()
+    page.once("dialog", lambda dialog: dialog.accept("加速区域"))
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
+        row.locator(".region-rename").click()
+    sync_api.expect(row.locator(".trigger-name")).to_contain_text("加速区域")
+    page.reload()
+    page.wait_for_function("currentGameName.textContent === '界面模式测试'")
+    _go(page, "games")
+    sync_api.expect(row.locator(".binding-target")).to_have_value("K")
+    sync_api.expect(row.locator(".trigger-name")).to_contain_text("加速区域")
+    saved = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]
+    assert saved["regions"] == [{**region, "name": "加速区域"}]
+    assert set(saved["bindings"]["zones"][region["id"]]["trigger_points"]) == {"left_wrist", "right_wrist", "nose"}
+    page.click('#mapTabs [data-tab="body"]')
+    sync_api.expect(page.locator("#zoneActions")).to_be_hidden()
+    page.click('#mapTabs [data-tab="zones"]')
+    sync_api.expect(page.locator("#zoneActions")).to_be_visible()
+    _go(page, "play")
+    zone = page.locator(f'.zone[data-zone="{region["id"]}"]')
+    sync_api.expect(zone).to_be_visible()
+    sync_api.expect(zone.locator("small")).to_have_text("加速区域")
+    page.click("#adjustZonesBtn")
+    sync_api.expect(page.locator("#zoneEditBar")).to_be_visible()
+    zone.press("ArrowDown")
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
+        page.click("#saveLiveZonesBtn")
+    moved = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]["regions"][0]["rect"]
+    assert moved["y1"] == pytest.approx(region["rect"]["y1"] + .01)
+    assert moved["y2"] == pytest.approx(region["rect"]["y2"] + .01)
+    page.reload()
+    page.wait_for_function("currentGameName.textContent === '界面模式测试'")
+    sync_api.expect(zone).to_be_visible()
+    assert float(zone.evaluate("element => element.style.top").removesuffix("%")) == pytest.approx(moved["y1"] * 100)
+    page.click("#adjustZonesBtn")
+    zone.press("ArrowDown")
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
+        page.click("#cancelLiveZonesBtn")
+    restored = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]["regions"][0]["rect"]
+    assert restored == moved
+    assert float(zone.evaluate("element => element.style.top").removesuffix("%")) == pytest.approx(moved["y1"] * 100)
+    assert ui.errors == []
+
+
+def test_custom_region_shared_definition_separate_mode_keys_and_delete(mode_ui):
+    """同游戏模式共用一个区域定义，按键独立，删区域则全模式删除。"""
+    ui, _ = mode_ui
+    page = ui.page
+    region, row = _new_region(page)
+    _set_region_key(page, row, "Q")
+    drive = _new_mode(page, "驾驶")
+    sync_api.expect(row.locator(".binding-target")).to_have_value("Q")
+    _set_region_key(page, row, "E")
+    default = page.request.get(ui.base + "/api/game-profiles/selected?mode=DEFAULT").json()["profile"]
+    driving = page.request.get(ui.base + "/api/game-profiles/selected?mode=" + drive).json()["profile"]
+    assert default["regions"] == driving["regions"] == [region]
+    assert default["bindings"]["zones"][region["id"]]["action"]["target"] == "Q"
+    assert driving["bindings"]["zones"][region["id"]]["action"]["target"] == "E"
+    page.once("dialog", lambda dialog: dialog.accept("驾驶区"))
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
+        row.locator(".region-rename").click()
+    page.click('#modeTabs [data-mode-id="DEFAULT"]')
+    sync_api.expect(row.locator(".binding-target")).to_have_value("Q")
+    sync_api.expect(row.locator(".trigger-name")).to_contain_text("驾驶区")
+    confirmations = []
+    def confirm_delete(dialog):
+        confirmations.append(dialog.message)
+        dialog.accept()
+    page.once("dialog", confirm_delete)
+    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
+        row.locator(".region-remove").click()
+    assert "所有模式" in confirmations[0]
+    sync_api.expect(row).to_have_count(0)
+    for mode in ("DEFAULT", drive):
+        profile = page.request.get(ui.base + "/api/game-profiles/selected?mode=" + mode).json()["profile"]
+        assert profile["regions"] == []
+        assert region["id"] not in profile["bindings"]["zones"]
+        assert "zone." + region["id"] not in profile["overrides"]
     assert ui.errors == []
 
 
