@@ -10,7 +10,7 @@ import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runActio
 import {S,gameProfile,head,output} from './state.js';
 import {handMouseConfig,renderViewControl,syncControlLabels} from './view-control.js';
 import {renderHeadCurve} from './head-curve.js';
-import {voiceInputReady} from './voice.js';
+import {voiceInputIssue,voiceInputReady,voiceInputTarget} from './voice.js';
 
 export let currentPoseMap=null;
 export let kernelState=null;
@@ -58,12 +58,12 @@ export const overlay={win:null,canvas:null,ctx:null};
 
 const perfUi={previewBusy:false};
 
-// 「挪动区域」：把跟随框定住再拖。框的坐标和内核一样是原始画面（没镜像）的比例。
+// 编辑使用打开时的参考快照；保存时由内核保留跟随或固定方式。
 const RECT_EDIT_ZONE_IDS=['leftHand','rightHand','leftFoot','rightFoot','headJump','lookGate'];
 
 const RECT_EDIT_MIN=.02;
 
-export const rectEdit={rects:{},backup:{},selected:'',wasFrozen:false,profileId:null,customIds:[]};
+export const rectEdit={rects:{},selected:'',profileId:null,modes:{},reference:{},viewport:{x1:0,y1:0,x2:1,y2:1},width:640,height:480};
 
 function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
   target.save();target.setTransform(1,0,0,1,0,0);target.clearRect(0,0,w,h);
@@ -97,18 +97,18 @@ export function renderKernelZones(zones={}){
   for(const[id,def]of Object.entries(definitions)){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
     if(def.gate&&!kernelState?.vertical_look?.enabled){setStyle(el,'display','none');continue}
-    const active=!zoneEditMode&&!!state?.pressed;
+    const active=!!state?.pressed;
     setClass(el,'active',active);
     // 智能判定：判断中（黄）、判定是扫过（闪红）。系统功能要稳住，底下的条是稳住走到哪了。
-    const phase=zoneEditMode?'idle':String(state?.phase||'idle');
+    const phase=String(state?.phase||'idle');
     setClass(el,'pending',phase==='pending');setClass(el,'swept',phase==='swept');
     setStyle(el,'--progress',Math.round(Number(state?.progress||0)*100)+'%');
     setText(el.querySelector('strong'),def.gate?'上下视角':zoneKeyLabel(id,def));
     setText(el.querySelector('small'),def.gate?(active?'已开启':'左手放这里'):def.body);
-    setProperty(el,'tabIndex',zoneEditMode?0:-1);
+    setProperty(el,'tabIndex',-1);
     setAttribute(el,'aria-label',def.body+'区域，方向键移动，Shift 加方向键改大小');
-    const rect=zoneEditMode?rectEdit.rects[id]:state?.rect;
-    setClass(el,'selected',zoneEditMode&&rectEdit.selected===id);
+    const rect=state?.rect;
+    setClass(el,'selected',false);
     if(!rect){setStyle(el,'display','none');continue}
     setStyle(el,'display','grid');setStyle(el,'left',(rect.x1*100)+'%');setStyle(el,'top',(rect.y1*100)+'%');setStyle(el,'width',((rect.x2-rect.x1)*100)+'%');setStyle(el,'height',((rect.y2-rect.y1)*100)+'%');
   }
@@ -154,6 +154,8 @@ export function renderMainStatus(){
   if(isVisible(viewer)){renderViewerMessage();renderReadiness();renderConflicts()}
 }
 
+document.addEventListener('motioncontrol:voice-state',renderMainStatus);
+
 // 画面中间那句话只在没人、没画面时出现；有人站进来就让开。
 function renderViewerMessage(){
   const hint=$('#hint');if(!hint)return;
@@ -184,8 +186,14 @@ function renderReadiness(){
   const handHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand);
   const needCal=!handHorizontal&&head.enabled;
   const calibrated=!needCal||!!(hs.horizontal_calibrated??hs.calibrated);
-  setStep('camera',cameraOk?'done':'warn',phoneMode?(cameraOk?'手机摄像头':'等手机连上'):(cameraRunning&&cameraInfo.picture_black?'画面全黑，请检查镜头或画面来源':cameraOk?(cameraInfo.camera_name||'电脑摄像头'):'还没连接'));
-  const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk);
+  const cameraIssue=phoneMode?'等手机摄像头连上':cameraRunning&&cameraInfo.picture_black?'摄像头画面全黑，请检查镜头或画面来源':String(cameraInfo?.last_error||'').trim()||'摄像头还没连接';
+  const deviceText=cameraOk&&voiceInputReady?'已就绪'
+    :[cameraOk?'摄像头已就绪':cameraIssue,voiceInputReady?'麦克风已就绪':`麦克风：${voiceInputIssue}`].join(' · ');
+  setStep('camera',cameraOk&&voiceInputReady?'done':'warn',deviceText);
+  setProperty($('#cameraStepSub'),'title',cameraOk&&voiceInputReady?'摄像头和麦克风已就绪':deviceText);
+  const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk&&voiceInputReady);
+  setAttribute(go,'data-resolve',cameraOk?voiceInputTarget:'camera');
+  setText(go,cameraOk?(voiceInputTarget==='voice'?'检查语音':'检查麦克风'):'检查摄像头');
   // 脚踝出了画面，踏步和脚区就认不出抬脚。只在它们绑了键时提，不算进"还差几步"。
   const feetOut=posed&&kernelState?.feet_in_view===false&&['motion.march','zone.leftFoot','zone.rightFoot'].some(triggerMapped);
   const feetHint='脚没入镜';
@@ -411,90 +419,143 @@ function renderOverlay(map=currentPoseMap){
 
 export async function toggleOverlay(){if(overlay.win&&!overlay.win.closed){try{overlay.win.close()}catch{}overlay.win=null;overlay.canvas=null;overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗';return}if(!window.documentPictureInPicture?.requestWindow){notice('当前浏览器不支持置顶游戏悬浮窗。');return}try{const pip=await window.documentPictureInPicture.requestWindow({width:420,height:315});pip.document.title='MotionControl';pip.document.body.style.cssText='margin:0;overflow:hidden;background:#050608;width:100vw;height:100vh';const c=pip.document.createElement('canvas');c.width=640;c.height=480;c.style.cssText='display:block;width:100vw;height:100vh;object-fit:contain;background:#050608';pip.document.body.appendChild(c);overlay.win=pip;overlay.canvas=c;overlay.ctx=c.getContext('2d');pip.addEventListener('pagehide',()=>{overlay.win=overlay.canvas=overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗'},{once:true});$('#overlayBtn').textContent='关闭悬浮';renderOverlay(currentPoseMap)}catch(e){notice('悬浮窗启动失败：'+(e?.message||e))}}
 
-export async function openLiveZoneEditor(){
-  if(zoneEditMode)return;
+export async function openLiveZoneEditor({selectedId=''}={}){
+  if(zoneEditMode){if(typeof selectedId==='string'&&rectEdit.rects[selectedId])selectEditorRegion(selectedId);return}
   await setOutput(false);
-  // 区域平时跟着人走。先把它定在现在的位置再拖——一直在动的东西没法拖。
-  // 想让它重新跟着走，点「恢复跟随」。
-  await openFrozenZoneEditor();
-}
-
-function frozenRectsFrom(zones){
-  const out={};
-  for(const [id,state] of Object.entries(zones||{})){
-    if(!RECT_EDIT_ZONE_IDS.includes(id)&&!state.custom)continue;
-    const r=state.rect;if(r)out[id]={x1:+r.x1,y1:+r.y1,x2:+r.x2,y2:+r.y2};
-  }
-  return out;
-}
-
-async function openFrozenZoneEditor(){
-  const wasFrozen=!!kernelState?.zones_frozen;
-  const hasFollowing=RECT_EDIT_ZONE_IDS.some(id=>kernelState?.zones?.[id]?.rect);
-  if(!wasFrozen&&hasFollowing)renderKernelState(await post('/api/zones/freeze',{frozen:true}));
-  const rects=frozenRectsFrom(kernelState?.zones);
-  if(!Object.keys(rects).length)throw new Error('还没看到人，没有框可以定住：先让头和双肩入镜');
-  Object.assign(rectEdit,{rects,backup:structuredClone(rects),wasFrozen,profileId:gameProfile.selected?.selected_id,
-    customIds:Object.keys(rects).filter(id=>kernelState?.zones?.[id]?.custom)});
-  if(!rects[rectEdit.selected])rectEdit.selected=Object.keys(rects)[0];
-  zoneEditMode=true;viewer.classList.add('zone-editing','rect-editing');$('#zoneEditBar').hidden=false;
-  renderKernelZones(kernelState?.zones||{});renderZoneFreeze();renderMainStatus();
-  document.querySelector(`.zone[data-zone="${rectEdit.selected}"]`)?.focus();
-  notice('拖框移动，拖四个角改大小，改完点「保存区域」。自定义区域始终固定在画面上。');
+  const data=await api('/api/zones/editor');
+  const rects=structuredClone(data.rects||{});
+  if(!Object.keys(rects).length)throw new Error('先在「本游戏 → 区域」添加区域');
+  Object.assign(rectEdit,{rects,profileId:data.profile_id,modes:{...data.modes},reference:data.reference||{},width:data.width||640,height:data.height||480});
+  rectEdit.selected=typeof selectedId==='string'&&rects[selectedId]?selectedId:Object.keys(rects)[0];
+  fitReferenceViewport();zoneEditMode=true;$('#zoneEditBar').hidden=false;
+  renderReferenceCanvas();renderEditorZones();renderZoneFreeze();renderMainStatus();
+  $('#zoneEditBar').scrollIntoView({block:'center'});
+  $('#zoneReferenceZones').querySelector(`[data-zone="${rectEdit.selected}"]`)?.focus({preventScroll:true});
 }
 
 function closeLiveZoneEditor(){
-  zoneEditMode=false;liveZoneDrag=null;
-  viewer.classList.remove('zone-editing','rect-editing');$('#zoneEditBar').hidden=true;
-  renderKernelZones(kernelState?.zones||{});renderZoneFreeze();renderMainStatus();$('#adjustZonesBtn').focus();
+  zoneEditMode=false;liveZoneDrag=null;$('#zoneEditBar').hidden=true;
+  renderZoneFreeze();renderMainStatus();$('#adjustZonesBtn').focus({preventScroll:true});
 }
 
-// 显示用的框（镜像过的，左边就是屏幕左边）和原始坐标互换。拖的时候全在显示坐标里算。
-const rectToDisplay=r=>({left:previewMirrored?1-r.x2:r.x1,right:previewMirrored?1-r.x1:r.x2,top:r.y1,bottom:r.y2});
+function fitReferenceViewport(){
+  const points=[{x:0,y:0},{x:1,y:1},...Object.values(rectEdit.reference.pose||{})];
+  for(const r of Object.values(rectEdit.rects))points.push({x:r.x1,y:r.y1},{x:r.x2,y:r.y2});
+  for(const r of rectEdit.reference.ranges||[])points.push({x:r.cx-r.rx,y:r.cy-r.ry},{x:r.cx+r.rx,y:r.cy+r.ry});
+  const valid=points.filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+  let x1=Math.min(...valid.map(p=>p.x)),x2=Math.max(...valid.map(p=>p.x)),y1=Math.min(...valid.map(p=>p.y)),y2=Math.max(...valid.map(p=>p.y));
+  const pad=.06*Math.max(x2-x1,y2-y1);x1-=pad;x2+=pad;y1-=pad;y2+=pad;
+  // 补齐到显示框比例，横向和纵向使用相同的实际像素尺度。
+  const ratio=4/3*rectEdit.height/rectEdit.width,w=x2-x1,h=y2-y1;
+  if(w/h<ratio){const extra=(h*ratio-w)/2;x1-=extra;x2+=extra}else{const extra=(w/ratio-h)/2;y1-=extra;y2+=extra}
+  rectEdit.viewport={x1,x2,y1,y2};
+}
 
-const rectFromDisplay=d=>({x1:previewMirrored?1-d.right:d.left,x2:previewMirrored?1-d.left:d.right,y1:d.top,y2:d.bottom});
+function referencePoint(x,y){
+  const v=rectEdit.viewport,px=(x-v.x1)/(v.x2-v.x1);
+  return {x:previewMirrored?1-px:px,y:(y-v.y1)/(v.y2-v.y1)};
+}
+
+function rectToDisplay(r){
+  const a=referencePoint(r.x1,r.y1),b=referencePoint(r.x2,r.y2);
+  return {left:Math.min(a.x,b.x),right:Math.max(a.x,b.x),top:a.y,bottom:b.y};
+}
+
+function rectFromDisplay(d){
+  const v=rectEdit.viewport,w=v.x2-v.x1,h=v.y2-v.y1;
+  return {x1:clamp(v.x1+(previewMirrored?1-d.right:d.left)*w,0,1),x2:clamp(v.x1+(previewMirrored?1-d.left:d.right)*w,0,1),y1:clamp(v.y1+d.top*h,0,1),y2:clamp(v.y1+d.bottom*h,0,1)};
+}
+
+function renderReferenceCanvas(){
+  const c=$('#zoneReferenceCanvas');fitCanvas(c,4/3);const g=c.getContext('2d'),w=c.width,h=c.height;
+  const style=getComputedStyle(document.documentElement),ink=style.getPropertyValue('--text').trim()||'#d7e5f6',muted=style.getPropertyValue('--text-2').trim()||'#8c98aa';
+  g.clearRect(0,0,w,h);g.lineWidth=Math.max(1,w/640*2);
+  const frame=rectToDisplay({x1:0,y1:0,x2:1,y2:1});
+  g.fillStyle='rgba(120,130,145,.06)';g.fillRect(frame.left*w,frame.top*h,(frame.right-frame.left)*w,(frame.bottom-frame.top)*h);
+  g.strokeStyle='rgba(150,160,175,.45)';g.strokeRect(frame.left*w,frame.top*h,(frame.right-frame.left)*w,(frame.bottom-frame.top)*h);
+  g.font=`${Math.max(11,w/55)}px system-ui`;g.fillStyle='#969ba4';g.fillText('摄像取景范围',frame.left*w+7,frame.top*h+17);
+  for(const range of rectEdit.reference.ranges||[]){
+    const p=referencePoint(range.cx,range.cy),v=rectEdit.viewport;
+    g.strokeStyle=range.kind==='hand'?'rgba(100,170,255,.55)':'rgba(82,202,166,.55)';g.setLineDash([5,5]);
+    g.beginPath();g.ellipse(p.x*w,p.y*h,Math.abs(range.rx/(v.x2-v.x1)*w),Math.abs(range.ry/(v.y2-v.y1)*h),0,0,Math.PI*2);g.stroke();
+  }
+  const pose=rectEdit.reference.pose||{};
+  for(const [a,b] of EDGES){
+    const p=pose[a],q=pose[b];if(!p||!q)continue;
+    const x=referencePoint(p.x,p.y),y=referencePoint(q.x,q.y),estimated=p.estimated||q.estimated;
+    g.setLineDash(estimated?[6,5]:[]);g.strokeStyle=estimated?muted:ink;g.lineWidth=Math.max(2,w/640*3);
+    g.beginPath();g.moveTo(x.x*w,x.y*h);g.lineTo(y.x*w,y.y*h);g.stroke();
+  }
+  g.setLineDash([]);
+  for(const p of Object.values(pose)){
+    const at=referencePoint(p.x,p.y);g.fillStyle=p.estimated?muted:ink;g.beginPath();g.arc(at.x*w,at.y*h,Math.max(2,w/200),0,Math.PI*2);g.fill();
+  }
+  const estimated=Object.values(pose).some(p=>p.estimated);
+  $('#zoneEditHint').textContent=rectEdit.reference.source==='default'?'未获取身体，骨骼和侧举范围按通用比例估算。':estimated?'实线为已识别骨骼；虚线为估算骨骼和侧举范围。':'实线为已识别骨骼；虚线为侧举估算范围。';
+}
+
+function editorRegionName(id){return gameProfile.selected?.regions?.find(r=>r.id===id)?.name||bodyZones()[id]?.body||id}
+
+function renderEditorZones(){
+  if(!zoneEditMode)return;
+  const layer=$('#zoneReferenceZones'),selection=$('#zoneEditSelection');
+  for(const old of layer.querySelectorAll('.zone'))if(!rectEdit.rects[old.dataset.zone])old.remove();
+  for(const [id,r] of Object.entries(rectEdit.rects)){
+    let el=layer.querySelector(`[data-zone="${id}"]`);
+    if(!el){el=document.createElement('div');el.className='zone';el.dataset.zone=id;el.tabIndex=0;el.append(document.createElement('strong'),document.createElement('small'));addZoneHandles(el);layer.append(el)}
+    const name=editorRegionName(id),d=rectToDisplay(r);
+    setAttribute(el,'aria-label',name+'，方向键移动，Shift 加方向键改大小');
+    setText(el.querySelector('strong'),zoneKeyLabel(id,bodyZones()[id]||{body:name}));setText(el.querySelector('small'),name);
+    setClass(el,'selected',rectEdit.selected===id);setClass(el,'following',rectEdit.modes[id]==='following');
+    setStyle(el,'display','grid');setStyle(el,'left',d.left*100+'%');setStyle(el,'top',d.top*100+'%');setStyle(el,'width',(d.right-d.left)*100+'%');setStyle(el,'height',(d.bottom-d.top)*100+'%');
+  }
+  const ids=Object.keys(rectEdit.rects);
+  if([...selection.options].map(o=>o.value).join()!==ids.join())selection.replaceChildren(...ids.map(id=>new Option(editorRegionName(id),id)));
+  selection.value=rectEdit.selected;$('#zoneEditPositionMode').value=rectEdit.modes[rectEdit.selected]||'fixed';
+}
+
+export function selectEditorRegion(id){if(rectEdit.rects[id]){rectEdit.selected=id;renderEditorZones()}}
+
+export function setEditorRegionMode(mode){
+  if(!['fixed','following'].includes(mode))return;
+  const ids=RECT_EDIT_ZONE_IDS.includes(rectEdit.selected)?Object.keys(rectEdit.rects).filter(id=>RECT_EDIT_ZONE_IDS.includes(id)):[rectEdit.selected];
+  ids.forEach(id=>rectEdit.modes[id]=mode);renderEditorZones();
+}
 
 function startRectDrag(e,el,id){
   rectEdit.selected=id;
-  const corner=e.target?.closest?.('.zone-handle')?.dataset.corner||'';
-  const box=viewer.getBoundingClientRect();
+  const corner=e.target?.closest?.('.zone-handle')?.dataset.corner||'',box=$('#zoneReferenceViewer').getBoundingClientRect();
   const at={x:(e.clientX-box.left)/Math.max(1,box.width),y:(e.clientY-box.top)/Math.max(1,box.height)};
-  e.preventDefault();el.setPointerCapture?.(e.pointerId);
-  liveZoneDrag={id,pointerId:e.pointerId,corner,from:at,start:rectToDisplay(rectEdit.rects[id])};
-  renderKernelZones(kernelState?.zones||{});
+  e.preventDefault();el.focus({preventScroll:true});el.setPointerCapture?.(e.pointerId);
+  liveZoneDrag={id,pointerId:e.pointerId,corner,from:at,start:rectToDisplay(rectEdit.rects[id])};renderEditorZones();
+}
+
+function constrainEditorRect(d){
+  const bounds=rectToDisplay({x1:0,y1:0,x2:1,y2:1}),w=d.right-d.left,h=d.bottom-d.top;
+  d.left=clamp(d.left,bounds.left,bounds.right-w);d.right=d.left+w;d.top=clamp(d.top,bounds.top,bounds.bottom-h);d.bottom=d.top+h;return d;
 }
 
 function moveRectDrag(e){
-  const drag=liveZoneDrag,box=viewer.getBoundingClientRect();
-  const x=clamp((e.clientX-box.left)/Math.max(1,box.width),0,1),y=clamp((e.clientY-box.top)/Math.max(1,box.height),0,1);
-  const d={...drag.start};
-  if(!drag.corner){
-    // 整个框平移，碰到画面边就停。
-    const w=d.right-d.left,h=d.bottom-d.top;
-    d.left=clamp(drag.start.left+x-drag.from.x,0,1-w);d.right=d.left+w;
-    d.top=clamp(drag.start.top+y-drag.from.y,0,1-h);d.bottom=d.top+h;
-  }else{
-    if(drag.corner.includes('w'))d.left=clamp(x,0,d.right-RECT_EDIT_MIN);
-    if(drag.corner.includes('e'))d.right=clamp(x,d.left+RECT_EDIT_MIN,1);
-    if(drag.corner.includes('n'))d.top=clamp(y,0,d.bottom-RECT_EDIT_MIN);
-    if(drag.corner.includes('s'))d.bottom=clamp(y,d.top+RECT_EDIT_MIN,1);
+  const drag=liveZoneDrag,box=$('#zoneReferenceViewer').getBoundingClientRect(),bounds=rectToDisplay({x1:0,y1:0,x2:1,y2:1});
+  const x=(e.clientX-box.left)/Math.max(1,box.width),y=(e.clientY-box.top)/Math.max(1,box.height),d={...drag.start};
+  const minW=RECT_EDIT_MIN/(rectEdit.viewport.x2-rectEdit.viewport.x1),minH=RECT_EDIT_MIN/(rectEdit.viewport.y2-rectEdit.viewport.y1);
+  if(!drag.corner){d.left+=x-drag.from.x;d.right+=x-drag.from.x;d.top+=y-drag.from.y;d.bottom+=y-drag.from.y;constrainEditorRect(d)}else{
+    const dx=x-drag.from.x,dy=y-drag.from.y;
+    if(drag.corner.includes('w'))d.left=clamp(drag.start.left+dx,bounds.left,d.right-minW);
+    if(drag.corner.includes('e'))d.right=clamp(drag.start.right+dx,d.left+minW,bounds.right);
+    if(drag.corner.includes('n'))d.top=clamp(drag.start.top+dy,bounds.top,d.bottom-minH);
+    if(drag.corner.includes('s'))d.bottom=clamp(drag.start.bottom+dy,d.top+minH,bounds.bottom);
   }
-  rectEdit.rects[drag.id]=rectFromDisplay(d);
-  renderKernelZones(kernelState?.zones||{});
+  rectEdit.rects[drag.id]=rectFromDisplay(d);renderEditorZones();
 }
 
 export function nudgeRect(id,key,shift){
   const r=rectEdit.rects[id];if(!r)return;
-  const d=rectToDisplay(r),step=.01;
-  const dx=key==='ArrowLeft'?-step:key==='ArrowRight'?step:0,dy=key==='ArrowUp'?-step:key==='ArrowDown'?step:0;
-  if(shift){
-    // Shift：往右、往下是变大，往左、往上是变小（动的是右边和下边）。
-    d.right=clamp(d.right+dx,d.left+RECT_EDIT_MIN,1);d.bottom=clamp(d.bottom+dy,d.top+RECT_EDIT_MIN,1);
-  }else{
-    const w=d.right-d.left,h=d.bottom-d.top;
-    d.left=clamp(d.left+dx,0,1-w);d.right=d.left+w;d.top=clamp(d.top+dy,0,1-h);d.bottom=d.top+h;
-  }
-  rectEdit.rects[id]=rectFromDisplay(d);renderKernelZones(kernelState?.zones||{});
+  rectEdit.selected=id;const d=rectToDisplay(r),v=rectEdit.viewport,bounds=rectToDisplay({x1:0,y1:0,x2:1,y2:1});
+  const dx=(key==='ArrowLeft'?-.01:key==='ArrowRight'?.01:0)/(v.x2-v.x1),dy=(key==='ArrowUp'?-.01:key==='ArrowDown'?.01:0)/(v.y2-v.y1);
+  if(shift){d.right=clamp(d.right+dx,d.left+RECT_EDIT_MIN/(v.x2-v.x1),bounds.right);d.bottom=clamp(d.bottom+dy,d.top+RECT_EDIT_MIN/(v.y2-v.y1),bounds.bottom)}
+  else{d.left+=dx;d.right+=dx;d.top+=dy;d.bottom+=dy;constrainEditorRect(d)}
+  rectEdit.rects[id]=rectFromDisplay(d);renderEditorZones();
 }
 
 export function startLiveZoneDrag(e){
@@ -502,63 +563,28 @@ export function startLiveZoneDrag(e){
   if(id&&rectEdit.rects[id])startRectDrag(e,el,id);
 }
 
-export function moveLiveZoneDrag(e){
-  if(zoneEditMode&&liveZoneDrag&&e.pointerId===liveZoneDrag.pointerId)moveRectDrag(e);
-}
-
+export function moveLiveZoneDrag(e){if(zoneEditMode&&liveZoneDrag&&e.pointerId===liveZoneDrag.pointerId)moveRectDrag(e)}
 export function endLiveZoneDrag(e){if(!liveZoneDrag)return;if(e?.pointerId!==undefined&&liveZoneDrag.pointerId!==e.pointerId)return;liveZoneDrag=null}
 
+function acceptZoneLayout(data){
+  if(data.profile)gameProfile.selected=data.profile;
+  if(data.runtime)renderKernelState(data.runtime);else if(data.kernel)renderKernelState(data);else return refreshKernel();
+}
+
 export async function saveLiveZones(){
-  await setOutput(false);
-  checkZoneEditGame();
-  const fixed=Object.fromEntries(Object.entries(rectEdit.rects).filter(([id])=>RECT_EDIT_ZONE_IDS.includes(id)));
-  if(Object.keys(fixed).length)renderKernelState(await post('/api/zones/frozen',{rects:fixed}));
-  await saveCustomZoneRects(rectEdit.rects);
-  closeLiveZoneEditor();notice('区域已保存。自定义区域固定在画面上，内置区域可点「恢复跟随」。');
+  if(rectEdit.profileId!==gameProfile.selected?.selected_id)throw new Error('游戏已经切换，请取消后重新调整区域');
+  const data=await post('/api/zones/layout',{profile_id:rectEdit.profileId,rects:rectEdit.rects,modes:rectEdit.modes,reference:rectEdit.reference});
+  await acceptZoneLayout(data);closeLiveZoneEditor();notice('区域已保存。');
 }
 
-function checkZoneEditGame(){
-  if(rectEdit.profileId!==gameProfile.selected?.selected_id)throw new Error('游戏已经切换，请取消后重新挪动区域');
-}
+export async function cancelLiveZones(){closeLiveZoneEditor()}
 
-async function saveCustomZoneRects(rects){
-  const custom=Object.fromEntries(rectEdit.customIds.filter(id=>rects[id]).map(id=>[id,rects[id]]));
-  if(!Object.keys(custom).length)return;
-  const data=await post('/api/game-profiles/regions',{op:'layout',profile_id:rectEdit.profileId,rects:custom});
-  for(const region of gameProfile.selected?.regions||[]){if(custom[region.id])region.rect={...custom[region.id]}}
-  if(data.kernel)renderKernelState(data);else await refreshKernel();
-}
-
-export async function cancelLiveZones(){
-  await setOutput(false);
-  if(rectEdit.profileId!==gameProfile.selected?.selected_id){
-    closeLiveZoneEditor();notice('游戏已切换，已取消原游戏的区域调整。');return;
-  }
-  // 这次是点「挪动区域」才定住的，取消就回到跟着走；本来就定住的，回到拖之前的样子。
-  renderKernelState(rectEdit.wasFrozen
-    ?await post('/api/zones/frozen',{rects:Object.fromEntries(Object.entries(rectEdit.backup).filter(([id])=>RECT_EDIT_ZONE_IDS.includes(id)))})
-    :await post('/api/zones/freeze',{frozen:false}));
-  await saveCustomZoneRects(rectEdit.backup);
-  closeLiveZoneEditor();notice(rectEdit.wasFrozen?'已取消区域调整。':'已取消，区域继续跟着你走。');
-}
-
-// 定住的跟随框放开，重新跟着人走。拖过的大小位置不留：下次定住按那时的位置重新定。
+// 首页的蓝色按钮统一切换整组框；在编辑器中也可逐个指定自定义框。
 export async function followZones(){
   await setOutput(false);
-  renderKernelState(await post('/api/zones/freeze',{frozen:false}));
-  if(zoneEditMode)closeLiveZoneEditor();
-  notice('内置区域恢复跟随；自定义区域保持固定。');
-}
-
-// 区域挪到我这里：没定住就在现在的位置定住；定住了就整组框按人现在站的位置搬过来，
-// 拖过的大小和相对位置不变。语音、动作绑的「系统功能 → 区域挪到我这里」是同一件事。
-export async function moveZonesHere(){
-  renderKernelState(await post('/api/zones/move-here',{}));
-  if(zoneEditMode){
-    rectEdit.rects=frozenRectsFrom(kernelState?.zones);rectEdit.wasFrozen=true;
-    renderKernelZones(kernelState?.zones||{});
-  }
-  notice('区域已挪到你现在的位置。');
+  const data=await api('/api/zones/editor'),mode=kernelState?.zones_frozen?'following':'fixed';
+  const saved=await post('/api/zones/layout',{profile_id:data.profile_id,rects:data.rects,modes:Object.fromEntries(Object.keys(data.rects).map(id=>[id,mode])),reference:data.reference});
+  await acceptZoneLayout(saved);notice(mode==='fixed'?'触发框已固定在画面上。':'触发框已恢复跟随。');
 }
 
 /* --- 触发实况 -----------------------------------------------------------

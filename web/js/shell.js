@@ -11,7 +11,7 @@ import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
 import {openPhoneCode} from './phone-connect.js';
 import {addCustomGame,addGameVoiceRow,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
-import {addZoneHandles,cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
+import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,selectEditorRegion,sessionStarted,setEditorRegionMode,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
 import {initUpdates,refreshUpdates} from './updates.js';
 import {ensureViewControlReady,handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
@@ -215,11 +215,13 @@ const voiceSaver=autosaver(saveVoiceMappings,'voiceSaveStatus','retryVoiceBtn');
 
 document.querySelectorAll('[data-view],[data-go]').forEach(el=>el.addEventListener('click',()=>showView(el.dataset.view||el.dataset.go)));
 bind('cameraStepGo',()=>{
-  const phone=$('#poseSource').value==='phone';
-  showView(phone?'devices':'play');if(currentView!==(phone?'devices':'play'))return;
-  if(phone){showSettingsPane('devices');openPhoneCode()}
-  const target=phone?$('#phoneConnectPanel'):$('#sourceStartBtn');
-  target.focus({preventScroll:true});target.scrollIntoView({block:'start',behavior:'instant'});
+  const issue=$('#cameraStepGo').dataset.resolve||'camera';
+  showView('devices');if(currentView!=='devices')return;
+  // 模型问题到现有语音诊断查看准确错误和模型路径；设备问题定位来源与输入设备。
+  showSettingsPane(issue==='voice'?'lab':'devices');
+  const target=issue==='voice'?$('#voiceDiagnostic'):issue==='audio'?($('#audioDeviceRow').hidden?$('#audioSource'):$('#audioDevice')):($('#poseSource').value==='phone'?$('#poseSource'):$('#cameraDevice'));
+  if(!target.matches('input,select,button,a[href]')&&!target.hasAttribute('tabindex'))target.setAttribute('tabindex','-1');
+  target.focus({preventScroll:true});target.scrollIntoView({block:'center',behavior:'instant'});
 });
 
 $('#mainActionBtn').addEventListener('click',()=>output.enabled?void emergencyStop():void runAction(handleMainAction));
@@ -307,14 +309,12 @@ for(const event of ['input','change'])$('#profileBindingRows').addEventListener(
 
 bind('adjustZonesBtn',openLiveZoneEditor);
 bind('followZonesBtn',followZones);
-bind('zoneEditFollowBtn',followZones);
 bind('saveLiveZonesBtn',saveLiveZones);
 bind('cancelLiveZonesBtn',cancelLiveZones);
 
-bind('zoneMoveHereBtn',moveZonesHere);
-
-document.querySelectorAll('.zone').forEach(addZoneHandles);
-const liveZoneLayer=$('#viewer .zones');
+$('#zoneEditSelection').addEventListener('change',e=>selectEditorRegion(e.target.value));
+$('#zoneEditPositionMode').addEventListener('change',e=>setEditorRegionMode(e.target.value));
+const liveZoneLayer=$('#zoneReferenceZones');
 for(const [event,handler] of [['pointerdown',startLiveZoneDrag],['pointermove',moveLiveZoneDrag],['pointerup',endLiveZoneDrag],['pointercancel',endLiveZoneDrag]])liveZoneLayer.addEventListener(event,handler);
 liveZoneLayer.addEventListener('keydown',e=>{
   if(!zoneEditMode||!e.key.startsWith('Arrow'))return;

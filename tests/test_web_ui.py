@@ -333,6 +333,10 @@ def _new_region(page):
         page.click("#addRegionBtn")
     assert reply.value.ok
     region = reply.value.json()["profile"]["regions"][-1]
+    sync_api.expect(page.locator('#zoneEditBar')).to_be_visible()
+    sync_api.expect(page.locator(f'#zoneReferenceZones .zone[data-zone="{region["id"]}"]')).to_be_focused()
+    page.click('#cancelLiveZonesBtn')
+    _go(page, 'games')
     row = page.locator(f'.binding-row[data-trigger="zone.{region["id"]}"]')
     sync_api.expect(row).to_be_visible()
     return region, row
@@ -345,7 +349,7 @@ def _set_region_key(page, row, key):
     page.wait_for_function("profileSaveStatus.textContent === '已保存'")
 
 
-def test_region_mapping_delete_restore_and_compact_add_controls(mode_ui):
+def test_region_mapping_delete_and_unified_add_controls(mode_ui):
     ui, _ = mode_ui
     page = ui.page
     sync_api.expect(page.locator('#profileMeta')).to_be_hidden()
@@ -364,8 +368,8 @@ def test_region_mapping_delete_restore_and_compact_add_controls(mode_ui):
     page.wait_for_function("currentGameName.textContent === '界面模式测试'")
     _go(page, 'games')
     sync_api.expect(row).to_have_count(0)
-    page.click('#addRegionBtn')
-    page.locator('#regionAddOptions').get_by_role('button', name='＋ 左手区', exact=True).click()
+    page.click('#gameMenuBtn')
+    page.click('#resetProfileBindingsBtn')
     sync_api.expect(row).to_be_visible()
     _set_region_key(page, row, 'H')
     page.reload()
@@ -438,15 +442,14 @@ def test_custom_region_add_map_rename_and_reload(mode_ui):
     with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/overrides") and r.request.method == "POST"):
         picker.locator('.zone-point-option[data-point="nose"]').click()
     picker.locator("summary").click()
-    page.once("dialog", lambda dialog: dialog.accept("加速区域"))
     with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
-        row.locator(".region-rename").click()
-    sync_api.expect(row.locator(".trigger-name")).to_contain_text("加速区域")
+        row.locator(".region-name-input").fill("加速区域")
+    sync_api.expect(row.locator(".region-name-input")).to_have_value("加速区域")
     page.reload()
     page.wait_for_function("currentGameName.textContent === '界面模式测试'")
     _go(page, "games")
     sync_api.expect(row.locator(".binding-target")).to_have_value("K")
-    sync_api.expect(row.locator(".trigger-name")).to_contain_text("加速区域")
+    sync_api.expect(row.locator(".region-name-input")).to_have_value("加速区域")
     saved = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]
     assert saved["regions"] == [{**region, "name": "加速区域"}]
     assert set(saved["bindings"]["zones"][region["id"]]["trigger_points"]) == {"left_wrist", "right_wrist", "nose"}
@@ -455,28 +458,25 @@ def test_custom_region_add_map_rename_and_reload(mode_ui):
     page.click('#mapTabs [data-tab="zones"]')
     sync_api.expect(page.locator("#zoneActions")).to_be_visible()
     _go(page, "play")
-    zone = page.locator(f'.zone[data-zone="{region["id"]}"]')
+    zone = page.locator(f'#viewer .zone[data-zone="{region["id"]}"]')
     sync_api.expect(zone).to_be_visible()
     sync_api.expect(zone.locator("small")).to_have_text("加速区域")
     page.click("#adjustZonesBtn")
     sync_api.expect(page.locator("#zoneEditBar")).to_be_visible()
-    zone.press("ArrowDown")
-    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
+    edit_zone = page.locator(f'#zoneReferenceZones .zone[data-zone="{region["id"]}"]')
+    edit_zone.press("ArrowDown")
+    with page.expect_response(lambda r: r.url.endswith("/api/zones/layout") and r.request.method == "POST"):
         page.click("#saveLiveZonesBtn")
     moved = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]["regions"][0]["rect"]
     assert moved["y1"] == pytest.approx(region["rect"]["y1"] + .01)
     assert moved["y2"] == pytest.approx(region["rect"]["y2"] + .01)
     page.reload()
     page.wait_for_function("currentGameName.textContent === '界面模式测试'")
-    sync_api.expect(zone).to_be_visible()
-    assert float(zone.evaluate("element => element.style.top").removesuffix("%")) == pytest.approx(moved["y1"] * 100)
     page.click("#adjustZonesBtn")
-    zone.press("ArrowDown")
-    with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
-        page.click("#cancelLiveZonesBtn")
+    edit_zone.press("ArrowDown")
+    page.click("#cancelLiveZonesBtn")
     restored = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]["regions"][0]["rect"]
     assert restored == moved
-    assert float(zone.evaluate("element => element.style.top").removesuffix("%")) == pytest.approx(moved["y1"] * 100)
     assert ui.errors == []
 
 
@@ -494,12 +494,11 @@ def test_custom_region_shared_definition_separate_mode_keys_and_delete(mode_ui):
     assert default["regions"] == driving["regions"] == [region]
     assert default["bindings"]["zones"][region["id"]]["action"]["target"] == "Q"
     assert driving["bindings"]["zones"][region["id"]]["action"]["target"] == "E"
-    page.once("dialog", lambda dialog: dialog.accept("驾驶区"))
     with page.expect_response(lambda r: r.url.endswith("/api/game-profiles/regions") and r.request.method == "POST"):
-        row.locator(".region-rename").click()
+        row.locator(".region-name-input").fill("驾驶区")
     page.click('#modeTabs [data-mode-id="DEFAULT"]')
     sync_api.expect(row.locator(".binding-target")).to_have_value("Q")
-    sync_api.expect(row.locator(".trigger-name")).to_contain_text("驾驶区")
+    sync_api.expect(row.locator(".region-name-input")).to_have_value("驾驶区")
     confirmations = []
     def confirm_delete(dialog):
         confirmations.append(dialog.message)
@@ -514,6 +513,25 @@ def test_custom_region_shared_definition_separate_mode_keys_and_delete(mode_ui):
         assert profile["regions"] == []
         assert region["id"] not in profile["bindings"]["zones"]
         assert "zone." + region["id"] not in profile["overrides"]
+    assert ui.errors == []
+
+
+def test_region_name_saves_before_mode_switch_and_blank_name_can_be_deleted(mode_ui):
+    ui, _ = mode_ui
+    page = ui.page
+    region, row = _new_region(page)
+    mode = _new_mode(page, '移动')
+    row.locator('.region-name-input').fill('补给区域')
+    page.click('#modeTabs [data-mode-id="DEFAULT"]')
+    page.wait_for_function("currentModeName.textContent === '默认'")
+    sync_api.expect(row.locator('.region-name-input')).to_have_value('补给区域')
+    saved = page.request.get(ui.base + '/api/game-profiles/selected?mode=' + mode).json()['profile']
+    assert saved['regions'][0]['name'] == '补给区域'
+    row.locator('.region-name-input').fill('')
+    page.once('dialog', lambda dialog: dialog.accept())
+    row.locator('.region-remove').click()
+    sync_api.expect(row).to_have_count(0)
+    assert page.request.get(ui.base + '/api/game-profiles/selected').json()['profile']['regions'] == []
     assert ui.errors == []
 
 

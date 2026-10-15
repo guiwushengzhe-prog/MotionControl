@@ -144,9 +144,9 @@ export const GAMEPAD_TRIGGER_TARGETS=['LT','RT'];
 
 // 映射表「系统功能」能选的，按这个顺序列。电脑那边 profile_schema.BINDING_SYSTEM_TARGETS
 // 是准，这里只管名字和顺序；那边没有的不列。
-export const BINDING_SYSTEM_TARGETS=[['ZONES.MOVE_HERE','区域挪到我这里'],['ZONES.FREEZE_TOGGLE','定住区域 / 恢复跟随'],['ZONES.FREEZE','定住区域'],['ZONES.FOLLOW','区域恢复跟随'],['HEAD.CENTER','视角回正'],['OUTPUT.TOGGLE','开始 / 停止输出'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出']];
+export const BINDING_SYSTEM_TARGETS=[['ZONES.FREEZE_TOGGLE','定住区域 / 恢复跟随'],['ZONES.FREEZE','定住区域'],['ZONES.FOLLOW','区域恢复跟随'],['HEAD.CENTER','视角回正'],['OUTPUT.TOGGLE','开始 / 停止输出'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出']];
 
-export const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['OUTPUT.TOGGLE','开始 / 停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['ZONES.MOVE_HERE','区域挪到我这里'],['ZONES.FREEZE','定住区域'],['ZONES.FOLLOW','区域恢复跟随'],['ZONES.FREEZE_TOGGLE','定住区域 / 恢复跟随'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
+export const VOICE_SYSTEM_TARGETS=[['EMERGENCY_STOP','紧急停止'],['OUTPUT.START','开始输出'],['OUTPUT.STOP','停止输出'],['OUTPUT.TOGGLE','开始 / 停止输出'],['HEAD.CENTER','视角回正'],['HEAD_CALIBRATION_START','开始校准'],['ZONES.FREEZE','定住区域'],['ZONES.FOLLOW','区域恢复跟随'],['ZONES.FREEZE_TOGGLE','定住区域 / 恢复跟随'],['POSE.RECORD','录一个新姿势'],['POSE.ADD_FRAME','给刚录的动作再加一个姿势'],['POSE.CANCEL','取消录制倒计时']];
 
 export const SYSTEM_TARGET_NAMES=new Map([...VOICE_SYSTEM_TARGETS,...BINDING_SYSTEM_TARGETS,['HEAD.CALIBRATE','开始校准']]);
 

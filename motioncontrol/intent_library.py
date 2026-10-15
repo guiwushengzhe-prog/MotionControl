@@ -109,6 +109,7 @@ def make_replay_kernel(snapshot: dict):
             store.path, store.poses, store.last_error, store._progress = None, copy.deepcopy(poses), "", {}
             kernel.custom_pose_store = store
         kernel.zone_fit = copy.deepcopy(snapshot["zone_fit"])
+        kernel.following_layout = kernel._normalize_following_layout(snapshot.get("following_layout"))
         kernel.zones_frozen = bool(snapshot.get("zones_frozen"))
         kernel.frozen_rects = copy.deepcopy(snapshot.get("frozen_rects") or {})
         kernel.frozen_anchor = copy.deepcopy(snapshot.get("frozen_anchor"))
@@ -409,7 +410,7 @@ class ZoneLearner:
 def learning_signature(snapshot: dict, index: dict) -> str:
     payload = {key: snapshot.get(key) for key in (
         "control_bindings", "motion_config", "zone_fit", "zones_frozen", "frozen_rects",
-        "frozen_anchor", "zone_trigger_mode", "march_algorithm", "hand_mouse", "action_chain",
+        "frozen_anchor", "following_layout", "regions", "zone_trigger_mode", "march_algorithm", "hand_mouse", "action_chain",
         "disabled_builtin_actions")}
     payload["pose_actions"] = sorted((doc.get("id"), doc.get("revision")) for doc in snapshot.get("pose_actions") or [])
     payload["custom_poses"] = snapshot.get("custom_poses")

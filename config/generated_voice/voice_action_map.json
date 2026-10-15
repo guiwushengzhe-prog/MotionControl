@@ -20,13 +20,6 @@
     "default_target": "OUTPUT.STOP",
     "cooldown_ms": 700
   },
-  "体感挪动区域": {
-    "id": "zones.move_here",
-    "label": "区域挪到我这里",
-    "kind": "system",
-    "default_target": "ZONES.MOVE_HERE",
-    "cooldown_ms": 700
-  },
   "体感恢复跟随": {
     "id": "zones.follow",
     "label": "区域恢复跟随",

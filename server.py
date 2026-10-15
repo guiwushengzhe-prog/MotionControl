@@ -48,6 +48,7 @@ from motioncontrol.studio import MAX_CHUNK_BYTES, StudioService
 from motioncontrol.studio_portrait import StudioPortrait
 from motioncontrol.intent_library import ZoneLearner
 from motioncontrol.game_profiles import GameProfileStore, ProfileSelectionChanged
+from motioncontrol.zone_layout import relative_rect
 from motioncontrol.game_launch import is_administrator, launch_as_administrator, wait_for_previous_process
 from motioncontrol import kinect_camera
 from motioncontrol_shared import macro_schema, pose_library
@@ -1157,7 +1158,7 @@ def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
 
 
 @contextmanager
-def _profile_configuration_transaction(*, preserve_controls: bool = False):
+def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_layout: bool = False):
     """Commit files and both binding consumers together, or restore all three."""
     global MOTION_CONFIG, CONFIG_REVISION
     with PROFILE_UPDATE_LOCK, PROFILES._lock, VOICE._lock, KERNEL._lock:
@@ -1169,10 +1170,13 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False):
         previous_game_mode = dict(GAME_MODE)
         previous_voice = copy.deepcopy(VOICE._profile_bindings)
         previous_voice_modes = copy.deepcopy(VOICE._mode_bindings)
+        previous_layout = {name: copy.deepcopy(getattr(KERNEL, name)) for name in
+                           ("following_layout", "zones_frozen", "frozen_rects", "frozen_anchor", "_general_raw")}
         runtime_updated = False
         try:
             with file_transaction(
-                [PROFILES.selection_path, PROFILES.custom_games_path, MOTION_CONFIG_FILE],
+                [PROFILES.selection_path, PROFILES.custom_games_path, MOTION_CONFIG_FILE,
+                 *([KERNEL._general_settings_path()] if zone_layout else [])],
                 user_data_root() / ".profile-install.journal",
             ):
                 yield
@@ -1200,7 +1204,10 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False):
             PROFILES._custom = previous_custom
             MOTION_CONFIG = previous_motions
             GAME_MODE.update(previous_game_mode)
-            if not preserve_controls or runtime_updated:
+            if zone_layout:
+                for name, value in previous_layout.items():
+                    setattr(KERNEL, name, value)
+            if not preserve_controls or runtime_updated or zone_layout:
                 KERNEL.configure_motions(previous_motions)
                 KERNEL.configure_regions(previous_profile.get("regions", []))
                 KERNEL.configure_bindings(previous_bindings, mode=previous_profile["mode"])
@@ -1804,6 +1811,13 @@ class AdminHandler(_BaseHandler):
             self._send_json({"version": VERSION, "pose_capture": POSE_TIMER.status(),
                              **runtime_status()})
             return
+        if route == "/api/zones/editor":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "区域只能在这台电脑上修改"}, 403)
+                return
+            with PROFILE_UPDATE_LOCK:
+                self._send_json({"ok": True, "profile_id": PROFILES.selected_id(), **KERNEL.zone_editor()})
+            return
         if route == "/api/action-chain/config":
             self._send_json({"version": VERSION, **KERNEL.status()["action_chain"]})
             return
@@ -2364,14 +2378,26 @@ class AdminHandler(_BaseHandler):
                 with _profile_configuration_transaction(preserve_controls=True):
                     profile_id = body.get("profile_id")
                     if op == "add":
-                        made = PROFILES.add_region(profile_id, name=body.get("name"), rect=body.get("rect"))
+                        editor = KERNEL.zone_editor()
+                        mode = body.get("mode", editor["builtin_mode"])
+                        rect = body.get("rect") or {"x1": .35, "x2": .55, "y1": .35, "y2": .55}
+                        made = PROFILES.add_region(profile_id, name=body.get("name"), rect=rect, mode=mode,
+                                                   follow=relative_rect(rect, editor["reference"]["anchor"]) if mode == "following" else None)
                     elif op == "update":
                         made = PROFILES.update_region(profile_id, str(body.get("id", "")),
-                                                      name=body.get("name"), rect=body.get("rect"))
+                                                      name=body.get("name"), rect=body.get("rect"),
+                                                      follow=relative_rect(body["rect"], KERNEL.zone_editor()["reference"]["anchor"])
+                                                      if body.get("rect") is not None else None)
                     elif op == "remove":
                         PROFILES.remove_region(profile_id, str(body.get("id", "")))
                     elif op == "layout":
                         PROFILES.update_region_rects(profile_id, body.get("rects"))
+                        regions = _active_profile().get("regions", [])
+                        anchor = KERNEL.zone_editor()["reference"]["anchor"]
+                        for item in regions:
+                            if item["id"] in body["rects"] and item.get("mode") == "following":
+                                item["follow"] = relative_rect(item["rect"], anchor)
+                        PROFILES.set_regions(profile_id, regions)
                     else:
                         raise ValueError("不支持的区域操作")
                 broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
@@ -2381,6 +2407,28 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": True, "profile": profile, "active_mode": profile["mode"],
                                  "config_revision": CONFIG_REVISION,
                                  **({"region": made} if made is not None else {})})
+            except ProfileSelectionChanged as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 409)
+            except KeyError as exc:
+                self._send_json({"ok": False, "error": str(exc.args[0] if exc.args else exc)}, 404)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/zones/layout":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "区域只能在这台电脑上修改"}, 403)
+                return
+            try:
+                with _profile_configuration_transaction(preserve_controls=True, zone_layout=True):
+                    PROFILES._check_region_profile(body.get("profile_id"))
+                    prepared, regions = KERNEL.prepare_zone_layout(body.get("rects"), body.get("modes", {}), body.get("reference"))
+                    PROFILES.set_regions(PROFILES.selected_id(), regions)
+                    KERNEL.configure_regions(regions)
+                    KERNEL.apply_zone_layout(prepared)
+                broadcaster = getattr(INPUT_BRIDGE, "broadcast_control_config", None)
+                if broadcaster is not None:
+                    broadcaster(_phone_control_payload())
+                self._send_json({"ok": True, "profile": _active_profile(), "runtime": runtime_status()})
             except ProfileSelectionChanged as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 409)
             except KeyError as exc:

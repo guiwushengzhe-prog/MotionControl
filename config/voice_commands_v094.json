@@ -51,14 +51,6 @@
       "default_target": "OUTPUT.STOP"
     },
     {
-      "id": "zones.move_here",
-      "label": "区域挪到我这里",
-      "phrase": "体感挪动区域",
-      "profile": "safe_system",
-      "kind": "system",
-      "default_target": "ZONES.MOVE_HERE"
-    },
-    {
       "id": "zones.follow",
       "label": "区域恢复跟随",
       "phrase": "体感恢复跟随",

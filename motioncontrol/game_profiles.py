@@ -407,7 +407,7 @@ class GameProfileStore:
                 selection.pop("regions_by_profile", None)
             self._save_selection(selection)
 
-    def add_region(self, profile_id: str, name=None, rect=None) -> dict:
+    def add_region(self, profile_id: str, name=None, rect=None, *, mode=None, follow=None) -> dict:
         with self._lock:
             selected = self._check_region_profile(profile_id)
             items = copy.deepcopy(self._regions_for(selected))
@@ -425,10 +425,15 @@ class GameProfileStore:
             while any(item["id"] == ident for item in items):
                 ident = "user_" + uuid.uuid4().hex[:8]
             item = {"id": ident, "name": normalize_region_name(name), "rect": normalize_region_rect(rect)}
+            if mode is not None:
+                item["mode"] = mode
+                if mode == "following":
+                    item["follow"] = follow
+                item = normalize_regions([item])[0]
             self.set_regions(selected, [*items, item])
             return copy.deepcopy(item)
 
-    def update_region(self, profile_id: str, ident: str, name=None, rect=None) -> dict:
+    def update_region(self, profile_id: str, ident: str, name=None, rect=None, *, follow=None) -> dict:
         with self._lock:
             selected = self._check_region_profile(profile_id)
             items = copy.deepcopy(self._regions_for(selected))
@@ -441,6 +446,8 @@ class GameProfileStore:
                 item["name"] = normalize_region_name(name)
             if rect is not None:
                 item["rect"] = normalize_region_rect(rect)
+                if follow is not None and item.get("mode") == "following":
+                    item["follow"] = follow
             self.set_regions(selected, items)
             return copy.deepcopy(item)
 
