@@ -296,6 +296,7 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .zone strong { display: block; font-size: clamp(.9375rem, 30cqmin, 3.375rem); line-height: 1; letter-spacing: .02em; text-shadow: 0 .125rem .375rem rgba(0, 0, 0, .7); }
 .zone small { display: block; margin-top: .125rem; font-size: clamp(.625rem, 11cqmin, 1.125rem); opacity: .8; }
 .zone.look-gate { border: .125rem dashed #30d158; background: rgba(48, 209, 88, .08); }
+.zone.custom-zone { border-color: #64aaff; background: rgba(10, 132, 255, .12); }
 /* 亮 = 按下了一个键。 */
 .zone.active { border-color: #30d158; background: rgba(48, 209, 88, .30); }
 /* 智能判定：黄虚线 = 进框了、正在判断；红 = 判定是做动作扫过，没按。 */
@@ -502,6 +503,8 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .voice-phrase-tip { display: block; flex-basis: 100%; margin-top: .125rem; color: var(--warn); font-size: .7812rem; }
 .voice-phrase-tip[hidden] { display: none; }
 .add-voice { justify-self: start; margin-top: -6px; }
+.zone-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem 1rem; margin: -.25rem 0 .75rem; }
+.region-rename, .region-remove { min-height: 1.75rem; padding: .125rem .375rem; font-size: .8125rem; }
 
 /* 区域的触发部位：点开是一张骨骼图，选点或连线。 */
 .zone-point-picker { position: relative; font-size: .8125rem; }

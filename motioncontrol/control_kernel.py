@@ -31,6 +31,7 @@ from motioncontrol.head_control import (
     HEAD_SIGNAL_VERSION as CLEAN_HEAD_SIGNAL_VERSION,
 )
 from motioncontrol_shared.profile_schema import DEFAULT_MODE_NAME, flatten_bindings
+from motioncontrol_shared.regions import is_region_id, normalize_regions
 from motioncontrol_shared.pose_points import MP_NAMES, trigger_point_groups
 from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
@@ -591,7 +592,9 @@ class ControlKernel:
         self.vertical_pitch_velocity = 0.0
         self.vertical_pitch_acceleration = 0.0
         self.vertical_pitch_intent_state = "IDLE"
-        self.zone_state = {name: fresh_zone_state() for name in RUNTIME_BODY_ZONES}
+        self.runtime_body_zones = copy.deepcopy(RUNTIME_BODY_ZONES)
+        self.custom_regions: dict[str, dict] = {}
+        self.zone_state = {name: fresh_zone_state() for name in self.runtime_body_zones}
         self.zone_state["lookGate"] = fresh_zone_state()
         self.last_zone_emit = 0.0
         # 「智能」判定：最近一小段手脚动得多快、每个框的判断状态机、录的数据。
@@ -1083,7 +1086,7 @@ class ControlKernel:
                 self._safe_output(setter, [], source_group="controls")
 
     def _install_bindings_locked(self, bindings: dict | None, mode: dict | None) -> None:
-        previous_points = {name: self._zone_point_groups_locked(name) for name in RUNTIME_BODY_ZONES}
+        previous_points = {name: self._zone_point_groups_locked(name) for name in self.runtime_body_zones}
         self.control_bindings = self._apply_macro_behavior_locked(flatten_bindings(bindings))
         self._zone_point_groups.clear()
         for name, points in previous_points.items():
@@ -1420,7 +1423,7 @@ class ControlKernel:
         session = self.intent_session
         if session is None or not session.active:
             return
-        zone_inside = {name: bool(self.zone_state.get(name, {}).get("raw_inside")) for name in RUNTIME_BODY_ZONES}
+        zone_inside = {name: bool(self.zone_state.get(name, {}).get("raw_inside")) for name in self.runtime_body_zones}
         active = {f"motion.{ident}" for ident in self.motion_active} | {f"pose.{ident}" for ident in self.pose_active}
         session.update(now, pose_map, self.width, self.height, zone_inside, active,
                        sample_at=self._pose_sample_time_locked(now))
@@ -1625,7 +1628,42 @@ class ControlKernel:
         for alias, canonical in ZONE_ALIASES.items():
             if canonical in rects:
                 rects[alias] = copy.deepcopy(rects[canonical])
+        rects.update(self._custom_region_rects_locked())
         return rects
+
+    def _custom_region_rects_locked(self) -> dict[str, dict]:
+        return {ident: copy.deepcopy(item["rect"]) for ident, item in self.custom_regions.items()}
+
+    def configure_regions(self, regions: list[dict]) -> dict:
+        """安装当前游戏共用的独立框；只清掉删除或移动的框，立即松开它们的键。"""
+        normalized = {item["id"]: item for item in normalize_regions(regions)}
+        with self._lock:
+            previous = self.custom_regions
+            if normalized == previous:
+                return self.status_locked(time.monotonic())
+            changed = {ident for ident in previous
+                       if ident not in normalized or previous[ident]["rect"] != normalized[ident]["rect"]}
+            for ident in changed:
+                self.zone_state.pop(ident, None)
+                self.zone_rects.pop(ident, None)
+                trigger = f"zone.{ident}"
+                self.trigger_previous.discard(trigger)
+                self._rule_previous.discard(trigger)
+                self._mode_held.discard(trigger)
+                self._selected_active.pop(trigger, None)
+                self._sequence_next.pop(trigger, None)
+            self.custom_regions = copy.deepcopy(normalized)
+            self.runtime_body_zones = {**copy.deepcopy(RUNTIME_BODY_ZONES), **{
+                ident: {"label": item["name"], "name": item["name"], "custom": True,
+                        "points": ("left_wrist", "right_wrist"), "kind": "custom"}
+                for ident, item in normalized.items()
+            }}
+            self._zone_point_groups.clear()
+            for ident in normalized:
+                self.zone_state.setdefault(ident, fresh_zone_state())
+            self.zone_rects.update(self._custom_region_rects_locked())
+            self._dispatch_controls_locked(time.monotonic())
+            return self.status_locked(time.monotonic())
 
     def _freeze_zones_locked(self) -> dict:
         """把跟随框定在现在的位置。已经定住了就什么都不改——之后拖过的不能被冲掉。"""
@@ -1780,7 +1818,7 @@ class ControlKernel:
         if not self.trigger_recorder.config["enabled"]:
             return
         active = {f"zone.{name}" for name, state in self.zone_state.items()
-                  if name in RUNTIME_BODY_ZONES and state.get("pressed")}
+                  if name in self.runtime_body_zones and state.get("pressed")}
         active.update(f"motion.{name}" for name in self.motion_active)
         active.update(f"pose.{name}" for name in self.pose_active)
         self.trigger_recorder.capture(
@@ -2032,7 +2070,7 @@ class ControlKernel:
             return (("left_wrist",),)
         if name not in self._zone_point_groups:
             binding = self._zone_point_binding_locked(name)
-            points = binding.get("trigger_points", RUNTIME_BODY_ZONES[name]["points"])
+            points = binding.get("trigger_points", self.runtime_body_zones[name]["points"])
             self._zone_point_groups[name] = trigger_point_groups(points, binding.get("trigger_segments", ()))
         return self._zone_point_groups[name]
 
@@ -2052,7 +2090,7 @@ class ControlKernel:
                 point = pose_map.get(point_name)
                 if not self._point_in_rect(point, rect):
                     break
-                if custom:
+                if custom and name not in self.custom_regions:
                     side, _, part = point_name.partition("_")
                     if part in {"wrist", "pinky", "index", "thumb"} and self.hand_mouse_controller.owns_hand(side):
                         break
@@ -2112,14 +2150,15 @@ class ControlKernel:
             self.zone_rects = self._frozen_zone_rects_locked()
         else:
             self.zone_rects = self._compute_body_zones(pose_map, now)
+            self.zone_rects.update(self._custom_region_rects_locked())
         changed = False
         simple = self.zone_trigger_mode == "simple"
         gate_available = self._gate_available()
-        zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
+        zone_names = list(self.runtime_body_zones) + (["lookGate"] if gate_available else [])
         frame = body_frame(pose_map, self.width, self.height)
         custom_targets = {name: tuple(dict.fromkeys(point for group in self._zone_point_groups_locked(name)
                                                     for point in group))
-                          for name in zone_names if self._zone_has_custom_points_locked(name)}
+                          for name in zone_names if name in self.custom_regions or self._zone_has_custom_points_locked(name)}
         self.zone_kin.update(pose_map, frame, self._pose_sample_time_locked(now), targets=custom_targets)
         actions = self._bound_action_triggers_locked()
         conflicts = {} if simple else self.zone_conflicts_locked(actions)
@@ -2143,7 +2182,7 @@ class ControlKernel:
                 inside = False
             # 身体确实在框里没有，不管判定按不按。「录我的动作」数进框次数用它。
             state["raw_inside"] = inside
-            if name in RUNTIME_BODY_ZONES and not self._effective_binding_locked(f"zone.{name}"):
+            if name in self.runtime_body_zones and not self._effective_binding_locked(f"zone.{name}"):
                 # 没绑键的框不判断，画面上也不画（见 _zones_snapshot_locked）。
                 changed = changed or bool(state.get("pressed"))
                 self.zone_state[name] = {**fresh_zone_state(), "raw_inside": inside}
@@ -2152,7 +2191,7 @@ class ControlKernel:
             # output on the very first missing frame.  Body action zones
             # retain their normal two-frame hysteresis.
             exit_frames = 1 if name == "lookGate" else 2
-            if simple:
+            if simple or name in self.custom_regions:
                 # 进去就按：在框里就按着，出来就松，下面那些判断一条都不走。
                 state["inside"] = state["inside"] + 1 if inside else 0
                 state["outside"] = 0 if inside else state["outside"] + 1
@@ -2165,7 +2204,7 @@ class ControlKernel:
                 continue
             info = conflicts.get(name)
             yielding = tuple(info["triggers"]) if info and info["yields"] else ()
-            binding = self._effective_binding_locked(f"zone.{name}") if name in RUNTIME_BODY_ZONES else None
+            binding = self._effective_binding_locked(f"zone.{name}") if name in self.runtime_body_zones else None
             deliberate = str(((binding or {}).get("action") or {}).get("type", "")) == "system"
             # 系统功能：有任何绑了键的动作正在做都不按。游戏按键：只看会扫过它的那几个。
             watched = actions if deliberate else yielding
@@ -2314,6 +2353,7 @@ class ControlKernel:
                 "zones_frozen": self.zones_frozen,
                 "frozen_rects": self.frozen_rects,
                 "frozen_anchor": self.frozen_anchor,
+                "regions": list(self.custom_regions.values()),
                 "zone_trigger_mode": self.zone_trigger_mode,
                 "march_algorithm": self.march_algorithm,
                 "vertical_look": self.vertical_look,
@@ -2328,9 +2368,9 @@ class ControlKernel:
 
     def _pressed_keys_locked(self) -> list[str]:
         return sorted({
-            RUNTIME_BODY_ZONES[name]["button"]
+            self.runtime_body_zones[name]["button"]
             for name, state in self.zone_state.items()
-            if name in RUNTIME_BODY_ZONES and RUNTIME_BODY_ZONES[name].get("button") and state["pressed"]
+            if name in self.runtime_body_zones and self.runtime_body_zones[name].get("button") and state["pressed"]
         })
 
     # ---------- four existing motion rules ----------
@@ -2902,7 +2942,7 @@ class ControlKernel:
         那份必须由内核算好报出来，不能让界面自己再猜一遍——猜就一定会有第二套规则。
         """
         triggers = set(self.control_bindings)
-        triggers.update(f"zone.{name}" for name in RUNTIME_BODY_ZONES)
+        triggers.update(f"zone.{name}" for name in self.runtime_body_zones)
         triggers.update(f"motion.{item.get('id')}" for item in self.motion_config
                         if item.get("id"))
         out: dict[str, dict] = {}
@@ -2913,12 +2953,14 @@ class ControlKernel:
         return out
 
     def _effective_binding_locked(self, trigger: str) -> dict | None:
+        prefix, _, ident = trigger.partition(".")
+        if prefix == "zone" and is_region_id(ident) and ident not in self.custom_regions:
+            return None
         binding = self.control_bindings.get(trigger)
         if binding is not None:
             if binding.get("disabled"):
                 return None
             return binding
-        prefix, _, ident = trigger.partition(".")
         if prefix == "zone" and ident in RUNTIME_BODY_ZONES and RUNTIME_BODY_ZONES[ident].get("button"):
             # Prefer the new combined profile id.  If an older profile has no
             # such entry, use its former upper/lower binding deterministically
@@ -3119,7 +3161,7 @@ class ControlKernel:
         managed = self.action_chain.managed_triggers if self.action_chain.enabled else set()
         body_active = {
             f"zone.{name}" for name, state in self.zone_state.items()
-            if name in RUNTIME_BODY_ZONES and state.get("pressed")
+            if name in self.runtime_body_zones and state.get("pressed")
         }
         body_active.update(f"motion.{name}" for name in self.motion_active)
         body_active.update(f"pose.{name}" for name in self.pose_active)
@@ -3360,7 +3402,7 @@ class ControlKernel:
         self.zone_kin.reset()
         self._zone_smoothing_at = None
         # 定住的框不靠人算，人走开了也还在原地，画面上照样画出来、照样能拖。
-        self.zone_rects = self._frozen_zone_rects_locked() if self.zones_frozen else {}
+        self.zone_rects = self._frozen_zone_rects_locked() if self.zones_frozen else self._custom_region_rects_locked()
         self.head_jump_anchor = None
         self.head_jump_prev = None
         self.head_jump_torso_ref = None
@@ -3447,14 +3489,15 @@ class ControlKernel:
         只给「动作测试」页用。lookGate 不是键而是一道闸，它两个值一样。
         """
         gate_available = self._gate_available()
-        zone_names = list(RUNTIME_BODY_ZONES) + (["lookGate"] if gate_available else [])
+        zone_names = list(self.runtime_body_zones) + (["lookGate"] if gate_available else [])
         now = time.monotonic()
         zones = {}
         for name in zone_names:
             raw = self.zone_state.get(name, {})
-            recognized = bool(raw.get("pressed", False))
-            mapped = name not in RUNTIME_BODY_ZONES or bool(self._effective_binding_locked(f"zone.{name}"))
-            state = {"pressed": recognized and mapped, "recognized": recognized}
+            custom = name in self.custom_regions
+            recognized = bool(raw.get("raw_inside" if custom else "pressed", False))
+            mapped = name not in self.runtime_body_zones or bool(self._effective_binding_locked(f"zone.{name}"))
+            state = {"pressed": bool(raw.get("pressed")) and mapped, "recognized": recognized}
             state["trigger_groups"] = self._zone_point_groups_locked(name)
             # 画成什么样：idle 灰、pending 判断中（黄）、pressed 亮、swept 判定是扫过（闪红）。
             # 没绑键的框不判断也不画：没有 rect，网页和手机上就不出现。progress 是系统
@@ -3463,7 +3506,9 @@ class ControlKernel:
             state["phase"] = phase
             if phase == "pending" and raw.get("progress"):
                 state["progress"] = round(float(raw["progress"]), 2)
-            rect = self.zone_rects.get(name) if mapped else None
+            rect = self.zone_rects.get(name) if mapped or custom else None
+            if custom:
+                state.update(name=self.custom_regions[name]["name"], custom=True)
             zones[name] = {"rect": _snapshot_copy(rect), **state}
         # Keep the old four identifiers in status for clients that have not yet
         # learned the merged names. They are aliases only; no second trigger is

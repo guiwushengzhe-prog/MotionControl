@@ -95,8 +95,11 @@ def make_replay_kernel(snapshot: dict):
     from motioncontrol.custom_poses import CustomPoseStore
 
     kernel = ControlKernel(_NullOutput(), persist=False)
+    kernel.configure_regions(copy.deepcopy(snapshot.get("regions") or []))
     with kernel._lock:
         kernel.control_bindings = copy.deepcopy(snapshot.get("control_bindings") or {})
+        # 安装区域时的状态快照可能缓存默认触发点；恢复绑定后按实际选择重建。
+        kernel._zone_point_groups.clear()
         kernel.motion_config = copy.deepcopy(snapshot.get("motion_config") or [])
         kernel._install_pose_actions_locked(copy.deepcopy(snapshot.get("pose_actions") or []))
         poses = snapshot.get("custom_poses")

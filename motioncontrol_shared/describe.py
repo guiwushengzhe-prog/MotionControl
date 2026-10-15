@@ -185,14 +185,16 @@ def _annotate_merged_zones(entries: list[dict]) -> None:
         winner["shadows_matter"] = not same
 
 
-def _describe_overrides(overrides: dict, modes: list[dict] | None = None) -> dict:
+def _describe_overrides(overrides: dict, modes: list[dict] | None = None,
+                        regions: list[dict] | None = None) -> dict:
     """一个游戏的自定义绑定，按类别分好。"""
     groups: dict[str, list[dict]] = {}
+    region_names = {f"zone.{item['id']}": item["name"] for item in regions or []}
     for trigger, binding in sorted(overrides.items()):
         prefix = str(trigger).partition(".")[0]
         entry = {
             "trigger": trigger,
-            "name": trigger_name(trigger),
+            "name": region_names.get(trigger, trigger_name(trigger)),
             "action": "已关闭" if binding is None else describe_action(
                 binding.get("action") if isinstance(binding, dict) else None, modes),
             "disabled": binding is None,
@@ -213,11 +215,13 @@ def _describe_profile_selection(data: dict) -> dict:
     by_profile = data.get("overrides_by_profile", {})
     modes = data.get("launch_mode_by_profile", {})
     game_modes = data.get("modes_by_profile", {})
+    game_regions = data.get("regions_by_profile", {})
     games = [
         {"game_id": game_id, "launch_mode": modes.get(game_id, "normal"),
-         **_describe_overrides(by_profile.get(game_id, {}), game_modes.get(game_id)),
-         **({"modes": _describe_modes(game_modes[game_id])} if game_modes.get(game_id) else {})}
-        for game_id in sorted(set(by_profile) | set(modes) | set(game_modes))
+         **_describe_overrides(by_profile.get(game_id, {}), game_modes.get(game_id), game_regions.get(game_id)),
+         **({"modes": _describe_modes(game_modes[game_id], game_regions.get(game_id))} if game_modes.get(game_id) else {}),
+         **({"regions": game_regions[game_id]} if game_regions.get(game_id) else {})}
+        for game_id in sorted(set(by_profile) | set(modes) | set(game_modes) | set(game_regions))
     ]
     return {
         "kind": "profile_selection",
@@ -259,7 +263,7 @@ def _describe_voice_mappings(data: dict) -> dict:
 
 def _describe_game_bundle(data: dict) -> dict:
     """一个游戏的全部配置。按键和身体动作一起看，因为它们本来就是一件事。"""
-    bindings = _describe_overrides(data.get("overrides", {}), data.get("modes"))
+    bindings = _describe_overrides(data.get("overrides", {}), data.get("modes"), data.get("regions"))
     motions = _describe_motion_mappings({"motions": data.get("motions", [])})
     enabled = sum(1 for item in motions["items"] if item["enabled"])
     return {
@@ -270,13 +274,14 @@ def _describe_game_bundle(data: dict) -> dict:
         "groups": bindings["groups"],
         "total": bindings["total"],
         "motions": motions["items"],
-        **({"modes": _describe_modes(data["modes"])} if data.get("modes") else {}),
+        **({"modes": _describe_modes(data["modes"], data.get("regions"))} if data.get("modes") else {}),
+        **({"regions": data["regions"]} if data.get("regions") else {}),
     }
 
 
-def _describe_modes(modes: list[dict]) -> list[dict]:
+def _describe_modes(modes: list[dict], regions: list[dict] | None = None) -> list[dict]:
     return [{"id": item["id"], "name": item["name"],
-             **_describe_overrides(item.get("overrides", {}), modes)} for item in modes]
+             **_describe_overrides(item.get("overrides", {}), modes, regions)} for item in modes]
 
 
 _DESCRIBERS = {

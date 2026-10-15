@@ -23,6 +23,14 @@ export const EDGES = [
 
 export const BODY_ZONES = {leftHand:{body:'左手',button:'X',parts:['leftHandUpper','leftHandLower']},rightHand:{body:'右手',button:'B',parts:['rightHandUpper','rightHandLower']},leftFoot:{body:'左脚',button:'LB'},rightFoot:{body:'右脚',button:'RB'},headJump:{body:'头顶'},lookGate:{label:'上下视角',body:'左手放这里',button:null,gate:true}};
 
+export function bodyZones(zones=kernelState?.zones||{}){
+  const definitions={...BODY_ZONES};
+  for(const [id,state] of Object.entries(zones)){
+    if(state.custom&&/^user_[0-9a-f]{8}$/.test(id))definitions[id]={body:state.name||'自定义区域',custom:true};
+  }
+  return definitions;
+}
+
 // 圈上写的那个字以前是写死的，和真实映射悄悄对不上——头顶那块一直显示 'A'。
 // 后来改成读配置，结果错到了另一边：配置里没 zone.headJump 这一条时它写「未映射」，
 // 可内核有一层内置兜底，它照样按 A。于是界面说没绑、游戏里却有反应。
@@ -163,7 +171,10 @@ export function profileTriggers(){
   const downloadedTriggers=poseLibrary.filter(item=>item.source==='cloud').map(item=>({
     key:item.trigger,group:item.group==='pose'?'poses':'motions',id:item.id,name:item.name,
   }));
-  return [...BASE_PROFILE_TRIGGERS,...downloadedTriggers,...customPoseTriggers,...voiceTriggers];
+  const regions=(gameProfile.selected?.regions||[]).map(region=>({
+    key:`zone.${region.id}`,group:'zones',id:region.id,name:region.name,custom:true,
+  }));
+  return [...BASE_PROFILE_TRIGGERS,...regions,...downloadedTriggers,...customPoseTriggers,...voiceTriggers];
 }
 
 export function targetLabel(action){

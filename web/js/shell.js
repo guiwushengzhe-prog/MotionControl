@@ -11,7 +11,7 @@ import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
 import {openPhoneCode} from './phone-connect.js';
 import {addCustomGame,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
-import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
+import {addZoneHandles,cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,moveZonesHere,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,sessionStarted,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
 import {initUpdates,refreshUpdates} from './updates.js';
 import {ensureViewControlReady,handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
@@ -313,15 +313,13 @@ bind('cancelLiveZonesBtn',cancelLiveZones);
 
 bind('zoneMoveHereBtn',moveZonesHere);
 
-document.querySelectorAll('.zone').forEach(el=>{
-  // 定住的框四个角上的把手，拖它改大小。只在编辑定住的框时显示（见 .rect-editing）。
-  for(const corner of ['nw','ne','sw','se']){const handle=document.createElement('span');handle.className='zone-handle';handle.dataset.corner=corner;handle.setAttribute('aria-hidden','true');el.appendChild(handle)}
-  for(const [event,handler] of [['pointerdown',startLiveZoneDrag],['pointermove',moveLiveZoneDrag],['pointerup',endLiveZoneDrag],['pointercancel',endLiveZoneDrag]])el.addEventListener(event,handler);
-  el.addEventListener('keydown',e=>{
-    if(!zoneEditMode||!e.key.startsWith('Arrow'))return;
-    e.preventDefault();
-    rectEdit.selected=el.dataset.zone;nudgeRect(el.dataset.zone,e.key,e.shiftKey);
-  });
+document.querySelectorAll('.zone').forEach(addZoneHandles);
+const liveZoneLayer=$('#viewer .zones');
+for(const [event,handler] of [['pointerdown',startLiveZoneDrag],['pointermove',moveLiveZoneDrag],['pointerup',endLiveZoneDrag],['pointercancel',endLiveZoneDrag]])liveZoneLayer.addEventListener(event,handler);
+liveZoneLayer.addEventListener('keydown',e=>{
+  if(!zoneEditMode||!e.key.startsWith('Arrow'))return;
+  const zone=e.target.closest('.zone');if(!zone)return;
+  e.preventDefault();rectEdit.selected=zone.dataset.zone;nudgeRect(zone.dataset.zone,e.key,e.shiftKey);
 });
 
 // 抬头低头的中心稳定区。在「设置 → 视角」里，拖完就存。

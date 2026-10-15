@@ -3,7 +3,7 @@ import {renderIntent,renderMisfireHint,renderZoneFit,renderZoneFreeze} from './b
 import {$,agoText,api,clamp,fitCanvas,isVisible,notice,post,setAttribute,setClass,setProperty,setStyle,setText,syncChildren} from './core.js';
 import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMerge,renderCameraDepth,syncCameraDeviceRow} from './devices.js';
 import {renderTriggerRecord} from './diagnostics.js';
-import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
+import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,bodyZones,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseCountdown,paintPoseLibrary} from './library.js';
 import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode} from './mapping.js';
 import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runAction} from './shell.js';
@@ -63,7 +63,7 @@ const RECT_EDIT_ZONE_IDS=['leftHand','rightHand','leftFoot','rightFoot','headJum
 
 const RECT_EDIT_MIN=.02;
 
-export const rectEdit={rects:{},backup:{},selected:'',wasFrozen:false};
+export const rectEdit={rects:{},backup:{},selected:'',wasFrozen:false,profileId:null,customIds:[]};
 
 function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
   target.save();target.setTransform(1,0,0,1,0,0);target.clearRect(0,0,w,h);
@@ -84,7 +84,17 @@ function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
 
 export function renderKernelZones(zones={}){
   if(!isVisible(viewer))return;
-  for(const[id,def]of Object.entries(BODY_ZONES)){
+  const definitions=bodyZones(zones),layer=viewer.querySelector('.zones');
+  for(const element of layer.querySelectorAll('.custom-zone')){
+    if(!definitions[element.dataset.zone])element.remove();
+  }
+  for(const [id,def] of Object.entries(definitions)){
+    if(!def.custom||layer.querySelector(`[data-zone="${id}"]`))continue;
+    const element=document.createElement('div');element.className='zone custom-zone';element.dataset.zone=id;
+    element.append(document.createElement('strong'),document.createElement('small'));
+    addZoneHandles(element);layer.append(element);
+  }
+  for(const[id,def]of Object.entries(definitions)){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
     if(def.gate&&!kernelState?.vertical_look?.enabled){setStyle(el,'display','none');continue}
     const active=!zoneEditMode&&!!state?.pressed;
@@ -101,6 +111,12 @@ export function renderKernelZones(zones={}){
     setClass(el,'selected',zoneEditMode&&rectEdit.selected===id);
     if(!rect){setStyle(el,'display','none');continue}
     setStyle(el,'display','grid');setStyle(el,'left',(rect.x1*100)+'%');setStyle(el,'top',(rect.y1*100)+'%');setStyle(el,'width',((rect.x2-rect.x1)*100)+'%');setStyle(el,'height',((rect.y2-rect.y1)*100)+'%');
+  }
+}
+
+export function addZoneHandles(element){
+  for(const corner of ['nw','ne','sw','se']){
+    const handle=document.createElement('span');handle.className='zone-handle';handle.dataset.corner=corner;handle.setAttribute('aria-hidden','true');element.append(handle);
   }
 }
 
@@ -375,7 +391,7 @@ export async function startCalibration(){const running=!!kernelState?.head?.cali
 export async function centerHead(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('视角中心已更新。')}catch(e){notice('视角回正失败：'+(e?.message||e))}}
 
 function drawOverlayZones(octx,w,h,zones={}){
-  for(const[id,def]of Object.entries(BODY_ZONES)){
+  for(const[id,def]of Object.entries(bodyZones(zones))){
     const state=zones[id];if(!state)continue;const active=!!state.pressed,isGate=!!def.gate,phase=String(state.phase||'idle');
     // 悬浮窗里按下一直是红的（游戏画面上最显眼）；判断中黄、扫过灰掉，免得和按下混。
     const stroke=active?'#ff5966':phase==='pending'?'#ffcc33':phase==='swept'?'rgba(255,255,255,.35)':'rgba(255,255,255,.78)';
@@ -405,21 +421,26 @@ export async function openLiveZoneEditor(){
 
 function frozenRectsFrom(zones){
   const out={};
-  for(const id of RECT_EDIT_ZONE_IDS){const r=zones?.[id]?.rect;if(r)out[id]={x1:+r.x1,y1:+r.y1,x2:+r.x2,y2:+r.y2}}
+  for(const [id,state] of Object.entries(zones||{})){
+    if(!RECT_EDIT_ZONE_IDS.includes(id)&&!state.custom)continue;
+    const r=state.rect;if(r)out[id]={x1:+r.x1,y1:+r.y1,x2:+r.x2,y2:+r.y2};
+  }
   return out;
 }
 
 async function openFrozenZoneEditor(){
   const wasFrozen=!!kernelState?.zones_frozen;
-  if(!wasFrozen)renderKernelState(await post('/api/zones/freeze',{frozen:true}));
+  const hasFollowing=RECT_EDIT_ZONE_IDS.some(id=>kernelState?.zones?.[id]?.rect);
+  if(!wasFrozen&&hasFollowing)renderKernelState(await post('/api/zones/freeze',{frozen:true}));
   const rects=frozenRectsFrom(kernelState?.zones);
   if(!Object.keys(rects).length)throw new Error('还没看到人，没有框可以定住：先让头和双肩入镜');
-  Object.assign(rectEdit,{rects,backup:structuredClone(rects),wasFrozen});
+  Object.assign(rectEdit,{rects,backup:structuredClone(rects),wasFrozen,profileId:gameProfile.selected?.selected_id,
+    customIds:Object.keys(rects).filter(id=>kernelState?.zones?.[id]?.custom)});
   if(!rects[rectEdit.selected])rectEdit.selected=Object.keys(rects)[0];
   zoneEditMode=true;viewer.classList.add('zone-editing','rect-editing');$('#zoneEditBar').hidden=false;
   renderKernelZones(kernelState?.zones||{});renderZoneFreeze();renderMainStatus();
   document.querySelector(`.zone[data-zone="${rectEdit.selected}"]`)?.focus();
-  notice(wasFrozen?'拖框移动，拖四个角改大小，改完点「保存区域」。':'框已定住，不再跟着你走。拖框移动，拖四个角改大小，改完点「保存区域」。');
+  notice('拖框移动，拖四个角改大小，改完点「保存区域」。自定义区域始终固定在画面上。');
 }
 
 function closeLiveZoneEditor(){
@@ -477,7 +498,7 @@ export function nudgeRect(id,key,shift){
 }
 
 export function startLiveZoneDrag(e){
-  if(!zoneEditMode)return;const el=e.currentTarget,id=el?.dataset?.zone;
+  if(!zoneEditMode)return;const el=e.target.closest('.zone'),id=el?.dataset?.zone;
   if(id&&rectEdit.rects[id])startRectDrag(e,el,id);
 }
 
@@ -489,16 +510,35 @@ export function endLiveZoneDrag(e){if(!liveZoneDrag)return;if(e?.pointerId!==und
 
 export async function saveLiveZones(){
   await setOutput(false);
-  renderKernelState(await post('/api/zones/frozen',{rects:rectEdit.rects}));
-  closeLiveZoneEditor();notice('区域已保存，会一直定在这里。想让它重新跟着你走，点「恢复跟随」。');
+  checkZoneEditGame();
+  const fixed=Object.fromEntries(Object.entries(rectEdit.rects).filter(([id])=>RECT_EDIT_ZONE_IDS.includes(id)));
+  if(Object.keys(fixed).length)renderKernelState(await post('/api/zones/frozen',{rects:fixed}));
+  await saveCustomZoneRects(rectEdit.rects);
+  closeLiveZoneEditor();notice('区域已保存。自定义区域固定在画面上，内置区域可点「恢复跟随」。');
+}
+
+function checkZoneEditGame(){
+  if(rectEdit.profileId!==gameProfile.selected?.selected_id)throw new Error('游戏已经切换，请取消后重新挪动区域');
+}
+
+async function saveCustomZoneRects(rects){
+  const custom=Object.fromEntries(rectEdit.customIds.filter(id=>rects[id]).map(id=>[id,rects[id]]));
+  if(!Object.keys(custom).length)return;
+  const data=await post('/api/game-profiles/regions',{op:'layout',profile_id:rectEdit.profileId,rects:custom});
+  for(const region of gameProfile.selected?.regions||[]){if(custom[region.id])region.rect={...custom[region.id]}}
+  if(data.kernel)renderKernelState(data);else await refreshKernel();
 }
 
 export async function cancelLiveZones(){
   await setOutput(false);
+  if(rectEdit.profileId!==gameProfile.selected?.selected_id){
+    closeLiveZoneEditor();notice('游戏已切换，已取消原游戏的区域调整。');return;
+  }
   // 这次是点「挪动区域」才定住的，取消就回到跟着走；本来就定住的，回到拖之前的样子。
   renderKernelState(rectEdit.wasFrozen
-    ?await post('/api/zones/frozen',{rects:rectEdit.backup})
+    ?await post('/api/zones/frozen',{rects:Object.fromEntries(Object.entries(rectEdit.backup).filter(([id])=>RECT_EDIT_ZONE_IDS.includes(id)))})
     :await post('/api/zones/freeze',{frozen:false}));
+  await saveCustomZoneRects(rectEdit.backup);
   closeLiveZoneEditor();notice(rectEdit.wasFrozen?'已取消区域调整。':'已取消，区域继续跟着你走。');
 }
 
@@ -507,7 +547,7 @@ export async function followZones(){
   await setOutput(false);
   renderKernelState(await post('/api/zones/freeze',{frozen:false}));
   if(zoneEditMode)closeLiveZoneEditor();
-  notice('区域恢复跟随，重新跟着你走。');
+  notice('内置区域恢复跟随；自定义区域保持固定。');
 }
 
 // 区域挪到我这里：没定住就在现在的位置定住；定住了就整组框按人现在站的位置搬过来，
