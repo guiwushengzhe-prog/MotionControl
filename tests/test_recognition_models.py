@@ -19,6 +19,8 @@ def test_auto_choice_uses_frame_budget_and_actual_human_frames(duration, fps, ex
     results = [choice.observe(duration, fps, visible=True) for _ in range(27)]
     assert results[-1] == expected
     assert choice.measured_ms == duration
+    assert ("高精度" if expected == "heavy" else "标准") in choice.reason
+    assert "完整" not in choice.reason
 
 
 def test_sharing_full_does_not_accidentally_return_selected_heavy(tmp_path):

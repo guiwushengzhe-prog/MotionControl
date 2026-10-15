@@ -1,4 +1,4 @@
-import {renderRecognitionPerformance,renderPhoneModelState} from './recognition-models.js';
+import {recognitionModelName,renderRecognitionPerformance,renderPhoneModelState} from './recognition-models.js';
 // 设置 → 设备：摄像头、手机、麦克风、游戏输出。
 import {$,api,formatPerf,notice,post,setProperty} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
@@ -183,7 +183,7 @@ function performanceBreakdown(data){
   const duration=Number(data.inference_avg_ms);
   const stage=(name,value)=>`${name}：${formatPerf(value,' 毫秒')}${duration>0&&Number.isFinite(value)?`（${Math.min(100,Math.round(value/duration*100))}%）`:''}`;
   if(stages.pose!=null){
-    const model={full:'标准',heavy:'高精度'}[data.actual_model];
+    const model=recognitionModelName(data.actual_model);
     if(model)lines.push(`当前身体模型：${model}`);
     if(data.pose_cpu_threads!=null)lines.push(`身体计算线程：${data.pose_cpu_threads} · 跟随相机供帧`);
     else if(data.pose_thread_error)lines.push(`身体多线程：未启用 · ${data.pose_thread_error}`);
@@ -206,7 +206,7 @@ function performanceBreakdown(data){
   if(data.running&&interval>=60&&timing.color_exposure_ms>1000/30)lines.push('相机报告约 15 帧/秒，曝光超过 33 毫秒；可能与自动曝光有关，可增加镜头前的光照观察是否恢复 30 帧/秒。');
   const capture=Number(data.capture_fps),inference=Number(data.inference_fps);
   if(data.running&&capture>=2&&inference>0&&duration>0){
-    if(inference<capture*.9&&duration>1000/capture*.95)lines.push('识别处理未跟上相机；标准或自动模型可减少等待。');
+    if(inference<capture*.9&&duration>1000/capture*.95)lines.push('识别处理未跟上相机；可选择标准，或让程序自动选择。');
     else if(capture<20&&inference>=capture*.9&&duration<1000/capture*.85)lines.push('识别已跟上相机，当前帧率取决于相机供帧。');
   }
   return lines;

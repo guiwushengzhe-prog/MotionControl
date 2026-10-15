@@ -2,6 +2,36 @@
 from test_web_ui import browser, server, ui, _go, sync_api
 
 
+def test_model_names_match_choices_actual_status_and_diagnostics(ui):
+    page = ui.page
+    _go(page, "devices")
+    page.click('#settingsNav [data-pane="view"]')
+    select = page.locator("#poseModelSelect")
+    sync_api.expect(select).to_be_enabled()
+    assert select.locator("option").all_text_contents() == ["自动（推荐）", "标准", "高精度"]
+    page.route("**/api/recognition/models", lambda route: route.fulfill(json={
+        "model_preference": "auto", "actual_model": "full", "running": True,
+        "auto_model_reason": "标准模型更适合当前摄像头帧率", "models": [
+            {"id": "mp-full", "available": True}, {"id": "mp-heavy", "available": True}]}))
+    page.evaluate("import('/js/recognition-models.js').then(m=>m.refreshRecognitionModels())")
+    sync_api.expect(select).to_have_value("auto")
+    sync_api.expect(page.locator("#poseModelStatus")).to_have_text("当前：标准 · 标准模型更适合当前摄像头帧率")
+    for preference, actual, running, expected in [
+        ("auto", "heavy", True, "当前：高精度"),
+        ("full", "full", True, "当前：标准"),
+        ("heavy", "full", False, "下次识别使用：高精度"),
+        ("auto", "full", False, "下次识别时自动选择"),
+    ]:
+        page.evaluate("data=>import('/js/recognition-models.js').then(m=>m.renderRecognitionPerformance(data))",
+                      {"model_preference": preference, "actual_model": actual, "running": running})
+        sync_api.expect(page.locator("#poseModelStatus")).to_have_text(expected)
+    page.route("**/api/performance", lambda route: route.fulfill(json={
+        "actual_model": "heavy", "inference_stages_ms": {"pose": 12}}))
+    page.evaluate("import('/js/devices.js').then(m=>m.refreshPerformance())")
+    sync_api.expect(page.locator("#perfDetails")).to_contain_text("当前身体模型：高精度")
+    assert ui.errors == []
+
+
 def test_somatic_view_and_body_model_save_on_one_page_and_reload(ui):
     page = ui.page
     _go(page, "devices")
