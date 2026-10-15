@@ -631,7 +631,7 @@ def test_last_calibration_is_reused_after_restart(tmp_path):
     assert reloaded.calibrating is False
     assert (reloaded.center_yaw, reloaded.center_pitch) == pytest.approx((3.0, -2.0))
     status = reloaded.status()
-    assert status["quality"].startswith("沿用上次校准")
+    assert status["quality"].startswith("已载入上次校准")
     assert status["calibration_from_last_session"] is True
 
 
