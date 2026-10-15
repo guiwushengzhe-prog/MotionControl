@@ -328,6 +328,24 @@ def test_cancelling_changes_nothing(isolated_user_data):
         kernel.close()
 
 
+def test_slow_camera_completed_fit_still_saves_full_body_reference(isolated_user_data, monkeypatch):
+    import sys
+    monkeypatch.setattr(sys.modules[__name__], "FPS", 5.0)
+    session = ZoneFitSession({}, 100.0)
+    run(session)
+    assert session.state == "done"
+    assert 5 <= len(session.standing_poses) < 10
+    kernel = ControlKernel(Output())
+    kernel.zone_fit_session = session
+    try:
+        kernel._apply_zone_fit_locked()
+        assert kernel.body_reference is not None
+        assert kernel.status()["zone_fit"]["body_reference_ready"]
+        assert (isolated_user_data / "body_reference.json").is_file()
+    finally:
+        kernel.close()
+
+
 def test_full_body_fit_does_not_accept_half_body_or_replace_saved_reference(isolated_user_data):
     from motioncontrol.body_reference import make_reference
     kernel = ControlKernel(Output())
