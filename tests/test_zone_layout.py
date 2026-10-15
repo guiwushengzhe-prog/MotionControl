@@ -14,6 +14,26 @@ from test_configuration_coordination import application
 from test_custom_regions import RECT, REGION_ID, ROOT, region, region_kernel
 from test_game_modes import get, post
 from test_minimal_controls import _standing_pose
+from motioncontrol.body_reference import make_reference
+
+
+def full_standing():
+    pose = _standing_pose()
+    for side in ("left", "right"):
+        shoulder, wrist = pose[f"{side}_shoulder"], pose[f"{side}_wrist"]
+        pose[f"{side}_elbow"] = {"x": (shoulder["x"]+wrist["x"])/2,
+                                  "y": (shoulder["y"]+wrist["y"])/2, "score": .95}
+    return pose
+
+
+@pytest.fixture(autouse=True)
+def full_body_editor_reference(request):
+    if "region_kernel" in request.fixturenames:
+        request.getfixturevalue("region_kernel")[0].body_reference = make_reference(
+            [full_standing()], 640, 480, {"kind": "test"})
+    if "application" in request.fixturenames:
+        request.getfixturevalue("application").KERNEL.body_reference = make_reference(
+            [full_standing()], 640, 480, {"kind": "test"})
 
 
 def shifted(pose, dx=0, dy=0, scale=1):
@@ -53,20 +73,30 @@ def test_custom_follow_moves_and_scales_but_fixed_stays_still(region_kernel):
     assert kernel.zone_rects[fixed["id"]] == RECT
 
 
-def test_editor_reference_can_estimate_legs_from_shoulders_without_feet(region_kernel):
+def test_editor_uses_saved_full_body_without_adapting_to_current_half_body(region_kernel):
     kernel, _, feed = region_kernel
     pose = {name: point for name, point in _standing_pose().items()
             if not any(part in name for part in ("hip", "knee", "ankle", "heel", "foot"))}
     feed(pose, 3)
     before = copy.deepcopy(kernel.latest_pose)
     editor = kernel.zone_editor()
-    assert editor["reference"]["source"] == "estimated"
-    assert editor["reference"]["pose"]["left_ankle"]["estimated"]
-    assert all(item["source"] == "estimated" for item in editor["reference"]["ranges"])
+    assert editor["reference"]["source"] == "measured"
+    assert editor["reference"]["pose"] == kernel.body_reference["pose"]
+    assert editor["reference"]["ranges"] == []
     assert kernel.latest_pose == before
     assert not kernel.zones_frozen
     prepared, _ = kernel.prepare_zone_layout(editor["rects"], editor["modes"], editor["reference"])
     assert not prepared["zones_frozen"]
+
+
+def test_editor_without_measured_full_body_requests_fit_and_does_not_invent_legs(region_kernel):
+    kernel, _, feed = region_kernel
+    kernel.body_reference = None
+    feed(_standing_pose(), 3)
+    editor = kernel.zone_editor()
+    assert not editor["reference"]["ready"]
+    assert editor["reference"]["pose"] == {}
+    assert editor["reference"]["ranges"] == []
 
 
 def test_builtin_edit_keeps_following_and_does_not_accumulate_offset(region_kernel):

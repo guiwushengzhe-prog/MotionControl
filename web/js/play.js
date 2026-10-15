@@ -6,7 +6,7 @@ import {renderTriggerRecord} from './diagnostics.js';
 import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,bodyZones,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseCountdown,paintPoseLibrary} from './library.js';
 import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode} from './mapping.js';
-import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runAction} from './shell.js';
+import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runAction,showView,tutorial} from './shell.js';
 import {S,gameProfile,head,output} from './state.js';
 import {handMouseConfig,renderViewControl,syncControlLabels} from './view-control.js';
 import {renderHeadCurve} from './head-curve.js';
@@ -305,14 +305,6 @@ export function renderKernelState(runtime,force=false){
     setText(guardStatus,guardEnabled===false?'防晃 · 已关闭':motionScale>1.01?`防晃 · 稳定区临时增加 ${Math.round((motionScale-1)*100)}% · 明显转头仍可转向`:'防晃 · 已开启 · 身体动起来时略增大稳定区');
     setClass(guardStatus,'active',motionScale>1.01&&guardEnabled!==false);
   }
-  const threshold=$('#headThresholdStatus');
-  if(threshold){
-    const tilt=Number(hs.tilt_deadzone_deg),stop=Number(hs.responsive_tilt_stop_deg);
-    const valid=(hs.horizontal_calibrated??hs.calibrated)&&Number.isFinite(tilt)&&tilt>0;
-    setText(threshold,valid&&['roll_tilt','head_responsive'].includes(hs.horizontal_algorithm)
-      ? `当前设置 ${Math.round(Number(hs.deadzone??.1)*100)}% → 实际侧倾约 ${tilt.toFixed(1)}° 起转${Number.isFinite(stop)&&stop>0?`，回到 ${stop.toFixed(1)}° 内停止`:''}；校准抖动较大时，实际门槛会提高${motionScale>1.01?' · 运动时略扩大':''}`
-      : '百分比设置决定最低稳定区，实际起转角度还会结合个人校准');
-  }
   renderViewHud(hs,guardBlocked);
   if(hs.calibrated!==undefined){
     setText($('#calBtn'),hs.calibrating?'取消校准':(hs.horizontal_calibrated??hs.calibrated)?'重新校准':'站好并校准');
@@ -419,10 +411,17 @@ function renderOverlay(map=currentPoseMap){
 
 export async function toggleOverlay(){if(overlay.win&&!overlay.win.closed){try{overlay.win.close()}catch{}overlay.win=null;overlay.canvas=null;overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗';return}if(!window.documentPictureInPicture?.requestWindow){notice('当前浏览器不支持置顶游戏悬浮窗。');return}try{const pip=await window.documentPictureInPicture.requestWindow({width:420,height:315});pip.document.title='MotionControl';pip.document.body.style.cssText='margin:0;overflow:hidden;background:#050608;width:100vw;height:100vh';const c=pip.document.createElement('canvas');c.width=640;c.height=480;c.style.cssText='display:block;width:100vw;height:100vh;object-fit:contain;background:#050608';pip.document.body.appendChild(c);overlay.win=pip;overlay.canvas=c;overlay.ctx=c.getContext('2d');pip.addEventListener('pagehide',()=>{overlay.win=overlay.canvas=overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗'},{once:true});$('#overlayBtn').textContent='关闭悬浮';renderOverlay(currentPoseMap)}catch(e){notice('悬浮窗启动失败：'+(e?.message||e))}}
 
+export async function ensureZoneReference(){
+  const data=await api('/api/zones/editor');
+  if(data.reference?.ready!==false)return true;
+  showView('play');tutorial.openLesson('fit',$('#adjustZonesBtn'),{needReference:true});return false;
+}
+
 export async function openLiveZoneEditor({selectedId=''}={}){
   if(zoneEditMode){if(typeof selectedId==='string'&&rectEdit.rects[selectedId])selectEditorRegion(selectedId);return}
   await setOutput(false);
   const data=await api('/api/zones/editor');
+  if(data.reference?.ready===false){showView('play');tutorial.openLesson('fit',$('#adjustZonesBtn'),{needReference:true});return}
   const rects=structuredClone(data.rects||{});
   if(!Object.keys(rects).length)throw new Error('先在「本游戏 → 区域」添加区域');
   Object.assign(rectEdit,{rects,profileId:data.profile_id,modes:{...data.modes},reference:data.reference||{},width:data.width||640,height:data.height||480});
@@ -440,8 +439,8 @@ function closeLiveZoneEditor(){
 
 function fitReferenceViewport(){
   const points=[{x:0,y:0},{x:1,y:1},...Object.values(rectEdit.reference.pose||{})];
+  for(const sector of rectEdit.reference.ranges||[])points.push(...(sector.points||[]));
   for(const r of Object.values(rectEdit.rects))points.push({x:r.x1,y:r.y1},{x:r.x2,y:r.y2});
-  for(const r of rectEdit.reference.ranges||[])points.push({x:r.cx-r.rx,y:r.cy-r.ry},{x:r.cx+r.rx,y:r.cy+r.ry});
   const valid=points.filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
   let x1=Math.min(...valid.map(p=>p.x)),x2=Math.max(...valid.map(p=>p.x)),y1=Math.min(...valid.map(p=>p.y)),y2=Math.max(...valid.map(p=>p.y));
   const pad=.06*Math.max(x2-x1,y2-y1);x1-=pad;x2+=pad;y1-=pad;y2+=pad;
@@ -468,30 +467,30 @@ function rectFromDisplay(d){
 
 function renderReferenceCanvas(){
   const c=$('#zoneReferenceCanvas');fitCanvas(c,4/3);const g=c.getContext('2d'),w=c.width,h=c.height;
-  const style=getComputedStyle(document.documentElement),ink=style.getPropertyValue('--text').trim()||'#d7e5f6',muted=style.getPropertyValue('--text-2').trim()||'#8c98aa';
+  const style=getComputedStyle(document.documentElement),ink=style.getPropertyValue('--text').trim()||'#d7e5f6';
   g.clearRect(0,0,w,h);g.lineWidth=Math.max(1,w/640*2);
   const frame=rectToDisplay({x1:0,y1:0,x2:1,y2:1});
   g.fillStyle='rgba(120,130,145,.06)';g.fillRect(frame.left*w,frame.top*h,(frame.right-frame.left)*w,(frame.bottom-frame.top)*h);
   g.strokeStyle='rgba(150,160,175,.45)';g.strokeRect(frame.left*w,frame.top*h,(frame.right-frame.left)*w,(frame.bottom-frame.top)*h);
-  g.font=`${Math.max(11,w/55)}px system-ui`;g.fillStyle='#969ba4';g.fillText('摄像取景范围',frame.left*w+7,frame.top*h+17);
-  for(const range of rectEdit.reference.ranges||[]){
-    const p=referencePoint(range.cx,range.cy),v=rectEdit.viewport;
-    g.strokeStyle=range.kind==='hand'?'rgba(100,170,255,.55)':'rgba(82,202,166,.55)';g.setLineDash([5,5]);
-    g.beginPath();g.ellipse(p.x*w,p.y*h,Math.abs(range.rx/(v.x2-v.x1)*w),Math.abs(range.ry/(v.y2-v.y1)*h),0,0,Math.PI*2);g.stroke();
+  g.font=`${Math.max(11,w/55)}px system-ui`;g.fillStyle='#969ba4';g.fillText('量身取景范围',frame.left*w+7,frame.top*h+17);
+  for(const sector of rectEdit.reference.ranges||[]){
+    if(!sector.points?.length)continue;
+    g.fillStyle=sector.kind==='hand'?'rgba(100,170,255,.08)':'rgba(82,202,166,.08)';
+    g.strokeStyle=sector.kind==='hand'?'rgba(100,170,255,.5)':'rgba(82,202,166,.5)';g.setLineDash([5,5]);
+    g.beginPath();sector.points.forEach((point,i)=>{const p=referencePoint(point.x,point.y);if(i)g.lineTo(p.x*w,p.y*h);else g.moveTo(p.x*w,p.y*h)});g.closePath();g.fill();g.stroke();
   }
   const pose=rectEdit.reference.pose||{};
   for(const [a,b] of EDGES){
     const p=pose[a],q=pose[b];if(!p||!q)continue;
-    const x=referencePoint(p.x,p.y),y=referencePoint(q.x,q.y),estimated=p.estimated||q.estimated;
-    g.setLineDash(estimated?[6,5]:[]);g.strokeStyle=estimated?muted:ink;g.lineWidth=Math.max(2,w/640*3);
+    const x=referencePoint(p.x,p.y),y=referencePoint(q.x,q.y);
+    g.setLineDash([]);g.strokeStyle=ink;g.lineWidth=Math.max(2,w/640*3);
     g.beginPath();g.moveTo(x.x*w,x.y*h);g.lineTo(y.x*w,y.y*h);g.stroke();
   }
   g.setLineDash([]);
   for(const p of Object.values(pose)){
-    const at=referencePoint(p.x,p.y);g.fillStyle=p.estimated?muted:ink;g.beginPath();g.arc(at.x*w,at.y*h,Math.max(2,w/200),0,Math.PI*2);g.fill();
+    const at=referencePoint(p.x,p.y);g.fillStyle=ink;g.beginPath();g.arc(at.x*w,at.y*h,Math.max(2,w/200),0,Math.PI*2);g.fill();
   }
-  const estimated=Object.values(pose).some(p=>p.estimated);
-  $('#zoneEditHint').textContent=rectEdit.reference.source==='default'?'未获取身体，骨骼和侧举范围按通用比例估算。':estimated?'实线为已识别骨骼；虚线为估算骨骼和侧举范围。':'实线为已识别骨骼；虚线为侧举估算范围。';
+  $('#zoneEditHint').textContent=rectEdit.reference.ranges?.length?'按量身保存的身体比例调整；扇形为手脚侧举参考。':'按保存的完整身体比例调整；可重新量身补齐手脚侧举参考。';
 }
 
 function editorRegionName(id){return gameProfile.selected?.regions?.find(r=>r.id===id)?.name||bodyZones()[id]?.body||id}
@@ -507,7 +506,7 @@ function renderEditorZones(){
     setAttribute(el,'aria-label',name+'，方向键移动，Shift 加方向键改大小');
     setText(el.querySelector('strong'),zoneKeyLabel(id,bodyZones()[id]||{body:name}));setText(el.querySelector('small'),name);
     setClass(el,'selected',rectEdit.selected===id);setClass(el,'following',rectEdit.modes[id]==='following');
-    setStyle(el,'display','grid');setStyle(el,'left',d.left*100+'%');setStyle(el,'top',d.top*100+'%');setStyle(el,'width',(d.right-d.left)*100+'%');setStyle(el,'height',(d.bottom-d.top)*100+'%');
+    setStyle(el,'display',liveZoneDrag&&liveZoneDrag.id!==id?'none':'grid');setStyle(el,'left',d.left*100+'%');setStyle(el,'top',d.top*100+'%');setStyle(el,'width',(d.right-d.left)*100+'%');setStyle(el,'height',(d.bottom-d.top)*100+'%');
   }
   const ids=Object.keys(rectEdit.rects);
   if([...selection.options].map(o=>o.value).join()!==ids.join())selection.replaceChildren(...ids.map(id=>new Option(editorRegionName(id),id)));
@@ -564,7 +563,7 @@ export function startLiveZoneDrag(e){
 }
 
 export function moveLiveZoneDrag(e){if(zoneEditMode&&liveZoneDrag&&e.pointerId===liveZoneDrag.pointerId)moveRectDrag(e)}
-export function endLiveZoneDrag(e){if(!liveZoneDrag)return;if(e?.pointerId!==undefined&&liveZoneDrag.pointerId!==e.pointerId)return;liveZoneDrag=null}
+export function endLiveZoneDrag(e){if(!liveZoneDrag)return;if(e?.pointerId!==undefined&&liveZoneDrag.pointerId!==e.pointerId)return;liveZoneDrag=null;renderEditorZones()}
 
 function acceptZoneLayout(data){
   if(data.profile)gameProfile.selected=data.profile;

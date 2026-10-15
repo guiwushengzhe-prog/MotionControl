@@ -26,6 +26,7 @@ USER_DATA_FILES = {
     "scene_layout": "scene_layout.json",
     "scene_reference": "scene_reference.jpg",
     "head_profile": "head_profile.json",
+    "body_reference": "body_reference.json",
     "camera_backend": "camera_backend.json",
     "paired_devices": "paired_devices.json",
     "require_paired_devices": "require_paired_devices",

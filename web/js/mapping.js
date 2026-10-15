@@ -2,7 +2,7 @@
 import {$,api,configurationOperation,notice,positionPopup,post,registerDraftFlusher,setAttribute,setClass,setProperty,setText,syncChildren} from './core.js';
 import {ACTION_TYPE_GROUPS,ACTION_TYPE_LABELS,BASE_PROFILE_TRIGGERS,BINDING_SYSTEM_TARGETS,VOICE_SYSTEM_TARGETS,BODY_ZONES,GAMEPAD_STICK_TARGETS,GAMEPAD_TRIGGER_TARGETS,MOTION_CONFLICT_GROUPS,MOTION_CONFLICT_NAMES,TARGET_LABELS,bindingsForDisplay,draftGameVoiceSlots,macroById,macroLibrary,profileTriggers,targetLabel,triggerKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseLibrary,paintPoseMissingNotice} from './library.js';
-import {kernelState,openLiveZoneEditor,renderKernelZones} from './play.js';
+import {ensureZoneReference,kernelState,openLiveZoneEditor,renderKernelZones} from './play.js';
 import {currentView,showSettingsPane,showView,togglePanel} from './shell.js';
 import {gameProfile,profileDirty} from './state.js';
 import {isGameVoiceKey,normalizeGameVoicePhrase,refreshVoiceCommands,voiceCatalog,voiceCommandId,voiceCommandIds,voiceCommandName,voiceCommandNames,watchVoicePhrase} from './voice.js';
@@ -369,6 +369,7 @@ function renderRegionActions(){
 }
 
 async function addRegion(){
+  if(!await ensureZoneReference())return;
   if(profileSwitching)return;
   const profile_id=gameProfile.selected?.selected_id;if(!profile_id)return;
   let region;

@@ -88,10 +88,24 @@ def test_zone_teaching_uses_current_points_and_simultaneous_groups(lesson_page, 
         expect(page.locator('#tourHint')).to_contain_text('同时进圈')
 
 
+def test_old_threshold_only_record_does_not_skip_full_body_collection(lesson_page):
+    page = lesson_page
+    page.evaluate("""()=>{
+      teachingState.fit={state:'idle',measured_at_unix:100,grip_measured_at_unix:100,body_reference_ready:false};
+      testTutorial.open(null,{menu:false});
+    }""")
+    page.click('#tourSkipBtn')
+    page.click('#tourSkipBtn')
+    expect(page.locator('#tourStep')).to_contain_text('量身')
+    expect(page.locator('#tourHint')).to_contain_text('全身进画面')
+    expect(page.locator('#tourChoiceBtn')).to_contain_text('3 秒后开始')
+    assert page.evaluate('teachingCalls') == []
+
+
 def test_first_teaching_reuses_saved_measurements(lesson_page):
     page = lesson_page
     page.evaluate("""()=>{
-      teachingState.fit={state:'idle',measured_at_unix:100,grip_measured_at_unix:100};
+      teachingState.fit={state:'idle',measured_at_unix:100,grip_measured_at_unix:100,body_reference_ready:true};
       testTutorial.open(null,{menu:false});
     }""")
     page.click('#tourSkipBtn')

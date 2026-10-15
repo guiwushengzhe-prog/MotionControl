@@ -304,7 +304,7 @@ const VOICE_FIX = {
 
 // 量身：每一步叫人做什么。量的过程在电脑那边每帧跑，这里只看它量到哪一步了。
 const FIT_SAY = {
-  stand: {say: '站好，别动', hint: '就站在你平时玩的位置'},
+  stand: {say: '全身入镜，自然站好', hint: '手放下，头、双手和双脚都要拍到'},
   hands: {say: '两只手往两边抬起来，挥一挥', hint: '抬到平时伸手按键那么高'},
   leftFoot: {say: '左脚往左边伸出去，再收回来', hint: '像平时踢那一下'},
   rightFoot: {say: '右脚往右边伸出去，再收回来', hint: '像平时踢那一下'},
@@ -315,6 +315,7 @@ const FIT_SAY = {
   rightFist: {say: '右手握紧', hint: '握住停一下'},
 };
 const FIT_ISSUE = {
+  full_body_hidden: '全身没拍全：往后站或调整摄像头，让头、双手和双脚入镜',
   not_visible: '看不到你了：头、肩膀和胯都要进画面',
   feet_hidden: '脚拍不到：往后退一点，或者把摄像头放低',
   hand_hidden: '看不到这只手：举到画面里，手指也要拍到',
@@ -452,6 +453,7 @@ const EXTRAS = [
       return {
         target: '#viewer', say: '站到你平时玩的位置',
         hint: gripOnly ? `只量握拳：张开一次、握紧一次。${prepareHint}`
+          : memo.needReference ? `先采集完整身体参考，再调整区域。${prepareHint}`
           : `全身进画面，脚也要拍到。接下来挥手、伸脚、跳一下${s.zonesFrozen ? '；量到的圈会直接更新，并继续固定' : ''}。${prepareHint}`,
         choice: {label: '点这里，3 秒后开始', run: gripOnly ? 'zoneFitGripOnly' : 'zoneFitStart'},
       };
@@ -540,7 +542,7 @@ const fitLesson = EXTRAS.find(lesson => lesson.id === 'fit');
 STEPS.splice(STEPS.findIndex(step => step.id === 'updown'), 0, {
   ...fitLesson,
   guide(s, memo, now) {
-    if (!memo.started && s.fit?.measured_at_unix && (!s.fistHands.length || s.fit.grip_measured_at_unix)) {
+      if (!memo.started && s.fit?.measured_at_unix && s.fit.body_reference_ready && (!s.fistHands.length || s.fit.grip_measured_at_unix)) {
       memo.reused = true;
       return {target: '#viewer', ready: true, say: '沿用上次量身', doneSay: '✓ 沿用上次量身，不需要重复测量'};
     }

@@ -32,7 +32,8 @@ from motioncontrol.head_control import (
 )
 from motioncontrol_shared.profile_schema import DEFAULT_MODE_NAME, flatten_bindings
 from motioncontrol_shared.regions import is_region_id, normalize_regions, normalize_region_rect
-from motioncontrol.zone_layout import body_anchor as layout_anchor, editor_reference, editor_rect, relative_rect, screen_rect, normalize_anchor as normalize_layout_anchor
+from motioncontrol.zone_layout import body_anchor as layout_anchor, editor_reference, editor_rect, relative_rect, screen_rect, layout_reference_pose, normalize_anchor as normalize_layout_anchor
+from motioncontrol.body_reference import make_reference, validate_reference
 from motioncontrol_shared.pose_points import MP_NAMES, trigger_point_groups
 from motioncontrol_shared.motion_conflicts import validate_motion_config
 from motioncontrol.hand_mouse_control import HANDS
@@ -726,9 +727,14 @@ class ControlKernel:
         # legacy headJump binding remains the only behavior.
         self.action_chain = HoldChain(DEFAULT_ACTION_CHAIN)
         self._general_raw: dict = {}
+        self.body_reference = None
         if self._persist:
             self._load_general_settings()
             self._migrate_scene_layout_locked()
+            try:
+                self.body_reference = validate_reference(json.loads(self._user_file("body_reference").read_text(encoding="utf-8")))
+            except (OSError, ValueError, TypeError):
+                pass
         # 新玩家使用侧倾左右配左手上下；初次校准只保存头控档案时，重启仍保留该组合。
         if not isinstance(self._general_raw.get("hand_mouse"), dict) and (
             not self._head_profile_path().exists() or self.head_controller.config["horizontal_algorithm"] == "roll_tilt"
@@ -1539,6 +1545,20 @@ class ControlKernel:
             fit["measured_at_unix"] = round(time.time(), 3)
         self.zone_fit = normalize_zone_fit(fit)
         self._general_raw["zone_fit"] = self.zone_fit
+        if len(session.standing_poses) >= 10:
+            reference = make_reference(session.standing_poses, *session.reference_size,
+                                       {"kind": "zone_fit", "frames": len(session.standing_poses)})
+            if reference:
+                anchor = layout_anchor(reference["pose"], *session.reference_size)
+                reference["reaches"] = {
+                    zone: [{"x": anchor["x"] + p["x"]*anchor["ux"],
+                            "y": anchor["y"] + p["y"]*anchor["uy"]} for p in points]
+                    for zone, points in session.reach_samples.items() if zone in session.values and len(points) >= 5
+                } if anchor else {}
+                if self._persist:
+                    from motioncontrol.config_transaction import atomic_bytes
+                    atomic_bytes(self._user_file("body_reference"), json.dumps(reference, ensure_ascii=False).encode("utf-8"))
+                self.body_reference = reference
         if self.zones_frozen and session.values and session.reference_pose:
             # 用站定基准直接应用量到的区域，不能用最后一帧的跳起/伸脚位置定圈。
             rects = self._compute_body_zones(session.reference_pose, time.monotonic(), reference=True)
@@ -1575,6 +1595,7 @@ class ControlKernel:
         state["custom"] = not is_default(self.zone_fit)
         state["measured_at_unix"] = self.zone_fit.get("measured_at_unix")
         state["grip_measured_at_unix"] = self.zone_fit.get("grip_measured_at_unix")
+        state["body_reference_ready"] = self.body_reference is not None
         state["zones"] = _snapshot_copy(self.zone_fit["zones"])
         state["applied_regions"] = list(session.applied_regions) if session is not None else []
         state["regions_mode"] = "fixed" if self.zones_frozen else "following"
@@ -1659,20 +1680,18 @@ class ControlKernel:
         return result
 
     def zone_editor(self) -> dict:
-        """一次打开取一份稳定的比例参照，估算骨骼不进入识别输入。"""
+        """统一用量身保存的完整参考编辑，不拼接当前半身或更改实时识别点。"""
         with self._lock:
-            pose = self.latest_pose
-            session = self.zone_fit_session
-            if session is not None and session.reference_pose:
-                pose = session.reference_pose
-            reference = editor_reference(pose, self.width, self.height, self.zone_fit)
-            if session is not None and session.reference_pose:
-                reference["source"] = "measured"
-            base = self._compute_body_zones(reference["pose"], time.monotonic(), reference=True,
-                                            apply_layout=False)
+            width, height = ((self.body_reference["width"], self.body_reference["height"]) if self.body_reference
+                             else (self.width, self.height))
+            pose = self.body_reference["pose"] if self.body_reference else None
+            reference = editor_reference(pose, width, height, self.zone_fit, self.body_reference)
+            layout_pose = layout_reference_pose(pose, reference["anchor"], width, height)
+            base = self._compute_body_zones(layout_pose, time.monotonic(), reference=True,
+                                            apply_layout=False, frame_size=(width, height))
             reference["base_rects"] = {name: editor_rect(rect) for name, rect in base.items() if name in RUNTIME_BODY_ZONES}
             rects = self._frozen_zone_rects_locked() if self.zones_frozen else self._compute_body_zones(
-                reference["pose"], time.monotonic(), reference=True)
+                layout_pose, time.monotonic(), reference=True, frame_size=(width, height))
             anchor = reference["anchor"]
             for ident, item in self.custom_regions.items():
                 rects[ident] = screen_rect(item["follow"], anchor) if item.get("mode") == "following" else copy.deepcopy(item["rect"])
@@ -1682,7 +1701,7 @@ class ControlKernel:
             # 越界的跟随框在编辑器中画成可拖动的最小框；原样保存应保留原比例，不偷偷裁剪。
             reference["display_rects"] = copy.deepcopy(rects)
             reference["modes"] = copy.deepcopy(modes)
-            return {"width": self.width, "height": self.height,
+            return {"width": width, "height": height,
                     "builtin_mode": "fixed" if self.zones_frozen else "following", "rects": rects,
                     "modes": modes,
                     "reference": reference}
@@ -2072,7 +2091,7 @@ class ControlKernel:
         return anchor
 
     def _compute_body_zones(self, pose_map: dict[str, dict], now: float, *, reference: bool = False,
-                            apply_layout: bool = True) -> dict[str, dict]:
+                            apply_layout: bool = True, frame_size=None) -> dict[str, dict]:
         # Preserve the original 0.5 response at 30 FPS. Timestamped native and
         # mobile streams use elapsed sampling time, independent of arrival jitter.
         sampled = self._pose_sample_time_locked(now) if self.pose_sample_at is not None else None
@@ -2081,9 +2100,10 @@ class ControlKernel:
             smooth_dt = max(0.0, sampled - self._zone_smoothing_at)
         if not reference:
             self._zone_smoothing_at = sampled
+        iw, ih = frame_size or (self.width, self.height)
         previous_rects = self.zone_rects
         if self.following_layout:
-            anchor = layout_anchor(pose_map, self.width, self.height)
+            anchor = layout_anchor(pose_map, iw, ih)
             if anchor:
                 previous_rects = copy.deepcopy(previous_rects)
                 for name, adjustment in self.following_layout.items():
@@ -2096,10 +2116,9 @@ class ControlKernel:
                     hh = (current["y2"] - current["y1"]) / (2 * adjustment["sy"])
                     previous_rects[name] = {"x1": cx - hw, "x2": cx + hw, "y1": cy - hh, "y2": cy + hh}
         # 参考系（胯、肩、头中心、左右朝向、尺子）和量身用的是同一份，见 zone_fit.py。
-        frame = body_frame(pose_map, self.width, self.height)
+        frame = body_frame(pose_map, iw, ih)
         if frame is None:
             return {}
-        iw, ih = self.width, self.height
         lh, rh, nose = pose_map.get("left_hip"), pose_map.get("right_hip"), pose_map.get("nose")
         shoulder, hip, torso_px = frame["shoulder"], frame["hip"], frame["torso_px"]
         left_dir, right_dir = frame["left_dir"], frame["right_dir"]
@@ -2178,7 +2197,7 @@ class ControlKernel:
                 old = None if reference else previous_rects.get(name)
                 rects[name] = self._smooth_rect(old, next_rect, dt=smooth_dt)
         if apply_layout and self.following_layout:
-            anchor = layout_anchor(pose_map, self.width, self.height)
+            anchor = layout_anchor(pose_map, iw, ih)
             if anchor:
                 for name, adjustment in self.following_layout.items():
                     if name not in rects:
