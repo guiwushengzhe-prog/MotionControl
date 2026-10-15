@@ -13,12 +13,16 @@ export function renderPhoneModelState(status){
   phoneConnected=!!(status.mobile_pose_connected||status.handheld_connected);renderPhoneModel();
 }
 
+export function recognitionModelName(model){return {full:'标准',heavy:'高精度'}[model]||''}
+
 export function renderRecognitionPerformance(data){
   if(data.source&&data.source!=='computer')return;
   const status=$('#poseModelStatus'),gesture=$('#gestureModelStatus');
   if(status&&data.actual_model){
-    const name=data.actual_model==='heavy'?'高精度模型':'标准模型';
-    status.textContent=data.running===false?'下次识别按所选模型运行':data.model_preference==='auto'?`${name} · ${data.auto_model_reason}`:`使用${name}`;
+    const name=recognitionModelName(data.actual_model);
+    status.textContent=data.running===false
+      ?data.model_preference==='auto'?'下次识别时自动选择':`下次识别使用：${recognitionModelName(data.model_preference)||name}`
+      :[`当前：${name}`,data.model_preference==='auto'&&data.auto_model_reason].filter(Boolean).join(' · ');
   }
   if(gesture&&data.hand_model_state){
     gesture.textContent=data.hand_model_state==='native'?'使用摄像头原厂张手、握拳识别'

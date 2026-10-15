@@ -4829,7 +4829,7 @@ class NativeCameraService:
                     if self.model_preference != "auto" or self.actual_model != "heavy" or not self.model_paths.get("full"):
                         raise
                     mp, detector = self._create_detector("full")
-                    self._auto_pose.reason = "高精度模型无法加载，继续使用完整模型"
+                    self._auto_pose.reason = "高精度模型无法加载，继续使用标准模型"
                 if self._start_cancel.is_set():
                     raise CameraUnavailable("摄像头启动已取消")
                 capture, first_frame = self._select_capture(cv2)
@@ -5612,7 +5612,7 @@ class LocalControlRuntime:
 
     def configure_pose_model(self, preference: str) -> dict:
         if preference not in {"auto", "full", "heavy"}:
-            raise ValueError("请选择自动、完整或高精度模型")
+            raise ValueError("请选择自动、标准或高精度模型")
         if preference != "auto" and not self.camera.model_paths.get(preference):
             raise ValueError("所选模型尚未安装")
         with self._lock:

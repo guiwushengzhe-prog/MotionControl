@@ -77,7 +77,7 @@ class AutoPoseChoice:
         self.measured_ms = values[math.ceil(len(values) * .9) - 1]
         choice = "heavy" if self.measured_ms <= 1000 / capture_fps * .90 else "full"
         self.reason = ("高精度模型能跟上当前摄像头" if choice == "heavy" else
-                       "完整模型更适合当前摄像头帧率")
+                       "标准模型更适合当前摄像头帧率")
         return choice
 
 
