@@ -52,6 +52,7 @@ from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.responsive_march import ResponsiveMarch
 from motioncontrol.depth_march import DepthMarchLifts
 from motioncontrol import kinect_camera
+from motioncontrol.hfhpe import HfhpeEstimator
 from motioncontrol.recognition_models import (
     AutoPoseChoice, ScheduledGestureRecognizer, hand_crop, hand_crops_match,
 )
@@ -536,6 +537,7 @@ class ControlKernel:
         # Once a personal model is active, HeadController uses them only for
         # diagnostics; the runtime yaw path remains normalized-2D only.
         self.latest_world_pose: dict[str, dict] | None = None
+        self.latest_head_pose: dict | None = None
         self.pose_last_valid_at = 0.0
         # Keep a short monotonic history so first-run scene placement and
         # explicit rematch use a robust multi-frame body snapshot instead of
@@ -1227,6 +1229,7 @@ class ControlKernel:
         world_pose: dict[str, dict] | list[dict] | None = None,
         hands: dict[str, list[dict]] | None = None,
         depth_body: dict | None = None,
+        head_pose: dict | None = None,
         captured_at_ms: float | None = None,
         sample_at: float | None = None,
         return_status: bool = True,
@@ -1257,6 +1260,7 @@ class ControlKernel:
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
             self.latest_world_pose = copy.deepcopy(world_pose) if world_pose else None
             self.latest_depth_body = copy.deepcopy(depth_body) if depth_body else None
+            self.latest_head_pose = dict(head_pose) if source_id == "computer_camera" and isinstance(head_pose, dict) else None
             # Read back out inside _process_pose_locked rather than threaded
             # through it: that hook still has callers passing positional
             # arguments only, and this keeps them working untouched.
@@ -3499,7 +3503,12 @@ class ControlKernel:
         # Body actions and the output backend remain unchanged; only head
         # estimation/mapping is delegated to HeadController.  The look gate
         # no longer freezes X: yaw remains independent of vertical permission.
-        if world_pose is None:
+        if self.head_controller.config.get("horizontal_algorithm") == "hfhpe":
+            x, _pitch_y = self.head_controller.update(
+                pose_map, self.width, self.height, now, world_pose=world_pose,
+                head_pose=self.latest_head_pose, motion_deadzone_scale=self.body_motion_guard_scale,
+            )
+        elif world_pose is None:
             x, _pitch_y = self.head_controller.update(
                 pose_map, self.width, self.height, now,
                 motion_deadzone_scale=self.body_motion_guard_scale,
@@ -3654,6 +3663,7 @@ class ControlKernel:
             self.head_controller.cancel_center("人体来源已断开")
         self.latest_pose = None
         self.latest_world_pose = None
+        self.latest_head_pose = None
         self.latest_depth_body = None
         self._depth_march.reset()
         self.march_depth_source = "image"
@@ -3948,6 +3958,7 @@ class NativeCameraService:
         self.process_priority = None
         self._auto_pose = AutoPoseChoice()
         self.hand_model_state, self.hand_model_error = "idle", None
+        self.hfhpe = HfhpeEstimator()
         self.hand_cpu_threads = None
         # 不写死 0。一台电脑上可以有好几个摄像头（内置的、外接的、虚拟的），
         # 而 0 号未必是对着人的那个——以前这个数字没有任何地方能改，插了采集卡
@@ -5177,6 +5188,10 @@ class NativeCameraService:
                         }
                         for index, point in enumerate(world_landmarks)
                     }
+                # 复用同帧彩色图和现有人体定位，不另开摄像头或运行第二个人头检测器。
+                head_config = getattr(getattr(self.kernel, "head_controller", None), "config", {})
+                head_pose = self.hfhpe.process(frame, pose_map, enabled=(not self.assist
+                    and head_config.get("enabled", True) and head_config.get("horizontal_algorithm") == "hfhpe"))
                 hands_started_at = time.perf_counter()
                 depth_body = kinect_camera.matching_depth_body(depth_metadata, pose_map, frame_rotation)
                 native_hands = kinect_camera.depth_hand_states(depth_body)
@@ -5211,6 +5226,7 @@ class NativeCameraService:
                             "computer_camera", pose_map, width=width, height=height,
                             world_pose=world_pose, hands=hands, sample_at=captured_at, return_status=False,
                             depth_body=depth_body,
+                            head_pose=head_pose,
                         )
                     finished = time.monotonic()
                     processing_finished_at = time.perf_counter()
@@ -5338,6 +5354,7 @@ class NativeCameraService:
         except Exception as exc:
             self._fail_session(session, str(exc))
         finally:
+            self.hfhpe.close()
             try:
                 scheduled.close()
             finally:
@@ -5456,6 +5473,7 @@ class NativeCameraService:
                 "auto_model_reason": self._auto_pose.reason,
                 "auto_model_measured_ms": self._auto_pose.measured_ms,
                 "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
+                "hfhpe": self.hfhpe.status(),
                 "resolution": {"width": self.capture_width, "height": self.capture_height},
                 "backend_preference": self.backend_preference,
                 "backend": self.selected_backend,
@@ -5777,7 +5795,13 @@ class LocalControlRuntime:
 
     def status(self) -> dict:
         with self._lock:
-            return {"body_mode": self.body_mode, "camera": self.camera.status(), "kernel": self.kernel.status()}
+            camera, kernel = self.camera.status(), self.kernel.status()
+            if kernel.get("head", {}).get("horizontal_algorithm") == "hfhpe":
+                if self.body_mode != "computer":
+                    camera["hfhpe"] = {"state": "unavailable", "message": "实验转头需要彩色画面，请将人体来源切到电脑摄像头"}
+                elif not camera.get("running"):
+                    camera["hfhpe"] = {"state": "unavailable", "message": "请先在开始页启动电脑摄像头识别"}
+            return {"body_mode": self.body_mode, "camera": camera, "kernel": kernel}
 
     def performance(self) -> dict:
         with self._lock:

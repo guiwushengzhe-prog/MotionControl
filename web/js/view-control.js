@@ -12,6 +12,7 @@ let viewControlSaving=false;
 let viewControlReady=false;
 let viewControlRevision=0;
 let viewControlReload=null;
+let hfhpeStatus=null;
 
 // --- hand mouse -----------------------------------------------------------
 // The fist thresholds shipped as estimates rather than measurements, so the
@@ -31,15 +32,27 @@ function fillViewControlOptions(){
 
 function viewChoice(items,value){return items.find(item=>item.value===value)||items.at(-1)}
 
+function horizontalDescription(choice){
+  const description=viewChoice(VIEW_CONTROL_CONTENT.horizontal,choice).description;
+  if(choice!=='hfhpe'||!hfhpeStatus||['ready','inactive'].includes(hfhpeStatus.state))return description;
+  const message=hfhpeStatus.message||({loading:'正在加载转头模型…',error:'转头模型暂不可用，请重新启动识别后重试',unavailable:'缺少实验模型，请运行工具下载'})[hfhpeStatus.state];
+  return message?`${description}。${message}`:description;
+}
+
+export function renderHfhpeStatus(state){
+  hfhpeStatus=state||null;
+  if($('#viewHorizontalSource')?.value==='hfhpe')setText($('#viewHorizontalDesc'),horizontalDescription('hfhpe'));
+}
+
 export function renderViewControl(force=false){
   if(viewControlSaving||(!force&&document.activeElement?.matches('#viewHorizontalSource,#viewVerticalSource')))return;
   const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
   const verticalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:null;
-  const horizontal=horizontalHand||(head.enabled?(['roll_tilt','head_responsive'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off');
+  const horizontal=horizontalHand||(head.enabled?(['roll_tilt','head_responsive','hfhpe'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off');
   const vertical=verticalHand||(head.verticalLookEnabled?'head':'off');
   setProperty($('#viewHorizontalSource'),'value',horizontal);setProperty($('#viewVerticalSource'),'value',vertical);
-  const horizontalInfo=viewChoice(VIEW_CONTROL_CONTENT.horizontal,horizontal),verticalInfo=viewChoice(VIEW_CONTROL_CONTENT.vertical,vertical);
-  setText($('#viewHorizontalDesc'),horizontalInfo.description);
+  const verticalInfo=viewChoice(VIEW_CONTROL_CONTENT.vertical,vertical);
+  setText($('#viewHorizontalDesc'),horizontalDescription(horizontal));
   setText($('#viewVerticalDesc'),verticalInfo.description);
   // 手感那几行只列眼下用得着的：用头就给头的，用握拳就给握拳的。
   const headOn=!horizontalHand&&horizontal!=='off',handOn=!!(horizontalHand||verticalHand);

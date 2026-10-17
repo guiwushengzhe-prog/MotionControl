@@ -28,6 +28,9 @@ opencv-python-headless>=4.9
 numpy>=1.26
 mediapipe>=0.10
 
+# 左右转头（实验）的 HFHPE 彩色头姿推理；未选择时不加载模型。
+onnxruntime>=1.22,<2
+
 # Local microphone capture and offline speech recognition.
 sounddevice>=0.4.6
 vosk>=0.3.45

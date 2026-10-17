@@ -19,6 +19,14 @@ function thresholds(){
 }
 
 function renderThresholdNote({start,stop,ready,scale,setting,adaptive},visible){
+  if(head.horizontalAlgorithm==='hfhpe'){
+    const setting=18*head.deadzone,adaptive=Number(latest.hfhpe_adaptive_deadzone_deg);
+    const ready=latest.hfhpe_calibrated===true&&latest.hfhpe_adaptive_deadzone_deg!=null&&Number.isFinite(adaptive);
+    if(!ready){setText($('#headThresholdStatus'),`设定死区 ${setting.toFixed(1)}°；重新校准后显示自适应防抖和实际死区。`);return}
+    const scale=clamp(Number(latest.motion_deadzone_scale)||1,1,1.2),actual=Math.max(setting*scale,adaptive);
+    setText($('#headThresholdStatus'),`设定死区 ${setting.toFixed(1)}°，自适应防抖死区 ${adaptive.toFixed(1)}°。实际死区 ${actual.toFixed(1)}°。${scale>1?`动作防抖临时扩大 ${Number(((scale-1)*100).toFixed(2))}%。`:''}`);
+    return;
+  }
   if(!visible){setText($('#headThresholdStatus'),'转动超过中心稳定区时开始转向；调大更稳，调小更灵敏。');return}
   if(!ready){setText($('#headThresholdStatus'),'校准后显示实际起转角度。');return}
   const responsive=head.horizontalAlgorithm==='head_responsive';

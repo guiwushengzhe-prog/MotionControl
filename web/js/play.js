@@ -8,7 +8,7 @@ import {paintCustomPoseScores,paintPoseCountdown,paintPoseLibrary} from './libra
 import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode,renderProfileBindingRows} from './mapping.js';
 import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runAction,showView,tutorial} from './shell.js';
 import {S,gameProfile,head,output} from './state.js';
-import {handMouseConfig,renderViewControl,syncControlLabels} from './view-control.js';
+import {handMouseConfig,renderHfhpeStatus,renderViewControl,syncControlLabels} from './view-control.js';
 import {renderHeadCurve} from './head-curve.js';
 import {voiceInputIssue,voiceInputReady,voiceInputTarget} from './voice.js';
 
@@ -325,7 +325,7 @@ export function renderKernelState(runtime,force=false){
     if(force||signature!==headConfigSignature){
     headConfigSignature=signature;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
-    head.horizontalAlgorithm=['gesture_v188','roll_tilt','head_responsive'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
+    head.horizontalAlgorithm=['gesture_v188','roll_tilt','head_responsive','hfhpe'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
     head.verticalLookEnabled=k.vertical_look?.enabled===true;
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
     head.bodyMotionGuard=k.vertical_look?.body_motion_guard===true;
@@ -341,6 +341,7 @@ export function renderKernelState(runtime,force=false){
   renderHeadCurve(hs);
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
+  renderHfhpeStatus(camera.hfhpe);
   sessionStarted=sourceMode==='phone'?inputStatus.body_enabled!==false:cameraRunning;
   if(S.desiredSource===null)setProperty($('#poseSource'),'value',sourceMode);
   const computer=$('#poseSource').value==='computer';
