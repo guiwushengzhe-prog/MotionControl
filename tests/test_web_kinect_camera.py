@@ -61,9 +61,11 @@ def test_kinect_regions_and_editing_keep_original_display_direction(desktop):
         ("phone", "kinect", True),
         ("computer", "kinect", True),
     ):
-        api.runtime.update(body_mode=source, camera={"running": False, "backend": backend})
+        api.runtime.update(body_mode=source, camera={"running": True, "backend": backend,
+                                                   "frames": 1, "last_frame_age_ms": 0})
         result = page.evaluate("""async runtime=>{
           const p=await import('/js/play.js');
+          (await import('/js/devices.js')).renderInputStatus({mobile_pose_connected:runtime.body_mode==='phone'});
           const c=document.createElement('canvas'),ctx=c.getContext('2d');
           const marks={points:[],zones:[]};
           const arc=ctx.arc.bind(ctx),roundRect=ctx.roundRect.bind(ctx);

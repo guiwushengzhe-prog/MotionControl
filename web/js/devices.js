@@ -2,7 +2,7 @@ import {recognitionModelName,renderRecognitionPerformance,renderPhoneModelState}
 // 设置 → 设备：摄像头、手机、麦克风、游戏输出。
 import {$,api,formatPerf,notice,post,setProperty} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
-import {cameraRunning,renderKernelState,renderMainStatus,setPreviewMirror,sourceMode,zoneEditMode} from './play.js';
+import {cameraInfo,cameraRunning,renderKernelState,renderMainStatus,setPreviewMirror,sourceHasFreshFrame,sourceMode,zoneEditMode} from './play.js';
 import {runAction} from './shell.js';
 import {S,gameProfile,output} from './state.js';
 import {handMouseConfig} from './view-control.js';
@@ -159,15 +159,15 @@ function renderPerformance(data){
   // 画面左上角只写一个数：每秒认几帧。毫秒、丢帧、CPU 这些排查问题才看，放在「实验与诊断」。
   // 手机那边不报推理帧率，用每秒收到几帧代替——人看到的就是这个。
   const fps=Number(data.inference_fps??data.network_fps);
-  const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
-  const black=sourceMode==='computer'&&live&&data.picture_black;
+  const live=sourceHasFreshFrame();
+  const black=sourceMode==='computer'&&cameraRunning&&data.picture_black;
   const hud=$('#fpsHud');
   if(hud){
     const show=black||(live&&Number.isFinite(fps)&&fps>0);hud.hidden=!show;
     if(show){const text=black?'画面全黑':`${Math.round(fps)} 帧/秒`;if(hud.textContent!==text)hud.textContent=text;hud.classList.toggle('slow',!!black||fps<15)}
   }
   const line=$('#recognitionStatus');
-  if(line)line.textContent=S.sourceConnecting?'正在启动摄像头，请稍候…':black?'摄像头画面全黑':live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):'未开始';
+  if(line)line.textContent=S.sourceConnecting?'正在启动摄像头，请稍候…':black?'摄像头画面全黑':live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):sourceMode==='computer'&&cameraInfo?.last_error?cameraInfo.last_error:cameraRunning?'摄像头没有新画面':'未开始';
   if(line&&!S.sourceConnecting&&live&&sourceMode==='computer'){if(!black&&data.depth_active)line.textContent+=' · 深度已启用';else if(!black&&data.depth_error)line.textContent+=' · '+data.depth_error}
   $('#perfSummary').textContent='识别';
   $('#perfDetails').textContent=[

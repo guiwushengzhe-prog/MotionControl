@@ -686,7 +686,9 @@ def _fake_live_state(page, **kernel_fields) -> None:
                      "horizontal_calibrated": True, "enabled": True}
         k.update(kernel_fields)
         data["body_mode"] = "computer"
-        data["camera"] = {**(data.get("camera") or {}), "running": True}
+        data["camera"] = {**(data.get("camera") or {}), "running": True,
+                          "frames": 1, "last_frame_age_ms": 0}
+        k["pose_age_ms"] = 0
         route.fulfill(response=response, json=data)
 
     def performance(route):
