@@ -8,7 +8,8 @@ def _camera_ready(ui, **changes):
     endpoint = ui.base + "/api/kernel/status"
     runtime = ui.page.request.get(endpoint).json()
     runtime["body_mode"] = "computer"
-    runtime.setdefault("camera", {}).update(running=True, picture_black=False)
+    runtime.setdefault("camera", {}).update(running=True, picture_black=False,
+                                             frames=1, last_frame_age_ms=0)
     runtime["camera"].update(changes)
     ui.page.route(endpoint, lambda route: route.fulfill(json=runtime))
     ui.page.evaluate("async()=>{await (await import('/js/play.js')).refreshKernel()}")

@@ -20,6 +20,13 @@ export let sessionStarted=false;
 // 摄像头的完整状态。新手教学要按它判断画面来没来。
 export let cameraInfo=null;
 export let previewMirrored=true;
+// 开关已打开不等于仍有画面；首页、准备检查与悬浮窗共用供帧状态。
+export function sourceHasFreshFrame(){
+  if(sourceMode==='phone')return !!inputStatus.mobile_pose_connected&&(inputStatus.mobile_pose_age_ms==null||Number(inputStatus.mobile_pose_age_ms)<3000);
+  if(!cameraRunning||cameraInfo?.picture_black)return false;
+  if(cameraInfo?.frames!==undefined||cameraInfo?.last_frame_age_ms!==undefined)return Number(cameraInfo?.frames)>0&&cameraInfo?.last_frame_age_ms!=null&&Number(cameraInfo.last_frame_age_ms)<3000;
+  return true;
+}
 export function setPreviewMirror(enabled,revision){
   if(Number.isFinite(revision))latestConfigRevision=Math.max(latestConfigRevision,revision);
   previewMirrored=!!enabled;
@@ -100,6 +107,7 @@ export function renderKernelZones(zones={}){
     if(def.gate&&!kernelState?.vertical_look?.enabled){setStyle(el,'display','none');continue}
     const active=!!state?.pressed;
     setClass(el,'active',active);
+    setClass(el,'following',state?.mode==='following');setClass(el,'fixed',state?.mode==='fixed');
     // 智能判定：判断中（黄）、判定是扫过（闪红）。系统功能要稳住，底下的条是稳住走到哪了。
     const phase=String(state?.phase||'idle');
     setClass(el,'pending',phase==='pending');setClass(el,'swept',phase==='swept');
@@ -110,7 +118,7 @@ export function renderKernelZones(zones={}){
     setAttribute(el,'aria-label',def.body+'区域，方向键移动，Shift 加方向键改大小');
     const rect=state?.rect;
     setClass(el,'selected',false);
-    if(!rect){setStyle(el,'display','none');continue}
+    if(!rect||S.sourceConnecting||!sourceHasFreshFrame()||!currentPoseMap){setStyle(el,'display','none');continue}
     setStyle(el,'display','grid');setStyle(el,'left',(rect.x1*100)+'%');setStyle(el,'top',(rect.y1*100)+'%');setStyle(el,'width',((rect.x2-rect.x1)*100)+'%');setStyle(el,'height',((rect.y2-rect.y1)*100)+'%');
   }
 }
@@ -160,11 +168,14 @@ document.addEventListener('motioncontrol:voice-state',renderMainStatus);
 // 画面中间那句话只在没人、没画面时出现；有人站进来就让开。
 function renderViewerMessage(){
   const hint=$('#hint');if(!hint)return;
-  const live=sourceMode==='phone'?!!inputStatus.mobile_pose_connected:cameraRunning;
-  const [title,detail]=S.sourceConnecting?['正在准备识别','相机启动可能需要几十秒，请稍候']:!live?[sourceMode==='phone'?'等手机连上':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':'点下方「开始识别」，或在「设置 → 设备」里选择摄像头']
-    :sourceMode==='computer'&&cameraRunning&&cameraInfo.picture_black?['摄像头画面全黑',cameraInfo.camera_virtual?'请启动虚拟摄像头的画面来源，或换一个摄像头':'请检查镜头遮挡，或换一个摄像头']
+  const live=sourceHasFreshFrame(),error=String(cameraInfo?.last_error||'').trim();
+  const [title,detail]=S.sourceConnecting?['正在准备识别','相机启动可能需要几十秒，请稍候']
+    :sourceMode==='computer'&&cameraRunning&&cameraInfo?.picture_black?['摄像头画面全黑',cameraInfo.camera_virtual?'请启动虚拟摄像头的画面来源，或换一个摄像头':'请检查镜头遮挡，或在「设置 → 设备」更换摄像头']
+    :!live?[sourceMode==='phone'?'等手机连上':cameraRunning?'摄像头没有新画面':error?'摄像头启动失败':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':`${error?error+'。':''}点下方「${cameraRunning||error?'重试识别':'开始识别'}」；更换摄像头在「设置 → 设备」`]
     :!currentPoseMap?['站到镜头前','头和双肩入镜就能开始']:['',''];
   setProperty(hint,'hidden',!title);
+  // 状态提示出现就让实时框让开；完整参考编辑位于另一层，不受影响。
+  if(title)for(const zone of viewer.querySelectorAll('.zones .zone'))setStyle(zone,'display','none');
   const key=title+'|'+detail;if(hint.dataset.key===key)return;hint.dataset.key=key;
   hint.replaceChildren();if(!title)return;
   const b=document.createElement('b');b.textContent=title;const s=document.createElement('span');s.textContent=detail;hint.append(b,s);
@@ -182,19 +193,19 @@ function setStep(name,state,sub){
 function renderReadiness(){
   const hs=kernelState?.head||{};
   const phoneMode=sourceMode==='phone';
-  const cameraOk=phoneMode?!!inputStatus.mobile_pose_connected:cameraRunning&&!cameraInfo.picture_black;
+  const cameraOk=sourceHasFreshFrame();
   const posed=!!currentPoseMap;
   const handHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand);
   const needCal=!handHorizontal&&head.enabled;
   const calibrated=!needCal||!!(hs.horizontal_calibrated??hs.calibrated);
-  const cameraIssue=phoneMode?'等手机摄像头连上':cameraRunning&&cameraInfo.picture_black?'摄像头画面全黑，请检查镜头或画面来源':String(cameraInfo?.last_error||'').trim()||'摄像头还没连接';
+  const cameraIssue=phoneMode?'等手机摄像头连上':cameraRunning&&cameraInfo?.picture_black?'摄像头画面全黑，请检查镜头或画面来源':String(cameraInfo?.last_error||'').trim()||(cameraRunning?'摄像头没有新画面':'摄像头还没连接');
   const deviceText=cameraOk&&voiceInputReady?'已就绪'
     :[cameraOk?'摄像头已就绪':cameraIssue,voiceInputReady?'麦克风已就绪':`麦克风：${voiceInputIssue}`].join(' · ');
   setStep('camera',cameraOk&&voiceInputReady?'done':'warn',deviceText);
   setProperty($('#cameraStepSub'),'title',cameraOk&&voiceInputReady?'摄像头和麦克风已就绪':deviceText);
   const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk&&voiceInputReady);
   setAttribute(go,'data-resolve',cameraOk?voiceInputTarget:'camera');
-  setText(go,cameraOk?(voiceInputTarget==='voice'?'检查语音':'检查麦克风'):'检查摄像头');
+  setText(go,cameraOk?(voiceInputTarget==='voice'?'检查语音':'检查麦克风'):phoneMode?'连接手机':cameraRunning||cameraInfo?.last_error?'重试识别':'开始识别');
   // 脚踝出了画面，踏步和脚区就认不出抬脚。只在它们绑了键时提，不算进"还差几步"。
   const feetOut=posed&&kernelState?.feet_in_view===false&&['motion.march','zone.leftFoot','zone.rightFoot'].some(triggerMapped);
   const feetHint='脚没入镜';
@@ -276,8 +287,10 @@ export function renderKernelState(runtime,force=false){
   latestRuntime=runtime;
   if(typeof runtime?.preview_mirror==='boolean')setPreviewMirror(runtime.preview_mirror);
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
+  const camera=runtime?.camera||{running:cameraRunning};
+  cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
   renderCurrentMode(k.game_mode);
-  currentPoseMap=k.pose||null;
+  currentPoseMap=sourceHasFreshFrame()&&(k.pose_age_ms==null||Number(k.pose_age_ms)<3000)?k.pose||null:null;
   // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
   const capture=runtime?.pose_capture,captureSignature=JSON.stringify([capture?.counting,capture?.purpose,capture?.remaining_s,capture?.pose_id,capture?.message]);
   if(capture?.counting||captureSignature!==poseCaptureSignature){poseCaptureSignature=captureSignature;paintPoseCountdown(capture)}
@@ -339,24 +352,23 @@ export function renderKernelState(runtime,force=false){
     }
   }
   renderHeadCurve(hs);
-  const camera=runtime?.camera||{running:cameraRunning};
-  cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
   renderHfhpeStatus(camera.hfhpe);
-  sessionStarted=sourceMode==='phone'?inputStatus.body_enabled!==false:cameraRunning;
+  sessionStarted=sourceMode==='phone'?inputStatus.body_enabled!==false:sourceHasFreshFrame();
   if(S.desiredSource===null)setProperty($('#poseSource'),'value',sourceMode);
   const computer=$('#poseSource').value==='computer';
   if(['cameraDeviceRow','cameraScanRow','cameraRotationRow'].some(id=>$('#'+id)?.hidden!==!computer))syncCameraDeviceRow();
 
   if(cameraPreview){
-    const showPreview=sourceMode==='computer'&&cameraRunning;
+    const showPreview=sourceMode==='computer'&&sourceHasFreshFrame();
     setProperty(cameraPreview,'hidden',!(showPreview&&cameraPreview.complete&&cameraPreview.naturalWidth));
     if(!showPreview&&cameraPreview.hasAttribute('src')){
       URL.revokeObjectURL(cameraPreview.src);cameraPreview.removeAttribute('src');
     }
   }
-  const recognizing=sourceMode==='phone'?inputStatus.body_enabled!==false&&!!inputStatus.mobile_pose_connected:cameraRunning;
-  setProperty($('#sourceStopBtn'),'hidden',!recognizing&&!S.sourceConnecting);
+  const recognizing=sourceMode==='phone'?inputStatus.body_enabled!==false&&sourceHasFreshFrame():sourceHasFreshFrame();
+  setProperty($('#sourceStopBtn'),'hidden',!(sourceMode==='computer'?cameraRunning:inputStatus.body_enabled!==false)&&!S.sourceConnecting);
   setProperty($('#sourceStartBtn'),'hidden',recognizing||!!S.sourceConnecting);
+  setText($('#sourceStartBtn'),sourceMode==='computer'&&(cameraRunning||cameraInfo?.last_error)?'重试识别':'开始识别');
   // 旧版上下视角（绿框）开着才有这一块。
   const gateActive=!!k.vertical_gate_active;const gateStatus=$('#lookGateStatus');if(gateStatus){setProperty(gateStatus,'hidden',!k.vertical_look?.enabled||!head.verticalLookEnabled||!currentPoseMap);const paused=!!hs.horizontal_paused_by_vertical_gate;const text=gateActive?`上下视角开${paused?' · 左右暂停':''}`:'左手放进绿框开上下视角';setText(gateStatus,text);setProperty(gateStatus,'className','hud hud-gate'+(gateActive?' active':''))}renderOverlay(currentPoseMap);renderMainStatus();
 
@@ -380,13 +392,13 @@ if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>{
 window.addEventListener('resize',()=>{if(isVisible(viewer))paintMainPose()});
 
 export async function refreshPreview(){
-  if(!cameraPreview||perfUi.previewBusy||sourceMode!=='computer'||!cameraRunning||currentView!=='play'||document.visibilityState!=='visible')return;
+  if(!cameraPreview||perfUi.previewBusy||sourceMode!=='computer'||!sourceHasFreshFrame()||currentView!=='play'||document.visibilityState!=='visible')return;
   perfUi.previewBusy=true;
   try{
     const response=await fetch(`/api/camera/preview.jpg?t=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(3000)});
     if(!response.ok)return;
     const blob=await response.blob(),url=URL.createObjectURL(blob),old=cameraPreview.src;
-    cameraPreview.onload=()=>{cameraPreview.hidden=false;if(old?.startsWith('blob:'))URL.revokeObjectURL(old)};
+    cameraPreview.onload=()=>{cameraPreview.hidden=!sourceHasFreshFrame();if(old?.startsWith('blob:'))URL.revokeObjectURL(old)};
     cameraPreview.onerror=()=>{cameraPreview.hidden=true;URL.revokeObjectURL(url);if(old?.startsWith('blob:'))URL.revokeObjectURL(old)};
     cameraPreview.src=url;
   }catch{}
@@ -398,15 +410,17 @@ export async function startCalibration(){const running=!!kernelState?.head?.cali
 export async function centerHead(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('视角中心已更新。')}catch(e){notice('视角回正失败：'+(e?.message||e))}}
 
 function drawOverlayZones(octx,w,h,zones={}){
+  if(S.sourceConnecting||!sourceHasFreshFrame()||!currentPoseMap)return;
   for(const[id,def]of Object.entries(bodyZones(zones))){
     const state=zones[id];if(!state)continue;const active=!!state.pressed,isGate=!!def.gate,phase=String(state.phase||'idle');
+    if(isGate&&!kernelState?.vertical_look?.enabled)continue;
     // 悬浮窗里按下一直是红的（游戏画面上最显眼）；判断中黄、扫过灰掉，免得和按下混。
     const stroke=active?'#ff5966':phase==='pending'?'#ffcc33':phase==='swept'?'rgba(255,255,255,.35)':'rgba(255,255,255,.78)';
     const fill=active?'rgba(255,70,80,.26)':phase==='pending'?'rgba(255,204,51,.22)':'rgba(0,0,0,.12)';
     octx.save();octx.lineWidth=Math.max(2,w/220);octx.strokeStyle=isGate?(active?'#62ff91':'#62d982'):stroke;octx.fillStyle=isGate?(active?'rgba(45,210,95,.30)':'rgba(30,150,75,.15)'):fill;if(isGate&&!active)octx.setLineDash([Math.max(4,w/100),Math.max(3,w/140)]);
     let x=0,y=0,ww=0,hh=0;const r=state.rect;
     if(r){x=(previewMirrored?1-Number(r.x2):Number(r.x1))*w;y=Number(r.y1)*h;ww=(Number(r.x2)-Number(r.x1))*w;hh=(Number(r.y2)-Number(r.y1))*h}
-    if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';octx.font=`800 ${Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.34,w/9)))}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?(active?'上下视角 已开启':'上下视角'):zoneKeyLabel(id,def),x+ww/2,y+hh/2);octx.restore();
+    if(ww<=0||hh<=0){octx.restore();continue}octx.beginPath();if(isGate)octx.roundRect(x,y,ww,hh,Math.max(8,w/70));else octx.roundRect(x,y,ww,hh,Math.max(6,w/90));octx.fill();octx.stroke();octx.setLineDash([]);octx.fillStyle='#fff';const fontSize=Math.round(Math.max(11,Math.min(Math.min(ww,hh)*.30,w/9)));octx.font=`800 ${fontSize}px system-ui,sans-serif`;octx.textAlign='center';octx.textBaseline='middle';octx.fillText(isGate?'上下视角':zoneKeyLabel(id,def),x+ww/2,y+hh/2-fontSize*.25,ww*.94);octx.font=`500 ${Math.max(8,Math.round(fontSize*.42))}px system-ui,sans-serif`;octx.fillText(isGate?(active?'已开启':'左手放这里'):def.body,x+ww/2,y+hh/2+fontSize*.55,ww*.94);octx.restore();
   }
 }
 

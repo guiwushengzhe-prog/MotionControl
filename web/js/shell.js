@@ -11,7 +11,7 @@ import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
 import {openPhoneCode} from './phone-connect.js';
 import {addCustomGame,addGameVoiceRow,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
-import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,selectEditorRegion,sessionStarted,setEditorRegionMode,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
+import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,selectEditorRegion,sessionStarted,setEditorRegionMode,sourceHasFreshFrame,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
 import {initUpdates,refreshUpdates} from './updates.js';
 import {ensureViewControlReady,handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
@@ -103,9 +103,12 @@ async function handleMainAction(){
   const stops=emergencyStops;
   // 麦克风或手持端就绪不代表已选摄像头正在识别。
   if(!sessionStarted){
-    await setSource($('#poseSource').value,true);
+    await startRecognition();
   }
   if(stops!==emergencyStops)return;
+  if($('#poseSource').value==='computer'&&!sourceHasFreshFrame()){
+    notice('识别已启动，正在等待摄像头新画面；画面恢复后再开始控制');return;
+  }
   await setOutput(true);
 }
 
@@ -214,19 +217,35 @@ export const headSaver=autosaver(pushHeadConfig,'headSaveStatus','retryHeadBtn',
 const voiceSaver=autosaver(saveVoiceMappings,'voiceSaveStatus','retryVoiceBtn');
 
 document.querySelectorAll('[data-view],[data-go]').forEach(el=>el.addEventListener('click',()=>showView(el.dataset.view||el.dataset.go)));
+function showRecognitionControl(){
+  showView('play');if(currentView!=='play')return;
+  const target=$(!$('#sourceStartBtn').hidden?'#sourceStartBtn':'#sourceStopBtn');
+  target.focus({preventScroll:true});target.scrollIntoView({block:'center',behavior:'instant'});
+}
+bind('recognitionHomeBtn',showRecognitionControl);
 bind('cameraStepGo',()=>{
   const issue=$('#cameraStepGo').dataset.resolve||'camera';
+  if(issue==='camera'&&$('#poseSource').value!=='phone'){showRecognitionControl();return}
   showView('devices');if(currentView!=='devices')return;
   // 模型问题到现有语音诊断查看准确错误和模型路径；设备问题定位来源与输入设备。
   showSettingsPane(issue==='voice'?'lab':'devices');
-  const target=issue==='voice'?$('#voiceDiagnostic'):issue==='audio'?($('#audioDeviceRow').hidden?$('#audioSource'):$('#audioDevice')):($('#poseSource').value==='phone'?$('#poseSource'):$('#cameraDevice'));
+  if(issue==='camera')openPhoneCode();
+  const target=issue==='voice'?$('#voiceDiagnostic'):issue==='audio'?($('#audioDeviceRow').hidden?$('#audioSource'):$('#audioDevice')):$('#phoneConnectPanel');
   if(!target.matches('input,select,button,a[href]')&&!target.hasAttribute('tabindex'))target.setAttribute('tabindex','-1');
   target.focus({preventScroll:true});target.scrollIntoView({block:'center',behavior:'instant'});
 });
 
 $('#mainActionBtn').addEventListener('click',()=>output.enabled?void emergencyStop():void runAction(handleMainAction));
 
-bind('sourceStartBtn',()=>setSource($('#poseSource').value,true));
+async function startRecognition(){
+  // 停帧时 start 本身可能幂等；先释放旧采集，再真正重新打开所选设备。
+  const source=$('#poseSource').value;
+  if(source==='computer'&&cameraRunning&&!sourceHasFreshFrame()){
+    await stopRecognition();if(cameraRunning)throw new Error('尚未确认停止旧采集，请重试停止识别');
+  }
+  await setSource(source,true);
+}
+bind('sourceStartBtn',startRecognition);
 
 $('#sourceStopBtn').addEventListener('click',()=>void stopRecognition());
 

@@ -6,7 +6,7 @@ from test_web_optimization import ORIGIN, desktop
 from test_web_ui import browser as mock_browser
 
 
-@pytest.mark.parametrize("previous_pane", ["voice", "body", "view"])
+@pytest.mark.parametrize("previous_pane", ["voice", "lab", "view"])
 def test_phone_shortcut_reveals_qr_below_fold(desktop, previous_pane):
     page, api = desktop.page, desktop.api
     api.runtime["body_mode"] = "phone"
