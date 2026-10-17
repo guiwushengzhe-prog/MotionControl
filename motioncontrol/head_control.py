@@ -4,13 +4,14 @@
   frozen22 22-D face feature is one of those cues, never a route of its own).
 - roll_tilt: eye-line tilt drives a sustained turn until the head is upright.
 - head_responsive: tilt or face turn, with a quick return brake.
+- hfhpe: independent model yaw, neutral capture and fail-stop tracking.
 
 The yaw route uses a relative gesture: outward turn moves, a held pose stops,
 and returning to a quiet neutral center rearms without reverse mouse output.
 The removed routes (``classic``, ``gesture``, ``gesture_v153``, ``frozen22``)
 are still accepted from old profiles/clients and select gesture_v188.
-One valid capture can be reused across the horizontal policies and across
-program starts. A new estimator (pnp/ratio) still requires a new neutral capture.
+The landmark routes share one neutral capture across program starts. A new
+estimator (pnp/ratio) or the independent HFHPE model needs its own neutral capture.
 """
 
 from __future__ import annotations
@@ -128,17 +129,19 @@ PITCH_INTENT_STOP_VELOCITY = 0.026
 # 转头只留一种（gesture_v188，多信号融合）。另外两种（个性化 PnP 单独出、
 # 固定特征 2D 单独出）已经删掉；老档案和老客户端发来的这些名字都按 gesture_v188 算。
 
-HORIZONTAL_ALGORITHMS = ("gesture_v188", "roll_tilt", "head_responsive")
+HORIZONTAL_ALGORITHMS = ("gesture_v188", "roll_tilt", "head_responsive", "hfhpe")
 REMOVED_HORIZONTAL_ALGORITHMS = frozenset(("classic", "gesture", "gesture_v153", "frozen22"))
 HORIZONTAL_ALGORITHM_VERSIONS = {
     "gesture_v188": "v5.1-consensus-shared-calibration",
     "roll_tilt": "roll-tilt-v1",
     "head_responsive": "head-responsive-v4",
+    "hfhpe": "hfhpe-relative-yaw-v1",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
     "gesture_v188": "多信号融合（稳健）",
     "roll_tilt": "侧倾转向（实验）",
     "head_responsive": "侧倾＋转脸（新版灵敏）",
+    "hfhpe": "左右转头（实验）",
 }
 
 
@@ -2498,6 +2501,17 @@ class HeadController:
         self._runtime_intent_raw_x = 0.0
         self._runtime_span_x = None
         self._last_target_x = 0.0
+        # 模型角度单独存放，不能借用姿态点估计器的中心和噪声。
+        self._hfhpe_calibration: dict | None = None
+        self._hfhpe_from_last_session = False
+        self._hfhpe_capturing = False
+        self._hfhpe_valid = False
+        self._hfhpe_error = "等待头部姿态模型数据"
+        self._hfhpe_angles: tuple[float, float, float] | None = None
+        self._hfhpe_confidence: float | None = None
+        self._hfhpe_filter = OneEuro(1.10, 0.050, 1.0)
+        self._hfhpe_intent = _RelativeYawAxisV153(velocity_tau=YAW_V2_VELOCITY_TAU_S, acceleration_tau=0.11)
+        self._hfhpe_last_at: float | None = None
         self._load_profile()
 
     def _effective_estimator_algorithm(self) -> str:
@@ -2534,6 +2548,14 @@ class HeadController:
         self._cue_last_at = 0.0
 
     def _reset_filters(self) -> None:
+        if hasattr(self, "_hfhpe_filter"):
+            self._hfhpe_filter.reset()
+            self._hfhpe_intent.reset()
+            self._hfhpe_last_at = None
+            self._hfhpe_valid = False
+            self._hfhpe_angles = None
+            self._hfhpe_confidence = None
+            self._hfhpe_error = "等待头部姿态模型数据"
         self._tilt_control.reset()
         self._responsive_head.reset()
         self._runtime_neutral_samples = []
@@ -2817,11 +2839,16 @@ class HeadController:
                 )
                 self.config["horizontal_algorithm"] = value
                 self._reset_filters()
-                self._apply_policy_model()
+                if value != "hfhpe":
+                    self._apply_policy_model()
                 self.calibrated = reusable
                 tilt_needs_center = value in {"roll_tilt", "head_responsive"} and not math.isfinite(self.center_tilt)
                 self.center_pending = not reusable or tilt_needs_center
-                if not reusable:
+                if value == "hfhpe":
+                    self.center_pending = self._hfhpe_calibration is None
+                    self.notice = ("已切换左右转头实验模式，沿用该模型的独立校准"
+                                   if self._hfhpe_calibration is not None else "首次使用左右转头实验模式，请先重新校准")
+                elif not reusable:
                     self.center_quality = "未校准"
                     self.notice = "当前没有兼容的中心，请先校准"
                 elif tilt_needs_center:
@@ -2868,6 +2895,9 @@ class HeadController:
         self._save_profile()
 
     def start_center(self, now: float | None = None, kind: str = "manual") -> None:
+        if self.config["horizontal_algorithm"] == "hfhpe":
+            self._start_hfhpe_center(time.monotonic() if now is None else now, kind)
+            return
         self._tilt_samples = []
         now = time.monotonic() if now is None else now
         if self.calibrating:
@@ -2948,6 +2978,9 @@ class HeadController:
         """Finish safely at the wall limit; enough valid samples still succeed."""
         if not self.calibrating:
             return
+        if self._hfhpe_capturing:
+            self._finish_hfhpe_center(len(self.center_yaw_samples) >= CENTER_MIN_SAMPLES)
+            return
         if len(self.center_yaw_samples) >= CENTER_MIN_SAMPLES:
             self._finish_center(True)
         else:
@@ -2957,6 +2990,11 @@ class HeadController:
             )
 
     def cancel_center(self, reason: str = "中心设置已取消") -> None:
+        if self._hfhpe_capturing:
+            self._end_hfhpe_capture()
+            self.notice = reason
+            self.notice_until = time.monotonic() + 2.5
+            return
         self.calibrating = False
         self.center_kind = ""
         self.center_phase = ""
@@ -3588,6 +3626,252 @@ class HeadController:
         delta = _clamp(target - current, -step, step)
         return current + delta
 
+    @staticmethod
+    def _angle_delta(angle: float, center: float) -> float:
+        """周期角差：179° 到 -179° 相差 2°，不能当成跳了 358°。"""
+        return (angle - center + 180.0) % 360.0 - 180.0
+
+    def _start_hfhpe_center(self, now: float, kind: str) -> None:
+        if self.calibrating:
+            self.cancel_center()
+        self._hfhpe_capturing = self.calibrating = True
+        self.center_pending = False
+        self.center_kind = str(kind or "manual")
+        self.center_started = now
+        self.center_prepare_until = now + CENTER_PREPARE_S
+        self.center_deadline = now + CENTER_WALL_LIMIT_S
+        self.center_phase = "prepare"
+        self.center_valid_s = 0.0
+        self.center_invalid_count = self.center_rejected_count = self.center_observed_count = 0
+        self.center_yaw_samples = []
+        self._reset_filters()
+        self.notice = "正在校准左右转头实验模式：自然看向屏幕中心"
+        self.notice_until = self.center_deadline
+
+    def _end_hfhpe_capture(self) -> None:
+        self._hfhpe_capturing = self.calibrating = False
+        self.center_pending = self._hfhpe_calibration is None
+        self.center_kind = self.center_phase = ""
+        self.center_started = self.center_prepare_until = self.center_deadline = 0.0
+        self.center_valid_s = 0.0
+        self.center_yaw_samples = []
+        self._reset_filters()
+
+    def _finish_hfhpe_center(self, success: bool) -> None:
+        count = len(self.center_yaw_samples)
+        if success:
+            center, noise = _robust_center_and_sigma(self.center_yaw_samples)
+            success = math.isfinite(center) and math.isfinite(noise)
+            if success:
+                self._hfhpe_calibration = {
+                    "version": 1,
+                    "center_yaw_deg": self._angle_delta(center, 0.0),
+                    "noise_yaw_deg": max(0.0, noise),
+                    "sample_count": count,
+                }
+                self._hfhpe_from_last_session = False
+        self._end_hfhpe_capture()
+        if success:
+            self.notice = "左右转头实验模式校准完成"
+        else:
+            retained = "，沿用该模型上次校准" if self._hfhpe_calibration is not None else "，请确认脸部入镜后重试"
+            self.notice = f"左右转头实验模式校准失败：有效样本不足 {count}/{CENTER_MIN_SAMPLES}{retained}"
+        self.notice_until = time.monotonic() + 5.0
+        self._save_profile()
+
+    def _read_hfhpe(self, head_pose: dict | None) -> None:
+        self._hfhpe_valid = False
+        self._hfhpe_angles = None
+        self._hfhpe_confidence = None
+        self._hfhpe_error = "等待头部姿态模型数据"
+        if not isinstance(head_pose, dict) or head_pose.get("source") != "hfhpe":
+            return
+        if head_pose.get("valid") is not True:
+            self._hfhpe_error = str(head_pose.get("error") or "头部姿态模型当前未识别到头部")
+            return
+        try:
+            values = tuple(head_pose[key] for key in ("yaw_deg", "pitch_deg", "roll_deg"))
+            if any(isinstance(v, bool) for v in values):
+                raise ValueError
+            angles = tuple(float(v) for v in values)
+            if not all(math.isfinite(v) for v in angles):
+                raise ValueError
+            if head_pose.get("confidence") is not None:
+                confidence = head_pose["confidence"]
+                if isinstance(confidence, bool):
+                    raise ValueError
+                confidence = float(confidence)
+                if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+                    raise ValueError
+                self._hfhpe_confidence = confidence
+                if confidence < CENTER_MIN_CONFIDENCE:
+                    self._hfhpe_error = "头部检测可信度偏低，已暂停左右转头输出"
+                    return
+        except (KeyError, TypeError, ValueError, OverflowError):
+            self._hfhpe_error = "头部姿态模型角度或可信度无效，已暂停输出"
+            return
+        self._hfhpe_angles = angles
+        self._hfhpe_valid = True
+        self._hfhpe_error = ""
+
+    def _hfhpe_deadzone(self) -> tuple[float, float | None, float | None]:
+        requested = PNP_YAW_SPAN_DEG * float(self.config["deadzone"])
+        if self._hfhpe_calibration is None:
+            return requested, None, None
+        adaptive = max(1.0, 3.0 * self._hfhpe_calibration["noise_yaw_deg"])
+        scale = self.motion_deadzone_scale
+        return requested, adaptive * scale, max(requested, adaptive) * scale
+
+    def _update_hfhpe(self, pose, width, height, now, head_pose) -> tuple[float, float]:
+        # 竖向仍用原来的姿态点估计，HFHPE 只接管左右；两者中心互不借用。
+        self.raw = self.estimator.estimate(pose, width, height, self._effective_estimator_algorithm())
+        if self.raw.valid:
+            self.filtered_pitch = self.signal_pitch = self._pitch_filter.apply(self.raw.pitch, now)
+        else:
+            self._pitch_filter.reset()
+            self.filtered_pitch = self.signal_pitch = math.nan
+        self._read_hfhpe(head_pose)
+        self.last_error = self._hfhpe_error
+        self.output_y = self.norm_y = 0.0
+        self._last_intent_drive = self._last_evidence_scale = self._last_target_x = 0.0
+        if self._hfhpe_capturing:
+            self.center_observed_count += 1
+            if now >= self.center_deadline:
+                self.timeout_center()
+                return 0.0, 0.0
+            if now < self.center_prepare_until:
+                return 0.0, 0.0
+            self.center_phase = "collect"
+            self.center_valid_s = max(0.0, now - self.center_prepare_until)
+            if not self._hfhpe_valid:
+                self.center_invalid_count += 1
+                self.notice = self._hfhpe_error
+                return 0.0, 0.0
+            yaw = self._hfhpe_angles[0]
+            # 将这一段样本展开到同一周期，再做稳健中位数和噪声估计。
+            if self.center_yaw_samples:
+                anchor = self.center_yaw_samples[0]
+                yaw = anchor + self._angle_delta(yaw, anchor)
+            if len(self.center_yaw_samples) >= CENTER_OUTLIER_WARMUP_SAMPLES and abs(
+                yaw - _median(self.center_yaw_samples[-CENTER_ROLLING_WINDOW:])
+            ) > PNP_CALIBRATION_OUTLIER_YAW_DEG:
+                self.center_rejected_count += 1
+                self.notice = "正在采集：已忽略一次明显转头，继续自然正视屏幕"
+                return 0.0, 0.0
+            self.center_yaw_samples.append(yaw)
+            self.notice = "正在采集头部姿态模型的独立中心，请自然正视屏幕"
+            if self.center_valid_s >= CENTER_MIN_COLLECTION_S and len(self.center_yaw_samples) >= CENTER_TARGET_SAMPLES:
+                self._finish_hfhpe_center(True)
+            return 0.0, 0.0
+        if not self._hfhpe_valid or self._hfhpe_calibration is None or not self.config["enabled"]:
+            self._hfhpe_filter.reset()
+            self._hfhpe_intent.reset()
+            self._hfhpe_last_at = None
+            self.output_x = self.norm_x = 0.0
+            self._runtime_raw_x = self._runtime_intent_raw_x = 0.0
+            self.filtered_yaw = self.signal_yaw = self.control_yaw = math.nan
+            self.yaw_intent_state = "IDLE"
+            self.yaw_velocity = self.yaw_acceleration = 0.0
+            return 0.0, 0.0
+        if self._hfhpe_last_at is not None and not 0.0 < now - self._hfhpe_last_at <= .25:
+            self._hfhpe_filter.reset()
+            self._hfhpe_intent.reset()
+            self._hfhpe_last_at = None
+            self.output_x = 0.0
+        fresh_segment = self._hfhpe_last_at is None
+        dt = now - self._hfhpe_last_at if self._hfhpe_last_at is not None else 1.0 / 30.0
+        self._hfhpe_last_at = now
+        yaw = self._hfhpe_angles[0]
+        delta = self._angle_delta(yaw, self._hfhpe_calibration["center_yaw_deg"])
+        filtered = self._hfhpe_filter.apply(delta, now)
+        self.control_yaw = yaw
+        self.filtered_yaw = self.signal_yaw = self._angle_delta(self._hfhpe_calibration["center_yaw_deg"] + filtered, 0.0)
+        sign = -1.0 if self.config["invert_x"] else 1.0
+        self.norm_x = raw_x = _clamp(sign * filtered / PNP_YAW_SPAN_DEG, -4.0, 4.0)
+        intent_raw_x = _clamp(sign * delta / PNP_YAW_SPAN_DEG, -4.0, 4.0)
+        self._runtime_raw_x, self._runtime_intent_raw_x, self._runtime_span_x = raw_x, intent_raw_x, PNP_YAW_SPAN_DEG
+        threshold = self._hfhpe_deadzone()[2]
+        if fresh_segment:
+            # 首帧只建立静默起点，不能把重获前后的角差伪装成转头速度。
+            self._hfhpe_intent._last_norm = raw_x
+            self._hfhpe_intent._last_raw_norm = intent_raw_x
+            self._hfhpe_intent._last_t = now
+            self._hfhpe_intent._history = [(now, raw_x, intent_raw_x)]
+            self.output_x = 0.0
+            return 0.0, 0.0
+        vx = self._hfhpe_intent.update(
+            raw_x, now, raw_norm=intent_raw_x, start_angle=threshold / PNP_YAW_SPAN_DEG,
+            start_velocity=.12, keep_velocity=.045, return_velocity=.060,
+            stop_grace_s=.075, acceleration_stop=1.15,
+            curve_gamma=float(self.config["horizontal_curve_gamma"]),
+        )
+        self.yaw_intent_state = self._hfhpe_intent.state
+        self.yaw_velocity = float(self._hfhpe_intent.velocity)
+        self.yaw_acceleration = float(self._hfhpe_intent.acceleration)
+        self._last_intent_drive = vx
+        self._last_evidence_scale = 1.0
+        self._last_target_x = vx * float(self.config["sensitivity_x"])
+        self.output_x = self._slew(self.output_x, self._last_target_x, dt)
+        return self.output_x / 100.0, 0.0
+
+    def _hfhpe_status(self, now: float) -> dict:
+        saved = self._hfhpe_calibration
+        requested, adaptive, actual = self._hfhpe_deadzone()
+        if not self.config["enabled"]:
+            code, message = "DISABLED", "头控已关闭"
+        elif self._hfhpe_capturing:
+            code, message = "CALIBRATING", "正在校准，暂不输出"
+        elif not self._hfhpe_valid:
+            code, message = "ESTIMATE_INVALID", self._hfhpe_error
+        elif saved is None:
+            code, message = "NEEDS_CALIBRATION", "首次使用左右转头实验模式，请先重新校准"
+        elif abs(self.output_x) > 1e-12:
+            code, message = "OUTPUT_ACTIVE", "头部姿态模型已有左右输出"
+        elif self._hfhpe_intent.return_latched:
+            code, message = "RETURNING", "正在回正；回到中心短暂停稳后重新触发"
+        else:
+            code, message = "NEUTRAL", "等待转头；停住或回正时不输出"
+        yaw, pitch, roll = self._hfhpe_angles or (None, None, None)
+        quality = ("正在记录模型中心" if self._hfhpe_capturing else
+                   "已载入上次模型校准" if saved and self._hfhpe_from_last_session else
+                   "已校准模型中心" if saved else "等待校准（可说“开始校准”）")
+        return {
+            "calibrated": saved is not None,
+            "horizontal_calibrated": saved is not None,
+            "calibration_from_last_session": bool(saved and self._hfhpe_from_last_session),
+            "center_capture_pending": saved is None and not self._hfhpe_capturing,
+            "center_quality": "未校准" if saved is None else "噪声较大" if saved["noise_yaw_deg"] > PNP_CALIBRATION_REFERENCE_SIGMA_YAW_DEG else "良好",
+            "quality": quality,
+            "center_yaw": saved["center_yaw_deg"] if saved else None,
+            "noise_yaw": saved["noise_yaw_deg"] if saved else 0.0,
+            "raw_yaw": yaw,
+            "estimate_valid": self._hfhpe_valid,
+            "estimate_error": self._hfhpe_error or None,
+            "confidence": self._hfhpe_confidence,
+            "horizontal_frame_valid": self._hfhpe_valid,
+            "horizontal_control_ready": bool(saved and self.config["enabled"] and not self._hfhpe_capturing),
+            "horizontal_block_reason": code,
+            "horizontal_block_message": message,
+            "horizontal_signal_source": "hfhpe",
+            "horizontal_signal_value": yaw,
+            "horizontal_signal_units": "degrees",
+            "raw_yaw_units": "degrees",
+            "using_generic_pnp": False,
+            "calibration_algorithm": "hfhpe" if saved else None,
+            "yaw_return_latched": bool(self._hfhpe_intent.return_latched),
+            "hfhpe_calibrated": saved is not None,
+            "hfhpe_estimate_valid": self._hfhpe_valid,
+            "hfhpe_error": self._hfhpe_error or None,
+            "hfhpe_yaw_deg": yaw,
+            "hfhpe_pitch_deg": pitch,
+            "hfhpe_roll_deg": roll,
+            "hfhpe_center_yaw_deg": saved["center_yaw_deg"] if saved else None,
+            "hfhpe_noise_yaw_deg": saved["noise_yaw_deg"] if saved else None,
+            "hfhpe_requested_deadzone_deg": requested,
+            "hfhpe_adaptive_deadzone_deg": adaptive,
+            "hfhpe_deadzone_deg": actual,
+        }
+
     def update(
         self,
         pose: dict[str, dict] | None,
@@ -3596,9 +3880,12 @@ class HeadController:
         now: float | None = None,
         world_pose: dict[str, dict] | list[dict] | None = None,
         *, motion_deadzone_scale: float = 1.0,
+        head_pose: dict | None = None,
     ) -> tuple[float, float]:
         now = time.monotonic() if now is None else now
         self.motion_deadzone_scale = _clamp(float(motion_deadzone_scale), 1.0, 1.2)
+        if self.config["horizontal_algorithm"] == "hfhpe":
+            return self._update_hfhpe(pose, width, height, now, head_pose)
         self._last_intent_drive = 0.0
         self.tilt_angle = eye_line_tilt(pose, width, height)
         self._last_evidence_scale = 0.0
@@ -4207,6 +4494,7 @@ class HeadController:
             "output_y": round(self.output_y, 3),
             # Compact compatibility aliases used by the existing web status.
             "calibration_notice_text": self.notice if now <= self.notice_until else "",
+            **(self._hfhpe_status(now) if policy_name == "hfhpe" else {}),
         }
 
     def _load_profile(self) -> None:
@@ -4260,6 +4548,18 @@ class HeadController:
                 set_model(None)
             self._recompute_deadzone()
             self._restore_saved_calibration(payload)
+            saved_hfhpe = payload.get("hfhpe_calibration")
+            if isinstance(saved_hfhpe, dict) and saved_hfhpe.get("version") == 1:
+                center = saved_hfhpe.get("center_yaw_deg")
+                noise = saved_hfhpe.get("noise_yaw_deg")
+                count = saved_hfhpe.get("sample_count")
+                if (all(isinstance(v, (float, int)) and not isinstance(v, bool) and math.isfinite(v) for v in (center, noise))
+                        and -180.0 <= center < 180.0 and noise >= 0.0
+                        and isinstance(count, int) and not isinstance(count, bool) and count >= CENTER_MIN_SAMPLES):
+                    self._hfhpe_calibration = dict(saved_hfhpe)
+                    self._hfhpe_from_last_session = True
+            if horizontal_algorithm == "hfhpe":
+                self.center_pending = self._hfhpe_calibration is None
         except (OSError, ValueError, TypeError):
             return
 
@@ -4336,6 +4636,7 @@ class HeadController:
             "saved_at_unix": time.time(),
             "params": dict(self.config),
             "calibration": self._saved_calibration,
+            "hfhpe_calibration": dict(self._hfhpe_calibration) if self._hfhpe_calibration is not None else None,
             "center": {
                 "yaw": self.center_yaw if self.calibrated else None,
                 "pitch": self.center_pitch if self.calibrated else None,

@@ -7,7 +7,7 @@ import time
 
 from .config_transaction import replace_documents
 
-HORIZONTAL = {"off", "left", "right", "roll_tilt", "head_turn", "head_responsive"}
+HORIZONTAL = {"off", "left", "right", "roll_tilt", "head_turn", "head_responsive", "hfhpe"}
 VERTICAL = {"off", "left", "right", "head"}
 
 
@@ -24,9 +24,9 @@ def configure_view_control(kernel, horizontal: str, vertical: str) -> dict:
         hand.configure({"enabled": horizontal in {"left", "right"} or vertical in {"left", "right"},
                         "horizontal_hand": horizontal if horizontal in {"left", "right"} else "off",
                         "vertical_hand": vertical if vertical in {"left", "right"} else "off"})
-        head.configure(enabled=horizontal in {"roll_tilt", "head_turn", "head_responsive"},
+        head.configure(enabled=horizontal in {"roll_tilt", "head_turn", "head_responsive", "hfhpe"},
                        horizontal_algorithm="gesture_v188" if horizontal == "head_turn"
-                       else horizontal if horizontal in {"roll_tilt", "head_responsive"} else None)
+                       else horizontal if horizontal in {"roll_tilt", "head_responsive", "hfhpe"} else None)
         look = dict(kernel.vertical_look)
         look["enabled"] = vertical == "head"
         if kernel._persist:
