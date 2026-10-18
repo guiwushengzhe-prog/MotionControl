@@ -379,7 +379,7 @@ export function renderKernelState(runtime,force=false){
     if(force||signature!==headConfigSignature){
     headConfigSignature=signature;
     const horizontalAlgorithm=String(hs.horizontal_algorithm||'roll_tilt');
-    head.horizontalAlgorithm=['gesture_v188','roll_tilt','head_responsive','hfhpe'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
+    head.horizontalAlgorithm=['gesture_v188','roll_tilt','head_responsive','hfhpe','hfhpe_simple'].includes(horizontalAlgorithm)?horizontalAlgorithm:'gesture_v188';
     head.verticalLookEnabled=k.vertical_look?.enabled===true;
     head.verticalExclusive=!!(k.vertical_look?.exclusive_axes??hs.vertical_exclusive_axes);
     head.bodyMotionGuard=k.vertical_look?.body_motion_guard===true;

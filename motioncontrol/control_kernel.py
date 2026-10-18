@@ -3519,7 +3519,7 @@ class ControlKernel:
         # Body actions and the output backend remain unchanged; only head
         # estimation/mapping is delegated to HeadController.  The look gate
         # no longer freezes X: yaw remains independent of vertical permission.
-        if self.head_controller.config.get("horizontal_algorithm") == "hfhpe":
+        if self.head_controller.config.get("horizontal_algorithm") in {"hfhpe", "hfhpe_simple"}:
             x, _pitch_y = self.head_controller.update(
                 pose_map, self.width, self.height, now, world_pose=world_pose,
                 head_pose=self.latest_head_pose, motion_deadzone_scale=self.body_motion_guard_scale,
@@ -5208,7 +5208,7 @@ class NativeCameraService:
                 # 复用同帧彩色图和现有人体定位，不另开摄像头或运行第二个人头检测器。
                 head_config = getattr(getattr(self.kernel, "head_controller", None), "config", {})
                 head_pose = self.hfhpe.process(frame, pose_map, enabled=(not self.assist
-                    and head_config.get("enabled", True) and head_config.get("horizontal_algorithm") == "hfhpe"))
+                    and head_config.get("enabled", True) and head_config.get("horizontal_algorithm") in {"hfhpe", "hfhpe_simple"}))
                 hands_started_at = time.perf_counter()
                 depth_body = kinect_camera.matching_depth_body(depth_metadata, pose_map, frame_rotation)
                 native_hands = kinect_camera.depth_hand_states(depth_body)
@@ -5813,9 +5813,9 @@ class LocalControlRuntime:
     def status(self) -> dict:
         with self._lock:
             camera, kernel = self.camera.status(), self.kernel.status()
-            if kernel.get("head", {}).get("horizontal_algorithm") == "hfhpe":
+            if kernel.get("head", {}).get("horizontal_algorithm") in {"hfhpe", "hfhpe_simple"}:
                 if self.body_mode != "computer":
-                    camera["hfhpe"] = {"state": "unavailable", "message": "实验转头需要彩色画面，请将人体来源切到电脑摄像头"}
+                    camera["hfhpe"] = {"state": "unavailable", "message": "模型转头需要彩色画面，请将人体来源切到电脑摄像头"}
                 elif not camera.get("running"):
                     camera["hfhpe"] = {"state": "unavailable", "message": "请先在开始页启动电脑摄像头识别"}
             return {"body_mode": self.body_mode, "camera": camera, "kernel": kernel}

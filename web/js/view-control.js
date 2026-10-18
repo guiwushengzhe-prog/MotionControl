@@ -34,21 +34,22 @@ function viewChoice(items,value){return items.find(item=>item.value===value)||it
 
 function horizontalDescription(choice){
   const description=viewChoice(VIEW_CONTROL_CONTENT.horizontal,choice).description;
-  if(choice!=='hfhpe'||!hfhpeStatus||['ready','inactive'].includes(hfhpeStatus.state))return description;
+  if(!['hfhpe','hfhpe_simple'].includes(choice)||!hfhpeStatus||['ready','inactive'].includes(hfhpeStatus.state))return description;
   const message=hfhpeStatus.message||({loading:'正在加载转头模型…',error:'转头模型暂不可用，请重新启动识别后重试',unavailable:'缺少实验模型，请运行工具下载'})[hfhpeStatus.state];
   return message?`${description}。${message}`:description;
 }
 
 export function renderHfhpeStatus(state){
   hfhpeStatus=state||null;
-  if($('#viewHorizontalSource')?.value==='hfhpe')setText($('#viewHorizontalDesc'),horizontalDescription('hfhpe'));
+  const choice=$('#viewHorizontalSource')?.value;
+  if(['hfhpe','hfhpe_simple'].includes(choice))setText($('#viewHorizontalDesc'),horizontalDescription(choice));
 }
 
 export function renderViewControl(force=false){
   if(viewControlSaving||(!force&&document.activeElement?.matches('#viewHorizontalSource,#viewVerticalSource')))return;
   const horizontalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand)?handMouseConfig.horizontal_hand:null;
   const verticalHand=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.vertical_hand)?handMouseConfig.vertical_hand:null;
-  const horizontal=horizontalHand||(head.enabled?(['roll_tilt','head_responsive','hfhpe'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off');
+  const horizontal=horizontalHand||(head.enabled?(['roll_tilt','head_responsive','hfhpe','hfhpe_simple'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off');
   const vertical=verticalHand||(head.verticalLookEnabled?'head':'off');
   setProperty($('#viewHorizontalSource'),'value',horizontal);setProperty($('#viewVerticalSource'),'value',vertical);
   const verticalInfo=viewChoice(VIEW_CONTROL_CONTENT.vertical,vertical);

@@ -4,7 +4,7 @@
   frozen22 22-D face feature is one of those cues, never a route of its own).
 - roll_tilt: eye-line tilt drives a sustained turn until the head is upright.
 - head_responsive: tilt or face turn, with a quick return brake.
-- hfhpe: independent model yaw, neutral capture and fail-stop tracking.
+- hfhpe / hfhpe_simple: independent model yaw with original or geometric return handling.
 
 The yaw route uses a relative gesture: outward turn moves, a held pose stops,
 and returning to a quiet neutral center rearms without reverse mouse output.
@@ -129,19 +129,22 @@ PITCH_INTENT_STOP_VELOCITY = 0.026
 # 转头只留一种（gesture_v188，多信号融合）。另外两种（个性化 PnP 单独出、
 # 固定特征 2D 单独出）已经删掉；老档案和老客户端发来的这些名字都按 gesture_v188 算。
 
-HORIZONTAL_ALGORITHMS = ("gesture_v188", "roll_tilt", "head_responsive", "hfhpe")
+HORIZONTAL_ALGORITHMS = ("gesture_v188", "roll_tilt", "head_responsive", "hfhpe", "hfhpe_simple")
+HFHPE_ALGORITHMS = {"hfhpe", "hfhpe_simple"}
 REMOVED_HORIZONTAL_ALGORITHMS = frozenset(("classic", "gesture", "gesture_v153", "frozen22"))
 HORIZONTAL_ALGORITHM_VERSIONS = {
     "gesture_v188": "v5.1-consensus-shared-calibration",
     "roll_tilt": "roll-tilt-v1",
     "head_responsive": "head-responsive-v4",
     "hfhpe": "hfhpe-relative-yaw-v2",
+    "hfhpe_simple": "hfhpe-outward-yaw-v1",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
     "gesture_v188": "多信号融合（稳健）",
     "roll_tilt": "侧倾转向（实验）",
     "head_responsive": "侧倾＋转脸（新版灵敏）",
-    "hfhpe": "左右转头（实验）",
+    "hfhpe": "左右转头（模型·原规则）",
+    "hfhpe_simple": "左右转头（模型·简化回正）",
 }
 
 
@@ -259,6 +262,8 @@ YAW_V2_RETURN_IDLE_MAX_SPAN = 0.040
 HFHPE_RETURN_IDLE_MAX_NET = 0.040
 HFHPE_RETURN_IDLE_MAX_SPAN = 0.080
 HFHPE_RETURN_RECOVERY_STEP = 0.080
+# 简化版按每秒角度变化排除微小波动，避免门槛随帧率变化。
+HFHPE_SIMPLE_MIN_SPEED_DEG_S = 3.0
 # Stop confirmation uses a short recent window and a small frame bound.  The
 # longer trend windows remain available for turn classification and return
 # detection, but do not lease mouse output during a stationary hold.
@@ -2532,6 +2537,7 @@ class HeadController:
             return_recovery_step=HFHPE_RETURN_RECOVERY_STEP,
         )
         self._hfhpe_last_at: float | None = None
+        self._hfhpe_simple_previous: tuple[float, float] | None = None
         self._load_profile()
 
     def _effective_estimator_algorithm(self) -> str:
@@ -2572,6 +2578,7 @@ class HeadController:
             self._hfhpe_filter.reset()
             self._hfhpe_intent.reset()
             self._hfhpe_last_at = None
+            self._hfhpe_simple_previous = None
             self._hfhpe_valid = False
             self._hfhpe_angles = None
             self._hfhpe_confidence = None
@@ -2859,15 +2866,15 @@ class HeadController:
                 )
                 self.config["horizontal_algorithm"] = value
                 self._reset_filters()
-                if value != "hfhpe":
+                if value not in HFHPE_ALGORITHMS:
                     self._apply_policy_model()
                 self.calibrated = reusable
                 tilt_needs_center = value in {"roll_tilt", "head_responsive"} and not math.isfinite(self.center_tilt)
                 self.center_pending = not reusable or tilt_needs_center
-                if value == "hfhpe":
+                if value in HFHPE_ALGORITHMS:
                     self.center_pending = self._hfhpe_calibration is None
-                    self.notice = ("已切换左右转头实验模式，沿用该模型的独立校准"
-                                   if self._hfhpe_calibration is not None else "首次使用左右转头实验模式，请先重新校准")
+                    self.notice = ("已切换左右转头模型方案，沿用该模型的独立校准"
+                                   if self._hfhpe_calibration is not None else "首次使用左右转头模型，请先重新校准")
                 elif not reusable:
                     self.center_quality = "未校准"
                     self.notice = "当前没有兼容的中心，请先校准"
@@ -2915,7 +2922,7 @@ class HeadController:
         self._save_profile()
 
     def start_center(self, now: float | None = None, kind: str = "manual") -> None:
-        if self.config["horizontal_algorithm"] == "hfhpe":
+        if self.config["horizontal_algorithm"] in HFHPE_ALGORITHMS:
             self._start_hfhpe_center(time.monotonic() if now is None else now, kind)
             return
         self._tilt_samples = []
@@ -3787,6 +3794,7 @@ class HeadController:
             self._hfhpe_filter.reset()
             self._hfhpe_intent.reset()
             self._hfhpe_last_at = None
+            self._hfhpe_simple_previous = None
             self.output_x = self.norm_x = 0.0
             self._runtime_raw_x = self._runtime_intent_raw_x = 0.0
             self.filtered_yaw = self.signal_yaw = self.control_yaw = math.nan
@@ -3797,6 +3805,7 @@ class HeadController:
             self._hfhpe_filter.reset()
             self._hfhpe_intent.reset()
             self._hfhpe_last_at = None
+            self._hfhpe_simple_previous = None
             self.output_x = 0.0
         fresh_segment = self._hfhpe_last_at is None
         dt = now - self._hfhpe_last_at if self._hfhpe_last_at is not None else 1.0 / 30.0
@@ -3813,12 +3822,17 @@ class HeadController:
         threshold = self._hfhpe_deadzone()[2]
         if fresh_segment:
             # 首帧只建立静默起点，不能把重获前后的角差伪装成转头速度。
+            self._hfhpe_simple_previous = (delta, filtered)
+            self.yaw_intent_state = "IDLE"
+            self.yaw_velocity = self.yaw_acceleration = 0.0
             self._hfhpe_intent._last_norm = raw_x
             self._hfhpe_intent._last_raw_norm = intent_raw_x
             self._hfhpe_intent._last_t = now
             self._hfhpe_intent._history = [(now, raw_x, intent_raw_x)]
             self.output_x = 0.0
             return 0.0, 0.0
+        if self.config["horizontal_algorithm"] == "hfhpe_simple":
+            return self._update_hfhpe_simple(delta, filtered, threshold, dt)
         vx = self._hfhpe_intent.update(
             raw_x, now, raw_norm=intent_raw_x, start_angle=threshold / PNP_YAW_SPAN_DEG,
             start_velocity=.12, keep_velocity=.045, return_velocity=.060,
@@ -3834,8 +3848,36 @@ class HeadController:
         self.output_x = self._slew(self.output_x, self._last_target_x, dt)
         return self.output_x / 100.0, 0.0
 
+    def _update_hfhpe_simple(self, raw: float, filtered: float, deadzone: float, dt: float) -> tuple[float, float]:
+        previous = self._hfhpe_simple_previous
+        self._hfhpe_simple_previous = (raw, filtered)
+        self.yaw_intent_state = "IDLE"
+        self.yaw_velocity = self.yaw_acceleration = 0.0
+        drive = 0.0
+        if previous is not None:
+            last_raw, last_filtered = previous
+            raw_speed = (abs(raw) - abs(last_raw)) / dt
+            filtered_speed = (abs(filtered) - abs(last_filtered)) / dt
+            sign = -1.0 if self.config["invert_x"] else 1.0
+            self.yaw_velocity = sign * (filtered - last_filtered) / dt / PNP_YAW_SPAN_DEG
+            # 原始角和滤波角都在同侧外转才放行；回正首帧、跨中心帧及滤波残尾立即静默。
+            same_side = raw * last_raw > 0.0 and filtered * last_filtered > 0.0 and raw * filtered > 0.0
+            if same_side and min(abs(raw), abs(filtered)) > deadzone:
+                if min(raw_speed, filtered_speed) > HFHPE_SIMPLE_MIN_SPEED_DEG_S:
+                    amount = _clamp((abs(filtered) - deadzone) / max(.001, PNP_YAW_SPAN_DEG - deadzone), 0.0, 1.0)
+                    drive = math.copysign(amount ** float(self.config["horizontal_curve_gamma"]), sign * filtered)
+                    self.yaw_intent_state = "TURN_RIGHT" if drive > 0.0 else "TURN_LEFT"
+                elif raw_speed < -HFHPE_SIMPLE_MIN_SPEED_DEG_S:
+                    self.yaw_intent_state = "RETURNING"
+        self._last_intent_drive = drive
+        self._last_evidence_scale = 1.0
+        self._last_target_x = drive * float(self.config["sensitivity_x"])
+        self.output_x = self._slew(self.output_x, self._last_target_x, dt)
+        return self.output_x / 100.0, 0.0
+
     def _hfhpe_status(self, now: float) -> dict:
         saved = self._hfhpe_calibration
+        simple = self.config["horizontal_algorithm"] == "hfhpe_simple"
         requested, adaptive, actual = self._hfhpe_deadzone()
         if not self.config["enabled"]:
             code, message = "DISABLED", "头控已关闭"
@@ -3844,10 +3886,12 @@ class HeadController:
         elif not self._hfhpe_valid:
             code, message = "ESTIMATE_INVALID", self._hfhpe_error
         elif saved is None:
-            code, message = "NEEDS_CALIBRATION", "首次使用左右转头实验模式，请先重新校准"
+            code, message = "NEEDS_CALIBRATION", "首次使用左右转头模型，请先重新校准"
         elif abs(self.output_x) > 1e-12:
             code, message = "OUTPUT_ACTIVE", "头部姿态模型已有左右输出"
-        elif self._hfhpe_intent.return_latched:
+        elif simple and self.yaw_intent_state == "RETURNING":
+            code, message = "RETURNING", "正在回正，暂不转向；再次向外转头即可响应"
+        elif not simple and self._hfhpe_intent.return_latched:
             code, message = "RETURNING", "正在回正；回到中心短暂停稳后重新触发"
         else:
             code, message = "NEUTRAL", "等待转头；停住或回正时不输出"
@@ -3878,7 +3922,7 @@ class HeadController:
             "raw_yaw_units": "degrees",
             "using_generic_pnp": False,
             "calibration_algorithm": "hfhpe" if saved else None,
-            "yaw_return_latched": bool(self._hfhpe_intent.return_latched),
+            "yaw_return_latched": not simple and bool(self._hfhpe_intent.return_latched),
             "hfhpe_calibrated": saved is not None,
             "hfhpe_estimate_valid": self._hfhpe_valid,
             "hfhpe_error": self._hfhpe_error or None,
@@ -3904,7 +3948,7 @@ class HeadController:
     ) -> tuple[float, float]:
         now = time.monotonic() if now is None else now
         self.motion_deadzone_scale = _clamp(float(motion_deadzone_scale), 1.0, 1.2)
-        if self.config["horizontal_algorithm"] == "hfhpe":
+        if self.config["horizontal_algorithm"] in HFHPE_ALGORITHMS:
             return self._update_hfhpe(pose, width, height, now, head_pose)
         self._last_intent_drive = 0.0
         self.tilt_angle = eye_line_tilt(pose, width, height)
@@ -4335,6 +4379,7 @@ class HeadController:
             "horizontal_algorithm_label": HORIZONTAL_ALGORITHM_LABELS[policy_name],
             "horizontal_behavior": ("侧倾或转脸时持续转向，快速回正加强制动，进入另一侧才换向" if policy_name == "head_responsive"
                                     else "向左肩或右肩倾斜时持续转向，头回正立即停止" if policy_name == "roll_tilt"
+                                    else "远离正前方时转向，回正或停住时停止；不设回正锁，再向外转头即可响应" if policy_name == "hfhpe_simple"
                                     else "转动时移动，偏头停住时停止，回到中心短暂停稳后重新触发"),
             "active_pitch_estimator": self._effective_estimator_algorithm(),
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,
@@ -4514,7 +4559,7 @@ class HeadController:
             "output_y": round(self.output_y, 3),
             # Compact compatibility aliases used by the existing web status.
             "calibration_notice_text": self.notice if now <= self.notice_until else "",
-            **(self._hfhpe_status(now) if policy_name == "hfhpe" else {}),
+            **(self._hfhpe_status(now) if policy_name in HFHPE_ALGORITHMS else {}),
         }
 
     def _load_profile(self) -> None:
@@ -4578,7 +4623,7 @@ class HeadController:
                         and isinstance(count, int) and not isinstance(count, bool) and count >= CENTER_MIN_SAMPLES):
                     self._hfhpe_calibration = dict(saved_hfhpe)
                     self._hfhpe_from_last_session = True
-            if horizontal_algorithm == "hfhpe":
+            if horizontal_algorithm in HFHPE_ALGORITHMS:
                 self.center_pending = self._hfhpe_calibration is None
         except (OSError, ValueError, TypeError):
             return

@@ -19,7 +19,7 @@ function thresholds(){
 }
 
 function renderThresholdNote({start,stop,ready,scale,setting,adaptive},visible){
-  if(head.horizontalAlgorithm==='hfhpe'){
+  if(['hfhpe','hfhpe_simple'].includes(head.horizontalAlgorithm)){
     const setting=18*head.deadzone,adaptive=Number(latest.hfhpe_adaptive_deadzone_deg);
     const ready=latest.hfhpe_calibrated===true&&latest.hfhpe_adaptive_deadzone_deg!=null&&Number.isFinite(adaptive);
     if(!ready){setText($('#headThresholdStatus'),`设定死区 ${setting.toFixed(1)}°；重新校准后显示自适应防抖和实际死区。`);return}
