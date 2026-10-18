@@ -39,6 +39,7 @@ def test_custom_pose_rule_update_reaches_store_and_kernel(application):
 
 def test_target_game_conflict_and_legacy_request_compatibility(application):
     app, replies = application, []
+    initial_revision = app.CONFIG_REVISION
     before = app.KERNEL.control_bindings.copy()
     request = request_for(app, "/api/game-profiles/overrides", replies)
     body = {"profile_id": "demo", "overrides": {}}
@@ -46,12 +47,12 @@ def test_target_game_conflict_and_legacy_request_compatibility(application):
     request.do_POST()
     assert replies[-1][0] == 409
     assert app.KERNEL.control_bindings == before
-    assert app.CONFIG_REVISION == 0
+    assert app.CONFIG_REVISION == initial_revision
     assert app.PROFILES.effective_profile()["id"] == "generic-xbox"
     body.pop("profile_id")
     request.do_POST()
     assert replies[-1][0] == 200
-    assert app.CONFIG_REVISION == 1
+    assert app.CONFIG_REVISION == initial_revision + 1
     bindings = app.PROFILES.effective_profile()["bindings"]
     assert app.KERNEL.control_bindings == flatten_bindings(bindings)
     assert app.VOICE._profile_bindings == bindings

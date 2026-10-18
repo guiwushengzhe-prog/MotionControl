@@ -20,12 +20,29 @@ export let sessionStarted=false;
 // 摄像头的完整状态。新手教学要按它判断画面来没来。
 export let cameraInfo=null;
 export let previewMirrored=true;
+// 画面提示、设备检查和操作按钮从同一个识别状态派生，不能各自猜测开关。
+export function recognitionState(){
+  if(S.recognitionOperation)return S.recognitionOperation;
+  if(S.sourceConnecting)return 'starting';
+  if(S.recognitionStopError||cameraInfo?.lifecycle==='stop_failed')return 'stop_failed';
+  // 本页没有待完成请求而后台仍在释放，说明上次操作未完成；保留重试停止的退路。
+  if(cameraInfo?.lifecycle==='stopping')return 'stop_failed';
+  if(cameraInfo?.lifecycle==='starting')return 'starting';
+  if(sourceMode==='phone')return inputStatus.body_enabled===false?'stopped':sourceHasFreshFrame()?'running':'no_frames';
+  if(!cameraRunning)return cameraInfo?.lifecycle==='failed'||cameraInfo?.last_error&&cameraInfo?.lifecycle!=='stopped'?'failed':'stopped';
+  return sourceHasFreshFrame()?'running':'no_frames';
+}
 // 开关已打开不等于仍有画面；首页、准备检查与悬浮窗共用供帧状态。
 export function sourceHasFreshFrame(){
+  if(S.recognitionOperation||S.sourceConnecting||S.recognitionStopError||['starting','stopping'].includes(cameraInfo?.lifecycle))return false;
   if(sourceMode==='phone')return !!inputStatus.mobile_pose_connected&&(inputStatus.mobile_pose_age_ms==null||Number(inputStatus.mobile_pose_age_ms)<3000);
   if(!cameraRunning||cameraInfo?.picture_black)return false;
   if(cameraInfo?.frames!==undefined||cameraInfo?.last_frame_age_ms!==undefined)return Number(cameraInfo?.frames)>0&&cameraInfo?.last_frame_age_ms!=null&&Number(cameraInfo.last_frame_age_ms)<3000;
   return true;
+}
+export function sourceWaitingForFirstFrame(){
+  return sourceMode==='computer'&&cameraRunning&&Number(cameraInfo?.frames)===0
+    &&cameraInfo?.last_frame_age_ms==null&&!cameraInfo?.last_error;
 }
 export function setPreviewMirror(enabled,revision){
   if(Number.isFinite(revision))latestConfigRevision=Math.max(latestConfigRevision,revision);
@@ -154,13 +171,26 @@ function renderCalibrationOverlay(hs={}){
 export function renderMainStatus(){
   serviceReady=kernelConnected&&outputConnected;
   const main=$('#mainActionBtn');
-  setProperty(main,'disabled',!output.enabled&&(!serviceReady||actionBusy||zoneEditMode));
+  const phase=recognitionState(),busy=['starting','stopping'].includes(phase);
+  setProperty(main,'disabled',!output.enabled&&(!serviceReady||actionBusy||zoneEditMode||busy||phase==='stop_failed'));
   setText($('#mainActionLabel'),output.enabled?'暂停控制':'开始控制');
   setClass(main,'running',!!output.enabled);setClass(main,'primary',!output.enabled);setClass(main,'stop',!!output.enabled);
   // 服务连着的时候什么都不说；断了才冒出来。
-  setText($('#serviceStatus'),S.sourceConnecting?'正在准备识别，请稍候…':serviceReady?'本地服务已连接':'服务断开，可按 F9 重试暂停控制');
+  setText($('#serviceStatus'),phase==='stopping'?'正在停止识别，请稍候…':phase==='starting'?'正在准备识别，请稍候…':serviceReady?'本地服务已连接':'服务断开，可按 F9 重试暂停控制');
   setClass($('#serviceStatus'),'online',serviceReady||!!S.sourceConnecting);setClass($('#serviceStatus'),'offline',!serviceReady&&!S.sourceConnecting);
+  renderRecognitionActions();
   if(isVisible(viewer)){renderViewerMessage();renderReadiness();renderConflicts()}
+}
+
+function renderRecognitionActions(){
+  const phase=recognitionState(),busy=['starting','stopping'].includes(phase);
+  const showStop=['running','no_frames','stopping','stop_failed'].includes(phase);
+  setProperty($('#sourceStopBtn'),'hidden',!showStop);
+  setProperty($('#sourceStopBtn'),'disabled',busy);
+  setText($('#sourceStopBtn'),phase==='stopping'?'正在停止…':phase==='stop_failed'?'重试停止':phase==='no_frames'?'释放设备':'停止识别');
+  setProperty($('#sourceStartBtn'),'hidden',showStop&&phase!=='no_frames');
+  setProperty($('#sourceStartBtn'),'disabled',busy);
+  setText($('#sourceStartBtn'),phase==='starting'?'正在启动…':['failed','no_frames'].includes(phase)?'重试识别':'开始识别');
 }
 
 document.addEventListener('motioncontrol:voice-state',renderMainStatus);
@@ -168,8 +198,12 @@ document.addEventListener('motioncontrol:voice-state',renderMainStatus);
 // 画面中间那句话只在没人、没画面时出现；有人站进来就让开。
 function renderViewerMessage(){
   const hint=$('#hint');if(!hint)return;
-  const live=sourceHasFreshFrame(),error=String(cameraInfo?.last_error||'').trim();
-  const [title,detail]=S.sourceConnecting?['正在准备识别','相机启动可能需要几十秒，请稍候']
+  const phase=recognitionState(),live=phase==='running',error=String(cameraInfo?.last_error||'').trim();
+  const [title,detail]=phase==='stopping'?['正在停止识别','正在释放摄像头和麦克风，请稍候']
+    :phase==='stop_failed'?['停止识别未完成',(S.recognitionStopError||cameraInfo?.stop_error||'设备仍在释放中')+'；点下方「重试停止」']
+    :phase==='starting'?['正在准备识别','相机启动可能需要几十秒，请稍候']
+    :phase==='stopped'?['识别已停止','点下方「开始识别」继续']
+    :sourceWaitingForFirstFrame()?['正在等待摄像头画面','首次启动需要稍候；点下方「释放设备」可取消']
     :sourceMode==='computer'&&cameraRunning&&cameraInfo?.picture_black?['摄像头画面全黑',cameraInfo.camera_virtual?'请启动虚拟摄像头的画面来源，或换一个摄像头':'请检查镜头遮挡，或在「设置 → 设备」更换摄像头']
     :!live?[sourceMode==='phone'?'等手机连上':cameraRunning?'摄像头没有新画面':error?'摄像头启动失败':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':`${error?error+'。':''}点下方「${cameraRunning||error?'重试识别':'开始识别'}」；更换摄像头在「设置 → 设备」`]
     :!currentPoseMap?['站到镜头前','头和双肩入镜就能开始']:['',''];
@@ -192,31 +226,38 @@ function setStep(name,state,sub){
 
 function renderReadiness(){
   const hs=kernelState?.head||{};
+  const phase=recognitionState(),busy=['starting','stopping'].includes(phase),stopped=phase==='stopped';
   const phoneMode=sourceMode==='phone';
   const cameraOk=sourceHasFreshFrame();
-  const posed=!!currentPoseMap;
+  const posed=cameraOk&&!!currentPoseMap;
   const handHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand);
   const needCal=!handHorizontal&&head.enabled;
   const calibrated=!needCal||!!(hs.horizontal_calibrated??hs.calibrated);
-  const cameraIssue=phoneMode?'等手机摄像头连上':cameraRunning&&cameraInfo?.picture_black?'摄像头画面全黑，请检查镜头或画面来源':String(cameraInfo?.last_error||'').trim()||(cameraRunning?'摄像头没有新画面':'摄像头还没连接');
-  const deviceText=cameraOk&&voiceInputReady?'已就绪'
-    :[cameraOk?'摄像头已就绪':cameraIssue,voiceInputReady?'麦克风已就绪':`麦克风：${voiceInputIssue}`].join(' · ');
-  setStep('camera',cameraOk&&voiceInputReady?'done':'warn',deviceText);
+  const cameraIssue=phase==='stopping'?'正在释放摄像头和麦克风':phase==='stop_failed'?'停止未完成，请重试停止':phase==='starting'?'正在启动识别':stopped?'识别已停止':sourceWaitingForFirstFrame()?'正在等待摄像头画面':phoneMode?'等手机摄像头连上':cameraRunning&&cameraInfo?.picture_black?'摄像头画面全黑，请检查镜头或画面来源':String(cameraInfo?.last_error||'').trim()||(cameraRunning?'摄像头没有新画面':'摄像头启动失败');
+  const deviceText=cameraOk?(voiceInputReady?'已就绪':'摄像头已就绪'):cameraIssue;
+  setStep('camera',cameraOk?'done':stopped||busy||sourceWaitingForFirstFrame()?'':'warn',deviceText);
   setProperty($('#cameraStepSub'),'title',cameraOk&&voiceInputReady?'摄像头和麦克风已就绪':deviceText);
-  const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk&&voiceInputReady);
-  setAttribute(go,'data-resolve',cameraOk?voiceInputTarget:'camera');
-  setText(go,cameraOk?(voiceInputTarget==='voice'?'检查语音':'检查麦克风'):phoneMode?'连接手机':cameraRunning||cameraInfo?.last_error?'重试识别':'开始识别');
+  const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk||busy);
+  setAttribute(go,'data-resolve','camera');
+  setText(go,phase==='stop_failed'?'重试停止':stopped?'开始识别':phoneMode?'连接手机':'重试识别');
+  const voiceStep=document.querySelector('.checklist [data-step="voice"]');
+  setProperty(voiceStep,'hidden',!cameraOk||voiceInputReady);
+  setStep('voice','warn',voiceInputIssue);
+  setAttribute($('#voiceStepGo'),'data-resolve',voiceInputTarget);
+  setText($('#voiceStepGo'),voiceInputTarget==='voice'?'检查语音':'检查麦克风');
   // 脚踝出了画面，踏步和脚区就认不出抬脚。只在它们绑了键时提，不算进"还差几步"。
   const feetOut=posed&&kernelState?.feet_in_view===false&&['motion.march','zone.leftFoot','zone.rightFoot'].some(triggerMapped);
   const feetHint='脚没入镜';
-  setStep('pose',posed&&!feetOut?'done':(cameraOk?'warn':''),posed?(feetOut?feetHint:'已识别'):'站到镜头前，头和双肩入镜');
+  setStep('pose',posed&&!feetOut?'done':(cameraOk?'warn':''),!cameraOk?(stopped?'开始识别后检查人体':'等待摄像头画面'):posed?(feetOut?feetHint:'已识别'):'站到镜头前，头和双肩入镜');
   setStep('game',gameProfile.selected?'done':'',gameProfile.selected?.name||'正在读取…');
   // 握拳管左右时不用校准头；这一步照样列着，写明用不着。
   const calStep=document.querySelector('.checklist [data-step="cal"]');
   if(calStep){setClass(calStep,'done',calibrated&&!hs.calibrating);setClass(calStep,'warn',!calibrated&&posed)}
   if(!needCal)setText($('#calStatus'),handHorizontal?'握拳控制视角，不用校准':'左右视角关着，不用校准');
+  setProperty($('#calBtn'),'disabled',!cameraOk&&!hs.calibrating);
+  if(needCal&&!cameraOk&&!calibrated)setText($('#calStatus'),stopped?'开始识别后校准':'等待摄像头画面后校准');
   const left=[cameraOk,posed,calibrated].filter(ok=>!ok).length;
-  setText($('#readyTitle'),left?`还差 ${left} 步`:'可以开始了');
+  setText($('#readyTitle'),stopped?'识别已停止':busy?(phase==='stopping'?'正在停止识别':'正在准备识别'):sourceWaitingForFirstFrame()?'正在等待画面':!cameraOk?'先恢复识别':left?`还差 ${left} 步`:voiceInputReady?'可以开始了':'体感已就绪');
   const running=!!output.enabled;
   setProperty($('#readyCard'),'hidden',running&&!setupConflicts().length);
   setProperty($('#runCard'),'hidden',!running);
@@ -228,7 +269,7 @@ function renderReadiness(){
     const text=sec>=3600?`${Math.floor(sec/3600)}:${pad(Math.floor(sec/60)%60)}:${pad(sec%60)}`:`${pad(Math.floor(sec/60))}:${pad(sec%60)}`;
     if($('#runElapsed').textContent!==text)$('#runElapsed').textContent=text;
     const sub=$('#runSub'),lost=!posed;
-    setText(sub,lost?'看不到人了，站回镜头前':feetOut?feetHint:`${gameProfile.selected?.name||''} · F9 暂停控制`);setClass(sub,'warn',lost||feetOut);
+    setText(sub,!cameraOk?'摄像头画面中断，请先恢复识别':lost?'看不到人了，站回镜头前':feetOut?feetHint:`${gameProfile.selected?.name||''} · F9 暂停控制`);setClass(sub,'warn',!cameraOk||lost||feetOut);
   }else runStartedAt=0;
 }
 
@@ -324,7 +365,7 @@ export function renderKernelState(runtime,force=false){
   renderViewHud(hs,guardBlocked);
   if(hs.calibrated!==undefined){
     setText($('#calBtn'),hs.calibrating?'取消校准':(hs.horizontal_calibrated??hs.calibrated)?'重新校准':'站好并校准');
-    const canCenter=!!(hs.horizontal_calibrated??hs.calibrated)&&!hs.calibrating;
+    const canCenter=sourceHasFreshFrame()&&!!(hs.horizontal_calibrated??hs.calibrated)&&!hs.calibrating;
     setProperty($('#calMenuBtn'),'disabled',!canCenter);setProperty($('#centerBtn'),'disabled',!canCenter);
     if(!canCenter){setProperty($('#calMenu'),'hidden',true);setAttribute($('#calMenuBtn'),'aria-expanded','false')}
     const handHorizontal=handMouseConfig.enabled&&['left','right'].includes(handMouseConfig.horizontal_hand);
@@ -365,10 +406,6 @@ export function renderKernelState(runtime,force=false){
       URL.revokeObjectURL(cameraPreview.src);cameraPreview.removeAttribute('src');
     }
   }
-  const recognizing=sourceMode==='phone'?inputStatus.body_enabled!==false&&sourceHasFreshFrame():sourceHasFreshFrame();
-  setProperty($('#sourceStopBtn'),'hidden',!(sourceMode==='computer'?cameraRunning:inputStatus.body_enabled!==false)&&!S.sourceConnecting);
-  setProperty($('#sourceStartBtn'),'hidden',recognizing||!!S.sourceConnecting);
-  setText($('#sourceStartBtn'),sourceMode==='computer'&&(cameraRunning||cameraInfo?.last_error)?'重试识别':'开始识别');
   // 旧版上下视角（绿框）开着才有这一块。
   const gateActive=!!k.vertical_gate_active;const gateStatus=$('#lookGateStatus');if(gateStatus){setProperty(gateStatus,'hidden',!k.vertical_look?.enabled||!head.verticalLookEnabled||!currentPoseMap);const paused=!!hs.horizontal_paused_by_vertical_gate;const text=gateActive?`上下视角开${paused?' · 左右暂停':''}`:'左手放进绿框开上下视角';setText(gateStatus,text);setProperty(gateStatus,'className','hud hud-gate'+(gateActive?' active':''))}renderOverlay(currentPoseMap);renderMainStatus();
 

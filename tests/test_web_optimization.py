@@ -131,11 +131,11 @@ class LocalApi:
             data = self.output
         elif path == "/api/input/stop":
             self.output["enabled"] = False
-            self.runtime["camera"]["running"] = False
+            self.runtime["camera"].update(running=False, lifecycle="stopped")
             self.input["body_enabled"] = False
             self.voice.update(connected=False, audio_ready=False)
             self.input["voice"] = self.voice
-            data = {**self.runtime, "output": self.output}
+            data = {**self.runtime, "output": self.output, "recognition_stopped": True, "stop_error": ""}
         elif path == "/api/input/source":
             self.runtime["body_mode"] = body["source"]
             self.runtime["camera"]["running"] = body["source"] == "computer" and body.get("enabled", True)

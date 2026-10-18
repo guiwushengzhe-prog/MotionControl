@@ -281,7 +281,8 @@ class VoiceService:
         self._mic_sequence = 0
         self._phone_sequence = 0
         self._mic_gap = threading.Event()
-        self._callback_error: str | None = None
+        self._callback_error: tuple[str, int] | None = None
+        self._recovered_callback_error: tuple[str, int] | None = None
         self.audio_dropped_frames = 0
         self.audio_stream_resets = 0
         self._voice_journal = self.config_path.parent / ".voice-config-transaction.json"
@@ -1261,7 +1262,10 @@ class VoiceService:
         target = self._mic_queue if frame_queue is None else frame_queue
         gap = self._mic_gap if gap_event is None else gap_event
         if status:
-            self._callback_error = f"电脑麦克风状态：{status}"
+            overflow = getattr(status, "input_overflow", False) or "overflow" in str(status).lower()
+            message = ("电脑麦克风音频丢帧，正在重置识别" if overflow else
+                       "电脑麦克风音频间断，正在重置识别")
+            self._callback_error = (message, self._mic_sequence)
             gap.set()
         if not data or target is None:
             return
@@ -1281,7 +1285,7 @@ class VoiceService:
             target.put_nowait(frame)
         except queue.Full:
             self.audio_dropped_frames += 1
-            self._callback_error = "电脑麦克风队列已满，已丢弃音频并重置识别"
+            self._callback_error = ("电脑麦克风处理不及时，已丢弃部分音频，正在重置识别", self._mic_sequence)
             gap.set()
 
     def start_local_microphone(self, device: int | None = None) -> dict:
@@ -1367,13 +1371,14 @@ class VoiceService:
                 gap_event.clear()
                 if previous_sequence is not None and frame.sequence != previous_sequence + 1:
                     gap = True
-                with self._lock:
-                    if self._callback_error:
-                        self.last_error, self._callback_error = self._callback_error, None
+                callback_error = self._callback_error
                 outcome = self._consume_audio(frame, "computer", reset=gap)
                 gap = outcome is None
                 if outcome is not None:
                     previous_sequence = frame.sequence
+                    if not gap_event.is_set():
+                        # 仅确认消费前的这条警告；消费途中产生的新间断仍需下一帧重置。
+                        self._recovered_callback_error = callback_error
             except Exception as exc:
                 gap = True
                 with self._lock:
@@ -1403,6 +1408,8 @@ class VoiceService:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.0)
         with self._lock:
+            self._callback_error = None
+            self._recovered_callback_error = None
             if self.source_kind == "computer":
                 self._release_locked(self.source_id)
                 self.audio_ready = False
@@ -1476,6 +1483,9 @@ class VoiceService:
         display_model_path = (
             str(self.model_path) if self.model_path else None
         )
+        callback_error = self._callback_error
+        callback_warning = (callback_error[0] if callback_error is not None and
+                            callback_error is not self._recovered_callback_error else None)
         result = {
             "available": self.recognizer is not None,
             "model_ready": bool(self.recognizer is not None),
@@ -1512,7 +1522,7 @@ class VoiceService:
             "commands_heard": self.commands_heard,
             "last_action": self.last_action,
             "last_executed": self.last_executed,
-            "last_error": self.last_error,
+            "last_error": self.last_error or callback_warning,
             "audio_alive": alive,
             "stream_alive": alive,
             "audio_queue_depth": self._phone_queue.qsize() if self.source_kind == "phone" else
