@@ -2,7 +2,7 @@ import {recognitionModelName,renderRecognitionPerformance,renderPhoneModelState}
 // 设置 → 设备：摄像头、手机、麦克风、游戏输出。
 import {$,api,formatPerf,notice,post,setProperty} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
-import {cameraInfo,cameraRunning,renderKernelState,renderMainStatus,setPreviewMirror,sourceHasFreshFrame,sourceMode,zoneEditMode} from './play.js';
+import {cameraInfo,cameraRunning,recognitionState,renderKernelState,renderMainStatus,setPreviewMirror,sourceHasFreshFrame,sourceWaitingForFirstFrame,sourceMode,zoneEditMode} from './play.js';
 import {runAction} from './shell.js';
 import {S,gameProfile,output} from './state.js';
 import {handMouseConfig} from './view-control.js';
@@ -167,7 +167,8 @@ function renderPerformance(data){
     if(show){const text=black?'画面全黑':`${Math.round(fps)} 帧/秒`;if(hud.textContent!==text)hud.textContent=text;hud.classList.toggle('slow',!!black||fps<15)}
   }
   const line=$('#recognitionStatus');
-  if(line)line.textContent=S.sourceConnecting?'正在启动摄像头，请稍候…':black?'摄像头画面全黑':live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):sourceMode==='computer'&&cameraInfo?.last_error?cameraInfo.last_error:cameraRunning?'摄像头没有新画面':'未开始';
+  const phase=recognitionState();
+  if(line)line.textContent=phase==='stopping'?'正在停止识别，请稍候…':phase==='stop_failed'?'停止识别未完成，请重试停止':phase==='starting'?'正在启动摄像头，请稍候…':phase==='stopped'?'识别已停止':sourceWaitingForFirstFrame()?'正在等待摄像头画面':black?'摄像头画面全黑':live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):sourceMode==='computer'&&cameraInfo?.last_error?cameraInfo.last_error:cameraRunning?'摄像头没有新画面':'未开始';
   if(line&&!S.sourceConnecting&&live&&sourceMode==='computer'){if(!black&&data.depth_active)line.textContent+=' · 深度已启用';else if(!black&&data.depth_error)line.textContent+=' · '+data.depth_error}
   $('#perfSummary').textContent='识别';
   $('#perfDetails').textContent=[
@@ -460,15 +461,26 @@ export async function emergencyStop(){
 
 export async function stopRecognition(){
   ++S.outputEpoch;++kernelEpoch;++S.inputEpoch;++emergencyStops;
+  S.recognitionOperation='stopping';S.recognitionStopError='';renderMainStatus();
   try{
     const result=await post('/api/input/stop',{},CAMERA_REQUEST_TIMEOUT);
-    if(result.output?.enabled!==false)throw new Error('服务尚未确认');
-    ++S.outputEpoch;renderOutput(result.output);renderKernelState(result);
-    await refreshInput();await refreshPerformance();
+    // 失效掉停止期间发出的旧轮询；相机和输出必须均由服务端确认已停。
+    ++kernelEpoch;++S.outputEpoch;++S.inputEpoch;
+    if(result.output)renderOutput(result.output);
+    renderKernelState(result);
+    const inputOk=await refreshInput();
+    if(!inputOk&&result.input)renderInputStatus(result.input);
+    const stopped=result.output?.enabled===false&&result.camera?.running===false
+      &&(result.recognition_stopped===true||(result.recognition_stopped===undefined&&inputOk&&inputStatus.body_enabled===false));
+    if(!stopped)throw new Error(result.stop_error||'设备尚未完全释放');
+    S.recognitionOperation=null;
+    await refreshPerformance();
     notice('识别已停止，所有体感输出已松开');
+    return result;
   }catch(error){
-    notice('还没确认停止识别：'+error.message+'。请重试停止识别');
-  }
+    S.recognitionStopError=error.message||'未收到设备停止确认';
+    throw new Error('停止识别未完成：'+S.recognitionStopError+'。请点「重试停止」');
+  }finally{S.recognitionOperation=null;renderMainStatus()}
 }
 
 export async function setSource(source,enabled=true){
@@ -490,6 +502,7 @@ export async function setSource(source,enabled=true){
       +'。没有摄像头就把来源改成手机；有好几个就点「扫描」换一个。');
   }
   ++kernelEpoch;++S.inputEpoch;S.desiredSource=source;
+  S.recognitionStopError='';
   renderKernelState(result);await refreshInput();
-  notice(enabled?(source==='phone'?'已切到手机摄像头，等手机连上':'摄像头连上了'):'识别已停止');
+  notice(enabled?(source==='phone'?'已切到手机摄像头，等手机连上':sourceHasFreshFrame()?'识别已开始':'识别已启动，正在等待摄像头画面'):'识别已停止');
 }

@@ -11,7 +11,7 @@ import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
 import {openPhoneCode} from './phone-connect.js';
 import {addCustomGame,addGameVoiceRow,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
-import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,nudgeRect,openLiveZoneEditor,overlay,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,selectEditorRegion,sessionStarted,setEditorRegionMode,sourceHasFreshFrame,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
+import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,nudgeRect,openLiveZoneEditor,overlay,recognitionState,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,selectEditorRegion,sessionStarted,setEditorRegionMode,sourceHasFreshFrame,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
 import {initUpdates,refreshUpdates} from './updates.js';
 import {ensureViewControlReady,handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
@@ -223,9 +223,11 @@ function showRecognitionControl(){
   target.focus({preventScroll:true});target.scrollIntoView({block:'center',behavior:'instant'});
 }
 bind('recognitionHomeBtn',showRecognitionControl);
-bind('cameraStepGo',()=>{
-  const issue=$('#cameraStepGo').dataset.resolve||'camera';
-  if(issue==='camera'&&$('#poseSource').value!=='phone'){showRecognitionControl();return}
+function resolveDeviceIssue(button){
+  const issue=button.dataset.resolve||'camera';
+  if(issue==='camera'&&$('#poseSource').value!=='phone'){
+    showView('play');return recognitionState()==='stop_failed'?stopRecognition():startRecognition();
+  }
   showView('devices');if(currentView!=='devices')return;
   // 模型问题到现有语音诊断查看准确错误和模型路径；设备问题定位来源与输入设备。
   showSettingsPane(issue==='voice'?'lab':'devices');
@@ -233,21 +235,19 @@ bind('cameraStepGo',()=>{
   const target=issue==='voice'?$('#voiceDiagnostic'):issue==='audio'?($('#audioDeviceRow').hidden?$('#audioSource'):$('#audioDevice')):$('#phoneConnectPanel');
   if(!target.matches('input,select,button,a[href]')&&!target.hasAttribute('tabindex'))target.setAttribute('tabindex','-1');
   target.focus({preventScroll:true});target.scrollIntoView({block:'center',behavior:'instant'});
-});
+}
+bind('cameraStepGo',()=>resolveDeviceIssue($('#cameraStepGo')));
+bind('voiceStepGo',()=>resolveDeviceIssue($('#voiceStepGo')));
 
 $('#mainActionBtn').addEventListener('click',()=>output.enabled?void emergencyStop():void runAction(handleMainAction));
 
 async function startRecognition(){
-  // 停帧时 start 本身可能幂等；先释放旧采集，再真正重新打开所选设备。
-  const source=$('#poseSource').value;
-  if(source==='computer'&&cameraRunning&&!sourceHasFreshFrame()){
-    await stopRecognition();if(cameraRunning)throw new Error('尚未确认停止旧采集，请重试停止识别');
-  }
-  await setSource(source,true);
+  // 后台在同一设备操作中等待旧采集释放后再启动，页面只提交一次重试。
+  await setSource($('#poseSource').value,true);
 }
 bind('sourceStartBtn',startRecognition);
 
-$('#sourceStopBtn').addEventListener('click',()=>void stopRecognition());
+bind('sourceStopBtn',stopRecognition);
 
 $('#audioSource').addEventListener('change',e=>runAction(async()=>{
   const value=e.target.value;

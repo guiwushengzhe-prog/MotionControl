@@ -113,6 +113,141 @@ def test_microphone_callback_never_waits_for_recognition_lock_even_on_overflow(t
         item.close()
 
 
+def fake_microphone(item, monkeypatch, *, start_error=None):
+    streams = []
+
+    class Stream:
+        def __init__(self, **options):
+            self.callback = options["callback"]
+            streams.append(self)
+
+        def start(self):
+            if start_error is not None:
+                raise start_error
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "sounddevice", SimpleNamespace(
+        RawInputStream=Stream, query_devices=lambda *args: {"name": "test microphone"},
+        check_input_settings=lambda **options: None))
+    item.start_local_microphone()
+    return streams[0]
+
+
+def test_microphone_overflow_warning_clears_only_after_reset_and_successful_audio(tmp_path, monkeypatch):
+    item, _ = service(tmp_path)
+    entered, resume = threading.Event(), threading.Event()
+    item.recognizer = Recognizer(lambda data: (entered.set(), resume.wait(2.0), None)[-1])
+    try:
+        stream = fake_microphone(item, monkeypatch)
+        resets = item.recognizer.resets
+        stream.callback(b"\0\0", 1, None, SimpleNamespace(input_overflow=True))
+        assert entered.wait(1.0)
+        warning = item.status()["last_error"]
+        assert warning == "电脑麦克风音频丢帧，正在重置识别"
+        assert "已恢复" not in warning and "overflow" not in warning
+        assert item.recognizer.resets == resets + 1
+        assert item.audio_stream_resets == 1
+        resume.set()
+        item._mic_queue.join()
+        assert item.status()["last_error"] is None
+        assert item.status()["audio_alive"]
+    finally:
+        resume.set()
+        item.close()
+
+
+def test_microphone_new_gap_during_recognition_is_not_cleared_by_older_audio(tmp_path, monkeypatch):
+    item, _ = service(tmp_path)
+    entered, resume = threading.Event(), threading.Event()
+    item.recognizer = Recognizer(lambda data: (entered.set(), resume.wait(2.0), None)[-1])
+    try:
+        stream = fake_microphone(item, monkeypatch)
+        stream.callback(b"\0\0", 1, None, "input overflow")
+        assert entered.wait(1.0)
+        stream.callback(b"", 0, None, "input underflow")
+        resume.set()
+        item._mic_queue.join()
+        assert item.status()["last_error"] == "电脑麦克风音频间断，正在重置识别"
+        stream.callback(b"\0\0", 1, None, "")
+        item._mic_queue.join()
+        assert item.audio_stream_resets == 2
+        assert item.status()["last_error"] is None
+    finally:
+        resume.set()
+        item.close()
+
+
+def test_stale_microphone_audio_does_not_clear_overflow_warning(tmp_path, monkeypatch):
+    item, _ = service(tmp_path)
+    item.recognizer = Recognizer(lambda data: None)
+    try:
+        stream = fake_microphone(item, monkeypatch)
+        stream.callback(b"\0\0", 1, SimpleNamespace(currentTime=20.0, inputBufferAdcTime=18.0), "input overflow")
+        item._mic_queue.join()
+        assert item.recognizer.calls == []
+        assert item.status()["last_error"] == "电脑麦克风音频丢帧，正在重置识别"
+        stream.callback(b"\0\0", 1, None, "")
+        item._mic_queue.join()
+        assert item.status()["last_error"] is None
+        assert item.audio_stream_resets == 1
+    finally:
+        item.close()
+
+
+def test_microphone_warning_and_recovery_do_not_replace_persistent_error(tmp_path, monkeypatch):
+    item, _ = service(tmp_path)
+
+    def broken_recognizer(data):
+        raise RuntimeError("语音模型读取失败")
+
+    item.recognizer = Recognizer(broken_recognizer)
+    try:
+        stream = fake_microphone(item, monkeypatch)
+        stream.callback(b"\0\0", 1, None, "input overflow")
+        item._mic_queue.join()
+        assert item.status()["last_error"] == "语音模型读取失败"
+        item.recognizer = Recognizer(lambda data: None)
+        stream.callback(b"\0\0", 1, None, "input overflow")
+        item._mic_queue.join()
+        assert item.status()["last_error"] == "语音模型读取失败"
+        item.stop_local_microphone()
+        assert item.status()["last_error"] == "语音模型读取失败"
+    finally:
+        item.close()
+
+
+def test_explicit_microphone_stop_clears_pending_callback_warning(tmp_path, monkeypatch):
+    item, _ = service(tmp_path)
+    try:
+        stream = fake_microphone(item, monkeypatch)
+        stream.callback(b"", 0, None, "input overflow")
+        assert item.status()["last_error"]
+        state = item.stop_local_microphone()
+        assert state["last_error"] is None
+        assert not state["connected"] and not state["audio_ready"]
+        stream.callback(b"\0\0", 1, None, "input overflow")
+        assert item.status()["last_error"] is None
+    finally:
+        item.close()
+
+
+def test_failed_microphone_start_retains_failure_after_stop_cleanup(tmp_path, monkeypatch):
+    item, _ = service(tmp_path)
+    try:
+        fake_microphone(item, monkeypatch, start_error=RuntimeError("设备已断开"))
+        state = item.status()
+        assert state["last_error"] == "电脑麦克风启动失败：设备已断开"
+        assert not state["connected"] and not state["audio_ready"]
+        assert item.stop_local_microphone()["last_error"] == state["last_error"]
+    finally:
+        item.close()
+
+
 def test_phone_audio_producer_stays_fast_and_bounded_while_recognizer_is_busy(tmp_path):
     item, _ = service(tmp_path)
     entered, resume = threading.Event(), threading.Event()

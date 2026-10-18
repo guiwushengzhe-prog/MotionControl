@@ -6,6 +6,8 @@ export const S = {
   cameraIndex: 0,
   outputEpoch: 0,
   inputEpoch: 0,
+  recognitionOperation: null,
+  recognitionStopError: '',
   headDirty: false,
   desiredSource: null,
   customPoseScores: {},

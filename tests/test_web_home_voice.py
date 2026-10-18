@@ -1,4 +1,4 @@
-"""设备检查整合摄像头与麦克风，异常可定位处理处；不采集截图。"""
+"""设备就绪时保持简洁；麦克风故障单独定位，不覆盖摄像头状态；不采集截图。"""
 import pytest
 
 from test_web_ui import browser, server, ui, sync_api
@@ -53,10 +53,11 @@ def test_microphone_error_is_lightweight_and_jumps_to_audio_device(ui):
     was_disabled = page.locator("#mainActionBtn").is_disabled()
     page.unroute(ui.base + "/api/voice/status")
     _voice_status(ui, connected=False, last_error="麦克风已被其他程序占用")
-    sync_api.expect(page.locator("#cameraStepSub")).to_contain_text("麦克风已被其他程序占用")
-    sync_api.expect(page.locator('.checklist [data-step="camera"]')).to_have_class("step warn")
+    sync_api.expect(page.locator("#cameraStepSub")).to_have_text("摄像头已就绪")
+    sync_api.expect(page.locator("#voiceStepSub")).to_contain_text("麦克风已被其他程序占用")
+    sync_api.expect(page.locator('.checklist [data-step="voice"]')).to_have_class("step warn")
     assert page.locator("#mainActionBtn").is_disabled() == was_disabled, "麦克风异常不额外阻止控制"
-    page.click("#cameraStepGo")
+    page.click("#voiceStepGo")
     sync_api.expect(page.locator('.settings-pane[data-pane="devices"]')).to_be_visible()
     assert page.evaluate("['audioSource','audioDevice'].includes(document.activeElement.id)")
     assert ui.errors == []
@@ -71,9 +72,11 @@ def test_voice_read_failure_clears_device_ready_and_recovers(ui):
     page.unroute(endpoint)
     page.route(endpoint, lambda route: route.fulfill(status=503, json={"error": "读取失败"}))
     page.evaluate("async()=>{await (await import('/js/voice.js')).refreshVoice()}")
-    sync_api.expect(page.locator("#cameraStepSub")).to_contain_text("语音状态无法确认")
-    sync_api.expect(page.locator('.checklist [data-step="camera"]')).to_have_class("step warn")
+    sync_api.expect(page.locator("#cameraStepSub")).to_have_text("摄像头已就绪")
+    sync_api.expect(page.locator("#voiceStepSub")).to_contain_text("语音状态无法确认")
+    sync_api.expect(page.locator('.checklist [data-step="voice"]')).to_have_class("step warn")
     page.unroute(endpoint)
     _voice_status(ui)
     sync_api.expect(page.locator("#cameraStepSub")).to_have_text("已就绪")
+    sync_api.expect(page.locator('.checklist [data-step="voice"]')).to_be_hidden()
     assert ui.errors == []

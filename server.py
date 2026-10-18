@@ -159,7 +159,8 @@ INPUT_SOURCE_LOCK = threading.RLock()
 INPUT_STOP_LOCK = threading.Lock()
 INPUT_STOP_GENERATION = 0
 AUDIO_SOURCE_LOCK = threading.RLock()
-CONFIG_REVISION = 0
+# 同机跨进程的递增时钟作基数，后台重启后未刷新的网页仍能接收新状态。
+CONFIG_REVISION = time.monotonic_ns() // 1000
 
 
 def runtime_status() -> dict:
@@ -281,7 +282,21 @@ def stop_recognition_all() -> dict:
             _set_audio_source(AUDIO_SOURCE, start=False)
             INPUT_BRIDGE.set_audio_mode("computer")
             VOICE.disconnect()
-        return {**runtime_status(), **_audio_payload(), "output": result}
+        status = _recognition_stop_status()
+        if not status["recognition_stopped"]:
+            raise CameraUnavailable("识别设备仍在释放，请稍后重试停止")
+        return {**status, "stop_error": "", "output": result}
+
+
+def _recognition_stop_status() -> dict:
+    runtime, audio = runtime_status(), _audio_payload()
+    body_enabled = bool(INPUT_BRIDGE.status().get("body_enabled", True))
+    camera, voice = runtime.get("camera", {}), audio.get("voice", {})
+    stopped = (camera.get("running") is False
+               and camera.get("lifecycle") not in {"starting", "stopping"}
+               and not body_enabled and not voice.get("connected", False))
+    return {**runtime, **audio, "input": {"body_enabled": body_enabled},
+            "recognition_stopped": stopped}
 
 
 HOTKEYS = GlobalHotkeys(OUTPUT, emergency_stop=emergency_stop_all)
@@ -741,6 +756,7 @@ def _set_body_input(source: str, enabled: bool, *, device=None) -> dict:
         _set_output_enabled(False)
         INPUT_BRIDGE.set_body_enabled(False)
         INPUT_BRIDGE.set_body_mode("computer")
+        succeeded = False
         try:
             if generation != INPUT_STOP_GENERATION:
                 raise CameraUnavailable("识别启动已被停止")
@@ -751,10 +767,11 @@ def _set_body_input(source: str, enabled: bool, *, device=None) -> dict:
             if generation != INPUT_STOP_GENERATION:
                 RUNTIME.stop_body()
                 raise CameraUnavailable("识别启动已被停止")
+            succeeded = True
             return data
         finally:
             # 主动停止不会被迟到的相机请求或手机姿态重新打开。
-            active = enabled and generation == INPUT_STOP_GENERATION
+            active = enabled and succeeded and generation == INPUT_STOP_GENERATION
             INPUT_BRIDGE.set_body_mode(source if active else "computer")
             INPUT_BRIDGE.set_body_enabled(active)
 
@@ -2559,7 +2576,9 @@ class AdminHandler(_BaseHandler):
             try:
                 self._send_json({"ok": True, **stop_recognition_all()})
             except Exception as exc:
-                self._send_json({"ok": False, "error": str(exc), "output": OUTPUT.status()}, 400)
+                self._send_json({"ok": False, **_recognition_stop_status(),
+                                 "recognition_stopped": False, "stop_error": str(exc),
+                                 "error": str(exc), "output": OUTPUT.status()}, 400)
             return
         if route == "/api/input/audio-device":
             if not self._is_loopback():
@@ -3032,6 +3051,7 @@ def main():
                     help="本机管理面端口；只监听 127.0.0.1，局域网无法访问")
     ap.add_argument("--model-root", default=None)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--no-start-recognition", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--wait-for-pid", type=int, default=0, help=argparse.SUPPRESS)
     args = ap.parse_args()
 
@@ -3067,8 +3087,9 @@ def main():
     FIREWALL.enabled = args.host not in {"127.0.0.1", "localhost", "::1"}
     # 启动时恢复两种独立输入：身体来源只决定姿态，音频来源只决定语音。
     INPUT_BRIDGE.set_body_mode(RUNTIME.body_mode)
+    INPUT_BRIDGE.set_body_enabled(not args.no_start_recognition)
     # 默认电脑麦克风随服务启动；选择手机麦克风时仍会释放本地麦克风。
-    _set_audio_source(AUDIO_SOURCE, start=True)
+    _set_audio_source(AUDIO_SOURCE, start=not args.no_start_recognition)
     _enable_default_xinput_merge()
     print(f"MotionControl 2.0 · body zones + motions + voice · v{VERSION}")
     print("Model root:", MODEL_ROOT or "NOT FOUND")
@@ -3124,9 +3145,10 @@ def main():
 
     with INPUT_STOP_LOCK:
         startup_generation = INPUT_STOP_GENERATION
-    threading.Thread(target=_restore_saved_recognition,
-                     args=(RUNTIME.body_mode, startup_generation),
-                     name="motion-start-recognition", daemon=True).start()
+    if not args.no_start_recognition:
+        threading.Thread(target=_restore_saved_recognition,
+                         args=(RUNTIME.body_mode, startup_generation),
+                         name="motion-start-recognition", daemon=True).start()
 
     # 两个监听都起来了，这一份就算站住了：清掉启动记号，不然下次启动会以为上次
     # 崩了然后把包退回去。也顺手去查一次有没有新版本，下到暂存目录等下次启动。

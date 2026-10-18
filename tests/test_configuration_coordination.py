@@ -112,16 +112,18 @@ def game_bundle():
 
 def test_install_game_bundle_updates_both_consumers(application):
     app = application
+    initial_revision = app.CONFIG_REVISION
     app._install_game_bundle(game_bundle())
     bindings = app.PROFILES.effective_profile()["bindings"]
     assert app.KERNEL.control_bindings == flatten_bindings(bindings)
     assert app.VOICE._profile_bindings == bindings
     assert bindings["voice"]["game.profile_slot_1"]["phrase"] == "换方案"
-    assert app.CONFIG_REVISION == 1
+    assert app.CONFIG_REVISION == initial_revision + 1
 
 
 def test_failed_bundle_restores_disk_memory_and_both_consumers(application, monkeypatch):
     app = application
+    initial_revision = app.CONFIG_REVISION
     app._install_game_bundle(game_bundle())
     paths = [app.PROFILES.selection_path, app.PROFILES.custom_games_path, app.MOTION_CONFIG_FILE]
     files = {p: p.read_bytes() if p.exists() else None for p in paths}
@@ -141,7 +143,7 @@ def test_failed_bundle_restores_disk_memory_and_both_consumers(application, monk
     assert app.KERNEL.control_bindings == bindings
     assert app.VOICE._profile_bindings == voice
     assert {p: p.read_bytes() if p.exists() else None for p in paths} == files
-    assert app.CONFIG_REVISION == 1
+    assert app.CONFIG_REVISION == initial_revision + 1
 
 
 def test_emergency_releases_output_before_kernel_cleanup(application, monkeypatch):
@@ -273,6 +275,7 @@ def test_phone_disconnect_during_trigger_note_cannot_enable_output(application, 
 
 def test_journal_commit_failure_restores_consumers_before_unlock(application, monkeypatch):
     app = application
+    initial_revision = app.CONFIG_REVISION
     app._install_game_bundle(game_bundle())
     old_kernel = copy.deepcopy(app.KERNEL.control_bindings)
     old_voice = copy.deepcopy(app.VOICE._profile_bindings)
@@ -299,5 +302,5 @@ def test_journal_commit_failure_restores_consumers_before_unlock(application, mo
     assert app.KERNEL.control_bindings == old_kernel
     assert app.VOICE._profile_bindings == old_voice
     assert app.PROFILES.selection_path.read_bytes() == old_file
-    assert app.CONFIG_REVISION == 1
+    assert app.CONFIG_REVISION == initial_revision + 1
     assert not journal.exists()

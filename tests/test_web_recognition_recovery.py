@@ -19,8 +19,6 @@ def test_settings_home_link_reveals_real_start_and_check_does_not_return_to_sett
     assert page.evaluate('document.activeElement.id') == 'sourceStartBtn'
     page.click('#cameraStepGo')
     expect(page.locator('#playPanel')).to_be_visible()
-    assert page.evaluate('document.activeElement.id') == 'sourceStartBtn'
-    page.click('#sourceStartBtn')
     expect(page.locator('#sourceStopBtn')).to_be_visible()
     assert any(path == '/api/input/source' and body['enabled'] for path, body in api.requests)
     assert api.output['enabled'] is False
@@ -40,7 +38,9 @@ def test_stalled_camera_retry_releases_then_reopens_on_home(desktop):
     page.wait_for_function("!document.querySelector('#sourceStartBtn').disabled")
     mutations = [(path, body) for path, body in api.requests if body is not None]
     paths = [path for path, _ in mutations]
-    assert paths.index('/api/input/stop') < paths.index('/api/input/source')
+    # 旧采集的释放和重开在后台同一操作内完成，页面不能插入“停止成功”提示。
+    assert '/api/input/stop' not in paths
+    assert paths.count('/api/input/source') == 1
     source = next(body for path, body in mutations if path == '/api/input/source')
     assert source['source'] == 'computer' and source['enabled'] is True
     assert api.output['enabled'] is False
@@ -54,6 +54,9 @@ def test_start_control_does_not_enable_output_until_a_real_camera_frame(desktop)
     with page.expect_request('**/api/input/source'):
         page.click('#mainActionBtn')
     expect(page.locator('#notice')).to_contain_text('正在等待摄像头新画面')
+    expect(page.locator('#hint b')).to_have_text('正在等待摄像头画面')
+    expect(page.locator('#cameraStepSub')).to_have_text('正在等待摄像头画面')
+    expect(page.locator('#sourceStopBtn')).to_have_text('释放设备')
     assert api.runtime['camera']['running'] is True
     assert api.output['enabled'] is False
     assert not any(path == '/api/output/config' and body.get('enabled')

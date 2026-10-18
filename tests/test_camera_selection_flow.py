@@ -59,6 +59,7 @@ def test_camera_start_failure_does_not_exit_application(application, monkeypatch
     app._restore_saved_recognition("computer", app.INPUT_STOP_GENERATION)
     assert "设备未就绪" in capsys.readouterr().out
     assert not app.OUTPUT.status()["enabled"]
+    assert not app.INPUT_BRIDGE.status()["body_enabled"]
 
 
 def test_stop_recognition_keeps_web_server_and_restart_available(application, monkeypatch):
@@ -73,7 +74,10 @@ def test_stop_recognition_keeps_web_server_and_restart_available(application, mo
         request = urllib.request.Request(base + "/api/input/stop", data=b"{}",
                                          headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(request, timeout=5) as response:
-            assert json.load(response)["ok"]
+            stopped = json.load(response)
+            assert stopped["ok"]
+            assert stopped["recognition_stopped"]
+            assert stopped["input"]["body_enabled"] is False
         assert not camera.running
         with urllib.request.urlopen(base + "/api/kernel/status", timeout=5) as response:
             assert not json.load(response)["camera"]["running"]
@@ -89,6 +93,36 @@ def test_stop_recognition_keeps_web_server_and_restart_available(application, mo
         http.shutdown()
         http.server_close()
         thread.join(timeout=2)
+
+
+def test_stop_release_timeout_reports_failure_but_keeps_output_and_body_off(application, monkeypatch):
+    app = application
+    camera, _events = mock_camera(app, monkeypatch)
+    camera.running = True
+    released = camera.stop_and_wait
+
+    def blocked_release(*args, **kwargs):
+        camera.running = False
+        camera.lifecycle = "stopping"
+        raise CameraUnavailable("上一台摄像头还在释放，请稍后重试")
+
+    monkeypatch.setattr(camera, "stop_and_wait", blocked_release)
+    replies = []
+    request = request_for(app, "/api/input/stop", replies)
+    request._body = lambda: {}
+    try:
+        request.do_POST()
+        code, stopped = replies[-1]
+        assert code == 400
+        assert not stopped["ok"]
+        assert not stopped["recognition_stopped"]
+        assert stopped["camera"]["lifecycle"] == "stopping"
+        assert "还在释放" in stopped["stop_error"]
+        assert not stopped["output"]["enabled"]
+        assert not app.INPUT_BRIDGE.status()["body_enabled"]
+    finally:
+        camera.lifecycle = "stopped"
+        monkeypatch.setattr(camera, "stop_and_wait", released)
 
 
 def test_running_camera_selection_releases_then_starts_and_preserves_controls(application, monkeypatch):
