@@ -277,6 +277,13 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 1.25rem; align-items: start; }
 .play-main { display: grid; gap: .875rem; min-width: 0; }
 .viewer-card { padding: .75rem; }
+.pose-record-status { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .75rem; padding: .625rem .75rem; border-radius: var(--radius-sm); background: var(--tint); }
+.pose-record-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; }
+.pose-record-text b { font-size: .875rem; font-weight: 600; }
+.pose-record-text span { color: var(--text-2); font-size: .875rem; font-variant-numeric: tabular-nums; }
+.pose-record-status[data-state="waiting"] .pose-record-text span, .pose-record-status[data-state="recording"] .pose-record-text span { color: var(--on-tint); }
+.pose-record-status[data-state="error"] .pose-record-text span { color: var(--warn); }
+.pose-record-status > .btn { flex-shrink: 0; }
 /* 画面按屏幕高度收着，整个开始页不用滚动就能看全。比例跟着摄像头走（手机竖着拍
    就是竖的），所以宽度要从高度和那个比例反算。 */
 .viewer { position: relative; width: min(100%, calc(max(100vh - 12.5rem, 21.25rem) * var(--frame-ratio, 1.3333)));

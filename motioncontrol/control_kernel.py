@@ -1924,6 +1924,7 @@ class ControlKernel:
     ) -> None:
         if not pose_map:
             self._clear_body_outputs_locked()
+            self._record_pose_frame_locked(None, now, world_pose)
             self._update_intent_recording_locked(None, now)
             self._record_trigger_frame_locked(None, now)
             if self.fitness is not None:
@@ -1937,18 +1938,6 @@ class ControlKernel:
             pose_map, now, self._hand_points_for_mouse_locked(),
             kinect_camera.depth_hand_states(self.latest_depth_body),
             frame_size=(self.width, self.height) if self.width > 0 and self.height > 0 else None)
-        # Recorded after the hand pass so the saved frames carry the fist
-        # reading alongside the skeleton -- that pairing is the point of
-        # recording at all when tuning the thresholds.
-        if self.pose_recorder.state in {"waiting", "recording"}:
-            hand = self.hand_mouse_controller.status()
-            self.pose_recorder.capture(
-                pose_map, now, width=self.width, height=self.height,
-                source=str(self.active_body_source or ""),
-                extra={"hand_spread": hand["spread"], "fist": hand["engaged"],
-                       "hand": hand["hand"], "hands": hand["hands"],
-                       "axes": hand["axes"]},
-            )
         if self.zone_fit_session is not None and self.zone_fit_session.active:
             grips = {hand: {"curl": controller.curl, "spread": controller.spread}
                      for hand, controller in self.hand_mouse_controller.hands.items()}
@@ -1963,6 +1952,7 @@ class ControlKernel:
         self._dispatch_controls_locked(now)
         self._update_body_motion_guard_locked(pose_map, now)
         self._update_head_locked(pose_map, now, world_pose)
+        self._record_pose_frame_locked(pose_map, now, world_pose)
         self._record_trigger_frame_locked(pose_map, now, world_pose)
         if self.fitness is not None:
             physical = {f"motion.{name}" for name in self.motion_active}
@@ -1970,6 +1960,32 @@ class ControlKernel:
             physical.update(f"zone.{name}" for name, state in self.zone_state.items()
                             if name != "lookGate" and state.get("pressed"))
             self.fitness.observe_pose(pose_map, self._pose_sample_time_locked(now), actions=physical)
+
+    def _record_pose_frame_locked(self, pose_map, now, world_pose=None):
+        if self.pose_recorder.state not in {"waiting", "recording"}:
+            return
+        # 头部和手部均已处理当前帧，不能把上一帧输出配到当前骨骼上。
+        hand = self.hand_mouse_controller.status()
+        self.pose_recorder.capture(
+            pose_map, now, width=self.width, height=self.height,
+            source=str(self.active_body_source or ""), world_pose=world_pose,
+            sample_at=self.pose_sample_at,
+            extra={"hand_spread": hand["spread"], "fist": hand["engaged"],
+                   "hand": hand["hand"], "hands": hand["hands"], "axes": hand["axes"],
+                   "head_pose": self.latest_head_pose, "head": self.head,
+                   "head_config": self.head_controller.config,
+                   "motion_deadzone_scale": self.body_motion_guard_scale,
+                   # 这是控制链计算结果，不代表系统鼠标或游戏实际已移动。
+                   "output_enabled": bool(getattr(self.output, "enabled", True))},
+            snapshot_factory=lambda: {
+                # 旧校准档案用NaN表示未测得的浮点量；按原格式封装为字符串，
+                # 既能原样恢复，又不把非标准浮点值写入外层录制JSON。
+                "head_profile_json": json.dumps(self.head_controller.profile_document(),
+                                                 ensure_ascii=False, separators=(",", ":")),
+                "vertical_look": dict(self.vertical_look),
+                "body_motion_guard_enabled": self.body_motion_guard_enabled,
+            },
+        )
 
     def _record_trigger_frame_locked(self, pose_map, now, world_pose=None):
         if not self.trigger_recorder.config["enabled"]:
@@ -3871,6 +3887,7 @@ class ControlKernel:
                     self.sensor_sources.pop(source, None)
                     self._safe_output(self.output.clear_source, source)
                 self.trigger_recorder.tick(now)
+                self.pose_recorder.tick(now)
 
     def close(self) -> None:
         self._stop.set()

@@ -31,6 +31,10 @@
 <section class="layout" data-panel="play" id="playPanel">
 <div class="play-main">
 <section class="card viewer-card">
+<div class="pose-record-status" id="homePoseRecorder" hidden>
+<div class="pose-record-text"><b>骨骼数据录制</b><span id="homePoseRecordStatus" role="status" aria-live="polite"></span></div>
+<button class="btn" id="homePoseRecordCancelBtn" type="button" hidden>取消录制</button>
+</div>
 <div class="viewer" id="viewer">
 <img alt="电脑摄像头预览" hidden="" id="cameraPreview"/>
 <canvas id="canvas"></canvas>

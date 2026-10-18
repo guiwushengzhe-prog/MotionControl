@@ -134,7 +134,7 @@ class HfhpeEstimator:
         now = time.monotonic()
         if self.session is None:
             if now < self._retry_at:
-                return {"source": "hfhpe", "valid": False, "error": self._state["message"]}
+                return {"source": "hfhpe", "model": self.model, "valid": False, "error": self._state["message"]}
             self._state = {"state": "loading", "message": "正在加载实验头姿模型", "model": self.model}
             try:
                 self._load()
@@ -142,22 +142,24 @@ class HfhpeEstimator:
                 message = "缺少头姿推理运行库，请安装 requirements-runtime.txt 中的依赖" if isinstance(exc, ImportError) else str(exc)
                 self._state = {"state": "error", "message": message, "model": self.model}
                 self._retry_at = now + 5
-                return {"source": "hfhpe", "valid": False, "error": message}
+                return {"source": "hfhpe", "model": self.model, "valid": False, "error": message}
         box = head_box(pose, frame.shape[1], frame.shape[0])
         if box is None:
             message = "未看清头部，请让整头和双肩入镜"
             self._state = {"state": "unavailable", "message": message, "model": self.model}
-            return {"source": "hfhpe", "valid": False, "error": message}
+            return {"source": "hfhpe", "model": self.model, "valid": False, "error": message}
         started = time.perf_counter()
         try:
             tensor = prepare_crop(frame, box, self.size)
             result = decode_pose(*self.session.run(["cos_sin", "kappa"], {"images": tensor}))
         except Exception as exc:
             self._state = {"state": "error", "message": "头姿推理失败：" + str(exc), "model": self.model}
-            return {"source": "hfhpe", "valid": False, "error": self._state["message"]}
+            return {"source": "hfhpe", "model": self.model, "valid": False, "error": self._state["message"]}
         elapsed = round((time.perf_counter() - started) * 1000, 2)
         self._state = {"state": "ready", "message": "", "model": self.model,
                        "inference_ms": elapsed, "head_box": list(box), "kappa": result["kappa"]}
+        # 和角度保留在同一帧，录制无需另外查询相机状态或重复推理。
+        result.update(model=self.model, inference_ms=elapsed, head_box=list(box))
         return result
 
     def status(self):
