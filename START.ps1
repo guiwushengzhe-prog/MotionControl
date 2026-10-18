@@ -2,6 +2,29 @@ $ErrorActionPreference = 'Stop'
 $env:PYTHONUTF8 = '1'
 Set-Location $PSScriptRoot
 
+function Wait-MotionControlAdministrator {
+    param([string]$GameId, [int]$TimeoutSeconds = 60)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $selected = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/selected' -TimeoutSec 2
+            # The previous ordinary instance may still answer during handoff.
+            if ($selected.profile.selected_id -eq $GameId -and
+                $selected.launch.game_id -eq $GameId -and $selected.launch.is_admin -eq $true) {
+                $cameraState = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/kernel/status' -TimeoutSec 2
+                if ($cameraState.body_mode -in @('computer', 'phone') -and
+                        $null -ne $cameraState.camera -and $null -ne $cameraState.kernel) {
+                    return $cameraState
+                }
+            }
+        } catch {
+            # Connection refusals are expected while the old instance exits.
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw '管理员程序未能在一分钟内就绪，未打开页面或另起后台。请查看启动窗口中的错误后重试。'
+}
+
 # If an authorized Android phone is already connected, expose the local
 # MotionControl service to the phone as 127.0.0.1:8765. This is intentionally
 # best-effort: desktop camera mode must still start when ADB is unavailable.
@@ -36,22 +59,74 @@ try {
 if ($running -and $running.StatusCode -eq 200) {
     try {
         $selected = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/selected' -TimeoutSec 2
-        if ($selected.launch.requires_admin -and -not $selected.launch.is_admin) {
-            Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/launch-mode' `
-                -Method Post -ContentType 'application/json' -Body '{"admin":true}' -TimeoutSec 120 | Out-Null
-            Write-Host '已请求按当前游戏的设置以管理员方式重启。'
-        }
     } catch {
-        Write-Host "未能切换启动权限，现有程序继续运行：$($_.Exception.Message)"
+        Write-Host '现有程序未能返回游戏设置，未打开页面或另起后台。请稍后重试。'
+        exit 1
+    }
+    $cameraState = $null
+    $gameId = [string]$selected.profile.selected_id
+    if (-not $gameId -or $selected.launch.game_id -ne $gameId) {
+        Write-Host '现有程序的游戏设置尚未就绪，未打开页面或另起后台。请稍后重试。'
+        exit 1
+    }
+    if ($selected.launch.requires_admin -and -not $selected.launch.is_admin) {
+        $restart = $null
+        try {
+            $restart = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/launch-mode' `
+                -Method Post -ContentType 'application/json' -Body '{"admin":true}' -TimeoutSec 120
+            if ($restart.ok -ne $true) { throw '程序未接受管理员重启请求。' }
+        } catch {
+            $restart = $null
+            Write-Host '未能切换为管理员，正在核实原程序是否仍在运行。'
+            try {
+                $selected = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/selected' -TimeoutSec 2
+                if ($selected.profile.selected_id -ne $gameId -or $selected.launch.game_id -ne $gameId) {
+                    throw '原游戏的程序尚未就绪。'
+                }
+                $cameraState = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/kernel/status' -TimeoutSec 3
+                if ($cameraState.body_mode -notin @('computer', 'phone') -or
+                        $null -eq $cameraState.camera -or $null -eq $cameraState.kernel) {
+                    throw '原程序未能返回识别状态。'
+                }
+                if (-not $selected.launch.is_admin) {
+                    Write-Host '原程序仍以普通权限运行；本次不再请求管理员权限。'
+                }
+            } catch {
+                Write-Host '原程序也未响应，未打开页面或另起后台。请查看启动窗口中的错误后重试。'
+                exit 1
+            }
+        }
+        if ($null -ne $restart) {
+            if ($restart.restarting -eq $true) {
+                Write-Host '已请求按当前游戏的设置以管理员方式重启，正在等待新程序就绪。'
+            } else {
+                Write-Host '正在核实当前游戏的管理员程序是否就绪。'
+            }
+            try {
+                $cameraState = Wait-MotionControlAdministrator -GameId $gameId
+            } catch {
+                Write-Host $_.Exception.Message
+                exit 1
+            }
+            Write-Host '当前游戏的管理员程序已就绪。'
+        }
     }
     try {
-        $cameraState = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/kernel/status' -TimeoutSec 3
+        if ($null -eq $cameraState) {
+            $cameraState = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/kernel/status' -TimeoutSec 3
+        }
         if ($cameraState.body_mode -eq 'computer' -and -not $cameraState.camera.running) {
             Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/input/source' `
                 -Method Post -ContentType 'application/json' -Body '{"source":"computer","enabled":true}' -TimeoutSec 55 | Out-Null
         }
     } catch {
         Write-Host "摄像头未能自动启动，可在首页画面下方重试识别：$($_.Exception.Message)"
+        try {
+            Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/selected' -TimeoutSec 2 | Out-Null
+        } catch {
+            Write-Host '程序已失去响应，未打开页面或另起后台。请查看启动窗口中的错误后重试。'
+            exit 1
+        }
     }
     Write-Host 'MotionControl 已在运行，正在打开控制页面。'
     Start-Process 'http://127.0.0.1:8766/'
