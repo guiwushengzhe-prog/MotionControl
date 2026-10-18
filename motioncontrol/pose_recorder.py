@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import tempfile
 import threading
@@ -46,6 +47,17 @@ MAX_DURATION_S = 120.0
 MAX_FRAMES = 12_000
 
 
+def _json_safe(value):
+    """缺失的观测量写作null，校准档案字符串保留其原有恢复格式。"""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 class PoseRecorder:
     """Records the expanded 33-point pose the kernel is actually working with."""
 
@@ -53,6 +65,7 @@ class PoseRecorder:
         self.directory = Path(directory)
         self._lock = threading.RLock()
         self._frames: list[dict] = []
+        self._snapshot: dict | None = None
         self.state = "idle"
         self.starts_at = 0.0
         self.ends_at = 0.0
@@ -85,6 +98,7 @@ class PoseRecorder:
             if self.state in {"waiting", "recording", "saving"}:
                 raise ValueError("已经在录制中")
             self._frames = []
+            self._snapshot = None
             self.delay_s = delay
             self.duration_s = duration
             self.starts_at = now + delay
@@ -106,25 +120,31 @@ class PoseRecorder:
 
     # -- capture -----------------------------------------------------------
 
-    def capture(self, pose_map: dict, now: float, *, width: int = 0, height: int = 0,
-                source: str = "", extra: dict | None = None) -> None:
+    def capture(self, pose_map: dict | None, now: float, *, width: int = 0, height: int = 0,
+                source: str = "", extra: dict | None = None, world_pose=None,
+                sample_at: float | None = None, snapshot_factory=None) -> None:
         """Called once per frame from the control loop.  Must stay cheap."""
         with self._lock:
             if self.state == "waiting":
                 if now < self.starts_at:
                     return
                 self.state = "recording"
-                self.source = str(source)
-                self.recorded_at = datetime.now().astimezone().isoformat(timespec="microseconds")
             if self.state != "recording":
                 return
             if now >= self.ends_at or len(self._frames) >= MAX_FRAMES:
                 self._finish_locked()
                 return
+            if not self.recorded_at:
+                self.source = str(source)
+                self.recorded_at = datetime.now().astimezone().isoformat(timespec="microseconds")
+                # 只在第一帧保存校准档案，倒计时和普通控制不额外复制档案。
+                self._snapshot = copy.deepcopy(snapshot_factory()) if snapshot_factory else None
             self._frames.append({
                 "t": round(now - self.starts_at, 4),
+                "source": str(source),
                 "width": int(width),
                 "height": int(height),
+                **({"sample_t": round(sample_at - self.starts_at, 4)} if sample_at is not None else {}),
                 # Copied rather than referenced: the kernel reuses and mutates
                 # its pose dictionaries between frames.
                 "pose": {
@@ -137,8 +157,17 @@ class PoseRecorder:
                     for name, point in (pose_map or {}).items()
                     if isinstance(point, dict)
                 },
+                **({"world_pose": copy.deepcopy(world_pose)} if world_pose is not None else {}),
                 **({"extra": copy.deepcopy(extra)} if extra else {}),
             })
+
+    def tick(self, now: float) -> None:
+        """相机断帧时倒计时和截止时间仍然生效，不生成虚构姿态。"""
+        with self._lock:
+            if self.state == "waiting" and now >= self.starts_at:
+                self.state = "recording"
+            if self.state == "recording" and now >= self.ends_at:
+                self._finish_locked()
 
     def _finish_locked(self) -> None:
         frames = self._frames
@@ -153,6 +182,7 @@ class PoseRecorder:
             "delay_s": round(self.delay_s, 3),
             "frames": len(frames),
             "source": self.source,
+            **({"snapshot": self._snapshot} if self._snapshot is not None else {}),
         }
         # Capture owns these copied frames exclusively. Detaching the list is
         # constant time; serialization and disk I/O belong to the writer.
@@ -179,9 +209,9 @@ class PoseRecorder:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
                                              dir=path.parent, suffix=".tmp", delete=False) as stream:
                 temporary = Path(stream.name)
-                stream.write(json.dumps(header, ensure_ascii=False, separators=(",", ":")) + "\n")
+                stream.write(json.dumps(_json_safe(header), ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n")
                 for frame in frames:
-                    stream.write(json.dumps(frame, ensure_ascii=False, separators=(",", ":")) + "\n")
+                    stream.write(json.dumps(_json_safe(frame), ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, path)

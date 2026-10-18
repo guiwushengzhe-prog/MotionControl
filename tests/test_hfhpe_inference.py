@@ -80,7 +80,11 @@ def test_only_selected_mode_loads_model_and_missing_head_never_reuses_a_crop(tmp
     estimator = HfhpeEstimator(model, session_factory=create)
     image = np.zeros((480, 640, 3), dtype=np.uint8)
     assert estimator.process(image, pose(), enabled=False) is None and not sessions
-    assert estimator.process(image, pose(), enabled=True)["valid"]
+    result = estimator.process(image, pose(), enabled=True)
+    assert result["valid"]
+    assert result["model"] == "vitt128"
+    assert result["inference_ms"] >= 0
+    assert result["head_box"] == estimator.status()["head_box"]
     assert len(sessions) == 1 and len(sessions[0].calls) == 1
     assert not estimator.process(image, {}, enabled=True)["valid"]
     assert len(sessions[0].calls) == 1

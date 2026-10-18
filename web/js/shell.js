@@ -180,7 +180,7 @@ export async function init(){
   };
   poll(warmLibraries,2500,()=>!profileLibrariesReady);
   initUpdates();
-  const initialTasks=[refreshRecognitionModels,refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshTriggerRecord,refreshUpdates,()=>api('/api/models').then(data=>{
+  const initialTasks=[refreshRecognitionModels,refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshPoseRecord,refreshTriggerRecord,refreshUpdates,()=>api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
       if(data.version)$('#appVersion').textContent=data.version;
       $('#modelStatus').textContent=modelAvailable?'':'这台电脑的人体识别模型用不了，只能用手机摄像头';
@@ -289,9 +289,10 @@ bind('zoneFitResetBtn',()=>zoneFit('reset'));
 
 $('#tutorialBtn').addEventListener('click',()=>{closeMenus();tutorial.open($('#helpBtn'))});
 
-bind('poseRecordBtn',startPoseRecord);
+bind('poseRecordBtn',async()=>{if(await startPoseRecord())showView('play')});
 
 bind('poseRecordCancelBtn',cancelPoseRecord);
+bind('homePoseRecordCancelBtn',cancelPoseRecord);
 bind('openRecordingsBtn',async()=>{await post('/api/recordings/open',{})});
 
 $('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){clearTimeout(profileSearchTimer);void runAction(searchProfiles)}});

@@ -234,3 +234,74 @@ def test_close_saves_recorded_frames_without_needing_another_camera_frame(record
     assert recorder.close(timeout=2.0)
     assert recorder.status()["state"] == "done"
     assert recorder.last_frames == 1
+
+
+def test_head_snapshot_is_taken_once_after_countdown_and_world_points_are_copied(recorder):
+    calls = []
+    profile = {"params": {"deadzone": .25}, "hfhpe_calibration": {"center_yaw_deg": 6.4}}
+    world = {"nose": {"x": .1, "y": .2, "z": -.3}}
+
+    def snapshot():
+        calls.append(True)
+        return {"head_profile": profile}
+
+    recorder.start(delay_s=3, duration_s=1, now=100)
+    recorder.capture(frame(), 102, snapshot_factory=snapshot)
+    assert not calls
+    recorder.tick(103)
+    recorder.capture(frame(), 103.1, source="computer_camera", world_pose=world,
+                     sample_at=103.08, snapshot_factory=snapshot)
+    profile["params"]["deadzone"] = .5
+    world["nose"]["x"] = 99
+    recorder.capture(frame(), 103.2, snapshot_factory=snapshot)
+    recorder.tick(104)
+    assert recorder.wait(2)
+    header, first, _ = map(json.loads, recorder.last_path.read_text(encoding="utf-8").splitlines())
+    assert len(calls) == 1
+    assert header["snapshot"]["head_profile"]["params"]["deadzone"] == .25
+    assert first["world_pose"]["nose"]["x"] == .1
+    assert first["source"] == "computer_camera"
+    assert first["sample_t"] == pytest.approx(.08)
+
+
+def test_deadline_finishes_without_another_camera_frame_and_does_not_invent_pose(recorder):
+    recorder.start(delay_s=3, duration_s=1, now=100)
+    recorder.tick(103)
+    assert recorder.status(now=103.2)["state"] == "recording"
+    assert recorder.status(now=103.2)["remaining_s"] == .8
+    recorder.tick(104.1)
+    assert recorder.wait(2)
+    assert recorder.status()["state"] == "done"
+    lines = recorder.last_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["frames"] == 0
+
+
+def test_tracking_loss_frame_is_preserved_for_validity_analysis(recorder):
+    recorder.start(delay_s=0, duration_s=1, now=100)
+    recorder.capture(None, 100.1, extra={"head_pose": {"valid": False, "error": "头部丢失"}})
+    recorder.tick(101)
+    assert recorder.wait(2)
+    saved = json.loads(recorder.last_path.read_text(encoding="utf-8").splitlines()[1])
+    assert saved["pose"] == {}
+    assert not saved["extra"]["head_pose"]["valid"]
+
+
+def test_invalid_observations_are_standard_json_and_legacy_profile_is_lossless(recorder):
+    import math
+
+    profile = {"calibration": {"optional_angle": math.nan}}
+    recorder.start(delay_s=0, duration_s=1, now=100)
+    recorder.capture(frame(), 100.1, extra={"head": {"raw_yaw": math.inf}},
+                     snapshot_factory=lambda: {"head_profile_json": json.dumps(profile)})
+    recorder.tick(101)
+    assert recorder.wait(2)
+
+    def reject_constant(value):
+        raise ValueError(value)
+
+    header, saved = [json.loads(line, parse_constant=reject_constant)
+                     for line in recorder.last_path.read_text(encoding="utf-8").splitlines()]
+    assert saved["extra"]["head"]["raw_yaw"] is None
+    restored = json.loads(header["snapshot"]["head_profile_json"])
+    assert math.isnan(restored["calibration"]["optional_angle"])

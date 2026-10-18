@@ -4,23 +4,39 @@ import {$,api,notice,positionPopup,post} from './core.js';
 // --- skeleton recording ---------------------------------------------------
 // Polls only while something is actually happening, so an idle settings page
 // is not making a request every second for nothing.
-let poseRecordTimer=null,lastPoseRecordState='';
-let poseRecordBusy=false;
+let poseRecordTimer=null,lastPoseRecordState='',poseRecordRevision=0;
+let poseRecordBusy=false,poseRecordResultTimer=null;
 
 function renderPoseRecord(state){
   if(!state)return;
   const label={
-    idle:'未录制',waiting:`倒计时 ${Number(state.remaining_s||0).toFixed(1)} 秒`,
-    recording:`录制中 ${Number(state.remaining_s||0).toFixed(1)} 秒 · 已 ${state.frames} 帧`,
+    idle:'未录制',waiting:`准备倒计时 ${Number(state.remaining_s||0).toFixed(1)} 秒`,
+    recording:`录制剩余 ${Number(state.remaining_s||0).toFixed(1)} 秒 · 已 ${state.frames} 帧`,
     saving:'正在保存…',cancelled:'已取消',
-    done:`已保存 ${state.frames} 帧`,
+    done:Number(state.frames)>0?`已保存 ${state.frames} 帧`:'未采集到骨骼数据，请开始识别后重试',
     error:state.error||'录制失败',
   }[state.state]||state.state;
   $('#poseRecordStatus').textContent=label;
+  $('#homePoseRecordStatus').textContent=label;
+  const busy=state.state==='waiting'||state.state==='recording'||state.state==='saving';
+  const problem=state.state==='error'||(state.state==='done'&&!(Number(state.frames)>0));
+  const result=state.state==='done'||state.state==='cancelled';
+  const home=$('#homePoseRecorder');
+  if(busy||problem||!result){
+    window.clearTimeout(poseRecordResultTimer);poseRecordResultTimer=null;
+    home.hidden=!busy&&!problem;
+  }else if(state.state!==lastPoseRecordState){
+    window.clearTimeout(poseRecordResultTimer);poseRecordResultTimer=null;
+    home.hidden=!['waiting','recording','saving'].includes(lastPoseRecordState);
+    if(!home.hidden)poseRecordResultTimer=window.setTimeout(()=>{home.hidden=true;poseRecordResultTimer=null},4000);
+  }
+  $('#homePoseRecorder').dataset.state=state.state;
   if(state.state==='done'&&lastPoseRecordState!=='done')void refreshRecordings();
   lastPoseRecordState=state.state;
-  const busy=state.state==='waiting'||state.state==='recording'||state.state==='saving';
   $('#poseRecordBtn').disabled=busy;
+  const cancellable=state.state==='waiting'||state.state==='recording';
+  $('#poseRecordCancelBtn').disabled=!cancellable;
+  $('#homePoseRecordCancelBtn').hidden=!cancellable;
   if(busy&&poseRecordTimer==null){
     poseRecordTimer=window.setInterval(()=>void refreshPoseRecord(),400);
   }else if(!busy&&poseRecordTimer!=null){
@@ -30,8 +46,8 @@ function renderPoseRecord(state){
 
 export async function refreshPoseRecord(){
   if(poseRecordBusy)return;
-  poseRecordBusy=true;
-  try{const data=await api('/api/pose/record');renderPoseRecord(data.recording)}catch{}
+  poseRecordBusy=true;const revision=poseRecordRevision;
+  try{const data=await api('/api/pose/record');if(revision===poseRecordRevision)renderPoseRecord(data.recording)}catch{}
   finally{poseRecordBusy=false}
 }
 
@@ -122,15 +138,21 @@ document.addEventListener('click',event=>{if(!event.target.closest('#triggerReco
 document.addEventListener('keydown',event=>{if(event.key==='Escape')$('#triggerRecordPicker').open=false});
 
 export async function startPoseRecord(){
+  // 丢弃开始/取消前后仍在途中的旧状态，避免首页倒计时被覆盖。
+  ++poseRecordRevision;
   try{
     const data=await post('/api/pose/record',{delay_s:3,duration_s:15});
+    ++poseRecordRevision;
     renderPoseRecord(data.recording);
-  }catch(error){$('#poseRecordStatus').textContent=error.message||'无法开始录制'}
+    return true;
+  }catch(error){++poseRecordRevision;$('#poseRecordStatus').textContent=error.message||'无法开始录制';return false}
 }
 
 export async function cancelPoseRecord(){
+  ++poseRecordRevision;
   try{
     const data=await post('/api/pose/record',{cancel:true});
+    ++poseRecordRevision;
     renderPoseRecord(data.recording);
-  }catch(error){$('#poseRecordStatus').textContent=error.message||'取消失败'}
+  }catch(error){++poseRecordRevision;const message=error.message||'取消失败';$('#poseRecordStatus').textContent=message;$('#homePoseRecordStatus').textContent=message}
 }
