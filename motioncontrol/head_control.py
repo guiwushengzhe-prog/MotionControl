@@ -135,7 +135,7 @@ HORIZONTAL_ALGORITHM_VERSIONS = {
     "gesture_v188": "v5.1-consensus-shared-calibration",
     "roll_tilt": "roll-tilt-v1",
     "head_responsive": "head-responsive-v4",
-    "hfhpe": "hfhpe-relative-yaw-v1",
+    "hfhpe": "hfhpe-relative-yaw-v2",
 }
 HORIZONTAL_ALGORITHM_LABELS = {
     "gesture_v188": "多信号融合（稳健）",
@@ -254,6 +254,11 @@ YAW_V2_RETURN_IDLE_WINDOW_S = 0.30
 YAW_V2_RETURN_IDLE_MIN_COVERAGE_S = 0.20
 YAW_V2_RETURN_IDLE_MAX_NET = 0.023
 YAW_V2_RETURN_IDLE_MAX_SPAN = 0.040
+# HFHPE真人录制：允许回正后的轻微角度漂移，但同侧恢复必须有新的明确位移。
+# 均为18度量程的比例，对应净移0.72度、跨度1.44度、恢复位移1.44度。
+HFHPE_RETURN_IDLE_MAX_NET = 0.040
+HFHPE_RETURN_IDLE_MAX_SPAN = 0.080
+HFHPE_RETURN_RECOVERY_STEP = 0.080
 # Stop confirmation uses a short recent window and a small frame bound.  The
 # longer trend windows remain available for turn classification and return
 # detection, but do not lease mouse output during a stationary hold.
@@ -1528,8 +1533,15 @@ class _RelativeYawAxisV153:
     substantially below this turn's own baseline.
     """
 
-    def __init__(self, *, velocity_tau: float = YAW_V2_VELOCITY_TAU_S, acceleration_tau: float = 0.11) -> None:
-        self.velocity_tau=float(velocity_tau); self.acceleration_tau=float(acceleration_tau); self.reset()
+    def __init__(self, *, velocity_tau: float = YAW_V2_VELOCITY_TAU_S, acceleration_tau: float = 0.11,
+                 return_idle_max_net: float = YAW_V2_RETURN_IDLE_MAX_NET,
+                 return_idle_max_span: float = YAW_V2_RETURN_IDLE_MAX_SPAN,
+                 return_recovery_step: float = 0.0) -> None:
+        self.velocity_tau=float(velocity_tau); self.acceleration_tau=float(acceleration_tau)
+        self.return_idle_max_net=float(return_idle_max_net)
+        self.return_idle_max_span=float(return_idle_max_span)
+        self.return_recovery_step=float(return_recovery_step)
+        self.reset()
 
     @staticmethod
     def _sign(v: float, eps: float=0.0) -> int:
@@ -1624,8 +1636,8 @@ class _RelativeYawAxisV153:
         for idx in (1,2):
             values=[p[idx] for p in pts]
             if (
-                abs(values[-1]-values[0])>YAW_V2_RETURN_IDLE_MAX_NET
-                or max(values)-min(values)>YAW_V2_RETURN_IDLE_MAX_SPAN
+                abs(values[-1]-values[0])>self.return_idle_max_net
+                or max(values)-min(values)>self.return_idle_max_span
             ):
                 return False
         return True
@@ -1742,8 +1754,11 @@ class _RelativeYawAxisV153:
                 recovery_pos=max(center*1.15,.050)
                 sshort,_,dshort,_=self._trend(now,orig,.18)
                 rshort,_,rdshort,_=self._trend(now,orig,.18,raw=True)
-                fast_recovery=amount>=recovery_pos and sshort>.040 and rshort>.120 and dshort>.004 and rdshort>.006
-                medium_recovery=amount>=recovery_pos and dm>.018 and rdm>.012 and sm>.045 and rsm>.025
+                fast_recovery=(amount>=recovery_pos and sshort>.040 and rshort>.120
+                               and dshort>max(.004,self.return_recovery_step)
+                               and rdshort>max(.006,self.return_recovery_step))
+                medium_recovery=(amount>=recovery_pos and dm>max(.018,self.return_recovery_step)
+                                 and rdm>max(.012,self.return_recovery_step) and sm>.045 and rsm>.025)
                 if fast_recovery or medium_recovery:
                     self._resume_s+=dt
                     if self._resume_s>=.08:
@@ -2510,7 +2525,12 @@ class HeadController:
         self._hfhpe_angles: tuple[float, float, float] | None = None
         self._hfhpe_confidence: float | None = None
         self._hfhpe_filter = OneEuro(1.10, 0.050, 1.0)
-        self._hfhpe_intent = _RelativeYawAxisV153(velocity_tau=YAW_V2_VELOCITY_TAU_S, acceleration_tau=0.11)
+        self._hfhpe_intent = _RelativeYawAxisV153(
+            velocity_tau=YAW_V2_VELOCITY_TAU_S, acceleration_tau=0.11,
+            return_idle_max_net=HFHPE_RETURN_IDLE_MAX_NET,
+            return_idle_max_span=HFHPE_RETURN_IDLE_MAX_SPAN,
+            return_recovery_step=HFHPE_RETURN_RECOVERY_STEP,
+        )
         self._hfhpe_last_at: float | None = None
         self._load_profile()
 
