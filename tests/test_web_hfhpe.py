@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import copy
 
+import pytest
+
 from test_web_optimization import desktop, mock_browser  # noqa: F401
 
 
@@ -12,28 +14,29 @@ def open_view(page):
     page.wait_for_function("!viewHorizontalSource.disabled")
 
 
-def choose_hfhpe(desktop):
+def choose_hfhpe(desktop, mode="hfhpe"):
     page, api = desktop.page, desktop.api
     open_view(page)
-    page.select_option("#viewHorizontalSource", "hfhpe")
+    page.select_option("#viewHorizontalSource", mode)
     page.wait_for_function("!viewHorizontalSource.disabled && !viewControlStatus.textContent.includes('正在保存')")
-    assert page.locator("#viewHorizontalSource").input_value() == "hfhpe"
-    assert api.runtime["kernel"]["head"]["horizontal_algorithm"] == "hfhpe"
+    assert page.locator("#viewHorizontalSource").input_value() == mode
+    assert api.runtime["kernel"]["head"]["horizontal_algorithm"] == mode
 
 
-def test_experimental_turn_is_distinct_and_survives_reload(desktop):
+@pytest.mark.parametrize("mode", ["hfhpe", "hfhpe_simple"])
+def test_experimental_turn_is_distinct_and_survives_reload(desktop, mode):
     page, api = desktop.page, desktop.api
-    choose_hfhpe(desktop)
+    choose_hfhpe(desktop, mode)
     choices = page.locator("#viewHorizontalSource option")
-    assert choices.all_text_contents() == ["头部侧倾", "侧倾＋转脸", "左右转头", "左右转头（实验）", "右手握拳", "左手握拳", "关闭"]
+    assert choices.all_text_contents() == ["头部侧倾", "侧倾＋转脸", "左右转头", "左右转头（模型·原规则）", "左右转头（模型·简化回正）", "右手握拳", "左手握拳", "关闭"]
     mutations = [(path, body) for path, body in api.requests if path == "/api/view-control"]
-    assert mutations[-1] == ("/api/view-control", {"horizontal": "hfhpe", "vertical": "off"})
+    assert mutations[-1] == ("/api/view-control", {"horizontal": mode, "vertical": "off"})
     assert page.locator("#headCurvePanel").is_hidden()
-    assert "彩色画面" in page.locator("#viewHorizontalDesc").text_content()
+    assert ("彩色画面" if mode == "hfhpe" else "取消原有回正锁") in page.locator("#viewHorizontalDesc").text_content()
     page.reload()
     page.wait_for_function("currentGameName.textContent === 'Default game'")
     open_view(page)
-    assert page.locator("#viewHorizontalSource").input_value() == "hfhpe"
+    assert page.locator("#viewHorizontalSource").input_value() == mode
     assert page.locator("#headCurvePanel").is_hidden()
     # 原左右转头仍映回旧策略，不被实验模式替代。
     page.select_option("#viewHorizontalSource", "head_turn")
@@ -42,9 +45,10 @@ def test_experimental_turn_is_distinct_and_survives_reload(desktop):
     assert [body for path, body in api.requests if path == "/api/view-control"][-1]["horizontal"] == "head_turn"
 
 
-def test_saving_experiment_speed_keeps_the_hfhpe_algorithm(desktop):
+@pytest.mark.parametrize("mode", ["hfhpe", "hfhpe_simple"])
+def test_saving_experiment_speed_keeps_the_hfhpe_algorithm(desktop, mode):
     page, api = desktop.page, desktop.api
-    choose_hfhpe(desktop)
+    choose_hfhpe(desktop, mode)
     saved = []
 
     def save_head(route):
@@ -57,15 +61,16 @@ def test_saving_experiment_speed_keeps_the_hfhpe_algorithm(desktop):
     with page.expect_response(lambda response: response.url.endswith("/api/head/config") and response.request.method == "POST"):
         page.locator("#speedX").press("End")
     page.wait_for_function("!viewControlStatus.textContent.includes('正在保存') && headSaveStatus.textContent.includes('已保存')")
-    assert saved[-1]["horizontal_algorithm"] == "hfhpe"
+    assert saved[-1]["horizontal_algorithm"] == mode
     assert saved[-1]["sensitivity_x"] == 200
-    assert page.locator("#viewHorizontalSource").input_value() == "hfhpe"
+    assert page.locator("#viewHorizontalSource").input_value() == mode
     assert page.locator("#headCurvePanel").is_hidden()
 
 
-def test_experiment_only_reports_current_actionable_model_status(desktop):
+@pytest.mark.parametrize("mode", ["hfhpe", "hfhpe_simple"])
+def test_experiment_only_reports_current_actionable_model_status(desktop, mode):
     page, api = desktop.page, desktop.api
-    choose_hfhpe(desktop)
+    choose_hfhpe(desktop, mode)
     baseline = page.locator("#viewHorizontalDesc").text_content()
     for state, message in [
         ("loading", "正在加载实验转头模型"),
@@ -80,7 +85,7 @@ def test_experiment_only_reports_current_actionable_model_status(desktop):
             assert description == baseline
         else:
             assert message in description
-        assert page.locator("#viewHorizontalSource").input_value() == "hfhpe"
+        assert page.locator("#viewHorizontalSource").input_value() == mode
         assert page.locator("#headCurvePanel").is_hidden()
     page.select_option("#viewHorizontalSource", "roll_tilt")
     page.wait_for_function("!viewHorizontalSource.disabled && !viewControlStatus.textContent.includes('正在保存')")
@@ -88,19 +93,21 @@ def test_experiment_only_reports_current_actionable_model_status(desktop):
     assert "实验" not in page.locator("#viewHorizontalDesc").text_content()
 
 
-def test_rejected_experiment_selection_restores_the_actual_source(desktop):
+@pytest.mark.parametrize("mode", ["hfhpe", "hfhpe_simple"])
+def test_rejected_experiment_selection_restores_the_actual_source(desktop, mode):
     page, api = desktop.page, desktop.api
     open_view(page)
     api.fail_view = True
-    page.select_option("#viewHorizontalSource", "hfhpe")
+    page.select_option("#viewHorizontalSource", mode)
     page.wait_for_function("!viewHorizontalSource.disabled && viewControlStatus.textContent.includes('保存未确认')")
     assert page.locator("#viewHorizontalSource").input_value() == "right"
     assert "实验" not in page.locator("#viewHorizontalDesc").text_content()
 
 
-def test_experiment_deadzone_uses_its_own_yaw_noise_and_no_tilt_curve(desktop):
+@pytest.mark.parametrize("mode", ["hfhpe", "hfhpe_simple"])
+def test_experiment_deadzone_uses_its_own_yaw_noise_and_no_tilt_curve(desktop, mode):
     page = desktop.page
-    choose_hfhpe(desktop)
+    choose_hfhpe(desktop, mode)
     notes = page.evaluate("""async()=>{
       const {head}=await import('/js/state.js');
       const {renderHeadCurve}=await import('/js/head-curve.js');

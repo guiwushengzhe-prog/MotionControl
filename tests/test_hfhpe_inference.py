@@ -101,11 +101,12 @@ def test_missing_model_is_reported_and_does_not_break_other_algorithms(tmp_path)
     assert estimator.process(None, None, enabled=False) is None
 
 
-def test_phone_or_stopped_camera_has_actionable_experimental_status():
+@pytest.mark.parametrize("mode", ["hfhpe", "hfhpe_simple"])
+def test_phone_or_stopped_camera_has_actionable_experimental_status(mode):
     kernel = ControlKernel(_NullOutput(), persist=False)
     try:
         runtime = LocalControlRuntime(kernel, NativeCameraService(kernel))
-        kernel.head_controller.configure(horizontal_algorithm="hfhpe")
+        kernel.head_controller.configure(horizontal_algorithm=mode)
         runtime.body_mode = "phone"
         state = runtime.status()["camera"]["hfhpe"]
         assert state["state"] == "unavailable" and "切到电脑" in state["message"]
@@ -116,10 +117,11 @@ def test_phone_or_stopped_camera_has_actionable_experimental_status():
         kernel.close()
 
 
-def test_kernel_passes_native_model_signal_and_clears_it_for_phone(monkeypatch):
+@pytest.mark.parametrize("mode", ["hfhpe", "hfhpe_simple"])
+def test_kernel_passes_native_model_signal_and_clears_it_for_phone(monkeypatch, mode):
     kernel = ControlKernel(_NullOutput(), persist=False)
     try:
-        kernel.head_controller.configure(horizontal_algorithm="hfhpe")
+        kernel.head_controller.configure(horizontal_algorithm=mode)
         captured = []
 
         def update(*args, **kwargs):

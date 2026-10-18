@@ -73,7 +73,7 @@ function tutorialState(){
     // 握拳控左右不需要头部中心，这一点和「视角控制」那块的判断保持一致。
     calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
     calibrating:!!hs.calibrating,calibrationNote:String(hs.notice||''),
-    horizontal:horizontalHand||(head.enabled?(['roll_tilt','head_responsive'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off'),
+    horizontal:horizontalHand||(head.enabled?(['roll_tilt','head_responsive','hfhpe','hfhpe_simple'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off'),
     hLevel,hHandState:String(axes.horizontal?.state||''),guardBlocked:!!hs.horizontal_paused_by_body_motion,
     vertical:verticalHand||(head.verticalLookEnabled?'head':'off'),
     vLevel,vHandState:String(axes.vertical?.state||''),gateActive:!!k.vertical_gate_active,

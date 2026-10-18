@@ -176,12 +176,13 @@ def test_direction_inversion_and_sensitivity_are_applied_to_model_output():
     assert abs(c.status()["target_output_x"]) <= 80.0
 
 
-def test_new_view_source_is_saved_without_enabling_hand_control(tmp_path, monkeypatch):
+@pytest.mark.parametrize("policy", ["hfhpe", "hfhpe_simple"])
+def test_new_view_source_is_saved_without_enabling_hand_control(tmp_path, monkeypatch, policy):
     monkeypatch.setenv("MOTIONCONTROL_USER_DIR", str(tmp_path))
     k = ControlKernel(_NullOutput())
     try:
-        result = configure_view_control(k, "hfhpe", "head")
-        assert result["kernel"]["head"]["horizontal_algorithm"] == "hfhpe"
+        result = configure_view_control(k, policy, "head")
+        assert result["kernel"]["head"]["horizontal_algorithm"] == policy
         assert result["kernel"]["head"]["enabled"]
         assert not result["hand_mouse"]["enabled"]
         assert k.vertical_look["enabled"]
