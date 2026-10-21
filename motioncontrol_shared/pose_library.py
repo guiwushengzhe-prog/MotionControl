@@ -165,6 +165,8 @@ BUILTIN += tuple({
      {"nose": (.44, .10), "left_shoulder": (.515, .22), "right_shoulder": (.365, .22)}),
     ("lean_back", "身体后倾", "在实验与诊断开启后倾后退；轻微向后倾，回正停止",
      {"nose": (.50, .15), "left_shoulder": (.565, .25), "right_shoulder": (.435, .25)}),
+    ("lean_forward", "身体前倾", "在实验与诊断开启前倾前进；轻微向前倾，回正停止",
+     {"nose": (.50, .065), "left_shoulder": (.585, .19), "right_shoulder": (.415, .19)}),
 ))
 BUILTIN_IDS = frozenset(entry["id"] for entry in BUILTIN)
 

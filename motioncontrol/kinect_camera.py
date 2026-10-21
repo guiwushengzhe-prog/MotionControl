@@ -239,6 +239,12 @@ def matching_depth_body(metadata, pose_map, rotation="none"):
         return None
     result = dict(candidates[0][1])
     result["floor"] = metadata.get("floor")
+    # 学习与录制必须能核对这是同一彩色帧匹配到的人，不能把旧骨骼当作监督真值。
+    result.update(matched_to_model=True, match_error=math.sqrt(candidates[0][0]),
+                  body_valid=metadata.get("body_valid") is True)
+    for key in ("sample_at", "body_age_ms", "sensor_seconds", "device_id", "body_frames"):
+        if key in metadata:
+            result[key] = metadata[key]
     return result
 
 

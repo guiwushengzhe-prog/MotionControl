@@ -16,6 +16,8 @@ import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
 import {initUpdates,refreshUpdates} from './updates.js';
 import {ensureViewControlReady,handMouseConfig,initViewControl,pushHeadConfig,refreshHandMouse,saveHandMouseFields,saveViewControlAxis,setViewControlBusy,syncControlLabels} from './view-control.js';
 import {addVoiceRow,refreshVoice,refreshVoiceCommands,renderVoiceRows,saveVoiceMappings,voice,voiceInputReady,voiceRowsFromStatus} from './voice.js';
+import {initViewTuning,openViewTuning} from './view-tuning.js';
+import {renderSpeedSummary} from './view-speed.js';
 
 let modelAvailable=false;
 export let actionBusy=false;
@@ -44,7 +46,7 @@ function tutorialState(){
   // 上下灵敏度/100。
   const handMax=Math.min(1,Math.max(.01,Number(handMouseConfig.sensitivity??hand.config?.sensitivity??70)/100));
   const hLevel=horizontalHand?(finite(axes.horizontal?.output)?Number(axes.horizontal.output)/handMax:null)
-    :(finite(hs.output_x)?Number(hs.output_x)/Math.max(1,Number(hs.sensitivity_x||head.sensitivityX||58)):null);
+    :(finite(hs.output_x)?Number(hs.output_x)/Math.max(.01,Number(hs.sensitivity_x||head.sensitivityX||58)/100):null);
   const pitchMax=clamp(Number(hs.sensitivity_y||head.sensitivityY||46)/100,.15,1);
   const vLevel=verticalHand?(finite(axes.vertical?.output)?Number(axes.vertical.output)/handMax:null)
     :(head.verticalLookEnabled&&finite(hs.output_y)?Number(hs.output_y)/pitchMax:null);
@@ -155,7 +157,7 @@ function poll(task,delay,enabled=()=>true){
 }
 
 export async function init(){
-  initViewControl();setViewControlBusy(false);syncControlLabels();
+  initViewControl();initViewTuning();setViewControlBusy(false);syncControlLabels();
   // 状态刷新先启动，某个可选设置读不到不会让连接/急停状态等它。
   poll(refreshKernel,250);
   poll(async()=>{const results=await Promise.all([refreshInput(),refreshOutput(),refreshVoice()]);return results.every(result=>result!==false)},900);
@@ -264,7 +266,7 @@ $('#audioDevice').addEventListener('change',e=>runAction(async()=>{
 bind('overlayBtn',toggleOverlay);
 
 for(const [id,key,digits] of [['handMouseSensitivity','sensitivity',0],['handMouseDeadzone','deadzone',2]]){
-  $('#'+id).addEventListener('input',e=>{$('#'+id+'Value').textContent=Number(e.target.value).toFixed(digits)});
+  $('#'+id).addEventListener('input',e=>{$('#'+id+'Value').textContent=Number(e.target.value).toFixed(digits);renderSpeedSummary()});
   $('#'+id).addEventListener('change',e=>void saveHandMouseFields({[key]:Number(e.target.value)}));
 }
 $('#handMouseGripAlgorithm').addEventListener('change',e=>void saveHandMouseFields({grip_algorithm:e.target.value}));
@@ -276,6 +278,7 @@ for(const axis of ['horizontal','vertical']){
 // 教学只指路不代劳：连接、校准都由人去点真按钮。它自己只会做一件事——扫一遍
 // 摄像头，好知道该建议什么。
 export const tutorial=createTutorial({state:tutorialState,scanCameras,
+  viewTuning:()=>void runAction(openViewTuning),
   zoneFitStart:()=>zoneFit('start'),zoneFitGripOnly:()=>zoneFit('start',{body:false}),
   zoneFitSkip:()=>zoneFit('skip'),zoneFitCancel:()=>zoneFit('cancel'),
   intentStart:keys=>intentAction('start',keys?{keys}:{}),intentSkip:()=>intentAction('skip'),
@@ -445,7 +448,7 @@ $('#xinputMerge').addEventListener('change',()=>runAction(setXinputMerge));
 
 $('#xinputMotionLeft').addEventListener('change',()=>runAction(setXinputMotionLeft));
 
-$('#strength').addEventListener('input',()=>{$('#strengthValue').textContent=$('#strength').value+'%'});
+$('#strength').addEventListener('input',()=>{$('#strengthValue').textContent=$('#strength').value+'%';renderSpeedSummary(Number($('#strength').value)/100)});
 
 $('#strength').addEventListener('change',()=>runAction(async()=>{
   const gain=Number($('#strength').value)/100;
@@ -453,8 +456,8 @@ $('#strength').addEventListener('change',()=>runAction(async()=>{
 }));
 
 for(const id of ['verticalExclusive','bodyMotionGuard','deadzone','speedX','speedY','headCurveGamma','invertY']){
-  $('#'+id).addEventListener('input',()=>{headSaver.dirty();syncControlLabels()});
-  $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels()});
+  $('#'+id).addEventListener('input',()=>{headSaver.dirty();syncControlLabels();renderSpeedSummary()});
+  $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels();renderSpeedSummary()});
 }
 
 $('#addVoiceBtn').addEventListener('click',()=>addVoiceRow());

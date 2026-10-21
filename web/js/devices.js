@@ -1,5 +1,5 @@
 import {recognitionModelName,renderRecognitionPerformance,renderPhoneModelState} from './recognition-models.js';
-// 设置 → 设备：摄像头、手机、麦克风、游戏输出。
+// 设置 → 设备：摄像头、手机、麦克风；体感里的游戏输出复用这里的接口。
 import {$,api,formatPerf,notice,post,setProperty} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
 import {cameraInfo,cameraRunning,recognitionState,renderKernelState,renderMainStatus,setPreviewMirror,sourceHasFreshFrame,sourceWaitingForFirstFrame,sourceMode,zoneEditMode} from './play.js';
@@ -7,6 +7,7 @@ import {runAction} from './shell.js';
 import {S,gameProfile,output} from './state.js';
 import {handMouseConfig} from './view-control.js';
 import {syncPhoneCode} from './phone-connect.js';
+import {renderSpeedSummary} from './view-speed.js';
 
 let audioDevice='';
 $('#cameraMirror')?.addEventListener('change',async event=>{
@@ -396,6 +397,7 @@ export function renderOutput(s=output.server){
     output.xinputMotionLeft=!!s.xinput_motion_left_enabled;renderXinputMotionLeft();
   }
   renderMainStatus();
+  renderSpeedSummary();
 }
 
 // 一台电脑上只能有一套"当前输入设备"。体感这边一半出鼠标、一半出 Xbox，游戏

@@ -27,9 +27,10 @@ def kernel():
 
 def test_default_off_does_not_write_configuration_and_switches_survive_restart(kernel):
     assert not kernel._general_settings_path().exists()
+    assert not kernel.sensitivity_experiments["lean_forward"]
     kernel._update_lean_motions_locked(time.monotonic())
     assert not kernel._general_settings_path().exists()
-    kernel.configure_sensitivity_experiments({"head_hold": True, "first_step": True, "body_source": "depth"})
+    kernel.configure_sensitivity_experiments({"head_hold": True, "first_step": True, "body_source": "depth", "lean_forward": True})
     assert kernel.head_controller.hfhpe_hold
     assert kernel.status()["sensitivity_experiments"]["body"]["source"] == "depth"
     restored = ControlKernel(Output())
@@ -69,15 +70,66 @@ def test_lean_bindings_are_derived_from_known_forward_direction_and_user_overrid
     effective = kernel.effective_bindings()
     assert [effective["motion." + ident]["action"]["target"] for ident in ("lean_left", "lean_right", "lean_back")] == ["A", "D", "S"]
     assert effective["motion.calf_back"]["action"]["target"] == "Z"
+    assert effective["motion.lean_forward"]["action"]["target"] == "W"
     kernel.configure_bindings({"motions": {"march": {"action": {"type": "gamepad_axis", "target": "LS_UP"}},
                                            "lean_left": {"action": {"type": "keyboard", "target": "Q"}},
+                                           "lean_forward": {"action": {"type": "keyboard", "target": "UP"}},
                                            "lean_right": {"disabled": True}}})
     assert kernel.effective_bindings()["motion.lean_left"]["action"]["target"] == "Q"
     assert "motion.lean_right" not in kernel.effective_bindings()
     assert kernel.effective_bindings()["motion.lean_back"]["action"]["target"] == "LS_DOWN"
+    assert kernel.effective_bindings()["motion.lean_forward"]["action"]["target"] == "UP"
     kernel.configure_bindings({"motions": {"march": {"action": {"type": "keyboard", "target": "F"}}}})
     assert "motion.lean_back" not in kernel.effective_bindings()
-    assert all(pose_library.get(ident) for ident in ("lean_left", "lean_right", "lean_back"))
+    assert all(pose_library.get(ident) for ident in ("lean_left", "lean_right", "lean_back", "lean_forward"))
+
+
+def test_forward_disable_releases_existing_motion_and_old_settings_default_off(kernel, monkeypatch):
+    kernel.configure_sensitivity_experiments({"lean_forward": True})
+    kernel.motion_active.add("lean_forward")
+    kernel.configure_sensitivity_experiments({"lean_forward": False})
+    assert "lean_forward" not in kernel.motion_active
+    from motioncontrol.sensitivity_experiments import load, lean_binding
+    assert not load({"lean_back": True})["lean_forward"]
+    assert lean_binding({"action": {"type": "keyboard", "target": "F"}}, "lean_forward") is None
+    assert lean_binding({"action": {"type": "keyboard", "target": "UP"}}, "lean_forward")["action"]["target"] == "UP"
+
+
+def test_forward_switch_survives_recording_snapshot_and_old_replay_defaults_off(kernel):
+    from motioncontrol.intent_library import make_replay_kernel
+    kernel.configure_sensitivity_experiments({"lean_forward": True})
+    snapshot = kernel.replay_snapshot()
+    replay = make_replay_kernel(snapshot)
+    try:
+        assert replay.sensitivity_experiments["lean_forward"]
+    finally:
+        replay.close()
+    del snapshot["sensitivity_experiments"]["lean_forward"]
+    replay = make_replay_kernel(snapshot)
+    try:
+        assert not replay.sensitivity_experiments["lean_forward"]
+    finally:
+        replay.close()
+
+
+def test_legacy_source_is_preserved_but_independent_axis_choices_survive_body_source_updates(kernel):
+    from motioncontrol.sensitivity_experiments import load
+    legacy = load({"body_source": "depth"})
+    assert legacy["side_source"] == legacy["fore_aft_source"] == "depth"
+    kernel.configure_sensitivity_experiments({"body_source": "depth"})
+    assert kernel.sensitivity_experiments["side_source"] == "depth"
+    kernel.configure_sensitivity_experiments({"side_source": "model"})
+    kernel.configure_sensitivity_experiments({"body_source": "model"})
+    assert kernel.sensitivity_experiments["side_source"] == "model"
+    assert kernel.sensitivity_experiments["fore_aft_source"] == "depth"
+    restored = ControlKernel(Output())
+    try:
+        assert restored.sensitivity_experiments == kernel.sensitivity_experiments
+        body = restored.status()["sensitivity_experiments"]["body"]
+        assert body["source"] == "mixed"
+        assert body["side_source"] == "model" and body["fore_aft_source"] == "depth"
+    finally:
+        restored.close()
 
 
 def test_back_suppresses_only_forward_and_can_combine_with_sideways(kernel, monkeypatch):

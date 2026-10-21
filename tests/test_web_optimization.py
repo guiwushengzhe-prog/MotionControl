@@ -281,6 +281,7 @@ def test_emergency_stop_wins_over_late_output_settings_response(desktop):
     api.output["enabled"] = True
     page.evaluate("async()=>{const d=await import('/js/devices.js');await d.refreshOutput()}")
     page.click('[data-view="devices"]')
+    page.click('#settingsNav [data-pane="view"]')
     api.hold_output = True
     page.select_option("#outputMode", "gamepad")
     page.wait_for_timeout(50)
