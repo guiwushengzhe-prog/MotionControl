@@ -24,6 +24,8 @@ import json
 import math
 import threading
 import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from dataclasses import dataclass, field
 
 from motioncontrol.intent_recording import IntentRecordingStore, pose_from_frame
@@ -93,6 +95,8 @@ def make_replay_kernel(snapshot: dict):
     """照着实时内核的设置建一个临时内核。snapshot 见 ControlKernel.replay_snapshot。"""
     from motioncontrol.control_kernel import ControlKernel
     from motioncontrol.custom_poses import CustomPoseStore
+    from motioncontrol.head_control import HeadController, HEAD_ALGORITHMS, HEAD_PROFILE_COMPATIBLE_VERSIONS
+    from motioncontrol import sensitivity_experiments
 
     kernel = ControlKernel(_NullOutput(), persist=False)
     kernel.configure_regions(copy.deepcopy(snapshot.get("regions") or []))
@@ -115,6 +119,32 @@ def make_replay_kernel(snapshot: dict):
         kernel.frozen_anchor = copy.deepcopy(snapshot.get("frozen_anchor"))
         kernel.zone_trigger_mode = snapshot.get("zone_trigger_mode", "smart")
         kernel.march_algorithm = snapshot.get("march_algorithm", "legacy")
+        kernel.sensitivity_experiments = sensitivity_experiments.load(snapshot.get("sensitivity_experiments"))
+        kernel._body_lean.load_neutral(snapshot.get("body_lean_neutral"))
+        kernel._body_lean_saved_neutral = kernel._body_lean.neutral_snapshot()
+        # 旧区学习不使用头控，也不继承当前用户的个人头部档案。
+        head = HeadController(None)
+        head.config["enabled"] = False
+        kernel._replay_head_available = False
+        raw_profile = snapshot.get("head_profile_json")
+        if snapshot.get("head_replay") is True and isinstance(raw_profile, str):
+            try:
+                profile = json.loads(raw_profile)
+                if (isinstance(profile, dict) and isinstance(profile.get("params"), dict)
+                        and profile.get("signal_version") in HEAD_PROFILE_COMPATIBLE_VERSIONS
+                        and profile["params"].get("algorithm", "pnp") in HEAD_ALGORITHMS):
+                    # 复用现有完整档案加载校验；临时文件与真实用户配置无关。
+                    with TemporaryDirectory(prefix="motioncontrol-replay-") as folder:
+                        path = Path(folder) / "head.json"
+                        path.write_text(raw_profile, encoding="utf-8")
+                        head = HeadController(path)
+                        head.profile_path = None
+                    kernel._replay_head_available = True
+            except (OSError, ValueError, TypeError):
+                pass
+        head.hfhpe_hold = kernel.sensitivity_experiments["head_hold"]
+        kernel.head_controller = head
+        kernel.head = head.status(BASE_T)
         kernel.vertical_look.update(copy.deepcopy(snapshot.get("vertical_look") or {}))
         if snapshot.get("hand_mouse"):
             kernel.hand_mouse_controller.configure(copy.deepcopy(snapshot["hand_mouse"]))
@@ -137,13 +167,31 @@ def replay_segment(kernel, segment: Segment, on_frame=None) -> list[dict]:
     for count, frame in enumerate(segment.frames):
         if gentle and count % THROTTLE_EVERY == 0:
             time.sleep(THROTTLE_S)
-        pose_map = pose_from_frame(frame)
+        raw_pose = frame.get("pose") or {}
+        pose_map = (copy.deepcopy(raw_pose) if isinstance(raw_pose, dict) and
+                    all(isinstance(point, dict) for point in raw_pose.values()) else pose_from_frame(frame))
         now = BASE_T + float(frame.get("t", 0.0))
         with kernel._lock:
-            kernel.width, kernel.height = int(frame.get("w") or 640), int(frame.get("h") or 480)
+            kernel.width, kernel.height = int(frame.get("w") or frame.get("width") or 640), int(frame.get("h") or frame.get("height") or 480)
             # 手机录的帧另带认出时刻，速度照它算，和实时一样。
-            kernel.pose_sample_at = BASE_T + float(frame["c"]) if "c" in frame else None
-            kernel._process_pose_locked(pose_map or None, now)
+            sampled = frame.get("c", frame.get("sample_t"))
+            kernel.pose_sample_at = BASE_T + float(sampled) if sampled is not None else None
+            extra = frame.get("extra") if isinstance(frame.get("extra"), dict) else {}
+            if isinstance(extra.get("sensitivity_experiments"), dict):
+                kernel.configure_sensitivity_experiments(extra["sensitivity_experiments"])
+            if getattr(kernel, "_replay_head_available", False) and isinstance(extra.get("head_config"), dict):
+                if extra["head_config"] != kernel.head_controller.config:
+                    kernel.head_controller.configure(**extra["head_config"])
+            world_pose = copy.deepcopy(frame.get("world_pose"))
+            kernel.latest_world_pose = world_pose
+            kernel.latest_model_pose = copy.deepcopy(extra.get("model_pose"))
+            kernel.latest_depth_body = copy.deepcopy(extra.get("depth_body"))
+            kernel.latest_head_pose = copy.deepcopy(extra.get("head_pose")) if getattr(kernel, "_replay_head_available", False) else None
+            kernel.latest_pose = copy.deepcopy(pose_map) if pose_map else None
+            if world_pose is None:
+                kernel._process_pose_locked(pose_map or None, now)
+            else:
+                kernel._process_pose_locked(pose_map or None, now, world_pose)
             row = {"t": now, "step": int(frame.get("step", -1)),
                    "inside": {zone: bool(kernel.zone_state[zone].get("raw_inside")) for zone in ZONES},
                    "pressed": {zone: bool(kernel.zone_state[zone]["pressed"]) for zone in ZONES}}
@@ -411,6 +459,7 @@ def learning_signature(snapshot: dict, index: dict) -> str:
     payload = {key: snapshot.get(key) for key in (
         "control_bindings", "motion_config", "zone_fit", "zones_frozen", "frozen_rects",
         "frozen_anchor", "following_layout", "regions", "zone_trigger_mode", "march_algorithm", "hand_mouse", "action_chain",
+        "sensitivity_experiments", "body_lean_neutral",
         "disabled_builtin_actions")}
     payload["pose_actions"] = sorted((doc.get("id"), doc.get("revision")) for doc in snapshot.get("pose_actions") or [])
     payload["custom_poses"] = snapshot.get("custom_poses")

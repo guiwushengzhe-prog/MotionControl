@@ -12,11 +12,12 @@ import time
 
 MAX_FRAME_AGE = 0.9
 FRAME_INTERVAL = 1.0 / 8.0
-DEFAULT_CONFIG = {"source": "computer", "background": "original", "face": "original", "mirror": True}
+DEFAULT_CONFIG = {"source": "computer", "background": "original", "face": "original", "mirror": True,
+                  "avatar_preset": ""}
 
 
-def face_rectangle(pose, width, height):
-    """只接受本帧可信的人脸点，丢失跟踪时由调用方隐藏整幅人像。"""
+def face_geometry(pose, width, height):
+    """复用本帧眼鼻耳定位面具；肩膀不参与放大，眼线决定侧倾。"""
     if not isinstance(pose, dict):
         return None
 
@@ -36,22 +37,85 @@ def face_rectangle(pose, width, height):
     left, right = point("left_eye"), point("right_eye")
     if nose is None or left is None or right is None:
         return None
-    points = [nose, left, right]
-    points.extend(p for name in ("left_ear", "right_ear", "mouth_left", "mouth_right")
-                  if (p := point(name)) is not None)
-    xs, ys = [p[0] for p in points], [p[1] for p in points]
-    face_width = max(max(xs) - min(xs), abs(left[0] - right[0]) * 3.0)
-    shoulders = point("left_shoulder"), point("right_shoulder")
-    if all(shoulders):
-        face_width = max(face_width, math.dist(*shoulders) * 0.6)
-    if face_width < 8:
+    eye_left, eye_right = sorted((left, right))
+    eye_width = math.dist(eye_left, eye_right)
+    if eye_width < 3:
         return None
-    center_x = (min(xs) + max(xs)) / 2.0
-    top = min(min(ys) - face_width * 0.65, nose[1] - face_width * 0.8)
-    bottom = max(max(ys) + face_width * 0.45, nose[1] + face_width * 0.7)
-    x0, x1 = max(0, int(center_x - face_width * 0.75)), min(width, math.ceil(center_x + face_width * 0.75))
-    y0, y1 = max(0, int(top)), min(height, math.ceil(bottom))
-    return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
+    ears = point("left_ear"), point("right_ear")
+    face_width = max(eye_width * 2.3, math.dist(*ears) * 1.05 if all(ears) else 0)
+    angle = math.atan2(eye_right[1] - eye_left[1], eye_right[0] - eye_left[0])
+    down = (-math.sin(angle), math.cos(angle))
+    center = ((left[0] + right[0]) / 2 + down[0] * face_width * .22,
+              (left[1] + right[1]) / 2 + down[1] * face_width * .22)
+    # 一组点横向错配时宁可不显示人物，不能把遮盖误贴到胸口。
+    if math.dist(nose, center) > face_width * .7:
+        return None
+    nose_depth = (nose[0] - (left[0] + right[0]) / 2) * down[0] + (nose[1] - (left[1] + right[1]) / 2) * down[1]
+    if not eye_width * .08 <= nose_depth <= eye_width * 1.5:
+        return None
+    return {"center": center, "width": face_width * 1.05, "height": face_width * 1.45,
+            "angle": math.degrees(angle), "eyes": (eye_left, eye_right), "nose": nose}
+
+
+def face_rectangle(pose, width, height):
+    geometry = face_geometry(pose, width, height)
+    return _face_bounds(geometry, width, height) if geometry else None
+
+
+def _face_bounds(geometry, width, height):
+    cx, cy = geometry["center"]
+    angle = math.radians(geometry["angle"])
+    half_w = abs(math.cos(angle)) * geometry["width"] / 2 + abs(math.sin(angle)) * geometry["height"] / 2
+    half_h = abs(math.sin(angle)) * geometry["width"] / 2 + abs(math.cos(angle)) * geometry["height"] / 2
+    return max(0, int(cx - half_w)), max(0, int(cy - half_h)), min(width, math.ceil(cx + half_w)), min(height, math.ceil(cy + half_h))
+
+
+def _cover_face(image, geometry, avatar, preset=""):
+    import cv2
+    import numpy as np
+
+    height, width = image.shape[:2]
+    bounds = _face_bounds(geometry, width, height)
+    transform = None
+    if avatar is not None:
+        # 内置面具的图像只有脸，锚点以320像素画布标定；自选图片仍按完整图片显示。
+        anchors = {"cat": ((116, 166), (204, 166), (160, 195)),
+                   "fox": ((114, 151), (206, 151), (160, 220)),
+                   "robot": ((118, 153), (202, 153), (160, 185))}.get(preset)
+        if anchors:
+            source = np.float32(anchors) * np.float32((avatar.shape[1] / 320, avatar.shape[0] / 320))
+            transform = cv2.getAffineTransform(source, np.float32((*geometry["eyes"], geometry["nose"])))
+        else:
+            scale = min(geometry["width"] / avatar.shape[1], geometry["height"] / avatar.shape[0])
+            pivot = (avatar.shape[1] / 2, avatar.shape[0] / 2)
+            transform = cv2.getRotationMatrix2D(pivot, -geometry["angle"], scale)
+            transform[:, 2] += np.array(geometry["center"]) - np.array(pivot)
+        corners = np.array(((0, 0, 1), (avatar.shape[1], 0, 1), (0, avatar.shape[0], 1),
+                            (avatar.shape[1], avatar.shape[0], 1)), dtype=float) @ transform.T
+        bounds = (max(0, min(bounds[0], math.floor(corners[:, 0].min()))),
+                  max(0, min(bounds[1], math.floor(corners[:, 1].min()))),
+                  min(width, max(bounds[2], math.ceil(corners[:, 0].max()))),
+                  min(height, max(bounds[3], math.ceil(corners[:, 1].max()))))
+    x0, y0, x1, y1 = bounds
+    if x1 <= x0 or y1 <= y0:
+        return None
+    center = geometry["center"]
+    local = (center[0] - x0, center[1] - y0)
+    cover = np.zeros((y1 - y0, x1 - x0), np.uint8)
+    cv2.ellipse(cover, tuple(round(value) for value in local),
+                (max(1, round(geometry["width"] / 2)), max(1, round(geometry["height"] / 2))),
+                geometry["angle"], 0, 360, 255, -1)
+    roi = image[y0:y1, x0:x1]
+    roi[cover > 0] = (48, 48, 48)
+    if avatar is not None:
+        tile = avatar if avatar.shape[2] == 4 else cv2.cvtColor(avatar, cv2.COLOR_BGR2BGRA)
+        transform[:, 2] -= np.array((x0, y0))
+        placed = cv2.warpAffine(tile, transform, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+        alpha = placed[:, :, 3:4].astype(np.float32) / 255.0
+        roi[:] = (placed[:, :, :3] * alpha + roi * (1 - alpha)).astype(np.uint8)
+        cover = np.maximum(cover, placed[:, :, 3])
+    return (x0, y0, x1, y1), cover
 
 
 def decode_avatar(data_url):
@@ -74,6 +138,19 @@ def decode_avatar(data_url):
     return avatar
 
 
+def builtin_avatar(preset):
+    """内置形象以程序自带透明脸型为准，不再使用旧档案中的方形缓存。"""
+    import cv2
+
+    if preset not in {"cat", "fox", "robot"}:
+        raise ValueError("内置面具无效")
+    path = Path(__file__).resolve().parent.parent / "web" / "assets" / f"studio-{preset}.png"
+    avatar = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if avatar is None or avatar.ndim != 3 or avatar.shape[2] != 4:
+        raise ValueError("内置面具资源缺失，请更新程序后重试")
+    return avatar
+
+
 def render_portrait(frame, pose, mask, config, avatar=None):
     """输入同一帧的原图、点与分割概率，输出带透明通道的画面。"""
     import cv2
@@ -83,28 +160,15 @@ def render_portrait(frame, pose, mask, config, avatar=None):
         return None, "等待摄像头画面"
     height, width = frame.shape[:2]
     image = frame.copy()
+    face_cover = None
     if config["face"] != "original":
-        rect = face_rectangle(pose, width, height)
-        if rect is None:
+        geometry = face_geometry(pose, width, height)
+        if geometry is None:
             return None, "人脸跟踪丢失，已隐藏画面"
-        x0, y0, x1, y1 = rect
-        image[y0:y1, x0:x1] = (48, 48, 48)
-        if config["face"] == "avatar":
-            if avatar is not None:
-                target_width, target_height = x1 - x0, y1 - y0
-                scale = max(target_width / avatar.shape[1], target_height / avatar.shape[0])
-                tile = cv2.resize(avatar, (math.ceil(avatar.shape[1] * scale), math.ceil(avatar.shape[0] * scale)), interpolation=cv2.INTER_AREA)
-                offset_x, offset_y = (tile.shape[1] - target_width) // 2, (tile.shape[0] - target_height) // 2
-                tile = tile[offset_y:offset_y + target_height, offset_x:offset_x + target_width]
-                if tile.shape[2] == 4:
-                    alpha = tile[:, :, 3:4].astype(np.float32) / 255.0
-                    image[y0:y1, x0:x1] = (tile[:, :, :3] * alpha + 48 * (1 - alpha)).astype(np.uint8)
-                else:
-                    image[y0:y1, x0:x1] = tile
-            else:
-                center = ((x0 + x1) // 2, (y0 + y1) // 2)
-                radius = max(1, min(x1 - x0, y1 - y0) // 3)
-                cv2.circle(image, center, radius, (232, 136, 40), -1)
+        face_cover = _cover_face(image, geometry, avatar if config["face"] == "avatar" else None,
+                                config.get("avatar_preset", ""))
+        if face_cover is None:
+            return None, "人脸不在画面中，已隐藏人物"
 
     if config["background"] == "original":
         alpha = np.full((height, width), 255, dtype=np.uint8)
@@ -117,6 +181,9 @@ def render_portrait(frame, pose, mask, config, avatar=None):
         probabilities = cv2.resize(probabilities, (width, height), interpolation=cv2.INTER_LINEAR)
         probabilities = np.nan_to_num(probabilities, nan=0.0, posinf=0.0, neginf=0.0)
         alpha = (np.clip((probabilities - 0.25) / 0.5, 0, 1) * 255).astype(np.uint8)
+        if face_cover is not None:
+            (x0, y0, x1, y1), cover = face_cover
+            alpha[y0:y1, x0:x1] = np.maximum(alpha[y0:y1, x0:x1], cover)
         if config["background"] == "green":
             weight = alpha[:, :, None].astype(np.float32) / 255.0
             image = (image * weight + np.array([0, 255, 0]) * (1 - weight)).astype(np.uint8)
@@ -160,7 +227,8 @@ class StudioPortrait:
     def update(self, config):
         if not isinstance(config, dict):
             raise ValueError("人像设置需要对象")
-        allowed = {"source": {"computer", "phone"}, "background": {"original", "green", "transparent"}, "face": {"original", "mask", "avatar"}}
+        allowed = {"source": {"computer", "phone"}, "background": {"original", "green", "transparent"},
+                   "face": {"original", "mask", "avatar"}, "avatar_preset": {"", "cat", "fox", "robot"}}
         with self._lock:
             candidate = dict(self._config)
             for name, choices in allowed.items():
@@ -173,13 +241,16 @@ class StudioPortrait:
                 if type(config["mirror"]) is not bool:
                     raise ValueError("人物镜像必须为开启或关闭")
                 candidate["mirror"] = config["mirror"]
-            avatar_changed = "avatar_data_url" in config and config["avatar_data_url"] != self._avatar_data_url
+            data_url = config.get("avatar_data_url", self._avatar_data_url)
+            avatar_changed = (data_url != self._avatar_data_url
+                              or candidate["avatar_preset"] != self._config["avatar_preset"])
             if avatar_changed:
-                avatar = decode_avatar(config["avatar_data_url"]) if config["avatar_data_url"] else None
+                avatar = (builtin_avatar(candidate["avatar_preset"]) if candidate["avatar_preset"] else
+                          decode_avatar(data_url) if data_url else None)
             if candidate != self._config or avatar_changed:
                 self._config, self._avatar = candidate, avatar
                 if avatar_changed:
-                    self._avatar_data_url = config["avatar_data_url"]
+                    self._avatar_data_url = data_url
                 self._revision += 1
                 self._clear_locked("等待新设置的画面")
                 self._wake.set()

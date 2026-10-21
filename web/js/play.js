@@ -11,6 +11,7 @@ import {S,gameProfile,head,output} from './state.js';
 import {handMouseConfig,renderHfhpeStatus,renderViewControl,syncControlLabels} from './view-control.js';
 import {renderHeadCurve} from './head-curve.js';
 import {voiceInputIssue,voiceInputReady,voiceInputTarget} from './voice.js';
+import {renderSensitivityExperiments} from './sensitivity-experiments.js';
 
 export let currentPoseMap=null;
 export let kernelState=null;
@@ -107,6 +108,13 @@ function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
   target.restore();
 }
 
+function zoneIsMapped(id,def,state){
+  if(def.gate)return !!kernelState?.vertical_look?.enabled;
+  if(typeof state?.mapped==='boolean')return state.mapped;
+  const label=zoneKeyLabel(id,def);
+  return label!=='未映射'&&label!=='宏已丢失';
+}
+
 export function renderKernelZones(zones={}){
   if(!isVisible(viewer))return;
   const definitions=bodyZones(zones),layer=viewer.querySelector('.zones');
@@ -121,7 +129,7 @@ export function renderKernelZones(zones={}){
   }
   for(const[id,def]of Object.entries(definitions)){
     const el=document.querySelector(`.zone[data-zone="${id}"]`),state=zones[id];if(!el)continue;
-    if(def.gate&&!kernelState?.vertical_look?.enabled){setStyle(el,'display','none');continue}
+    if(!zoneIsMapped(id,def,state)){setStyle(el,'display','none');continue}
     const active=!!state?.pressed;
     setClass(el,'active',active);
     setClass(el,'following',state?.mode==='following');setClass(el,'fixed',state?.mode==='fixed');
@@ -354,6 +362,8 @@ export function renderKernelState(runtime,force=false){
   // 自定义姿势的相似度跟着主状态一起来，不另开一路轮询。
   S.customPoseScores=k.custom_pose_scores||{};if(isVisible($('#customPoseList')))paintCustomPoseScores();if(isVisible($('#poseLibraryList')))paintPoseLibrary();
   const hs=k.head||{};
+  head.hfhpeHold=hs.hfhpe_hold===true;
+  renderSensitivityExperiments(k);
   const guardEnabled=hs.body_motion_guard_enabled??k.body_motion_guard_enabled??false;
   const guardBlocked=!!hs.horizontal_paused_by_body_motion;
   const motionScale=Number(hs.motion_deadzone_scale)||1;
@@ -450,7 +460,7 @@ function drawOverlayZones(octx,w,h,zones={}){
   if(S.sourceConnecting||!sourceHasFreshFrame()||!currentPoseMap)return;
   for(const[id,def]of Object.entries(bodyZones(zones))){
     const state=zones[id];if(!state)continue;const active=!!state.pressed,isGate=!!def.gate,phase=String(state.phase||'idle');
-    if(isGate&&!kernelState?.vertical_look?.enabled)continue;
+    if(!zoneIsMapped(id,def,state))continue;
     // 悬浮窗里按下一直是红的（游戏画面上最显眼）；判断中黄、扫过灰掉，免得和按下混。
     const stroke=active?'#ff5966':phase==='pending'?'#ffcc33':phase==='swept'?'rgba(255,255,255,.35)':'rgba(255,255,255,.78)';
     const fill=active?'rgba(255,70,80,.26)':phase==='pending'?'rgba(255,204,51,.22)':'rgba(0,0,0,.12)';
@@ -462,7 +472,7 @@ function drawOverlayZones(octx,w,h,zones={}){
 }
 
 function renderOverlay(map=currentPoseMap){
-  if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx;fitCanvas(c,4/3,500000);const w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);
+  if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx;fitCanvas(c,(Number(kernelState?.width)||640)/(Number(kernelState?.height)||480),500000);const w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);
   draw(map,octx,w,h,previewMirrored);
   drawOverlayZones(octx,w,h,kernelState?.zones||{});const buttons=kernelState?.buttons||[],motions=kernelState?.motions||[];const gate=!!kernelState?.vertical_gate_active;const latch=voiceLatchText(output);const text=gate?'上下视角已开启':(buttons.length?`区域 ${buttons.join('+')}`:(motions.length?`动作 ${motions.join('+')}`:(map?'未触发':'未识别人体')));octx.fillStyle=latch?'rgba(70,32,0,.78)':'rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle=latch?'#ffc46b':'#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.textAlign='left';octx.textBaseline='alphabetic';octx.fillText(latch?`${latch} · 说松开才会放`:`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))
 }

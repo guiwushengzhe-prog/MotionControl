@@ -2812,6 +2812,22 @@ class AdminHandler(_BaseHandler):
             except (ValueError, TypeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
+        if route in {"/api/sensitivity-experiments", "/api/sensitivity-experiments/neutral"}:
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "只能在本机修改灵敏度实验"}, 403)
+                return
+            try:
+                with PROFILE_UPDATE_LOCK:
+                    if route.endswith("/neutral"):
+                        KERNEL.start_lean_neutral()
+                    else:
+                        KERNEL.configure_sensitivity_experiments(body)
+                    CONFIG_REVISION += 1
+                    payload = {"ok": True, **runtime_status()}
+                self._send_json(payload)
+            except (ValueError, TypeError, OSError) as exc:
+                self._send_json({"ok": False, "error": str(exc), **runtime_status()}, 400)
+            return
         if route == "/api/view-control":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "view control is loopback-only"}, 403)

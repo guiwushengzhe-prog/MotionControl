@@ -43,12 +43,12 @@ function renderControls(){
   $('studioSizeValue').textContent=config.size+'%';
   $('studioZoomValue').textContent=config.portrait_zoom+'%';
   $('studioAvatarRow').hidden=config.face!=='avatar';
-  $('studioAvatarStatus').textContent=config.avatar_data_url?'已保存头像':'尚未选择头像；暂用遮盖保护人脸';
+  $('studioAvatarStatus').textContent=config.avatar_data_url?'已保存面具；随人脸位置和侧倾移动':'选择下方面具；未选择时使用跟脸遮盖';
   for(const button of root.querySelectorAll('[data-avatar-preset]'))button.setAttribute('aria-pressed',String(button.dataset.avatarPreset===config.avatar_preset));
   const canvas=$('studioCanvas'),portrait=config.layout==='portrait';
   canvas.width=portrait?720:1280;canvas.height=portrait?1280:720;
   $('studioPreviewBox').classList.toggle('portrait',portrait);
-  draw();renderButtons();
+  draw();renderButtons();renderAudioStatus();
 }
 
 function renderButtons(){
@@ -139,8 +139,12 @@ function portraitGeometry(){
 function renderTransformTools(){
   const geometry=portraitGeometry(),draggable=!!geometry&&(geometry.overflowX>.5||geometry.overflowY>.5);
   $('studioCanvas').classList.toggle('is-draggable',draggable);
-  $('studioZoomIn').disabled=!loaded||starting||saving||config.portrait_zoom>=400;
-  $('studioZoomOut').disabled=!loaded||starting||saving||config.portrait_zoom<=100;
+  const hasScreen=screenVideo?.readyState>=2;
+  $('studioZoomIn').disabled=!loaded||starting||saving||!hasScreen||config.size>=65;
+  $('studioZoomOut').disabled=!loaded||starting||saving||!hasScreen||config.size<=15;
+  $('studioSize').disabled=!loaded||starting||saving||!hasScreen;
+  $('studioFrameHint').textContent=hasScreen?'＋／－调整人物框；框内放大后可拖动画面':'仅人物预览已使用完整画面；选择游戏画面后可调整人物框';
+  $('studioFit').disabled=!loaded||starting||saving;
   $('studioFill').disabled=!geometry;
   $('studioCenter').disabled=!loaded||starting||saving||!(config.portrait_pan.x||config.portrait_pan.y);
 }
@@ -171,7 +175,8 @@ function bindTransformTools(){
   canvas.addEventListener('pointerup',event=>finish(event,false));
   canvas.addEventListener('pointercancel',event=>finish(event,true));
   canvas.addEventListener('lostpointercapture',event=>finish(event,true));
-  for(const [id,delta] of [['studioZoomOut',-25],['studioZoomIn',25]])$(id).addEventListener('click',()=>void persist({portrait_zoom:Math.max(100,Math.min(400,config.portrait_zoom+delta))}).catch(()=>{}));
+  for(const [id,delta] of [['studioZoomOut',-5],['studioZoomIn',5]])$(id).addEventListener('click',()=>void persist({size:Math.max(15,Math.min(65,config.size+delta))}).catch(()=>{}));
+  $('studioFit').addEventListener('click',()=>void persist({portrait_crop:{...FULL_CROP},portrait_zoom:100,portrait_pan:{x:0,y:0}}).catch(()=>{}));
   $('studioCenter').addEventListener('click',()=>void persist({portrait_pan:{x:0,y:0}}).catch(()=>{}));
   $('studioFill').addEventListener('click',()=>{
     const view=portraitGeometry();if(!view)return;
@@ -188,7 +193,7 @@ function releaseRecordingSources(){
   audioSources.forEach(source=>{try{source.disconnect()}catch{}});audioSources=[];
   if(audioContext){void audioContext.close().catch(()=>{});audioContext=null}
   if(screenVideo){screenVideo.pause();screenVideo.srcObject=null;screenVideo=null}
-  clearInterval(drawTimer);drawTimer=0;draw();
+  clearInterval(drawTimer);drawTimer=0;draw();renderAudioStatus();
 }
 
 async function acquireScreen(){
@@ -203,6 +208,7 @@ async function acquireScreen(){
   const previous=screenStream;
   if(screenVideo){screenVideo.pause();screenVideo.srcObject=null}
   screenStream=selected;screenVideo=video;stopTracks(previous);
+  for(const track of selected.getAudioTracks())for(const type of ['ended','mute','unmute'])track.addEventListener(type,renderAudioStatus);
   videoTrack.addEventListener('ended',()=>{
     if(screenStream!==selected)return;
     if(recording)stopRecording();
@@ -223,7 +229,7 @@ async function selectScreenPreview(){
     await demand(true);preview=true;void getFrame();
     status('正在预览实际合成画面，尚未录制；可先裁切和调整人物位置');
   }catch(error){if(screenStream!==previous)releaseRecordingSources();status(errorText(error))}
-  finally{starting=false;renderButtons()}
+  finally{starting=false;renderButtons();renderAudioStatus()}
 }
 
 function pickMime(){
@@ -232,9 +238,12 @@ function pickMime(){
 }
 
 function renderAudioStatus(){
-  const systemLive=!!config.system_audio&&screenStream?.getAudioTracks().some(track=>track.readyState==='live');
-  const micLive=!!config.microphone&&micStream?.getAudioTracks().some(track=>track.readyState==='live');
-  $('studioAudioStatus').textContent='电脑声音：'+(systemLive?'已收到':config.system_audio?'未收到，请在选取画面时勾选共享声音':'已关闭')+' · 麦克风：'+(micLive?'已收到':config.microphone?'未收到或已断开':'已关闭');
+  const tracks=stream=>stream?.getAudioTracks().filter(track=>track.readyState==='live'&&track.enabled)||[];
+  const system=tracks(screenStream),mic=tracks(micStream);
+  const received=list=>list.some(track=>!track.muted);
+  const systemText=!config.system_audio?'已关闭':received(system)?'已收到':system.length?'已连接，暂无音频':screenStream?'未收到，请重新选取并共享声音':'待选择共享画面';
+  const micText=!config.microphone?'已关闭':received(mic)?'已收到':mic.length?'已连接，暂无音频':recording?'已断开':starting?'准备请求麦克风':'已选择，录制时采集';
+  $('studioAudioStatus').textContent='电脑声音：'+systemText+' · 麦克风：'+micText;
 }
 
 function enqueueChunk(blob){
@@ -297,7 +306,7 @@ async function startRecording(){
       destination.stream.getAudioTracks().forEach(track=>canvasStream.addTrack(track));
     }
     renderAudioStatus();
-    audioTracks.forEach(track=>track.addEventListener('ended',renderAudioStatus));
+    audioTracks.forEach(track=>{for(const type of ['ended','mute','unmute'])track.addEventListener(type,renderAudioStatus)});
     const mime=pickMime();
     recorder=new MediaRecorder(canvasStream,{mimeType:mime,videoBitsPerSecond:4500000,audioBitsPerSecond:128000});
     const result=await request('/api/studio/recording/start',{mime_type:recorder.mimeType,layout:config.layout,width:$('studioCanvas').width,height:$('studioCanvas').height});
@@ -316,7 +325,7 @@ async function startRecording(){
     recorder=null;recording=false;if(!preview)void demand(false).catch(()=>{});
     if(error?.name==='NotSupportedError'||error?.name==='InvalidStateError')$('studioBrowserHint').hidden=false;
     status(errorText(error));
-  }finally{starting=false;renderButtons()}
+  }finally{starting=false;renderButtons();renderAudioStatus()}
 }
 
 async function chooseAvatar(event){
@@ -339,7 +348,7 @@ async function choosePreset(name){
     const canvas=document.createElement('canvas');canvas.width=canvas.height=320;
     canvas.getContext('2d').drawImage(image,0,0,320,320);
     await persist({avatar_data_url:canvas.toDataURL('image/png'),avatar_preset:name,face:'avatar'});
-    $('studioAvatarStatus').textContent='卡通头像已保存，会跟随人脸';
+    $('studioAvatarStatus').textContent='卡通面具已保存，会跟随人脸位置和侧倾';
   }catch(error){status(errorText(error))}
 }
 

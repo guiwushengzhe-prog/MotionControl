@@ -808,8 +808,11 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 
 /* 键盘宏：一条一个块。 */
 #macroList { display: grid; gap: .625rem; }
+#macroPanel { display: grid; gap: .625rem; min-width: 0; }
+#macroPanel > .group-title { padding: 0; }
+#macroPanel > .pane-sub { margin-top: 0; line-height: 1.5; }
 #commandsPanel #macroPanel { border-top: 1px solid var(--line); padding-top: 1.5rem; margin-top: 2rem; }
-#macroStatus { margin-top: -10px; }
+#macroStatus { margin: 0; }
 .macro { padding: .75rem .875rem; border-radius: var(--radius-lg); background: var(--card); box-shadow: var(--shadow); }
 .macro-head { display: flex; flex-wrap: wrap; align-items: center; gap: .875rem; }
 .macro-name { flex: 0 0 10rem; font-weight: 600; }
@@ -988,3 +991,9 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
 .phone-code-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
 .phone-code img{display:block;margin:auto;background:#fff;width:288px;max-width:100%;height:auto}
 .phone-permission{padding:8px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.experiment-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:.8rem 1.25rem;border-top:1px solid var(--line)}
+.experiment-comparison[hidden]{display:none}
+.experiment-comparison>div{display:flex;flex-direction:column;gap:.3rem;min-width:0;font-size:.85rem;color:var(--muted);overflow-wrap:anywhere}
+.experiment-comparison strong{color:var(--text);font-weight:600}
+#sensitivityExperiments .row-note:has(#experimentSaveStatus:empty){display:none}
+@media(max-width:560px){.experiment-comparison{grid-template-columns:1fr}}

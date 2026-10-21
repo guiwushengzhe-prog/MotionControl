@@ -119,6 +119,8 @@ const HEAD_MOVES = {
     hint: '转头时视角动，停住或回正时停止', more: '继续转头多一点', done: '✓ 转头就能转视角'},
   hfhpe_simple: {left: '向左转头 → 视角左转', right: '向右转头 → 视角右转', back: side => `回正，再向${side}转头 → 视角${side}转`,
     hint: '远离正前方时转向，回正或停住时停止', more: '继续转头多一点', done: '✓ 转头就能转视角'},
+  hfhpe_hold: {left: '向左转头并保持 → 视角持续左转', right: '向右转头并保持 → 视角持续右转', back: side => `先回正停止，再向${side}转头并保持`,
+    hint: '偏头停住仍转向，回到中心停止', more: '再转大一点并保持', done: '✓ 偏头保持就能持续转向'},
 };
 
 // 虚拟鼠标：真输出这时是关着的，人感觉不到「歪头 = 动鼠标」。所以在画面上放一个
@@ -193,7 +195,7 @@ const STEPS = [
       if (!s.calibrated) {
         return {target: '#calBtn', say: '先校准：看向屏幕中心，点「站好并校准」', hint: s.calibrationNote || '别看摄像头；倒计时完之前别动'};
       }
-      const move = HEAD_MOVES[s.horizontal] || HEAD_MOVES.roll_tilt;
+      const move = HEAD_MOVES[s.horizontal==='hfhpe_simple'&&s.hfhpeHold?'hfhpe_hold':s.horizontal] || HEAD_MOVES.roll_tilt;
       const other = want === 'left' ? 'right' : 'left';
       const toward = Number.isFinite(s.hLevel) ? (want === 'left' ? -s.hLevel : s.hLevel) : 0;
       return {

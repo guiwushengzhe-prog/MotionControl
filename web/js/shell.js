@@ -74,7 +74,7 @@ function tutorialState(){
     calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
     calibrating:!!hs.calibrating,calibrationNote:String(hs.notice||''),
     horizontal:horizontalHand||(head.enabled?(['roll_tilt','head_responsive','hfhpe','hfhpe_simple'].includes(head.horizontalAlgorithm)?head.horizontalAlgorithm:'head_turn'):'off'),
-    hLevel,hHandState:String(axes.horizontal?.state||''),guardBlocked:!!hs.horizontal_paused_by_body_motion,
+    hLevel,hfhpeHold:hs.hfhpe_hold===true,hHandState:String(axes.horizontal?.state||''),guardBlocked:!!hs.horizontal_paused_by_body_motion,
     vertical:verticalHand||(head.verticalLookEnabled?'head':'off'),
     vLevel,vHandState:String(axes.vertical?.state||''),gateActive:!!k.vertical_gate_active,
     zones,

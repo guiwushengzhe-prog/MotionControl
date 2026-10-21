@@ -304,5 +304,5 @@ function renderMacros() {
 document.getElementById('macroAddBtn')?.addEventListener('click', addMacro);
 
 document.getElementById('macroName')?.addEventListener('keydown', event => {
-  if (event.key === 'Enter') addMacro();
+  if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) addMacro();
 });

@@ -33,7 +33,7 @@ function fillViewControlOptions(){
 function viewChoice(items,value){return items.find(item=>item.value===value)||items.at(-1)}
 
 function horizontalDescription(choice){
-  const description=viewChoice(VIEW_CONTROL_CONTENT.horizontal,choice).description;
+  const description=choice==='hfhpe_simple'&&head.hfhpeHold?'同一模型：偏头时持续转向，幅度越大转得越快；回到中心停止':viewChoice(VIEW_CONTROL_CONTENT.horizontal,choice).description;
   if(!['hfhpe','hfhpe_simple'].includes(choice)||!hfhpeStatus||['ready','inactive'].includes(hfhpeStatus.state))return description;
   const message=hfhpeStatus.message||({loading:'正在加载转头模型…',error:'转头模型暂不可用，请重新启动识别后重试',unavailable:'缺少实验模型，请运行工具下载'})[hfhpeStatus.state];
   return message?`${description}。${message}`:description;
@@ -41,6 +41,8 @@ function horizontalDescription(choice){
 
 export function renderHfhpeStatus(state){
   hfhpeStatus=state||null;
+  const option=$('#viewHorizontalSource option[value="hfhpe_simple"]');
+  setText(option,head.hfhpeHold?'左右转头（模型·持续转向）':'左右转头（模型·简化回正）');
   const choice=$('#viewHorizontalSource')?.value;
   if(['hfhpe','hfhpe_simple'].includes(choice))setText($('#viewHorizontalDesc'),horizontalDescription(choice));
 }

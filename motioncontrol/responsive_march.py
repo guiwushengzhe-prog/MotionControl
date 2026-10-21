@@ -28,7 +28,14 @@ class ResponsiveMarch:
         self.ground_samples = []
         self.ground_tolerance = self.GROUND_TOLERANCE
 
-    def update(self, lifts, now, *, excluded=(), blocked=False, jumping=False):
+    def _stop(self, lifts, first_step):
+        self.reset()
+        if first_step:
+            # 首步已经响应过的悬空脚要先落地，不能静止抬腿后反复起步。
+            for side, leg in self.legs.items():
+                leg["announced"] = lifts[side] >= self.LIFT_END
+
+    def update(self, lifts, now, *, excluded=(), blocked=False, jumping=False, first_step=False):
         if not math.isfinite(now) or blocked or not lifts or not all(math.isfinite(lifts.get(side, math.nan))
                                           for side in self.legs):
             self.reset()
@@ -37,7 +44,7 @@ class ResponsiveMarch:
             self.reset()
         if self.active_until and now >= self.active_until:
             # 已停止：低幅度节奏不能借给下一次起动。
-            self.reset()
+            self._stop(lifts, first_step)
         self.last_at = now
         was_active = now < self.active_until
         if not was_active and not self.last_side and not jumping:
@@ -69,7 +76,7 @@ class ResponsiveMarch:
                 moving = True
             gap = now - self.last_event_at
             alternating = bool(self.last_side and side != self.last_side and .10 <= gap <= 1.50
-                               and not two_feet_lifted)
+                               and not two_feet_lifted and not (first_step and jumping))
             # 第一只脚确认节奏；相反脚达到门槛时，已有交替证据，不再额外等待。
             if leg["announced"] or (not alternating and now - leg["since"] < self.CONFIRM_S):
                 continue
@@ -79,6 +86,9 @@ class ResponsiveMarch:
                 # 真人慢踏步在两步之间会双脚落地约 0.2 秒，不能当成已经停下。
                 self.grounded_stop_s = min(self.GROUNDED_STOP_MAX_S,
                                            max(self.GROUNDED_STOP_MIN_S, .4 * gap))
+                self.last_motion_at = now
+            elif first_step and not was_active and not two_feet_lifted and not jumping:
+                self.active_until = now + .25
                 self.last_motion_at = now
             # 起动前可重复记录同一脚；持续阶段只由真正交替更新节奏。
             if alternating or not was_active:
@@ -109,5 +119,5 @@ class ResponsiveMarch:
             self.active_until = 0.0
         active = now < self.active_until
         if was_active and not active:
-            self.reset()
+            self._stop(lifts, first_step)
         return active

@@ -51,6 +51,10 @@ from motioncontrol.zone_arbiter import (
 from motioncontrol.hold_chain import HoldChain, DEFAULT_ACTION_CHAIN
 from motioncontrol.responsive_march import ResponsiveMarch
 from motioncontrol.depth_march import DepthMarchLifts
+from motioncontrol.experimental_march import ExperimentMarchLifts
+from motioncontrol.body_lean import BodyLeanController
+from motioncontrol import sensitivity_experiments
+from motioncontrol.config_transaction import atomic_bytes
 from motioncontrol import kinect_camera
 from motioncontrol.hfhpe import HfhpeEstimator
 from motioncontrol.recognition_models import (
@@ -537,6 +541,7 @@ class ControlKernel:
         # Once a personal model is active, HeadController uses them only for
         # diagnostics; the runtime yaw path remains normalized-2D only.
         self.latest_world_pose: dict[str, dict] | None = None
+        self.latest_model_pose: dict[str, dict] | None = None
         self.latest_head_pose: dict | None = None
         self.pose_last_valid_at = 0.0
         # Keep a short monotonic history so first-run scene placement and
@@ -652,6 +657,10 @@ class ControlKernel:
         self._depth_march = DepthMarchLifts()
         self.latest_depth_body = None
         self.march_depth_source = "image"
+        self.sensitivity_experiments = dict(sensitivity_experiments.DEFAULTS)
+        self._experimental_march = ExperimentMarchLifts()
+        self._body_lean = BodyLeanController()
+        self._body_lean_saved_neutral = self._body_lean.neutral_snapshot()
         self._jump = JumpDetector()
         # 脚：站着时的基准、最近 0.3 秒的样子、这一帧算出来的离地和往外。见 _update_feet_locked。
         self.foot_base: dict[str, float] | None = None
@@ -790,6 +799,10 @@ class ControlKernel:
             pass
         if data.get("march_algorithm") in {"legacy", "responsive"}:
             self.march_algorithm = data["march_algorithm"]
+        self.sensitivity_experiments = sensitivity_experiments.load(data.get("sensitivity_experiments"))
+        self.head_controller.hfhpe_hold = self.sensitivity_experiments["head_hold"]
+        self._body_lean.load_neutral(data.get("body_lean_neutral"))
+        self._body_lean_saved_neutral = self._body_lean.neutral_snapshot()
         hand_mouse = data.get("hand_mouse")
         if isinstance(hand_mouse, dict):
             try:
@@ -921,6 +934,8 @@ class ControlKernel:
             "action_chain": self.action_chain.config,
             "zone_trigger_mode": self.zone_trigger_mode,
             "march_algorithm": self.march_algorithm,
+            "sensitivity_experiments": dict(self.sensitivity_experiments),
+            "body_lean_neutral": self._body_lean.neutral_snapshot(),
             "trigger_recording": self.trigger_recorder.config,
             "zone_freeze": {"frozen": bool(self.zones_frozen),
                             "rects": self.frozen_rects,
@@ -1230,6 +1245,7 @@ class ControlKernel:
         hands: dict[str, list[dict]] | None = None,
         depth_body: dict | None = None,
         head_pose: dict | None = None,
+        model_pose: dict[str, dict] | None = None,
         captured_at_ms: float | None = None,
         sample_at: float | None = None,
         return_status: bool = True,
@@ -1259,6 +1275,7 @@ class ControlKernel:
             self.height = max(1, int(height))
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
             self.latest_world_pose = copy.deepcopy(world_pose) if world_pose else None
+            self.latest_model_pose = copy.deepcopy(model_pose if model_pose is not None else pose_map)
             self.latest_depth_body = copy.deepcopy(depth_body) if depth_body else None
             self.latest_head_pose = dict(head_pose) if source_id == "computer_camera" and isinstance(head_pose, dict) else None
             # Read back out inside _process_pose_locked rather than threaded
@@ -1366,7 +1383,7 @@ class ControlKernel:
         for entry in (*pose_library.BUILTIN, *pose_library.registered().values()):
             names.setdefault(entry["id"], entry["name"])
         out = []
-        for ident in (*BUILTIN_MOTIONS, *self._motion_rules):
+        for ident in (*BUILTIN_MOTIONS, *sensitivity_experiments.LEAN_MOTIONS, *self._motion_rules):
             if ident in self.disabled_builtin_actions:
                 continue
             out.append((f"motion.{ident}", names.get(ident, ident)))
@@ -1632,6 +1649,7 @@ class ControlKernel:
             self.march_algorithm = algorithm
             self.step = _fresh_step()
             self._responsive_march.reset()
+            self._experimental_march.reset()
             self.motion_active.discard("march")
             self.motion_raw["march"] = False
             self.motion_debounce["march"].clear()
@@ -1640,6 +1658,82 @@ class ControlKernel:
             now = time.monotonic()
             self._dispatch_controls_locked(now)
             return self.status_locked(now)
+
+    def configure_sensitivity_experiments(self, changes: dict) -> dict:
+        with self._lock:
+            previous = self.sensitivity_experiments
+            proposed = sensitivity_experiments.configure(previous, changes)
+            if proposed == previous:
+                return self.status_locked(time.monotonic())
+            if self._persist:
+                payload = self.general_settings_payload()
+                payload["sensitivity_experiments"] = proposed
+                path = self._general_settings_path()
+                atomic_bytes(path, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+            self.sensitivity_experiments = proposed
+            self.head_controller.hfhpe_hold = proposed["head_hold"]
+            if previous["head_hold"] != proposed["head_hold"]:
+                self.head_controller.reset_tracking()
+                self.head = self.head_controller.status(time.monotonic())
+                self._safe_output(self.output.apply, 0.0, 0.0)
+            if any(previous[key] != proposed[key] for key in ("first_step", "body_source")):
+                self._responsive_march.reset()
+                self._experimental_march.reset()
+                self.motion_active.discard("march")
+                self.motion_raw["march"] = False
+                self.motion_debounce["march"].update(active=False, on=0, off=0)
+            if any(previous[key] != proposed[key] for key in ("body_source", "lean_strafe", "lean_back")):
+                self._body_lean.reset_tracking()
+                self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)
+            self._body_lean.update(None, None, None, self.width, self.height, time.monotonic(),
+                source=proposed["body_source"], strafe=proposed["lean_strafe"],
+                back=proposed["lean_back"], compare=proposed["compare"])
+            now = time.monotonic()
+            self._dispatch_controls_locked(now)
+            return self.status_locked(now)
+
+    def start_lean_neutral(self) -> dict:
+        with self._lock:
+            now = time.monotonic()
+            self._body_lean.start_neutral(now)
+            self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)
+            self._dispatch_controls_locked(now)
+            return self.status_locked(now)
+
+    def _sensitivity_status_locked(self, now: float) -> dict:
+        march = self._experimental_march.status()
+        first_step = self.sensitivity_experiments["first_step"] and self.march_algorithm == "responsive"
+        return {"config": dict(self.sensitivity_experiments), "body": self._body_lean.status(now),
+                "first_step_source": self.sensitivity_experiments["body_source"],
+                "first_step_ready": bool(first_step and march["ready"]),
+                "first_step_message": (march["message"] if first_step else
+                                       "仅对灵敏踏步生效" if self.march_algorithm != "responsive" else "未开启首步响应")}
+
+    def _update_lean_motions_locked(self, now: float) -> None:
+        config = self.sensitivity_experiments
+        sample_at = self._pose_sample_time_locked(now)
+        fresh = 0.0 <= now - sample_at <= .25
+        active = self._body_lean.update(
+            self.latest_model_pose if fresh else None, self.latest_world_pose if fresh else None,
+            self.latest_depth_body if fresh else None,
+            self.width, self.height, sample_at if fresh else now,
+            source=config["body_source"], strafe=config["lean_strafe"],
+            back=config["lean_back"], compare=config["compare"],
+        )
+        active.difference_update(self.disabled_builtin_actions)
+        self.motion_active.update(active)
+        for ident in sensitivity_experiments.LEAN_MOTIONS:
+            self.motion_raw[ident] = ident in active
+        # 后退方向真正有绑定时才让踏步让路；左右走位可与前后组合。
+        if "lean_back" in active and self._effective_binding_locked("motion.lean_back"):
+            self.motion_active.discard("march")
+            self.motion_raw["march"] = False
+            self.motion_debounce["march"].update(active=False, on=0, off=0)
+            self._responsive_march.reset()
+        neutral = self._body_lean.neutral_snapshot()
+        if neutral != self._body_lean_saved_neutral:
+            self._body_lean_saved_neutral = neutral
+            self._save_general_settings()
 
     def trigger_recording_choices(self) -> list[dict]:
         with self._lock:
@@ -1946,6 +2040,7 @@ class ControlKernel:
                 self._apply_zone_fit_locked()
         self._update_zones_locked(pose_map, now)
         self._update_motion_locked(pose_map, now)
+        self._update_lean_motions_locked(now)
         self._update_cross_poses_locked(pose_map, now)
         self._update_intent_recording_locked(pose_map, now)
         self._update_action_chain_locked(now)
@@ -1974,6 +2069,10 @@ class ControlKernel:
                    "hand": hand["hand"], "hands": hand["hands"], "axes": hand["axes"],
                    "head_pose": self.latest_head_pose, "head": self.head,
                    "head_config": self.head_controller.config,
+                   "sensitivity_experiments": self.sensitivity_experiments,
+                   "body_lean": self._body_lean.status(now),
+                   "depth_body": self.latest_depth_body,
+                   "model_pose": self.latest_model_pose,
                    "motion_deadzone_scale": self.body_motion_guard_scale,
                    # 这是控制链计算结果，不代表系统鼠标或游戏实际已移动。
                    "output_enabled": bool(getattr(self.output, "enabled", True))},
@@ -1984,6 +2083,7 @@ class ControlKernel:
                                                  ensure_ascii=False, separators=(",", ":")),
                 "vertical_look": dict(self.vertical_look),
                 "body_motion_guard_enabled": self.body_motion_guard_enabled,
+                "body_lean_neutral": self._body_lean.neutral_snapshot(),
             },
         )
 
@@ -1997,9 +2097,15 @@ class ControlKernel:
         self.trigger_recorder.capture(
             pose_map, now, active, width=self.width, height=self.height,
             source=str(self.active_body_source or ""), sample_at=self.pose_sample_at,
-            world_pose=world_pose, snapshot_factory=self.replay_snapshot,
+            world_pose=world_pose, snapshot_factory=lambda: self.replay_snapshot(include_head=True),
             extra={"hands": self.hand_mouse_controller.status(), "feet": self.feet,
-                   "motion_raw": self.motion_raw},
+                   "motion_raw": self.motion_raw,
+                   "model_pose": self.latest_model_pose, "depth_body": self.latest_depth_body,
+                   "head_pose": self.latest_head_pose, "head": self.head,
+                   "head_config": self.head_controller.config,
+                   "sensitivity_experiments": self.sensitivity_experiments,
+                   "body_lean": self._body_lean.status(now),
+                   "output_enabled": bool(getattr(self.output, "enabled", True))},
         )
 
     def _reset_body_motion_guard_locked(self) -> None:
@@ -2342,6 +2448,17 @@ class ControlKernel:
         return any(name.startswith(f"{hand}Hand") and
                    self.hand_mouse_controller.owns_hand(hand) for hand in HANDS)
 
+    def _zone_mapped_locked(self, name: str) -> bool:
+        if name == "lookGate":
+            return self._gate_available()
+        binding = self._effective_binding_locked(f"zone.{name}")
+        action = (binding or {}).get("action")
+        if not isinstance(action, dict) or not action.get("type") or not action.get("target"):
+            return False
+        if action["type"] == "macro":
+            return self.macro_store is not None and self.macro_store.get(action["target"]) is not None
+        return True
+
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
         previous_gate = bool(self.vertical_gate_active)
         self._update_feet_locked(pose_map, now)
@@ -2366,6 +2483,11 @@ class ControlKernel:
         self._note_busy_locked(busy, conflicts, now)
         for name in zone_names:
             state = self.zone_state.setdefault(name, fresh_zone_state())
+            if not self._zone_mapped_locked(name):
+                # 未映射的区域不命中、不进入触发录制；几何仍由独立编辑器提供。
+                changed = changed or bool(state.get("pressed"))
+                self.zone_state[name] = fresh_zone_state()
+                continue
             depth = self._zone_depth_locked(pose_map, name, frame)
             inside = depth >= 0.0
             custom = name in custom_targets
@@ -2380,13 +2502,8 @@ class ControlKernel:
                 # be pressing whatever zone it flies through, so aiming would
                 # mash buttons.
                 inside = False
-            # 身体确实在框里没有，不管判定按不按。「录我的动作」数进框次数用它。
+            # 已映射区域实际是否命中，供动作录制计算进框次数。
             state["raw_inside"] = inside
-            if name in self.runtime_body_zones and not self._effective_binding_locked(f"zone.{name}"):
-                # 没绑键的框不判断，画面上也不画（见 _zones_snapshot_locked）。
-                changed = changed or bool(state.get("pressed"))
-                self.zone_state[name] = {**fresh_zone_state(), "raw_inside": inside}
-                continue
             # The look gate is a safety arm, so leaving it must cut vertical
             # output on the very first missing frame.  Body action zones
             # retain their normal two-frame hysteresis.
@@ -2538,7 +2655,7 @@ class ControlKernel:
                                   "report": report if state == "ready" else self.zone_learning.get("report"),
                                   "took_s": took_s, "snippets": len(self.zone_arbiter.bank)}
 
-    def replay_snapshot(self) -> dict | None:
+    def replay_snapshot(self, *, include_head: bool = False) -> dict | None:
         """回放录的动作要照着的那些设置（intent_library.make_replay_kernel）。正在录就不给。"""
         with self._lock:
             if self.intent_session is not None and self.intent_session.active:
@@ -2558,6 +2675,11 @@ class ControlKernel:
                 "regions": list(self.custom_regions.values()),
                 "zone_trigger_mode": self.zone_trigger_mode,
                 "march_algorithm": self.march_algorithm,
+                "sensitivity_experiments": self.sensitivity_experiments,
+                "body_lean_neutral": self._body_lean.neutral_snapshot(),
+                **({"head_replay": True,
+                    "head_profile_json": json.dumps(self.head_controller.profile_document(),
+                        ensure_ascii=False, separators=(",", ":"))} if include_head else {}),
                 "vertical_look": self.vertical_look,
                 "hand_mouse": dict(self.hand_mouse_controller.config),
                 "action_chain": self.action_chain.config,
@@ -2853,12 +2975,24 @@ class ControlKernel:
         knee_near_elbow = {side: any(rules[ident].get("attempts", {}).get(side, False) for ident in lift_claimers_bound)
                            for side in ("left", "right")}
 
-        march_lifts = self._depth_march.update(self.latest_depth_body, self.feet["lift"] if self.feet else None, now)
-        self.march_depth_source = self._depth_march.source
-        if self._depth_march.source_changed:
-            self._responsive_march.reset()
-            self.step.clear()
-            self.step.update(_fresh_step())
+        first_step = self.sensitivity_experiments["first_step"] and self.march_algorithm == "responsive"
+        if first_step:
+            sample_at = self._pose_sample_time_locked(now)
+            fresh = 0.0 <= now - sample_at <= .25
+            march_lifts = self._experimental_march.update(
+                self.latest_model_pose if fresh else None, self.latest_depth_body if fresh else None,
+                self.width, self.height, sample_at if fresh else now,
+                source=self.sensitivity_experiments["body_source"])
+            if not fresh:
+                self._experimental_march.message = "画面延迟较大，等待新帧后再起步"
+            self.march_depth_source = self.sensitivity_experiments["body_source"]
+        else:
+            march_lifts = self._depth_march.update(self.latest_depth_body, self.feet["lift"] if self.feet else None, now)
+            self.march_depth_source = self._depth_march.source
+            if self._depth_march.source_changed:
+                self._responsive_march.reset()
+                self.step.clear()
+                self.step.update(_fresh_step())
         leg_good = math.isfinite(torso) and self._points_good(pose_map, ("left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle"))
         if leg_good:
             def rise(side: str, other: str, joint: str) -> float:
@@ -3008,6 +3142,7 @@ class ControlKernel:
                     excluded=excluded,
                     blocked=steps_blocked or calf_raw or calf_in_progress or cross_attempting or responsive_lowered,
                     jumping=jumping,
+                    first_step=first_step,
                 )
         else:
             self.step.clear()
@@ -3165,6 +3300,7 @@ class ControlKernel:
         triggers.update(f"zone.{name}" for name in self.runtime_body_zones)
         triggers.update(f"motion.{item.get('id')}" for item in self.motion_config
                         if item.get("id"))
+        triggers.update(f"motion.{ident}" for ident in sensitivity_experiments.LEAN_MOTIONS)
         out: dict[str, dict] = {}
         for trigger in triggers:
             binding = self._effective_binding_locked(trigger)
@@ -3198,6 +3334,8 @@ class ControlKernel:
             for item in self.motion_config:
                 if item.get("id") == ident and item.get("enabled") and item.get("target"):
                     return {"action": {"type": item.get("type", "gamepad"), "target": item.get("target"), "behavior": "hold"}}
+            if ident in sensitivity_experiments.LEAN_MOTIONS:
+                return sensitivity_experiments.lean_binding(self._effective_binding_locked("motion.march"), ident)
         return None
 
     def effective_bindings(self) -> dict[str, dict]:
@@ -3659,6 +3797,8 @@ class ControlKernel:
         self.feet_out_since = None
         self._depth_march.reset()
         self.march_depth_source = "image"
+        self._experimental_march.reset()
+        self._body_lean.reset_tracking()
         self.step.clear()
         self.step.update(_fresh_step())
         self.head_controller.reset_tracking()
@@ -3679,6 +3819,7 @@ class ControlKernel:
             self.head_controller.cancel_center("人体来源已断开")
         self.latest_pose = None
         self.latest_world_pose = None
+        self.latest_model_pose = None
         self.latest_head_pose = None
         self.latest_depth_body = None
         self._depth_march.reset()
@@ -3712,9 +3853,8 @@ class ControlKernel:
     def runtime_zones_locked(self) -> dict:
         """Return only display geometry and pressed state for the phone overlay.
 
-        ``pressed`` 是"这个框现在按着一个键"：没绑键的框人伸进去也是 False，
-        手机和网页上就不会亮。``recognized`` 是"身体确实在框里"，不管绑没绑键，
-        只给「动作测试」页用。lookGate 不是键而是一道闸，它两个值一样。
+        未映射区域既不显示也不认作触发；调整区域的几何从独立编辑器取得。
+        lookGate 是启用上下视角时的控制闸，不需要额外按键绑定。
         """
         gate_available = self._gate_available()
         zone_names = list(self.runtime_body_zones) + (["lookGate"] if gate_available else [])
@@ -3723,9 +3863,9 @@ class ControlKernel:
         for name in zone_names:
             raw = self.zone_state.get(name, {})
             custom = name in self.custom_regions
-            recognized = bool(raw.get("raw_inside" if custom else "pressed", False))
-            mapped = name not in self.runtime_body_zones or bool(self._effective_binding_locked(f"zone.{name}"))
-            state = {"pressed": bool(raw.get("pressed")) and mapped, "recognized": recognized}
+            mapped = self._zone_mapped_locked(name)
+            recognized = mapped and bool(raw.get("raw_inside" if custom else "pressed", False))
+            state = {"mapped": mapped, "pressed": bool(raw.get("pressed")) and mapped, "recognized": recognized}
             state["trigger_groups"] = self._zone_point_groups_locked(name)
             # 画成什么样：idle 灰、pending 判断中（黄）、pressed 亮、swept 判定是扫过（闪红）。
             # 没绑键的框不判断也不画：没有 rect，网页和手机上就不出现。progress 是系统
@@ -3734,7 +3874,7 @@ class ControlKernel:
             state["phase"] = phase
             if phase == "pending" and raw.get("progress"):
                 state["progress"] = round(float(raw["progress"]), 2)
-            rect = self.zone_rects.get(name) if mapped or custom else None
+            rect = self.zone_rects.get(name) if mapped else None
             if custom:
                 state.update(name=self.custom_regions[name]["name"], custom=True)
             state["mode"] = self.custom_regions[name].get("mode", "fixed") if custom else "fixed" if self.zones_frozen else "following"
@@ -3842,6 +3982,7 @@ class ControlKernel:
             "zone_misfire_hint": self.zone_misfire_hint_locked(now),
             "zone_trigger_mode": self.zone_trigger_mode,
             "march_algorithm": self.march_algorithm,
+            "sensitivity_experiments": self._sensitivity_status_locked(now),
             # 跟随框定住了没有；zones_anchor_known：定住时看清了人站在哪，「区域挪到我这里」
             # 能按它把整组框搬过来。
             "zones_frozen": bool(self.zones_frozen),
@@ -5211,6 +5352,7 @@ class NativeCameraService:
                     and head_config.get("enabled", True) and head_config.get("horizontal_algorithm") in {"hfhpe", "hfhpe_simple"}))
                 hands_started_at = time.perf_counter()
                 depth_body = kinect_camera.matching_depth_body(depth_metadata, pose_map, frame_rotation)
+                model_pose = pose_map
                 native_hands = kinect_camera.depth_hand_states(depth_body)
                 pose_map = kinect_camera.merge_depth_pose(pose_map, depth_body, frame_rotation,
                     mirrored=bool(depth_metadata and depth_metadata.get("image_mirrored")))
@@ -5244,6 +5386,7 @@ class NativeCameraService:
                             world_pose=world_pose, hands=hands, sample_at=captured_at, return_status=False,
                             depth_body=depth_body,
                             head_pose=head_pose,
+                            model_pose=model_pose,
                         )
                     finished = time.monotonic()
                     processing_finished_at = time.perf_counter()

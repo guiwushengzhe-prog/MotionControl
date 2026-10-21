@@ -74,6 +74,75 @@ def test_curve_and_sensitivity_apply_only_while_outward():
         assert abs(c.status()["target_output_x"]) == 0.
 
 
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_hold_experiment_continues_while_still_and_slows_on_return(sign):
+    c = simple_controller(deadzone=.25, sensitivity_x=100., horizontal_curve_gamma=1.)
+    c.hfhpe_hold = True
+    assert step(c, sign * 12., 20.) == (0., 0.)
+    held = [step(c, sign * 12., 20. + i / 30)[0] for i in range(1, 16)]
+    assert all(x * sign > 0. for x in held)
+    assert held[-1] == pytest.approx(sign * (12. - 4.5) / (18. - 4.5))
+    returned = [step(c, sign * (12. - i * .4), 20.5 + i / 30)[0] for i in range(1, 31)]
+    assert all(x * sign >= 0. for x in returned)
+    assert returned[-1] == 0.
+    assert not c.status()["yaw_return_latched"]
+    assert c.status()["horizontal_algorithm_label"] == "左右转头（模型·持续转向）"
+    assert c.status()["horizontal_algorithm_version"] == "hfhpe-held-yaw-v1"
+
+
+def test_hold_flag_is_runtime_only_and_disabling_restores_simple_hold_stop(tmp_path):
+    c = simple_controller(tmp_path / "head.json")
+    assert not c.hfhpe_hold
+    c.hfhpe_hold = True
+    assert step(c, 15., 20.) == (0., 0.)
+    assert step(c, 15., 20.04)[0] > 0.
+    c.hfhpe_hold = False
+    assert step(c, 15., 20.08) == (0., 0.)
+    assert "hfhpe_hold" not in c.profile_document()
+    assert "hfhpe_hold" not in c.config
+    assert not HeadController(tmp_path / "head.json").hfhpe_hold
+    assert c.status()["horizontal_algorithm_label"] == "左右转头（模型·简化回正）"
+
+
+@pytest.mark.parametrize("failure", ["invalid", "gap"])
+def test_hold_experiment_loses_output_and_reacquires_with_silent_first_frame(failure):
+    c = simple_controller()
+    c.hfhpe_hold = True
+    step(c, 15., 20.)
+    assert step(c, 15., 20.04)[0] > 0.
+    if failure == "invalid":
+        assert c.update({}, 640, 480, 20.08, head_pose=frame(valid=False)) == (0., 0.)
+        reacquired = 20.12
+    else:
+        reacquired = 21.
+    assert step(c, -15., reacquired) == (0., 0.)
+    assert step(c, -15., reacquired + .04)[0] < 0.
+
+
+def test_hold_flag_does_not_change_original_model_rules():
+    controllers = [make_controller(), make_controller()]
+    controllers[1].hfhpe_hold = True
+    for i, yaw in enumerate([0., 8., 12., 12., 10., 0., -12., -12.]):
+        outputs = [step(c, yaw, 20. + i / 30) for c in controllers]
+        assert outputs[0] == outputs[1]
+
+
+@pytest.mark.parametrize("invert", [False, True])
+def test_hold_experiment_can_cross_center_and_respects_real_deadzone(invert):
+    c = simple_controller(invert_x=invert, deadzone=.03)
+    c.hfhpe_hold = True
+    c._hfhpe_calibration["noise_yaw_deg"] = 2.
+    for i in range(10):
+        assert step(c, 5., 20. + i / 30) == (0., 0.)
+    for i in range(1, 31):
+        x, _ = step(c, 15., 20.3 + i / 30)
+    assert x * (-1 if invert else 1) > 0.
+    for i in range(1, 31):
+        x, _ = step(c, -15., 21.3 + i / 30)
+    assert x * (1 if invert else -1) > 0.
+    assert c.status()["hfhpe_deadzone_deg"] == pytest.approx(6.)
+
+
 def test_shared_model_calibration_survives_save_reload_and_legacy_switch(tmp_path):
     path = tmp_path / "head.json"
     c = simple_controller(path)

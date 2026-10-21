@@ -384,6 +384,19 @@
 
 <section class="settings-pane" data-pane="lab" hidden="">
 <h1 class="pane-title">实验与诊断</h1>
+<div class="group" id="sensitivityExperiments">
+<h2 class="group-title">灵敏度实验</h2>
+<div class="list">
+<div class="row"><label class="row-main" for="experimentHeadHold"><span class="name">偏头持续转向</span><span class="sub" id="experimentHeadHoldNote">仅用于左右转头的模型简化方案</span></label><input class="switch" id="experimentHeadHold" type="checkbox" disabled/></div>
+<div class="row"><label class="row-main" for="experimentFirstStep"><span class="name">首步响应</span><span class="sub" id="experimentFirstStepNote">仅用于灵敏踏步</span></label><input class="switch" id="experimentFirstStep" type="checkbox" disabled/></div>
+<div class="row"><label class="row-main" for="experimentLeanStrafe"><span class="name">身体侧倾走位</span><span class="sub">左倾向左，右倾向右</span></label><input class="switch" id="experimentLeanStrafe" type="checkbox" disabled/></div>
+<div class="row"><label class="row-main" for="experimentLeanBack"><span class="name">身体后倾后退</span><span class="sub">后倾时触发后退</span></label><input class="switch" id="experimentLeanBack" type="checkbox" disabled/></div>
+<div class="row"><label class="row-main" for="experimentBodySource"><span class="name">身体角度来源</span><span class="sub" id="experimentBodyStatus" role="status">等待当前状态…</span></label><select id="experimentBodySource" aria-label="身体角度来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select><button class="btn" id="experimentNeutralBtn" type="button" disabled>重设站姿</button></div>
+<div class="row"><label class="row-main" for="experimentCompare"><span class="name">显示两路对照</span><span class="sub">只显示对照，控制使用上方选中的一路</span></label><input class="switch" id="experimentCompare" type="checkbox" disabled/></div>
+<div class="experiment-comparison" id="experimentComparison" hidden><div id="experimentModelReadout"></div><div id="experimentDepthReadout"></div></div>
+<div class="row-note"><span class="statusline" id="experimentSaveStatus" role="status"></span></div>
+</div>
+</div>
 <div class="group" id="stereoSettings">
 <h2 class="group-title">双目深度（实验）</h2>
 <div class="list">
