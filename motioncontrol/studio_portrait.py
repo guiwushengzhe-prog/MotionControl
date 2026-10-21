@@ -54,7 +54,29 @@ def face_geometry(pose, width, height):
     if not eye_width * .08 <= nose_depth <= eye_width * 1.5:
         return None
     return {"center": center, "width": face_width * 1.05, "height": face_width * 1.45,
-            "angle": math.degrees(angle), "eyes": (eye_left, eye_right), "nose": nose}
+            "angle": math.degrees(angle), "eyes": (eye_left, eye_right), "nose": nose,
+            "ears": tuple(ear for ear in ears if ear is not None)}
+
+
+def _head_geometry(face):
+    """遮住发顶和双耳；下沿保持到下巴，头像仍单独按眼鼻对齐。"""
+    base = face["width"] / 1.05
+    angle = math.radians(face["angle"])
+    across, down = (math.cos(angle), math.sin(angle)), (-math.sin(angle), math.cos(angle))
+    eyes = face["eyes"]
+    center = tuple((eyes[0][i] + eyes[1][i]) / 2 - down[i] * base * .03 for i in range(2))
+    half_width, half_height = base * .70, base * .975
+    for ear in face.get("ears", ()):
+        offset = tuple(ear[i] - center[i] for i in range(2))
+        horizontal = sum(offset[i] * across[i] for i in range(2))
+        vertical = sum(offset[i] * down[i] for i in range(2))
+        # 耳点错到发顶/下巴或远离头部时不能无限放大遮挡，沿用丢脸隐藏。
+        if abs(vertical) >= half_height * .8 or abs(horizontal) > base:
+            return None
+        # 椭圆在耳朵高度会内缩，按实际投影补足横向覆盖并留出耳缘。
+        half_width = max(half_width, (abs(horizontal) + .05 * base) /
+                         math.sqrt(1 - (vertical / half_height) ** 2))
+    return {**face, "center": center, "width": half_width * 2, "height": half_height * 2}
 
 
 def face_rectangle(pose, width, height):
@@ -75,7 +97,10 @@ def _cover_face(image, geometry, avatar, preset=""):
     import numpy as np
 
     height, width = image.shape[:2]
-    bounds = _face_bounds(geometry, width, height)
+    head = _head_geometry(geometry)
+    if head is None:
+        return None
+    bounds = _face_bounds(head, width, height)
     transform = None
     if avatar is not None:
         # 内置面具的图像只有脸，锚点以320像素画布标定；自选图片仍按完整图片显示。
@@ -99,11 +124,11 @@ def _cover_face(image, geometry, avatar, preset=""):
     x0, y0, x1, y1 = bounds
     if x1 <= x0 or y1 <= y0:
         return None
-    center = geometry["center"]
+    center = head["center"]
     local = (center[0] - x0, center[1] - y0)
     cover = np.zeros((y1 - y0, x1 - x0), np.uint8)
     cv2.ellipse(cover, tuple(round(value) for value in local),
-                (max(1, round(geometry["width"] / 2)), max(1, round(geometry["height"] / 2))),
+                (max(1, round(head["width"] / 2)), max(1, round(head["height"] / 2))),
                 geometry["angle"], 0, 360, 255, -1)
     roi = image[y0:y1, x0:x1]
     roi[cover > 0] = (48, 48, 48)

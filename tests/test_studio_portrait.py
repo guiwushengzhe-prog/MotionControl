@@ -110,6 +110,38 @@ def test_face_mask_uses_current_face_not_shoulder_size_and_follows_tilt():
     assert np.linalg.norm(np.array(current["center"]) - np.array(first["center"])) > 35
 
 
+@pytest.mark.parametrize("angle", [-30, 0, 30])
+@pytest.mark.parametrize("mirror", [False, True])
+def test_privacy_covers_hair_and_ear_edges_after_head_tilt_and_mirror(angle, mirror):
+    width, height = 440, 400
+    origin = np.array((200, 90))
+    radians = np.deg2rad(angle)
+    rotation = np.array(((np.cos(radians), -np.sin(radians)), (np.sin(radians), np.cos(radians))))
+
+    def moved(point):
+        return rotation @ (np.array(point) - origin) + origin + (20, 60)
+
+    pose = {}
+    for name, point in face_pose().items():
+        x, y = moved((point["x"] * 400, point["y"] * 300))
+        pose[name] = {"x": x / width, "y": y / height, "score": .99}
+    frame = np.full((height, width, 3), 180, np.uint8)
+    result, reason = render_portrait(frame, pose, None,
+                                    {"background": "original", "face": "mask", "mirror": mirror})
+    assert reason is None
+    # 发顶、两侧头发和耳缘都要覆盖，不能只盖住眼鼻嘴。
+    for point in ((200, 10), (170, 25), (230, 25), (150, 65), (250, 65), (156, 105), (244, 105)):
+        x, y = (round(value) for value in moved(point))
+        if mirror:
+            x = width - 1 - x
+        assert result[y, x, :3].tolist() == [48, 48, 48], (angle, mirror, point)
+    for point in ((120, 195), (280, 195), (200, 230)):
+        x, y = (round(value) for value in moved(point))
+        if mirror:
+            x = width - 1 - x
+        assert result[y, x, :3].tolist() == [180, 180, 180], "不扩大到肩膀和胸口"
+
+
 def test_builtin_mask_aligns_eye_and_nose_markers_without_cropping_the_picture():
     import cv2
 
@@ -128,13 +160,38 @@ def test_builtin_mask_aligns_eye_and_nose_markers_without_cropping_the_picture()
     assert result[230, 200, :3].tolist() == [180, 180, 180], "面具不覆盖胸口"
 
 
+def test_single_visible_ear_can_expand_head_cover_without_expanding_avatar():
+    pose = face_pose()
+    del pose["left_ear"]
+    pose["right_ear"]["x"] = .7
+    frame = np.full((300, 400, 3), 180, np.uint8)
+    result, reason = render_portrait(frame, pose, None,
+                                    {"background": "original", "face": "mask", "mirror": False})
+    assert reason is None
+    assert result[105, 284, :3].tolist() == [48, 48, 48]
+    assert result[230, 200, :3].tolist() == [180, 180, 180]
+
+
+@pytest.mark.parametrize("ear", [(0.5, .59), (0.5, .7), (.9, .35)])
+def test_implausible_single_ear_hides_portrait_instead_of_unbounded_cover(ear):
+    pose = face_pose()
+    del pose["left_ear"]
+    pose["right_ear"].update(x=ear[0], y=ear[1])
+    frame = np.full((300, 400, 3), 180, np.uint8)
+    result, reason = render_portrait(frame, pose, None, {"background": "original", "face": "mask"})
+    assert result is None
+    assert reason
+
+
 def test_mask_silhouette_stays_visible_with_transparent_body_and_fail_stop():
     frame = np.full((300, 400, 3), 180, np.uint8)
     pose = face_pose()
     result, _ = render_portrait(frame, pose, np.zeros((300, 400), np.float32),
                                 {"background": "transparent", "face": "avatar", "mirror": False},
-                                np.full((30, 30, 4), (0, 100, 200, 255), np.uint8))
+                                np.zeros((30, 30, 4), np.uint8))
     assert result[105, 200, 3] == 255
+    for x, y in ((200, 15), (156, 105), (244, 105)):
+        assert result[y, x].tolist() == [48, 48, 48, 255], "透明分割和头像不能漏出发顶与耳朵"
     assert result[230, 200, 3] == 0
     pose["nose"]["score"] = .2
     assert render_portrait(frame, pose, None, {"background": "original", "face": "avatar"})[0] is None
