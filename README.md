@@ -4,7 +4,19 @@
 
 > 第一次用？打开软件后点右上角「？」→「新手教学」，它在界面上带着你做一遍。
 
-当前电脑源码入口是 `START.bat` / `server.py`、`motioncontrol/` 与 `web/`；配套手机源码在 [MotionControl-Android](https://github.com/guiwushengzhe-prog/MotionControl-Android) 的 `mobile/`。该仓库保留的 `motionbridge/` 和 `desktop/` 是历史实现。
+MotionControl 将身体动作、头部姿态、语音与手持操作组合成游戏输入。整个项目由电脑端、Android 手机端和枪型飞鼠三个独立仓库组成，本仓库是电脑端和项目总入口。
+
+## 三个项目与搭配方式
+
+| 项目 | 负责什么 | 源码与使用入口 |
+|---|---|---|
+| [MotionControl（电脑端，本仓库）](https://github.com/guiwushengzhe-prog/MotionControl) | 电脑摄像头识别、体感与语音控制、游戏配置、统一按键映射和键鼠／虚拟手柄输出，提供管理界面及手机接入服务。 | `START.bat` / `server.py`、`motioncontrol/`、`web/`；云端配套在 `cloud/`。启动方法见下文。 |
+| [MotionControl-Android（手机端）](https://github.com/guiwushengzhe-prog/MotionControl-Android) | 在手机本地识别人体、手部和语音，提供手持传感器等输入，将控制数据交给电脑端统一映射与输出。 | 手机源码、构建与安装说明见该仓库的 [README](https://github.com/guiwushengzhe-prog/MotionControl-Android#readme)；当前入口是 `mobile/`。 |
+| [gun-mouse（枪型飞鼠）](https://github.com/guiwushengzhe-prog/gun-mouse) | 基于 ESP32-S3 的手持体感鼠标，提供触摸启用的体感移动、机械鼠标按键和摇杆操作；仓库包含固件、电路板、三维结构与装配资料。 | 项目介绍与装配入口见该仓库的 [README](https://github.com/guiwushengzhe-prog/gun-mouse#readme)，具体资料见 [firmware/（固件）](https://github.com/guiwushengzhe-prog/gun-mouse/tree/main/firmware)、[pcb/（电路板）](https://github.com/guiwushengzhe-prog/gun-mouse/tree/main/pcb) 和 [shell/（结构）](https://github.com/guiwushengzhe-prog/gun-mouse/tree/main/shell)。 |
+
+**搭配方式：**电脑端负责识别、映射和游戏输出，可使用电脑摄像头，或接入 Android 手机提供的控制数据。枪型飞鼠通过蓝牙以标准鼠标身份与电脑配对，可与电脑端的身体动作、语音控制同时使用，补充手持瞄准和鼠标操作。手机到电脑的数据连接沿用下文的手机接入流程；枪型飞鼠的配对、固件和装配以其仓库说明为准。
+
+本仓库保留的 `motionbridge/` 和 `desktop/` 是历史实现；当前电脑源码入口为上表所列目录。
 
 优化保留当前界面与 2.3.0 版本。已完成改动、本轮新增的 Worker / 状态读取 / 云缓存 / 增量渲染，以及后置的实机、兼容与长期稳定性验收，见[优化进度与维护入口](docs/optimization-progress.md)。已有自动化与装配约定见[协调优化记录](docs/coordination-optimization.md)。本轮尚未正式发布新完整便携包或正式签名 APK。
 
