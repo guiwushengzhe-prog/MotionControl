@@ -6,6 +6,7 @@ import {mergeOwnsSticks,renderKernelState} from './play.js';
 import {tutorial} from './shell.js';
 import {S,head,output} from './state.js';
 import {initHeadCurve,renderHeadCurve} from './head-curve.js';
+import {renderSpeedSummary} from './view-speed.js';
 
 export let handMouseConfig={enabled:true,horizontal_hand:'off',vertical_hand:'left'};
 let viewControlSaving=false;
@@ -65,6 +66,7 @@ export function renderViewControl(force=false){
   setProperty($('#headPitchSettings'),'hidden',vertical!=='head');
   const status=$('#viewControlStatus');if(viewControlReady&&status.textContent==='正在读取当前设置…')status.textContent='';
   renderHeadCurve();
+  renderSpeedSummary();
 }
 
 export function initViewControl(){

@@ -15,6 +15,7 @@ import {renderSensitivityExperiments} from './sensitivity-experiments.js';
 
 export let currentPoseMap=null;
 export let kernelState=null;
+export let kernelReceivedAt=0;
 export let sourceMode='computer';
 export let cameraRunning=false;
 export let sessionStarted=false;
@@ -425,7 +426,7 @@ export async function refreshKernel(){
   const epoch=kernelEpoch;
   try{
     const runtime=await api('/api/kernel/status');
-    if(epoch===kernelEpoch){kernelConnected=true;renderKernelState(runtime)}
+    if(epoch===kernelEpoch){kernelConnected=true;kernelReceivedAt=performance.now();renderKernelState(runtime)}
     if(!profileReady&&!profileLoading)void loadProfiles();
     return true;
   }catch{if(epoch===kernelEpoch){kernelConnected=false;renderMainStatus()}return false}

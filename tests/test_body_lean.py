@@ -113,3 +113,62 @@ def test_off_has_no_skeleton_work_and_fused_points_are_not_used_as_model(monkeyp
     feed(c, (image, world, depth), 10., strafe=True)
     state = c.status(11.3)["sources"]["model"]
     assert not state["side_valid"] and not state["side_calibrated"]
+
+
+@pytest.mark.parametrize("source", ["model", "depth"])
+def test_forward_hold_back_switch_center_and_lost_data_release(source):
+    c = BodyLeanController()
+    options = {"source": source, "forward": True, "back": True}
+    feed(c, poses(), 10., **options)
+    assert feed(c, poses(back=-12.), 11.4, count=10, **options) == {"lean_forward"}
+    assert feed(c, poses(back=-12.), 11.74, count=10, **options) == {"lean_forward"}
+    assert feed(c, poses(back=12.), 12.08, count=12, **options) == {"lean_back"}
+    assert feed(c, poses(), 12.49, count=12, **options) == set()
+    assert feed(c, poses(back=-12.), 12.90, count=10, **options) == {"lean_forward"}
+    assert c.update(None, None, None, 1000, 1000, 13.24, **options) == set()
+    assert c.status(13.24)["active"] == []
+
+
+def test_forward_uses_saved_back_axis_and_is_independent_of_back_switch():
+    c = BodyLeanController()
+    feed(c, poses(back=3.), 10., back=True)
+    neutral = c.neutral_snapshot()
+    assert feed(c, poses(back=-10.), 11.4, count=10, forward=True) == {"lean_forward"}
+    assert c.neutral_snapshot() == neutral
+    assert feed(c, poses(back=16.), 11.74, count=12, forward=True) == set()
+    assert feed(c, poses(back=-10.), 12.15, count=12, forward=True) == {"lean_forward"}
+    assert c.update(*poses(back=-10.), 1000, 1000, 12.56) == set()
+
+
+def test_forward_has_no_depth_fallback_and_stale_gap_starts_silent():
+    c = BodyLeanController()
+    feed(c, poses(), 10., source="depth", forward=True)
+    image, world, depth = poses(back=-12.)
+    assert feed(c, (image, world, None), 11.4, count=10, source="depth", forward=True) == set()
+    assert c.update(image, world, depth, 1000, 1000, 12., source="depth", forward=True) == set()
+    assert c.update(image, world, depth, 1000, 1000, 12.04, source="depth", forward=True) == {"lean_forward"}
+    assert c.status(12.5)["active"] == []
+
+
+def test_split_sources_use_model_side_and_depth_fore_aft_without_cross_driving():
+    c = BodyLeanController()
+    options = {"strafe": True, "back": True, "forward": True,
+               "side_source": "model", "fore_aft_source": "depth"}
+    feed(c, poses(), 10., **options)
+    image, world, _ = poses(side=12., back=-12.)
+    depth = poses(side=-12., back=12.)[2]
+    assert feed(c, (image, world, depth), 11.4, count=10, **options) == {"lean_left", "lean_back"}
+    state = c.status(11.7)
+    assert state["source"] == "mixed"
+    assert state["side_source"] == "model" and state["fore_aft_source"] == "depth"
+    assert state["sources"]["model"]["control_axes"] == ["side"]
+    assert state["sources"]["depth"]["control_axes"] == ["back"]
+    assert c.neutral_snapshot()["sources"]["model"].keys() == {"side"}
+    assert c.neutral_snapshot()["sources"]["depth"].keys() == {"back"}
+    # 深度前后倾丢失后不借用模型前倾，模型侧倾仍可独立输出。
+    assert feed(c, (image, world, None), 11.74, count=10, **options) == {"lean_left"}
+    # 手选交换来源后先静默，再用深度侧倾与模型前倾；共用各自保存的站姿。
+    c.start_neutral(12.1)
+    reversed_options = {**options, "side_source": "depth", "fore_aft_source": "model"}
+    feed(c, poses(), 12.1, **reversed_options)
+    assert feed(c, (image, world, depth), 13.5, count=10, **reversed_options) == {"lean_right", "lean_forward"}

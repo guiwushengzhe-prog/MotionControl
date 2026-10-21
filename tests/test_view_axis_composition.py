@@ -56,6 +56,54 @@ def test_horizontal_fist_preserves_other_vertical_source():
     assert x < 0 and y == -.3
 
 
+@pytest.mark.parametrize('horizontal_hand', ['off', 'right'])
+def test_final_status_uses_actual_normalized_head_or_hand_units_even_when_output_paused(horizontal_hand):
+    output = _Output()
+    kernel = ControlKernel(output)
+    kernel.head_controller = Head(.7)
+    try:
+        kernel.configure_hand_mouse({'enabled': True, 'horizontal_hand': horizontal_hand,
+                                     'vertical_hand': 'off', 'deadzone': 0})
+        feed(kernel, body(wrist=(.5, .3), spread=.2))
+        feed(kernel, body(wrist=(.6, .3), spread=.2))
+        expected = output.applied[-1][0]
+        state = kernel.status()['head']
+        assert state['controller_output_x_percent'] == 70
+        assert state['output_x'] == pytest.approx(expected, abs=1e-4)
+        assert state['normalized_x'] == state['output_x']
+        if horizontal_hand == 'off':
+            assert state['output_x'] == .7
+        else:
+            assert state['output_x'] < 0
+        output.enabled = False
+        applied = len(output.applied)
+        feed(kernel, body(wrist=(.6, .3), spread=.2))
+        state = kernel.status()['head']
+        assert len(output.applied) == applied
+        assert state['output_x'] == pytest.approx(expected, abs=1e-4)
+        assert state['normalized_x'] == state['output_x']
+    finally:
+        kernel.close()
+
+
+def test_vertical_exclusive_pause_zeroes_reported_head_output_and_actual_output_together():
+    output = _Output()
+    kernel = ControlKernel(output)
+    kernel.head_controller = Head(.7)
+    try:
+        kernel.hand_mouse_controller.configure({'horizontal_hand': 'off', 'vertical_hand': 'off'})
+        kernel.vertical_look.update(enabled=True, exclusive_axes=True)
+        kernel.vertical_gate_active = True
+        kernel._update_head_locked({}, 10.)
+        state = kernel.status()['head']
+        assert output.applied[-1][0] == 0
+        assert state['horizontal_paused_by_vertical_gate']
+        assert state['output_x'] == state['normalized_x'] == 0
+        assert state['controller_output_x_percent'] == 70
+    finally:
+        kernel.close()
+
+
 def test_fresh_user_gets_tilt_and_left_vertical():
     kernel = ControlKernel(_Output())
     try:

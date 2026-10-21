@@ -120,7 +120,12 @@ def make_replay_kernel(snapshot: dict):
         kernel.zone_trigger_mode = snapshot.get("zone_trigger_mode", "smart")
         kernel.march_algorithm = snapshot.get("march_algorithm", "legacy")
         kernel.sensitivity_experiments = sensitivity_experiments.load(snapshot.get("sensitivity_experiments"))
+        kernel._body_learning_collect = False
+        kernel.latest_body_model_identity = snapshot.get("body_model_identity")
+        kernel._body_lean.set_model_identity(kernel.latest_body_model_identity)
         kernel._body_lean.load_neutral(snapshot.get("body_lean_neutral"))
+        kernel._body_lean.learning.load_snapshot(snapshot.get("body_angle_learning"))
+        kernel._body_lean._refresh_learning_context()
         kernel._body_lean_saved_neutral = kernel._body_lean.neutral_snapshot()
         # 旧区学习不使用头控，也不继承当前用户的个人头部档案。
         head = HeadController(None)
@@ -177,8 +182,17 @@ def replay_segment(kernel, segment: Segment, on_frame=None) -> list[dict]:
             sampled = frame.get("c", frame.get("sample_t"))
             kernel.pose_sample_at = BASE_T + float(sampled) if sampled is not None else None
             extra = frame.get("extra") if isinstance(frame.get("extra"), dict) else {}
+            kernel.latest_body_model_identity = extra.get("body_model_identity", kernel.latest_body_model_identity)
+            kernel._body_lean.set_model_identity(kernel.latest_body_model_identity)
             if isinstance(extra.get("sensitivity_experiments"), dict):
                 kernel.configure_sensitivity_experiments(extra["sensitivity_experiments"])
+            if isinstance(extra.get("body_lean_neutral"), dict):
+                if extra["body_lean_neutral"] != kernel._body_lean.neutral_snapshot():
+                    kernel._body_lean.load_neutral(extra["body_lean_neutral"])
+                    kernel._body_lean.reset_tracking()
+            if isinstance(extra.get("body_angle_learning"), dict):
+                kernel._body_lean.learning.load_snapshot(extra["body_angle_learning"])
+                kernel._body_lean._refresh_learning_context()
             if getattr(kernel, "_replay_head_available", False) and isinstance(extra.get("head_config"), dict):
                 if extra["head_config"] != kernel.head_controller.config:
                     kernel.head_controller.configure(**extra["head_config"])

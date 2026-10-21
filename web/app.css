@@ -1,3 +1,41 @@
+/* 新手试调复用体感页的配色，放大选项与确认反馈，便于离开鼠标操作。 */
+.tuning-entry{display:flex;justify-content:space-between;align-items:center;gap:1.2rem;padding:1.1rem 1.3rem;margin-bottom:1.2rem;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-lg)}
+.tuning-entry p{margin:.4rem 0 0;color:var(--text-2);font-size:.9rem}
+dialog.view-tuning{box-sizing:border-box;width:min(1200px,96vw);max-width:none;max-height:96dvh;padding:clamp(1.1rem,3vw,2.5rem);overflow:auto;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:1.5rem;box-shadow:0 25px 90px #0006}
+.view-tuning::backdrop{background:#000b;backdrop-filter:blur(10px)}
+.tuning-header{display:flex;justify-content:space-between;gap:1rem;align-items:center}
+.tuning-kicker{color:var(--text-2);font-size:.85rem;letter-spacing:.06em}
+.tuning-header h2{font-size:clamp(1.4rem,3vw,2rem);margin:.5rem 0 1rem}
+.tuning-topline{display:flex;justify-content:space-between;gap:.7rem;flex-wrap:wrap;color:var(--text-2);font-size:.85rem;border-bottom:1px solid var(--line);padding-bottom:1rem}
+.tuning-topline>span:first-child{color:var(--accent);font-weight:650}
+.tuning-nav{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:1rem 0;color:var(--text-2);font-size:.85rem}
+.tuning-nav [aria-pressed="true"]{outline:2px solid var(--accent);color:var(--accent)}
+.tuning-instruction{font-size:clamp(1.1rem,2.5vw,1.5rem);font-weight:650;margin:1.3rem 0}
+.tuning-cards{display:flex;gap:1rem;padding:.5rem .25rem 1rem;overflow-x:auto;scroll-snap-type:x mandatory}
+.tuning-card{flex:1 0 180px;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:.8rem;text-align:left;white-space:normal;min-height:245px;padding:1.4rem;border:2px solid var(--line);border-radius:1.2rem;background:var(--card);color:var(--text);scroll-snap-align:center;transition:transform .18s,border-color .18s,box-shadow .18s}
+.tuning-card[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 15%,transparent);transform:translateY(-4px)}
+.tuning-card-icon{display:grid;place-items:center;width:3.8rem;height:3.8rem;background:var(--fill-2);color:var(--accent);border-radius:1rem;font-size:2.2rem}
+.tuning-card strong{font-size:1.3rem}.tuning-card>span:not(.tuning-card-icon){font-size:.95rem;line-height:1.55}.tuning-card small{font-size:.8rem;color:var(--text-2);line-height:1.5;margin-top:auto}
+.tuning-adjust{padding:1.2rem 1.4rem;background:var(--card);border-radius:1.2rem;text-align:center}
+.tuning-adjust>span{display:block;color:var(--text-2)}
+.tuning-adjust>strong{display:block;color:var(--accent);font-size:3rem;margin:.4rem}
+.tuning-adjust input{width:100%;height:2rem;accent-color:var(--accent)}
+.tuning-scale{display:flex;justify-content:space-between;color:var(--text-2);font-size:.85rem}
+.tuning-adjust p{font-size:.95rem;line-height:1.6}.tuning-adjust .btn{margin:.5rem 0}
+.tuning-landscape{height:220px;position:relative;overflow:hidden;border-radius:1.2rem;background:linear-gradient(#12334c 0%,#36788d 48%,#123e3c 50%,#0c2928 100%);color:#fff}
+.tuning-horizon{position:absolute;left:-560px;right:-560px;top:20%;bottom:18%;display:flex;align-items:center;justify-content:space-around;background:repeating-linear-gradient(90deg,transparent 0 139px,#fff3 140px 141px,transparent 142px 280px)}
+.tuning-horizon span{font-size:2rem;font-weight:600}.tuning-reticle{position:absolute;inset:0;display:grid;place-items:center;font-size:2.7rem;text-shadow:0 1px 6px #000}
+.tuning-trial-caption{position:absolute;bottom:1rem;left:1.2rem;font-size:.85rem;color:#c7edeb}
+.tuning-trial p{margin:.7rem 0;font-size:1rem}.tuning-trial p+p{color:var(--text-2);font-size:.85rem}
+.tuning-footer{border-top:1px solid var(--line);padding-top:1rem;margin-top:1rem}
+.tuning-feedback{display:flex;justify-content:space-between;gap:.7rem;flex-wrap:wrap;font-size:.9rem}
+#tuningDirection{font-weight:650;color:var(--accent)}#tuningTier{color:var(--text-2)}
+.tuning-confirm{height:6px;border-radius:6px;background:var(--fill-2);overflow:hidden;margin:.8rem 0}
+.tuning-confirm i{display:block;height:100%;width:0;background:var(--accent);transition:width .08s linear}
+.tuning-footer p{font-size:.8rem;color:var(--text-2);line-height:1.6;margin:0}
+.view-tuning.saving .tuning-cards,.view-tuning.saving .tuning-adjust{opacity:.6;pointer-events:none}
+@media(max-width:640px){.tuning-entry{align-items:flex-start;flex-direction:column}.tuning-header{align-items:flex-start}.tuning-header .btn{font-size:.8rem}.tuning-card{flex-basis:72%;min-height:220px}.tuning-scale{font-size:.75rem}.tuning-landscape{height:180px}}
+
 /* 一套颜色、一套字号、一套圆角。新加的东西从这里取，别再写一个新的蓝。
    两套配色：月白（白天）写在 :root，石墨（夜间）在下面两处覆盖——跟随系统，或者在
    右上角「？」里手动选。组件只用变量，不写死颜色；摄像头画面永远是暗的，除外。 */
@@ -993,7 +1031,7 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
 .phone-permission{padding:8px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .experiment-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:.8rem 1.25rem;border-top:1px solid var(--line)}
 .experiment-comparison[hidden]{display:none}
-.experiment-comparison>div{display:flex;flex-direction:column;gap:.3rem;min-width:0;font-size:.85rem;color:var(--muted);overflow-wrap:anywhere}
+.experiment-comparison>div{display:flex;flex-direction:column;gap:.3rem;min-width:0;font-size:.85rem;color:var(--text-2);overflow-wrap:anywhere}
 .experiment-comparison strong{color:var(--text);font-weight:600}
 #sensitivityExperiments .row-note:has(#experimentSaveStatus:empty){display:none}
 @media(max-width:560px){.experiment-comparison{grid-template-columns:1fr}}

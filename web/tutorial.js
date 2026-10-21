@@ -788,7 +788,7 @@ export function createTutorial(actions = {}) {
     setMark(null);
     const left = firstLeft();
     const basics = left === -1 ? '从头学怎么玩 ✓' : done.size || skipped.size ? `从头学怎么玩 · 接着第 ${left + 1} 步` : '从头学怎么玩';
-    const items = [{id: 'main', label: basics}, ...EXTRAS.map(lesson => ({id: lesson.id, label: lesson.problem + (done.has(lesson.id) ? ' ✓' : '')}))];
+    const items = [{id: 'main', label: basics}, ...(actions.viewTuning ? [{id: 'view-tuning', label: '不用鼠标，选视角、调速度'}] : []), ...EXTRAS.map(lesson => ({id: lesson.id, label: lesson.problem + (done.has(lesson.id) ? ' ✓' : '')}))];
     const key = JSON.stringify(items);
     if (key !== menuKey) {
       menuKey = key;
@@ -798,7 +798,8 @@ export function createTutorial(actions = {}) {
         btn.className = 'tour-option' + (item.label.endsWith('✓') ? ' done' : '');
         btn.textContent = item.label;
         btn.addEventListener('click', () => {
-          if (item.id === 'main') go(left === -1 ? 0 : left);
+          if (item.id === 'view-tuning') { close(); actions.viewTuning(); }
+          else if (item.id === 'main') go(left === -1 ? 0 : left);
           else startExtra(EXTRAS.find(lesson => lesson.id === item.id));
         });
         return btn;

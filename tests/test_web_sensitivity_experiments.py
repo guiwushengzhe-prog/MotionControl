@@ -20,6 +20,7 @@ def seed(desktop, *, hold_ready=True, step_ready=True):
                    "lean_back": False, "body_source": "model", "compare": False},
         "body": {"source": "model", "active": {}, "sources": {
             "model": {"valid": True, "reason": "", "calibrated": True,
+                      "side_valid": True, "side_calibrated": True, "back_valid": True, "back_calibrated": True,
                       "calibrating": False, "side_deg": -8.2, "back_deg": 3.4, "active": {"lean_left": True}},
             "depth": {"valid": False, "reason": "深度骨骼未连接", "calibrated": False,
                       "calibrating": False, "side_deg": None, "back_deg": None, "active": {}}}},
@@ -61,10 +62,11 @@ def test_default_off_and_independent_payloads_do_not_start_devices(desktop):
     seed(desktop)
     saved = install_save(desktop)
     assert page.locator('[data-pane="lab"] .group').first.get_attribute("id") == "sensitivityExperiments"
-    for selector in ("experimentHeadHold", "experimentFirstStep", "experimentLeanStrafe", "experimentLeanBack", "experimentCompare"):
+    for selector in ("experimentHeadHold", "experimentFirstStep", "experimentLeanStrafe", "experimentLeanBack", "experimentLeanForward", "experimentDepthLearning", "experimentCompare"):
         assert not page.locator("#" + selector).is_checked()
     for selector, key in [("experimentHeadHold", "head_hold"), ("experimentFirstStep", "first_step"),
-                          ("experimentLeanStrafe", "lean_strafe"), ("experimentLeanBack", "lean_back")]:
+                          ("experimentLeanStrafe", "lean_strafe"), ("experimentLeanBack", "lean_back"),
+                          ("experimentLeanForward", "lean_forward"), ("experimentDepthLearning", "learn_from_depth")]:
         page.check("#" + selector)
         wait_saved(page)
         assert saved[-1] == {key: True}
@@ -93,16 +95,63 @@ def test_compare_shows_selected_source_and_real_failure_without_dual_drive(deskt
     page.check("#experimentCompare")
     wait_saved(page)
     assert saved[-1] == {"compare": True}
-    assert "模型骨骼 · 控制来源" in page.locator("#experimentModelReadout").text_content()
+    assert "模型骨骼 · 侧倾控制" in page.locator("#experimentModelReadout").text_content()
     assert "-8.2°" in page.locator("#experimentModelReadout").text_content()
     assert "触发：左移" in page.locator("#experimentModelReadout").text_content()
     assert "深度骨骼 · 仅对照" in page.locator("#experimentDepthReadout").text_content()
     page.select_option("#experimentBodySource", "depth")
     wait_saved(page)
-    assert saved[-1] == {"body_source": "depth"}
-    assert "控制来源：深度骨骼 · 深度骨骼未连接" == page.locator("#experimentBodyStatus").text_content()
+    assert saved[-1] == {"body_source": "depth", "side_source": "model", "fore_aft_source": "model"}
+    assert "侧倾 模型骨骼；前后倾 模型骨骼" in page.locator("#experimentBodyStatus").text_content()
+    page.select_option("#experimentSideSource", "depth")
+    wait_saved(page)
+    assert saved[-1] == {"side_source": "depth"}
+    assert "侧倾 深度骨骼；前后倾 模型骨骼" in page.locator("#experimentBodyStatus").text_content()
+    assert "深度骨骼未连接" in page.locator("#experimentBodyStatus").text_content()
     assert "模型骨骼 · 仅对照" in page.locator("#experimentModelReadout").text_content()
-    assert "深度骨骼 · 控制来源" in page.locator("#experimentDepthReadout").text_content()
+    assert "深度骨骼 · 侧倾控制" in page.locator("#experimentDepthReadout").text_content()
+
+
+def test_independent_side_and_fore_aft_sources_keep_first_step_and_report_each_control_axis(desktop):
+    page = desktop.page
+    seed(desktop)
+    saved = install_save(desktop)
+    page.check("#experimentLeanStrafe")
+    wait_saved(page)
+    page.check("#experimentLeanForward")
+    wait_saved(page)
+    page.select_option("#experimentForeAftSource", "depth")
+    wait_saved(page)
+    assert saved[-1] == {"fore_aft_source": "depth"}
+    assert page.locator("#experimentBodySource").input_value() == "model"
+    assert page.locator("#experimentSideSource").input_value() == "model"
+    assert "侧倾 模型骨骼；前后倾 深度骨骼" in page.locator("#experimentBodyStatus").text_content()
+    page.check("#experimentCompare")
+    wait_saved(page)
+    assert "模型骨骼 · 侧倾控制" in page.locator("#experimentModelReadout").text_content()
+    assert "深度骨骼 · 前后倾控制" in page.locator("#experimentDepthReadout").text_content()
+
+
+def test_learning_shows_waiting_validation_and_missing_depth_without_claiming_unverified_success(desktop):
+    page, api = desktop.page, desktop.api
+    experiment = seed(desktop)
+    saved = install_save(desktop)
+    page.check("#experimentDepthLearning")
+    wait_saved(page)
+    assert saved[-1] == {"learn_from_depth": True}
+    assert "等待可靠深度肩髋" in page.locator("#experimentDepthLearningNote").text_content()
+    experiment["body"]["sources"]["depth"].update(back_valid=True, back_calibrated=True, back_calibrating=False)
+    experiment["body"]["learning"] = {"active": False, "reason": "候选等待后续独立留验", "accepted_samples": 64}
+    api.runtime["config_revision"] += 1
+    page.evaluate("runtime=>import('/js/play.js').then(m=>m.renderKernelState(runtime,true))", copy.deepcopy(api.runtime))
+    assert "独立留验" in page.locator("#experimentDepthLearningNote").text_content()
+    assert "已启用个人校正" not in page.locator("#experimentDepthLearningNote").text_content()
+    experiment["body"]["learning"].update(active=True, accepted_samples=100)
+    experiment["body"]["sources"]["depth"]["back_valid"] = False
+    api.runtime["config_revision"] += 1
+    page.evaluate("runtime=>import('/js/play.js').then(m=>m.renderKernelState(runtime,true))", copy.deepcopy(api.runtime))
+    note = page.locator("#experimentDepthLearningNote").text_content()
+    assert "已启用个人校正" in note and "暂无可靠深度" in note and "100 对" in note
 
 
 def test_rejected_save_restores_checked_and_busy_prevents_duplicate(desktop):

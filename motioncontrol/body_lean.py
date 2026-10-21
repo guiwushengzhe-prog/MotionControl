@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import math
 import statistics
 
@@ -92,12 +94,18 @@ def _angle(measured, basis):
 class BodyLeanController:
     """两路分别量中立姿态；只有手选来源能产生方向动作。"""
 
-    def __init__(self, neutral=None):
+    def __init__(self, neutral=None, learning=None):
+        self.learning = learning
+        self._learning_enabled = False
+        self._learning_touched = False
+        self._learning_context_ready = False
+        self._model_identity = None
         self._neutral = {}
         self._capture = {source: {axis: None for axis in ("side", "back")} for source in SOURCES}
         self._states = {}
         self._source = "model"
-        self._strafe = self._back = self._compare = False
+        self._side_source = self._fore_aft_source = "model"
+        self._strafe = self._back = self._forward = self._compare = False
         self.load_neutral(neutral)
         self.reset_tracking()
 
@@ -129,10 +137,36 @@ class BodyLeanController:
                 if accepted:
                     result[source] = accepted
         self._neutral = result
+        self._refresh_learning_context()
+
+    def _refresh_learning_context(self):
+        if self.learning is None:
+            return
+        bases = {source: self._neutral.get(source, {}).get("back") for source in SOURCES}
+        self._learning_context_ready = bool(self._model_identity) and all(bases.values())
+        # 构造内核时先建控制器、后读站姿，不能先用空基准抹掉已保存的校正。
+        if not self._learning_context_ready:
+            return
+        signature = hashlib.sha256(json.dumps({"bases": bases, "model_identity": self._model_identity},
+                                              sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        self.learning.set_context(signature)
+
+    def set_model_identity(self, value):
+        identity = value if isinstance(value, str) and 0 < len(value) <= 2048 else None
+        if identity != self._model_identity:
+            self._model_identity = identity
+            self._refresh_learning_context()
+            self.reset_tracking()
+
+    def flush_learning(self):
+        if self.learning is not None and self._learning_touched:
+            return self.learning.flush()
+        return False
 
     def reset_tracking(self):
         self._states = {source: {"valid": False, "reason": "等待身体数据", "side_valid": False,
-            "back_valid": False, "side_deg": None, "back_deg": None, "active": [],
+            "back_valid": False, "side_deg": None, "back_deg": None, "back_raw_deg": None,
+            "back_uncorrected_deg": None, "active": [],
             "last_at": None, "remaining_s": NEUTRAL_SECONDS} for source in SOURCES}
         for source in SOURCES:
             for capture in self._capture[source].values():
@@ -144,7 +178,8 @@ class BodyLeanController:
             if name not in SOURCES:
                 raise ValueError("身体数据来源无效")
             self._capture[name] = {axis: {"started": now, "samples": []} for axis in ("side", "back")}
-            self._states[name].update(active=[], side_deg=None, back_deg=None, remaining_s=NEUTRAL_SECONDS)
+            self._states[name].update(active=[], side_deg=None, back_deg=None, back_raw_deg=None,
+                                     back_uncorrected_deg=None, remaining_s=NEUTRAL_SECONDS)
 
     @staticmethod
     def _measure(image_pose, world_pose, depth_body, width, height):
@@ -163,35 +198,51 @@ class BodyLeanController:
         return result
 
     def update(self, image_pose, world_pose, depth_body, width, height, now, *,
-               source="model", strafe=False, back=False, compare=False):
-        if source not in SOURCES:
+               source="model", side_source=None, fore_aft_source=None,
+               strafe=False, back=False, forward=False, compare=False,
+               learn_from_depth=False, sample_age_s=0., collect_learning=True, model_identity=None):
+        side_source = source if side_source is None else side_source
+        fore_aft_source = source if fore_aft_source is None else fore_aft_source
+        if any(value not in SOURCES for value in (source, side_source, fore_aft_source)):
             raise ValueError("身体数据来源无效")
         if not isinstance(now, (int, float)) or not math.isfinite(now):
             self.reset_tracking()
             return set()
-        if source != self._source or (bool(strafe), bool(back)) != (self._strafe, self._back):
+        self.set_model_identity(model_identity)
+        if ((side_source, fore_aft_source) != (self._side_source, self._fore_aft_source)
+                or (bool(strafe), bool(back), bool(forward)) != (self._strafe, self._back, self._forward)):
             self.reset_tracking()
-        self._source, self._strafe, self._back, self._compare = source, bool(strafe), bool(back), bool(compare)
+        self._side_source, self._fore_aft_source = side_source, fore_aft_source
+        self._source, self._strafe, self._back, self._forward, self._compare = source, bool(strafe), bool(back), bool(forward), bool(compare)
+        if self._learning_enabled and not learn_from_depth:
+            self.flush_learning()
+        self._learning_enabled = bool(learn_from_depth and self.learning is not None)
+        self._learning_touched = self._learning_touched or self._learning_enabled
         capturing = any(value is not None for axes in self._capture.values() for value in axes.values())
-        if not (strafe or back or compare or capturing):
+        if not (strafe or back or forward or compare or capturing or self._learning_enabled):
             for state in self._states.values():
                 state.update(valid=False, side_valid=False, back_valid=False, side_deg=None,
-                             back_deg=None, active=[], last_at=None, reason="身体走位未开启")
+                             back_deg=None, back_raw_deg=None, back_uncorrected_deg=None,
+                             active=[], last_at=None, reason="身体走位未开启")
             return set()
         measurements = self._measure(image_pose, world_pose, depth_body, width, height)
-        needed = (["side"] if strafe else []) + (["back"] if back else [])
+        readiness = {}
         for name in SOURCES:
             state, measured = self._states[name], measurements[name]
             previous_at = state["last_at"]
             fresh = previous_at is None or not 0 < now - previous_at <= STALE_SECONDS
             if fresh:
-                state.update(side_deg=None, back_deg=None, active=[])
+                state.update(side_deg=None, back_deg=None, back_raw_deg=None, back_uncorrected_deg=None, active=[])
                 for capture in self._capture[name].values():
                     if capture is not None:
                         capture["samples"].clear()
             state["last_at"] = now
-            required = needed or (["side", "back"] if compare else [])
-            selected = name == source or compare
+            required = (["side"] if strafe and (name == side_source or compare) else []) + (
+                        ["back"] if (back or forward) and (name == fore_aft_source or compare) else [])
+            if compare and not required:
+                required = ["side", "back"]
+            if self._learning_enabled and "back" not in required:
+                required.append("back")
             dt = min(.1, now - previous_at) if previous_at is not None and now > previous_at else 0
             active = set(state["active"])
             fresh_axes = set()
@@ -202,7 +253,7 @@ class BodyLeanController:
                     fresh_axes.add(axis)
                 state[axis + "_valid"] = valid
                 neutral = self._neutral.get(name, {})
-                if selected and axis in required and axis not in neutral and valid and self._capture[name][axis] is None:
+                if axis in required and axis not in neutral and valid and self._capture[name][axis] is None:
                     self._capture[name][axis] = {"started": now, "samples": []}
                 capture = self._capture[name][axis]
                 if capture is not None:
@@ -217,29 +268,68 @@ class BodyLeanController:
                 neutral = self._neutral.get(name, {})
                 value = (_angle(measured.get(axis), neutral.get(axis))
                          if valid and self._capture[name][axis] is None else None)
-                old = state[axis + "_deg"]
+                old = state["back_uncorrected_deg"] if axis == "back" else state[axis + "_deg"]
                 state[axis + "_deg"] = (old + (1 - math.exp(-dt / FILTER_TAU)) * (value - old)
                                          if value is not None and old is not None and dt > 0 else value)
+                if axis == "back":
+                    state["back_raw_deg"] = value
+                    state["back_uncorrected_deg"] = state["back_deg"]
             side, backward = state["side_deg"], state["back_deg"]
             side_ready = not fresh and "side" not in fresh_axes and side is not None
             back_ready = not fresh and "back" not in fresh_axes and backward is not None
+            readiness[name] = (back_ready, active)
             left_on = side_ready and side >= (SIDE_OFF if "lean_left" in active else SIDE_ON)
             right_on = side_ready and side <= -(SIDE_OFF if "lean_right" in active else SIDE_ON)
             back_on = back_ready and backward >= (BACK_OFF if "lean_back" in active else BACK_ON)
-            state["active"] = (["lean_left"] if left_on else ["lean_right"] if right_on else []) + (["lean_back"] if back_on else [])
+            forward_on = back_ready and backward <= -(BACK_OFF if "lean_forward" in active else BACK_ON)
+            state["active"] = (["lean_left"] if left_on else ["lean_right"] if right_on else []) + (["lean_back"] if back_on else ["lean_forward"] if forward_on else [])
             state["valid"] = bool(required) and all(state[axis + "_valid"] for axis in required)
             missing = [axis for axis in required if not state[axis + "_valid"]]
             pending = [capture for capture in self._capture[name].values() if capture is not None]
             state["remaining_s"] = max((max(0., NEUTRAL_SECONDS - (now - capture["samples"][0][0]))
                                         if capture["samples"] else NEUTRAL_SECONDS for capture in pending), default=0.)
             state["reason"] = ("未取得与当前人物匹配的可靠深度骨骼" if missing and name == "depth" else
-                               "后倾需要可靠的三维肩髋；侧倾可单独使用" if missing == ["back"] else
+                               "前后倾需要可靠的三维肩髋；侧倾可单独使用" if missing == ["back"] else
                                "需要可靠的双肩和双髋" if missing else
                                "自然站直，保持约一秒" if pending else "")
             if timed_out:
                 state["reason"] = "站姿采集超时，保留上次有效基准"
-        return {action for action in self._states[source]["active"]
-                if (strafe and action in ("lean_left", "lean_right")) or (back and action == "lean_back")}
+        if self._learning_enabled:
+            self._update_learning(world_pose, depth_body, now, sample_age_s, readiness, collect_learning)
+        return {action for action in self._states[side_source]["active"]
+                if strafe and action in ("lean_left", "lean_right")} | {
+                action for action in self._states[fore_aft_source]["active"]
+                if (back and action == "lean_back") or (forward and action == "lean_forward")}
+
+    def _update_learning(self, world_pose, depth_body, now, sample_age_s, readiness, collect_learning):
+        model, depth = (self._states[source] for source in SOURCES)
+        paired = self._learning_context_ready and all(readiness[source][0] and self._capture[source]["back"] is None for source in SOURCES)
+        try:
+            matched = (isinstance(depth_body, dict) and depth_body.get("matched_to_model") is True
+                       and depth_body.get("body_valid") is True)
+            gap = max(abs(float(depth_body["sample_at"]) - now), float(depth_body["body_age_ms"]) / 1000.) if matched else math.inf
+        except (KeyError, TypeError, ValueError, OverflowError):
+            gap = math.inf
+        def confidence(pose):
+            if isinstance(pose, list) and len(pose) == 33:
+                pose = {name: pose[index] for name, index in zip(NAMES, INDICES)}
+            try:
+                return min(float(pose[name].get("score", pose[name].get("visibility", pose[name].get("presence", 0)))) for name in NAMES)
+            except (KeyError, TypeError, ValueError, AttributeError):
+                return 0.
+        quality = min(confidence(world_pose), confidence(depth_body.get("points") if isinstance(depth_body, dict) else None))
+        if collect_learning:
+            self.learning.update(model["back_raw_deg"], depth["back_raw_deg"], now,
+                                 valid=paired and quality >= .8 and 0 <= gap <= .08 and 0 <= sample_age_s <= STALE_SECONDS,
+                                 sync_gap_s=gap, sample_age_s=sample_age_s, quality=quality)
+        if self._learning_context_ready and readiness["model"][0]:
+            model["back_deg"] = self.learning.correct(model["back_uncorrected_deg"])
+            active = readiness["model"][1]
+            backward = model["back_deg"]
+            back_on = backward >= (BACK_OFF if "lean_back" in active else BACK_ON)
+            forward_on = backward <= -(BACK_OFF if "lean_forward" in active else BACK_ON)
+            model["active"] = [value for value in model["active"] if value not in ("lean_back", "lean_forward")]
+            model["active"] += ["lean_back"] if back_on else ["lean_forward"] if forward_on else []
 
     def _collect(self, source, axis, measured, now):
         samples = self._capture[source][axis]["samples"]
@@ -258,17 +348,25 @@ class BodyLeanController:
         direction = tuple(statistics.median(sample[1]["axis"][i] for sample in samples) for i in range(len(up)))
         direction = _unit(tuple(direction[i] - _dot(direction, up) * up[i] for i in range(len(up))))
         self._neutral.setdefault(source, {})[axis] = {"up": list(up), "axis": list(direction)}
+        if axis == "back":
+            self._refresh_learning_context()
         self._capture[source][axis] = None
         self._states[source][axis + "_deg"] = None
 
     def status(self, now):
         states = copy.deepcopy(self._states)
-        needed = (["side"] if self._strafe else []) + (["back"] if self._back else [])
         for source, state in states.items():
+            needed = (["side"] if self._strafe and (source == self._side_source or self._compare) else []) + (
+                      ["back"] if (self._back or self._forward) and (source == self._fore_aft_source or self._compare) else [])
+            if self._compare and not needed:
+                needed = ["side", "back"]
+            if self._learning_enabled and "back" not in needed:
+                needed.append("back")
             last_at = state.pop("last_at")
             if last_at is None or now - last_at > STALE_SECONDS:
                 state.update(valid=False, side_valid=False, back_valid=False, side_deg=None,
-                             back_deg=None, active=[], reason=("身体走位未开启" if state["reason"] == "身体走位未开启"
+                             back_deg=None, back_raw_deg=None, back_uncorrected_deg=None,
+                             active=[], reason=("身体走位未开启" if state["reason"] == "身体走位未开启"
                                                               else "等待当前帧身体数据"))
             neutral = self._neutral.get(source, {})
             state.update(calibrating=any(value is not None for value in self._capture[source].values()),
@@ -276,8 +374,20 @@ class BodyLeanController:
                          back_calibrating=self._capture[source]["back"] is not None,
                          side_calibrated="side" in neutral, back_calibrated="back" in neutral,
                          calibrated=bool(neutral) and all(axis in neutral for axis in needed))
-        active = [action for action in states[self._source]["active"]
-                  if (self._strafe and action in ("lean_left", "lean_right")) or (self._back and action == "lean_back")]
-        return {"source": self._source, "sources": states, "active": active,
+            state["control_axes"] = (["side"] if self._strafe and source == self._side_source else []) + (
+                                     ["back"] if (self._back or self._forward) and source == self._fore_aft_source else [])
+        active = [action for action in states[self._side_source]["active"]
+                  if self._strafe and action in ("lean_left", "lean_right")] + [
+                  action for action in states[self._fore_aft_source]["active"]
+                  if (self._back and action == "lean_back") or (self._forward and action == "lean_forward")]
+        learning = self.learning.status() if self.learning is not None else {}
+        learning["active"] = bool(learning.get("active") and self._learning_context_ready)
+        if self._learning_enabled and not self._model_identity:
+            learning["reason"] = "当前来源缺少稳定的摄像头与身体模型标识，暂不学习或应用校正"
+        return {"source": self._side_source if self._side_source == self._fore_aft_source else "mixed",
+                "side_source": self._side_source, "fore_aft_source": self._fore_aft_source,
+                "sources": states, "active": active,
+                "learning": {"enabled": self._learning_enabled, **learning},
                 "thresholds": {"side_on_deg": SIDE_ON, "side_off_deg": SIDE_OFF,
-                               "back_on_deg": BACK_ON, "back_off_deg": BACK_OFF}}
+                               "back_on_deg": BACK_ON, "back_off_deg": BACK_OFF,
+                               "forward_on_deg": BACK_ON, "forward_off_deg": BACK_OFF}}

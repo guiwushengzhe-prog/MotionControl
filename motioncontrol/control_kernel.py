@@ -53,6 +53,7 @@ from motioncontrol.responsive_march import ResponsiveMarch
 from motioncontrol.depth_march import DepthMarchLifts
 from motioncontrol.experimental_march import ExperimentMarchLifts
 from motioncontrol.body_lean import BodyLeanController
+from motioncontrol.body_angle_learning import BodyAngleLearning
 from motioncontrol import sensitivity_experiments
 from motioncontrol.config_transaction import atomic_bytes
 from motioncontrol import kinect_camera
@@ -542,6 +543,7 @@ class ControlKernel:
         # diagnostics; the runtime yaw path remains normalized-2D only.
         self.latest_world_pose: dict[str, dict] | None = None
         self.latest_model_pose: dict[str, dict] | None = None
+        self.latest_body_model_identity: str | None = None
         self.latest_head_pose: dict | None = None
         self.pose_last_valid_at = 0.0
         # Keep a short monotonic history so first-run scene placement and
@@ -659,7 +661,8 @@ class ControlKernel:
         self.march_depth_source = "image"
         self.sensitivity_experiments = dict(sensitivity_experiments.DEFAULTS)
         self._experimental_march = ExperimentMarchLifts()
-        self._body_lean = BodyLeanController()
+        self._body_lean = BodyLeanController(learning=BodyAngleLearning(persist=self._persist))
+        self._body_learning_collect = True
         self._body_lean_saved_neutral = self._body_lean.neutral_snapshot()
         self._jump = JumpDetector()
         # 脚：站着时的基准、最近 0.3 秒的样子、这一帧算出来的离地和往外。见 _update_feet_locked。
@@ -803,6 +806,12 @@ class ControlKernel:
         self.head_controller.hfhpe_hold = self.sensitivity_experiments["head_hold"]
         self._body_lean.load_neutral(data.get("body_lean_neutral"))
         self._body_lean_saved_neutral = self._body_lean.neutral_snapshot()
+        experiment = self.sensitivity_experiments
+        self._body_lean.update(None, None, None, self.width, self.height, time.monotonic(),
+            source=experiment["body_source"], side_source=experiment["side_source"],
+            fore_aft_source=experiment["fore_aft_source"], strafe=experiment["lean_strafe"],
+            back=experiment["lean_back"], forward=experiment["lean_forward"], compare=experiment["compare"],
+            learn_from_depth=experiment["learn_from_depth"], collect_learning=self._body_learning_collect)
         hand_mouse = data.get("hand_mouse")
         if isinstance(hand_mouse, dict):
             try:
@@ -1246,6 +1255,7 @@ class ControlKernel:
         depth_body: dict | None = None,
         head_pose: dict | None = None,
         model_pose: dict[str, dict] | None = None,
+        body_model_identity: str | None = None,
         captured_at_ms: float | None = None,
         sample_at: float | None = None,
         return_status: bool = True,
@@ -1276,6 +1286,7 @@ class ControlKernel:
             self.latest_pose = copy.deepcopy(pose_map) if pose_map else None
             self.latest_world_pose = copy.deepcopy(world_pose) if world_pose else None
             self.latest_model_pose = copy.deepcopy(model_pose if model_pose is not None else pose_map)
+            self.latest_body_model_identity = body_model_identity if isinstance(body_model_identity, str) else None
             self.latest_depth_body = copy.deepcopy(depth_body) if depth_body else None
             self.latest_head_pose = dict(head_pose) if source_id == "computer_camera" and isinstance(head_pose, dict) else None
             # Read back out inside _process_pose_locked rather than threaded
@@ -1682,12 +1693,15 @@ class ControlKernel:
                 self.motion_active.discard("march")
                 self.motion_raw["march"] = False
                 self.motion_debounce["march"].update(active=False, on=0, off=0)
-            if any(previous[key] != proposed[key] for key in ("body_source", "lean_strafe", "lean_back")):
+            if any(previous[key] != proposed[key] for key in ("side_source", "fore_aft_source", "lean_strafe", "lean_back", "lean_forward")):
                 self._body_lean.reset_tracking()
                 self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)
             self._body_lean.update(None, None, None, self.width, self.height, time.monotonic(),
                 source=proposed["body_source"], strafe=proposed["lean_strafe"],
-                back=proposed["lean_back"], compare=proposed["compare"])
+                side_source=proposed["side_source"], fore_aft_source=proposed["fore_aft_source"],
+                back=proposed["lean_back"], forward=proposed["lean_forward"], compare=proposed["compare"],
+                learn_from_depth=proposed["learn_from_depth"], collect_learning=self._body_learning_collect,
+                model_identity=self.latest_body_model_identity)
             now = time.monotonic()
             self._dispatch_controls_locked(now)
             return self.status_locked(now)
@@ -1718,7 +1732,11 @@ class ControlKernel:
             self.latest_depth_body if fresh else None,
             self.width, self.height, sample_at if fresh else now,
             source=config["body_source"], strafe=config["lean_strafe"],
-            back=config["lean_back"], compare=config["compare"],
+            side_source=config["side_source"], fore_aft_source=config["fore_aft_source"],
+            back=config["lean_back"], forward=config["lean_forward"], compare=config["compare"],
+            learn_from_depth=config["learn_from_depth"], sample_age_s=max(0., now - sample_at),
+            collect_learning=self._body_learning_collect,
+            model_identity=self.latest_body_model_identity,
         )
         active.difference_update(self.disabled_builtin_actions)
         self.motion_active.update(active)
@@ -2071,8 +2089,12 @@ class ControlKernel:
                    "head_config": self.head_controller.config,
                    "sensitivity_experiments": self.sensitivity_experiments,
                    "body_lean": self._body_lean.status(now),
+                   **({"body_angle_learning": self._body_lean.learning.snapshot(),
+                       "body_lean_neutral": self._body_lean.neutral_snapshot()}
+                      if self.sensitivity_experiments["learn_from_depth"] else {}),
                    "depth_body": self.latest_depth_body,
                    "model_pose": self.latest_model_pose,
+                   "body_model_identity": self.latest_body_model_identity,
                    "motion_deadzone_scale": self.body_motion_guard_scale,
                    # 这是控制链计算结果，不代表系统鼠标或游戏实际已移动。
                    "output_enabled": bool(getattr(self.output, "enabled", True))},
@@ -2084,6 +2106,8 @@ class ControlKernel:
                 "vertical_look": dict(self.vertical_look),
                 "body_motion_guard_enabled": self.body_motion_guard_enabled,
                 "body_lean_neutral": self._body_lean.neutral_snapshot(),
+                "body_angle_learning": self._body_lean.learning.snapshot(),
+                "body_model_identity": self.latest_body_model_identity,
             },
         )
 
@@ -2101,10 +2125,14 @@ class ControlKernel:
             extra={"hands": self.hand_mouse_controller.status(), "feet": self.feet,
                    "motion_raw": self.motion_raw,
                    "model_pose": self.latest_model_pose, "depth_body": self.latest_depth_body,
+                   "body_model_identity": self.latest_body_model_identity,
                    "head_pose": self.latest_head_pose, "head": self.head,
                    "head_config": self.head_controller.config,
                    "sensitivity_experiments": self.sensitivity_experiments,
                    "body_lean": self._body_lean.status(now),
+                   **({"body_angle_learning": self._body_lean.learning.snapshot(),
+                       "body_lean_neutral": self._body_lean.neutral_snapshot()}
+                      if self.sensitivity_experiments["learn_from_depth"] else {}),
                    "output_enabled": bool(getattr(self.output, "enabled", True))},
         )
 
@@ -2677,6 +2705,8 @@ class ControlKernel:
                 "march_algorithm": self.march_algorithm,
                 "sensitivity_experiments": self.sensitivity_experiments,
                 "body_lean_neutral": self._body_lean.neutral_snapshot(),
+                "body_angle_learning": self._body_lean.learning.snapshot(),
+                "body_model_identity": self.latest_body_model_identity,
                 **({"head_replay": True,
                     "head_profile_json": json.dumps(self.head_controller.profile_document(),
                         ensure_ascii=False, separators=(",", ":"))} if include_head else {}),
@@ -3820,6 +3850,8 @@ class ControlKernel:
         self.latest_pose = None
         self.latest_world_pose = None
         self.latest_model_pose = None
+        self.latest_body_model_identity = None
+        self._body_lean.set_model_identity(None)
         self.latest_head_pose = None
         self.latest_depth_body = None
         self._depth_march.reset()
@@ -3896,6 +3928,10 @@ class ControlKernel:
         pose_age = round(max(0.0, (now - self.body_last_at) * 1000.0)) if self.body_last_at else None
         zones = self.runtime_zones_locked()
         self.head = self.head_controller.status(now)
+        # 控制器的输出以百分值保存；实际 apply 接收除以100后的量，不能直接混入手控。
+        self.head["controller_output_x_percent"] = self.head.get("output_x", 0.0)
+        self.head["controller_normalized_x"] = self.head.get("normalized_x", 0.0)
+        self.head["output_x"] = float(getattr(self.head_controller, "output_x", self.head.get("output_x", 0.0))) / 100.0
         self.head["hand_mouse"] = self.hand_mouse_controller.status()
         vertical_output = self.vertical_pitch_norm
         self.head["vertical_source"] = "head_pitch" if self.vertical_look.get("enabled") else "off"
@@ -3935,6 +3971,8 @@ class ControlKernel:
         # 状态与实际输出共用方向归属，不能把头部左右误报成手部的零值。
         self.head["output_x"], self.head["output_y"] = self.hand_mouse_controller.compose_output(
             self.head["output_x"], self.head["output_y"], self.head["hand_mouse"])
+        self.head["normalized_x"] = self.head["output_x"]
+        self.head["normalized_y"] = self.head["output_y"]
         sensors = {
             source: {key: _snapshot_copy(value) for key, value in state.items() if key != "received_at"}
             | {"age_ms": round(max(0.0, (now - state["received_at"]) * 1000.0))}
@@ -4040,6 +4078,7 @@ class ControlKernel:
             self.sensor_sources.clear()
         self.trigger_recorder.close()
         self.pose_recorder.close(timeout=2.0)
+        self._body_lean.flush_learning()
         if self._thread is not threading.current_thread():
             self._thread.join(timeout=1.0)
 
@@ -5265,6 +5304,7 @@ class NativeCameraService:
         scheduled = ScheduledGestureRecognizer(self.model_paths.get("gesture"))
         gesture = scheduled.gesture
         previous_pose, previous_sample_at, previous_geometry = None, 0.0, None
+        body_identity_key, body_identity = None, None
         try:
             import cv2
             while True:
@@ -5381,12 +5421,18 @@ class NativeCameraService:
                     if self.assist:
                         self.kernel.stereo.observe_pc(pose_map, width, height, captured_at)
                     else:
+                        identity_key = (str(self.camera_device), str(self.model_path), str(self.backend),
+                                        frame_rotation, bool(depth_metadata and depth_metadata.get("image_mirrored")), width, height)
+                        if identity_key != body_identity_key:
+                            body_identity_key = identity_key
+                            body_identity = json.dumps(identity_key, ensure_ascii=False, separators=(",", ":"))
                         self.kernel.handle_pose_map(
                             "computer_camera", pose_map, width=width, height=height,
                             world_pose=world_pose, hands=hands, sample_at=captured_at, return_status=False,
                             depth_body=depth_body,
                             head_pose=head_pose,
                             model_pose=model_pose,
+                            body_model_identity=(body_identity if self.rotation != "auto" or self._rotation_locked else None),
                         )
                     finished = time.monotonic()
                     processing_finished_at = time.perf_counter()

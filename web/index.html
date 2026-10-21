@@ -243,6 +243,10 @@
 </div>
 <p class="group-foot warn" id="audioStatus"></p>
 </div>
+</section>
+
+<section class="settings-pane" data-pane="view" hidden="" id="somaticSettings">
+<h1 class="pane-title">体感</h1>
 <div class="group" id="outputSettings">
 <h2 class="group-title">游戏输出</h2>
 <div class="list">
@@ -251,14 +255,12 @@
 <div class="row" hidden="" id="xinputMotionLeftRow"><label class="row-main" for="xinputMotionLeft"><span class="name">体感也推左摇杆</span><span class="sub">和手柄的左摇杆相加</span></label><input class="switch" disabled="" id="xinputMotionLeft" type="checkbox"/></div>
 <div class="row"><label class="row-main" for="strength">游戏速度倍率</label><div class="range-in"><input aria-label="游戏速度倍率" id="strength" max="300" min="60" step="10" type="range" value="160"/><b id="strengthValue">160%</b></div></div>
 </div>
+<p class="group-foot" id="composedSpeedSummary" role="status"></p>
 <p class="group-foot warn" id="outputStatus"></p>
 </div>
-</section>
-
-<section class="settings-pane" data-pane="view" hidden="" id="somaticSettings">
-<h1 class="pane-title">体感</h1>
 <section aria-labelledby="viewControlTitle" class="settings-section" id="headSettings">
 <h2 class="settings-section-title" id="viewControlTitle">视角控制</h2>
+<div class="tuning-entry"><div><strong>找到顺手的视角</strong><p>选择转头、侧倾或握拳，离开鼠标也能逐格调速。</p></div><button class="btn primary" id="openViewTuning" type="button">新手试调</button></div>
 <div class="group">
 <div class="list">
 <div class="row"><label class="row-main" for="viewHorizontalSource"><span class="name">左右</span><span class="sub" id="viewHorizontalDesc"></span></label><span class="sel"><select id="viewHorizontalSource"><option value="roll_tilt">头部侧倾</option></select></span></div>
@@ -269,7 +271,7 @@
 <div class="group">
 <h2 class="group-title">手感</h2>
 <div class="list">
-<div class="row head-only"><label class="row-main" for="speedX"><span class="name">左右速度</span><span class="sub">大角度偏转时的最高转向速度</span></label><div class="range-in"><input aria-label="左右视角速度" id="speedX" max="200" min="20" step="2" type="range" value="58"/><b id="speedXValue">58%</b></div></div>
+<div class="row head-only"><label class="row-main" for="speedX"><span class="name">左右速度</span><span class="sub" id="headComposedSpeed">大角度偏转时的最高转向速度</span></label><div class="range-in"><input aria-label="左右视角速度" id="speedX" max="200" min="20" step="2" type="range" value="58"/><b id="speedXValue">58%</b></div></div>
 <div class="row head-only"><label class="row-main" for="deadzone"><span class="name">中心稳定区</span><span class="sub" id="headThresholdStatus"></span></label><div class="range-in"><input aria-label="中心稳定区" id="deadzone" max="50" min="3" type="range" value="10"/><b id="deadzoneValue">10%</b></div></div>
 <div class="head-curve head-only" id="headCurvePanel">
 <div class="head-curve-heading"><span>左右加速曲线</span><button class="btn link" id="resetHeadCurve" type="button">恢复推荐</button></div>
@@ -291,7 +293,7 @@
 <div class="row"><label class="row-main" for="headCurveGamma"><span class="name">加速弯曲</span><span class="sub" id="headCurveGammaStatus"></span></label><div class="range-in"><input aria-label="左右加速曲线弯曲程度" id="headCurveGamma" max="3" min="1" step="0.05" type="range" value="2"/><b id="headCurveGammaValue">2.00</b></div></div>
 <p class="head-curve-help" id="headCurveSummary">校准后显示实际起转角度。</p>
 </div>
-<div class="row hand-only"><label class="row-main" for="handMouseSensitivity">握拳灵敏度</label><div class="range-in"><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"/><b id="handMouseSensitivityValue">—</b></div></div>
+<div class="row hand-only"><label class="row-main" for="handMouseSensitivity"><span class="name">握拳灵敏度</span><span class="sub" id="handComposedSpeed"></span></label><div class="range-in"><input id="handMouseSensitivity" max="160" min="10" step="5" type="range"/><b id="handMouseSensitivityValue">—</b></div></div>
 <div class="row hand-only"><label class="row-main" for="handMouseDeadzone"><span class="name">握拳中心死区</span><span class="sub">握住后手在这个范围内不转</span></label><div class="range-in"><input id="handMouseDeadzone" max="0.6" min="0" step="0.02" type="range"/><b id="handMouseDeadzoneValue">—</b></div></div>
 <div class="row hand-only"><label class="row-main" for="handMouseGripAlgorithm"><span class="name">握拳识别方式</span></label><span class="sel"><select id="handMouseGripAlgorithm"><option value="steady">新版</option><option value="classic">旧版</option></select></span></div>
 <div class="row head-only"><label class="row-main" for="bodyMotionGuard"><span class="name">做动作时稳住视角</span><span class="sub">身体晃动时扩大稳定区，明显转头仍可转向</span></label><input class="switch" id="bodyMotionGuard" type="checkbox"/></div>
@@ -391,8 +393,12 @@
 <div class="row"><label class="row-main" for="experimentFirstStep"><span class="name">首步响应</span><span class="sub" id="experimentFirstStepNote">仅用于灵敏踏步</span></label><input class="switch" id="experimentFirstStep" type="checkbox" disabled/></div>
 <div class="row"><label class="row-main" for="experimentLeanStrafe"><span class="name">身体侧倾走位</span><span class="sub">左倾向左，右倾向右</span></label><input class="switch" id="experimentLeanStrafe" type="checkbox" disabled/></div>
 <div class="row"><label class="row-main" for="experimentLeanBack"><span class="name">身体后倾后退</span><span class="sub">后倾时触发后退</span></label><input class="switch" id="experimentLeanBack" type="checkbox" disabled/></div>
-<div class="row"><label class="row-main" for="experimentBodySource"><span class="name">身体角度来源</span><span class="sub" id="experimentBodyStatus" role="status">等待当前状态…</span></label><select id="experimentBodySource" aria-label="身体角度来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select><button class="btn" id="experimentNeutralBtn" type="button" disabled>重设站姿</button></div>
-<div class="row"><label class="row-main" for="experimentCompare"><span class="name">显示两路对照</span><span class="sub">只显示对照，控制使用上方选中的一路</span></label><input class="switch" id="experimentCompare" type="checkbox" disabled/></div>
+<div class="row"><label class="row-main" for="experimentLeanForward"><span class="name">身体前倾前进</span><span class="sub">前倾时向前，回到站姿停止</span></label><input class="switch" id="experimentLeanForward" type="checkbox" disabled/></div>
+<div class="row"><label class="row-main" for="experimentSideSource">侧倾来源</label><select id="experimentSideSource" aria-label="侧倾来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select></div>
+<div class="row"><label class="row-main" for="experimentForeAftSource">前后倾来源</label><select id="experimentForeAftSource" aria-label="前后倾来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select></div>
+<div class="row"><label class="row-main" for="experimentBodySource"><span class="name">首步响应来源</span><span class="sub" id="experimentBodyStatus" role="status">等待当前状态…</span></label><select id="experimentBodySource" aria-label="首步响应来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select><button class="btn" id="experimentNeutralBtn" type="button" disabled>重设站姿</button></div>
+<div class="row"><label class="row-main" for="experimentCompare"><span class="name">显示两路对照</span><span class="sub">仅作对照；控制按各方向选择的来源分别计算</span></label><input class="switch" id="experimentCompare" type="checkbox" disabled/></div>
+<div class="row"><label class="row-main" for="experimentDepthLearning"><span class="name">深度辅助学习</span><span class="sub" id="experimentDepthLearningNote">站在镜头前时，自动学习个人前后倾角度校正</span></label><input class="switch" id="experimentDepthLearning" type="checkbox" disabled/></div>
 <div class="experiment-comparison" id="experimentComparison" hidden><div id="experimentModelReadout"></div><div id="experimentDepthReadout"></div></div>
 <div class="row-note"><span class="statusline" id="experimentSaveStatus" role="status"></span></div>
 </div>
@@ -430,6 +436,17 @@
 
 <dialog aria-labelledby="updateNotesTitle" id="updateNotesDialog"><div class="dialog-head"><h2 id="updateNotesTitle">这次更新了什么</h2><button class="btn primary" id="closeUpdateNotesBtn">知道了</button></div><div class="update-notes" id="updateNotesBody"></div></dialog>
 <dialog aria-labelledby="voiceTitle" id="voiceCommandsMask"><div class="dialog-head"><h2 id="voiceTitle">口令</h2><button class="btn" id="closeVoiceCommandsBtn">关闭</button></div><div id="voiceCommandGrid"></div></dialog>
+<dialog class="view-tuning" id="viewTuning" aria-labelledby="viewTuningTitle">
+<header class="tuning-header"><div><span class="tuning-kicker">MotionControl · 新手试调</span><h2 id="viewTuningTitle">找到顺手的视角</h2></div><button class="btn" id="closeViewTuning" type="button">关闭试调</button></header>
+<div class="tuning-topline"><span id="tuningStageLabel">01 / 选方式</span><span>控制已暂停 · 在场景中试手感</span></div>
+<div class="tuning-nav"><span>菜单操作</span><button class="btn" id="tuningNavTilt" type="button" aria-pressed="true">左右侧倾</button><button class="btn" id="tuningNavTurn" type="button" aria-pressed="false">左右转头</button><button class="btn link" id="tuningNavInvert" type="button">反转选择方向</button></div>
+<p class="tuning-instruction" id="tuningInstruction">偏转逐格选择，回正停留确认</p>
+<div class="tuning-cards" id="tuningCards" role="group" aria-label="视角控制方案"></div>
+<section class="tuning-adjust" id="tuningAdjust" hidden><span id="tuningMethodName"></span><strong id="tuningSpeedValue"></strong><input type="range" id="tuningSpeed" aria-label="试调速度"/><div class="tuning-scale"><span>更慢</span><span>一格一格调整</span><span>更快</span></div><p id="tuningSpeedSummary"></p><button class="btn primary" id="tuningTry" type="button">应用并试一试</button></section>
+<section id="tuningTrial" class="tuning-trial" hidden><div class="tuning-landscape" id="tuningLandscape"><div class="tuning-horizon" id="tuningHorizon"><span>西</span><span>北</span><span>东</span><span>南</span><span>西</span></div><div class="tuning-reticle">＋</div><span class="tuning-trial-caption">体感预览</span></div><p id="tuningTrialStatus"></p><p id="tuningTrialTimer"></p><button class="btn" id="tuningEndTrial" type="button">结束本轮试用</button></section>
+<p class="statusline warn" id="tuningError" role="status"></p>
+<footer class="tuning-footer"><div class="tuning-feedback"><span id="tuningDirection">先回正</span><span id="tuningTier">小角度慢调 · 中角度中速 · 大角度快调</span></div><div class="tuning-confirm"><i id="tuningConfirmFill"></i></div><p id="tuningHelp">回正约 0.9 秒确认，每次只走一格。选定方式、确认速度时保存，关闭保留已应用设置。也支持方向键、回车和鼠标。</p></footer>
+</dialog>
 <div class="tour" hidden="" id="tour"><div class="tour-block"></div><div class="tour-block"></div><div class="tour-block"></div><div class="tour-block"></div><div class="tour-spot" id="tourSpot"></div><div aria-hidden="true" class="tour-cursor" hidden="" id="tourCursor"><svg viewBox="0 0 20 28" width="20" height="28"><path d="M2 2v21l5.5-5.2 3.6 8.2 3.4-1.5-3.6-8.1H18z"></path></svg><span>虚拟鼠标</span></div><section aria-label="新手教学" class="tour-card" data-side="none" id="tourCard">
 <div class="tour-head"><span id="tourStep">新手教学</span><button class="btn" id="tourCloseBtn">跳过教学</button></div>
 <p aria-live="polite" class="tour-say" id="tourSay"></p><p class="tour-hint" hidden="" id="tourHint"></p><div class="tour-choices" hidden="" id="tourChoices"></div>

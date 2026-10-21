@@ -48,7 +48,7 @@ class Head:
     def status(self, now=None):
         return {
             "algorithm": "pnp", "calibrated": True,
-            "horizontal_calibrated": True, "output_x": self.x,
+            "horizontal_calibrated": True, "output_x": self.x * 100.0,
         }
 
     def reset_tracking(self):

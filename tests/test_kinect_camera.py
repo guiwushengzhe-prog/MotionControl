@@ -201,6 +201,19 @@ def test_missing_depth_and_overlapping_people_do_not_supply_depth():
     assert matching_depth_body({"depth_valid": True, "bodies": [native, copy.deepcopy(native)]}, pose) is None
 
 
+def test_matched_depth_keeps_supervision_frame_age_and_person_provenance():
+    native = body()
+    pose = {name: {"x": p["color_x"], "y": p["color_y"], "score": 1} for name, p in native["points"].items()}
+    metadata = {"depth_valid": True, "body_valid": True, "bodies": [native],
+                "sample_at": 23.5, "body_age_ms": 12., "device_id": "kinect2:test", "body_frames": 7}
+    matched = matching_depth_body(metadata, pose)
+    assert matched["matched_to_model"] and matched["body_valid"]
+    assert matched["match_error"] == 0
+    assert matched["sample_at"] == 23.5 and matched["body_age_ms"] == 12.
+    assert matched["device_id"] == "kinect2:test" and matched["body_frames"] == 7
+    assert "matched_to_model" not in native
+
+
 def test_seated_person_matches_by_visible_shoulders_but_one_point_is_not_enough():
     native = body()
     pose = {name: {"x": p["color_x"], "y": p["color_y"], "score": 1}
