@@ -247,7 +247,7 @@ def test_calibration_cannot_start_after_emergency_during_source_check(applicatio
     assert started == []
 
 
-def test_phone_disconnect_during_trigger_note_cannot_enable_output(application, monkeypatch):
+def test_phone_disconnect_before_system_execution_cannot_enable_output(application, monkeypatch):
     app = application
     entered, release = threading.Event(), threading.Event()
     results = []
@@ -255,11 +255,14 @@ def test_phone_disconnect_during_trigger_note_cannot_enable_output(application, 
         app.VOICE._activate_locked("phone", "phone", "phone")
     generation = app.VOICE.phone_source_generation("phone")
 
-    def note(action):
+    original = app.execute_system_target
+
+    def execute(target, **kwargs):
         entered.set()
         assert release.wait(2)
+        return original(target, **kwargs)
 
-    monkeypatch.setattr(app, "_note_voice_trigger", note)
+    monkeypatch.setattr(app, "execute_system_target", execute)
     worker = threading.Thread(target=lambda: results.append(app._execute_queued_command({
         "type": "system", "target": "OUTPUT.START", "_command_generation": 0,
         "voice_source_id": "phone", "voice_source_generation": generation})))

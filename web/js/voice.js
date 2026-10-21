@@ -1,5 +1,5 @@
 // 语音：唤醒词、口令检查、通用口令、口令列表。
-import {$,api,configurationOperation,notice,post,setProperty,setText,syncChildren} from './core.js';
+import {$,api,configurationOperation,post,setProperty,setText,syncChildren} from './core.js';
 import {ACTION_TYPE_LABELS,SYSTEM_TARGET_NAMES,bindingsForDisplay,targetLabel} from './labels.js';
 import {fillBehaviorControl,fillTargetControl,makeKeyCaptureInput,makeTypeSelect,readBindingAction,syncRuleTriggerChoices,syncVoiceReleaseChoices} from './mapping.js';
 import {gameProfile} from './state.js';
@@ -204,14 +204,13 @@ function renderVoiceStatus(s=voice.status){
   setText($('#voicePill'),ready?'在听':(connected?'准备中':'没开'));setProperty($('#voicePill'),'className','tag '+(ready?'ok':(connected?'warn':'plain')));
   const partial=String(s.last_partial||s.partial||'').trim();
   const phrase=String(s.last_final||s.final||s.last_command||'').trim();
-  // 就绪后不再常驻说明；未就绪时保留原因。识别结果浮在页面底下。
+  // 就绪后不再常驻说明；未就绪时保留原因。执行成功的口令归入首页最近触发。
   const voiceText=ready?'':String(s.last_error||'').trim()
     ||(!s.available||!has?'语音模型没装好':!connected?(s.source_kind==='phone'?'等手机连上':'麦克风没打开'):'麦克风没声音，或者还在准备');
   voiceInputIssue=voiceText;
   voiceInputTarget=!s.available||!has?'voice':'audio';
   if($('#voiceStatus').textContent!==voiceText)$('#voiceStatus').textContent=voiceText;
   setProperty($('#voiceStatus'),'hidden',!voiceText);
-  announceVoice(s,phrase);
   const modelPath=s.model_path||s.command_model_path||'—';const mp=$('#voiceModelPath');setText(mp,'模型：'+modelPath);setProperty(mp,'title',modelPath);
   renderPersonalVoice(s);
   const clash=$('#voiceConflicts');if(clash){const list=s.phrase_conflicts||[];setProperty(clash,'hidden',!list.length);setText(clash,list.length?`${list.join('；')}。同名的只有一条会生效，改掉其中一条的说法。`:'')}
@@ -276,18 +275,6 @@ async function saveWakeWord(){
 document.getElementById('wakeWord')?.addEventListener('change',saveWakeWord);
 
 if($('#wakeWord'))watchVoicePhrase($('#wakeWord'));
-
-let voiceHeardKey=null;
-
-function announceVoice(s,phrase){
-  const key=[s.commands_heard??'',phrase,s.last_action||'',s.last_executed??''].join('|');
-  if(voiceHeardKey===null){voiceHeardKey=key;return}
-  if(key===voiceHeardKey)return;voiceHeardKey=key;
-  if(!phrase)return;
-  if(s.last_action==='wake')notice(`听到「${currentVoiceWakeWord(s)}」，接着说口令`);
-  else if(s.last_executed===true)notice(`「${phrase}」✓`);
-  else if(s.last_executed===false)notice(`听到「${phrase}」，没执行${s.last_error?`：${s.last_error}`:''}`);
-}
 
 export async function refreshVoice(){const revision=voiceRevision;try{const data=await api('/api/voice/status');if(revision===voiceRevision){voice.status=data;renderVoiceStatus(data)}return true}catch{if(revision===voiceRevision){voiceInputReady=false;voiceInputIssue='语音状态无法确认';setText($('#voicePill'),'未确认');setProperty($('#voicePill'),'className','tag warn');$('#voiceStatus').textContent=voiceInputIssue;$('#voiceStatus').hidden=false;document.dispatchEvent(new Event('motioncontrol:voice-state'))}return false}}
 

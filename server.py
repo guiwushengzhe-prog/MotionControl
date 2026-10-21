@@ -313,12 +313,8 @@ def _note_voice_trigger(action: dict) -> None:
         trigger = f"voice.shared.{phrase}"
     else:
         trigger = "voice." + str(action.get("target", "")).strip()
-    binding = KERNEL.control_bindings.get(trigger) if command_id else None
-    if isinstance(binding, dict) and not binding.get("disabled") and isinstance(binding.get("action"), dict):
-        noted = binding["action"]
-    else:
-        noted = {"type": str(action.get("type", "")), "target": action.get("target", ""),
-                 "behavior": str(action.get("behavior", "tap"))}
+    noted = {"type": str(action.get("type", "")), "target": action.get("target", ""),
+             "behavior": str(action.get("behavior", "tap"))}
     KERNEL.note_trigger(trigger, noted, label=phrase or None)
 
 
@@ -411,21 +407,27 @@ def _run_bound_mode_action(target: str, trigger: str) -> None:
 KERNEL.configure_mode_action_handler(_run_bound_mode_action)
 
 
-def _queue_mode_switch(target) -> dict:
+def _queue_mode_switch(target, action=None) -> dict:
     """口令选了「切换模式」。普通口令是语音服务持着自己的锁执行的，而换模式要先拿
     配置锁、再拿语音锁和内核锁；当场切会和保存配置互相等死。交给后台命令队列，
     它先拿配置锁，顺序和保存配置一样。"""
-    result = SYSTEM_COMMANDS.submit({"type": "mode", "target": target, "trigger": "voice"})
+    result = SYSTEM_COMMANDS.submit({**(action or {}), "type": "mode", "target": target, "trigger": "voice"})
     return {**result, "executed": bool(result.get("queued"))}
 
 
 def execute_voice_action(action: dict) -> dict:
-    result = _execute_voice_action(action)
     command_id = str(action.get("command_id", "")).strip()
-    if result.get("executed") and command_id:
-        binding = KERNEL.control_bindings.get(f"voice.{command_id}")
-        selected = binding.get("action") if isinstance(binding, dict) else None
-        KERNEL.note_voice_rule_trigger(f"voice.{command_id}", selected or action)
+    binding = KERNEL.control_bindings.get(f"voice.{command_id}") if command_id else None
+    selected = binding.get("action") if isinstance(binding, dict) else None
+    noted = {**action, **selected} if isinstance(selected, dict) else action
+    result = _execute_voice_action(action)
+    # 只记录确认执行的口令；排队完成时再记，身体触发和急停各有自己的记录入口。
+    if result.get("executed") and not result.get("queued"):
+        emergency = noted.get("type") == "system" and str(noted.get("target", "")).upper() == "EMERGENCY_STOP"
+        if action.get("trigger") in (None, "voice") and not emergency:
+            _note_voice_trigger(noted)
+        if command_id:
+            KERNEL.note_voice_rule_trigger(f"voice.{command_id}", selected or action)
     return result
 
 
@@ -436,23 +438,20 @@ def _execute_voice_action(action: dict) -> dict:
     recognizer and command vocabulary remain unchanged; only the final action
     is selected at this boundary.
     """
-    # 语音不走内核那条分发路，所以在这里补一笔"刚才触发了什么"。界面上的触发实况
-    # 靠它才看得见语音——口令说完就完，轮询状态是抓不到的。
     generation = action.get("_command_generation")
     if generation is not None and not SYSTEM_COMMANDS.is_current(generation):
         return {"executed": False, "reason": "操作已被停止或切换取消"}
     if str(action.get("type", "")).lower() == "mode" and action.get("trigger"):
         # 从后台命令队列来的「切换模式」（区域、动作、姿势或口令触发的）。内核分发时
-        # 已经记过身体触发，口令在排队前记过，这里只管切。
+        # 已经记过身体触发，口令在切换成功后由外层补记。
         return switch_game_mode(action.get("target", ""))
     command_id = str(action.get("command_id", "")).strip()
     binding = KERNEL.control_bindings.get(f"voice.{command_id}") if command_id else None
     if isinstance(binding, dict) and binding.get("disabled"):
         return {"executed": False, "reason": "当前游戏未启用这条语音"}
-    _note_voice_trigger(action)
     if str(action.get("type", "")).lower() == "mode":
         # 通用口令选了「切换模式」。
-        return _queue_mode_switch(action.get("target", ""))
+        return _queue_mode_switch(action.get("target", ""), action)
     if str(action.get("type", "")).lower() != "system":
         command_id = str(action.get("command_id", "")).strip()
         if command_id:
@@ -465,9 +464,9 @@ def _execute_voice_action(action: dict) -> dict:
                         return KERNEL.release_voice_hold(binding["action"].get("target", ""))
                     if binding["action"].get("type") == "system":
                         # 本游戏口令在映射表里选了「系统功能」。
-                        return execute_voice_action({**action, **binding["action"]})
+                        return _execute_voice_action({**action, **binding["action"]})
                     if binding["action"].get("type") == "mode":
-                        return _queue_mode_switch(binding["action"].get("target", ""))
+                        return _queue_mode_switch(binding["action"].get("target", ""), action)
                     mapped = {**action, **binding["action"]}
                     mapped["source"] = action.get("source", "voice")
                     return OUTPUT.execute_voice_action(mapped)

@@ -205,8 +205,7 @@ def test_an_unmapped_action_does_not_hide_a_mapped_one():
 
 
 def test_an_unmapped_zone_does_not_light_up():
-    """框亮 = 这个键正被按下。没绑键的框人伸进去，手机和网页上都不亮；
-    「动作测试」页读 recognized，照样知道认出来了。"""
+    """未映射区域不识别、不触发，也不在手机或网页上点亮。"""
     kernel = ControlKernel(Output())
     kernel.configure_bindings({"zones": {"leftHand": {"disabled": True}}})
     with kernel._lock:
@@ -214,7 +213,7 @@ def test_an_unmapped_zone_does_not_light_up():
         kernel.zone_state["rightHand"]["pressed"] = True
     zones = kernel.runtime_zones()
     assert zones["leftHand"]["pressed"] is False
-    assert zones["leftHand"]["recognized"] is True
+    assert zones["leftHand"]["recognized"] is False
     assert zones["rightHand"]["pressed"] is True, "右手区有内置的 B，照常亮"
     kernel.close()
 
