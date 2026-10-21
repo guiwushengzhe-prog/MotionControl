@@ -49,6 +49,8 @@ function renderVoiceGuide(status=voice.status){
  * 在输入框底下照实说是哪个字。几个框一起出现时攒成一次请求。 */
 const voiceCheckQueue=new Set();
 let voiceCheckTimer=0;
+const voicePhraseEdits=new WeakMap();
+let voiceDraftRevision=0;
 
 function voiceCheckText(input){
   // 通用口令的可选前缀只在填写后拼上；本游戏口令直接检查填写的内容。
@@ -64,23 +66,57 @@ function voicePhraseTip(input){
   return input.voiceTip;
 }
 
-function queueVoiceCheck(input){voiceCheckQueue.add(input);clearTimeout(voiceCheckTimer);voiceCheckTimer=setTimeout(flushVoiceCheck,250)}
+function queueVoiceCheck(input){if(voicePhraseEdits.get(input)?.composing)return;voiceCheckQueue.add(input);clearTimeout(voiceCheckTimer);voiceCheckTimer=setTimeout(flushVoiceCheck,250)}
 
 async function flushVoiceCheck(){
-  const inputs=[...voiceCheckQueue].filter(input=>input.isConnected);voiceCheckQueue.clear();
+  const inputs=[...voiceCheckQueue].filter(input=>input.isConnected&&!voicePhraseEdits.get(input)?.composing);voiceCheckQueue.clear();
   if(!inputs.length)return;
-  const texts=inputs.map(voiceCheckText);
+  const texts=inputs.map(voiceCheckText),revisions=inputs.map(input=>voicePhraseEdits.get(input)?.revision);
   let data;try{data=await post('/api/voice/check',{phrases:texts})}catch{return}
   if(!data.available)return;
   inputs.forEach((input,index)=>{
-    if(voiceCheckText(input)!==texts[index])return;  // 查的时候又改了，下一轮再说
+    const edit=voicePhraseEdits.get(input);
+    if(!input.isConnected||edit?.composing||edit?.revision!==revisions[index]||voiceCheckText(input)!==texts[index])return;
     const chars=data.results?.[index]?.unheard||[],tip=voicePhraseTip(input);
     tip.hidden=!chars.length;
     tip.textContent=chars.length?`${chars.map(char=>`「${char}」`).join('')}语音认不出，这句说了也听不到，换个说法`:'';
   });
 }
 
-export function watchVoicePhrase(input){input.addEventListener('input',()=>queueVoiceCheck(input));queueVoiceCheck(input)}
+export function watchVoicePhrase(input){
+  if(voicePhraseEdits.has(input))return;
+  const edit={composing:false,revision:0,finished:null,finish:null};voicePhraseEdits.set(input,edit);
+  const changed=()=>{edit.revision++;voiceDraftRevision++;if(input.voiceTip){input.voiceTip.hidden=true;input.voiceTip.textContent=''}};
+  input.addEventListener('compositionstart',()=>{
+    edit.composing=true;changed();voiceCheckQueue.delete(input);
+    edit.finished=new Promise(resolve=>{edit.finish=resolve});
+  });
+  input.addEventListener('input',event=>{
+    changed();
+    if(edit.composing||event.isComposing){voiceCheckQueue.delete(input);event.stopImmediatePropagation();return}
+    queueVoiceCheck(input);
+  },true);
+  // 不让组合中的拼音通过自动保存；确认后的完整中文再走原来的保存入口。
+  input.addEventListener('change',event=>{if(edit.composing)event.stopImmediatePropagation()},true);
+  input.addEventListener('compositionend',()=>{
+    edit.composing=false;changed();
+    const finish=edit.finish;edit.finish=null;edit.finished=null;
+    queueMicrotask(()=>{
+      if(input.isConnected&&!edit.composing)input.dispatchEvent(new Event('input',{bubbles:true}));
+      finish?.();
+    });
+  });
+  queueVoiceCheck(input);
+}
+
+async function waitForVoiceComposition(){
+  for(;;){
+    const pending=[...document.querySelectorAll('.voice-phrase,.voice-trigger-phrase,#wakeWord')]
+      .map(input=>voicePhraseEdits.get(input)?.finished).filter(Boolean);
+    if(!pending.length)return;
+    await Promise.all(pending);
+  }
+}
 
 // 「停住语音按住」能停哪几条：本游戏口令里现在设成持续按住的那些（循环的宏也算，
 // 它同样要另一个动作才停得下来）。读的是表里的当前状态而不是存下来的配置——刚把
@@ -153,6 +189,7 @@ function readVoiceMappings(){
 
 export function renderVoiceRows(items){
   const rows=[...document.querySelectorAll('#voiceRows .voice-row')];
+  if(rows.some(row=>voicePhraseEdits.get(row.querySelector('.voice-phrase'))?.composing))return;
   const targetValue=(type,value)=>Array.isArray(value)?(type==='voice_release'?value.join(','):value.join('+')):String(value||'');
   const current=rows.map(row=>{const type=row.querySelector('.voice-type').value;return [row.querySelector('.voice-phrase').value,type,type==='voice_release'?[...row.querySelector('.voice-release-target').selectedOptions].map(item=>item.value).join(','):row.querySelector('.binding-target')?.value||'',row.querySelector('select.binding-behavior')?.value||row.querySelector('.binding-behavior')?.dataset.value||'tap',row.querySelector('.combo-lead-ms')?.dataset.explicit==='1'?Number(row.querySelector('.combo-lead-ms').value):null]});
   const desired=(items||[]).map(item=>[item.phrase||'',item.type||'keyboard',targetValue(item.type,item.target),['system','voice_release','mouse_wheel','mode'].includes(item.type)?'tap':item.behavior||'tap',item.combo_stick_lead_ms??null]);
@@ -200,11 +237,12 @@ export function voiceRowsFromStatus(s){
 }
 
 export async function saveVoiceMappings(){
+  await waitForVoiceComposition();
   const rows=readVoiceMappings();
-  const revision=++voiceRevision;
+  const revision=++voiceRevision,draftRevision=voiceDraftRevision;
   const s=await post('/api/voice/config',{mappings:rows.filter(item=>!isEmergencyRow(item)),
     emergency_stop_phrases:rows.filter(isEmergencyRow).map(item=>item.phrase)});
-  if(revision===voiceRevision){++voiceRevision;voice.status=s;renderVoiceStatus(s);await refreshVoiceCommands()}return s;
+  if(revision===voiceRevision&&draftRevision===voiceDraftRevision){++voiceRevision;voice.status=s;renderVoiceStatus(s);await refreshVoiceCommands()}return s;
 }
 
 // 唤醒词只属于你：不跟游戏走、也不跟配置分享出去。
@@ -218,6 +256,7 @@ function renderPersonalVoice(status){
 
 async function saveWakeWord(){
   const say=(text,kind='')=>{const el=$('#personalVoiceStatus');if(el){el.textContent=text;el.className=kind==='error'?'statusline error':'statusline'}};
+  await waitForVoiceComposition();
   const value=String($('#wakeWord').value||'').trim();
   if(value===voice.status?.wake_word)return;
   try{
@@ -225,7 +264,7 @@ async function saveWakeWord(){
     // mappings 要原样带上：configure 是整份替换，不带等于把口令全删了。
     const revision=++voiceRevision;
     const s=await post('/api/voice/config',{mappings:voice.status?.mappings||[],wake_word:value});
-    if(revision!==voiceRevision)return;
+    if(revision!==voiceRevision||String($('#wakeWord').value||'').trim()!==value||voicePhraseEdits.get($('#wakeWord'))?.composing)return;
     ++voiceRevision;
     voice.status=s;renderVoiceStatus(s);await refreshVoiceCommands();say(value?'唤醒词已保存':'已保存：通用口令和系统口令直接说');
     // 可选前缀改变后，重新检查实际说出的整句。

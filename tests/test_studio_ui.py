@@ -114,6 +114,7 @@ Object.defineProperty(navigator.mediaDevices,'getDisplayMedia',{value:async opti
   const stream=c.captureStream(10);window.syntheticTracks.push(...stream.getTracks());return stream;
 }});
 Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value:async options=>{
+  if(window.syntheticDenyMicrophone)throw new DOMException('cancel','NotAllowedError');
   if(options.video!==false)throw new Error('禁止测试打开摄像头');
   const audio=new AudioContext(),oscillator=audio.createOscillator(),destination=audio.createMediaStreamDestination();
   oscillator.connect(destination);oscillator.start();window.syntheticAudio=audio;
@@ -353,9 +354,11 @@ def test_zoom_drag_clamps_saves_and_center_fill_shortcuts_work(browser, studio_s
     page.wait_for_function("document.getElementById('studioCenter').disabled && document.getElementById('studioPlaceholder').hidden")
     assert state["config"]["portrait_pan"] == {"x": 0, "y": 0}
     assert state["config"]["portrait_zoom"] == 320, "居中不改变放大比例"
-    page.click("#studioZoomOut")
+    # 人物框的＋／－只在合成画面时调整框大小，框内缩放由单独滑杆控制。
+    assert page.locator("#studioZoomIn").is_disabled()
+    page.locator("#studioZoom").evaluate("el=>{el.value='295';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))}")
     page.wait_for_function("document.getElementById('studioZoomValue').textContent==='295%' && document.getElementById('studioPlaceholder').hidden")
-    page.click("#studioZoomIn")
+    page.locator("#studioZoom").evaluate("el=>{el.value='320';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))}")
     page.wait_for_function("document.getElementById('studioZoomValue').textContent==='320%' && document.getElementById('studioPlaceholder').hidden")
     # 直播画面沿用保存的偏移，不申请设备或修改设置。
     state["config"]["portrait_pan"] = {"x": 1, "y": 0}
@@ -364,4 +367,66 @@ def test_zoom_drag_clamps_saves_and_center_fill_shortcuts_work(browser, studio_s
     page.wait_for_function("document.getElementById('portrait').width===180 && document.getElementById('portrait').getContext('2d').getImageData(0,50,1,1).data[0]===255")
     assert all(path == "/api/studio/video-demand" and body["enabled"] is False for path, body in state["posts"][posts:])
     assert errors == []
+    page.close()
+
+
+def test_person_frame_buttons_resize_viewport_and_fit_restores_complete_picture(browser, studio_server):
+    base, state = studio_server
+    page = browser.new_page()
+    page.add_init_script(FAKE_CAPTURE)
+    ready(page, base)
+    page.click("#studioScreenBtn")
+    page.wait_for_function("!document.getElementById('studioZoomIn').disabled")
+    page.click("#studioZoomIn")
+    page.wait_for_function("document.getElementById('studioSizeValue').textContent==='35%'")
+    assert state["config"]["size"] == 35
+    assert state["config"].get("portrait_zoom", 100) == 100
+    page.click("#studioZoomOut")
+    page.wait_for_function("document.getElementById('studioSizeValue').textContent==='30%'")
+    page.locator("#studioZoom").evaluate("el=>{el.value='200';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))}")
+    page.wait_for_function("document.getElementById('studioPlaceholder').hidden")
+    page.click("#studioFit")
+    page.wait_for_function("document.getElementById('studioZoomValue').textContent==='100%' && document.getElementById('studioPlaceholder').hidden")
+    assert state["config"]["portrait_crop"] == {"x": 0, "y": 0, "width": 1, "height": 1}
+    assert state["config"]["portrait_pan"] == {"x": 0, "y": 0}
+    assert state["config"]["size"] == 30
+    assert not any(path == "/api/studio/recording/start" for path, _ in state["posts"])
+    page.close()
+
+
+def test_audio_status_updates_on_config_and_releases_after_permission_cancel(browser, studio_server):
+    base, state = studio_server
+    page = browser.new_page()
+    page.add_init_script(FAKE_CAPTURE)
+    ready(page, base)
+    page.check("#studioMicrophone")
+    page.wait_for_function("document.getElementById('studioAudioStatus').textContent.includes('麦克风：已选择')")
+    assert not page.evaluate("!!window.syntheticAudio"), "选择开关不冒充已打开麦克风"
+    page.uncheck("#studioSystemAudio")
+    page.wait_for_function("document.getElementById('studioAudioStatus').textContent.includes('电脑声音：已关闭')")
+    page.evaluate("window.syntheticDenyMicrophone=true")
+    page.click("#studioStartBtn")
+    page.wait_for_function("document.getElementById('studioStatus').textContent.includes('没有开始录制') && !document.getElementById('studioStartBtn').disabled")
+    assert page.evaluate("syntheticTracks.every(track=>track.readyState==='ended')")
+    assert "麦克风：已选择" in page.locator("#studioAudioStatus").text_content()
+    assert "已收到" not in page.locator("#studioAudioStatus").text_content()
+    assert not any(path == "/api/studio/recording/start" for path, _ in state["posts"])
+    page.close()
+
+
+def test_builtin_face_presets_have_transparent_background_and_no_torso(browser, studio_server):
+    base, state = studio_server
+    page = browser.new_page()
+    ready(page, base)
+    page.select_option("#studioFace", "avatar")
+    for preset in ("cat", "fox", "robot"):
+        page.click(f'[data-avatar-preset="{preset}"]')
+        page.wait_for_function("preset=>document.querySelector('[data-avatar-preset='+preset+']').getAttribute('aria-pressed')==='true'", arg=preset)
+        data = state["config"]["avatar_data_url"]
+        alpha = page.evaluate("""async data=>{
+          const image=new Image();image.src=data;await image.decode();
+          const c=document.createElement('canvas');c.width=c.height=320;const ctx=c.getContext('2d');ctx.drawImage(image,0,0);
+          return [[0,0],[160,319],[160,150]].map(([x,y])=>ctx.getImageData(x,y,1,1).data[3]);
+        }""", data)
+        assert alpha == [0, 0, 255], preset
     page.close()

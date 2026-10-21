@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from motioncontrol.recording_storage import available_path, recording_path
+from motioncontrol.pose_recorder import _json_safe
 from motioncontrol_shared.describe import trigger_name
 
 SCHEMA = "motioncontrol.trigger_recording.v1"
@@ -75,7 +76,7 @@ class _ClipWriter:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             start = self.frames[0]["at"]
             with self.path.open("x", encoding="utf-8", newline="\n") as stream:
-                stream.write(json.dumps({"schema": SCHEMA, **self.header}, ensure_ascii=False, separators=(",", ":")) + "\n")
+                stream.write(json.dumps(_json_safe({"schema": SCHEMA, **self.header}), ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n")
 
                 def write(frame):
                     nonlocal count, duration
@@ -83,7 +84,7 @@ class _ClipWriter:
                     duration = max(0., frame["at"] - start)
                     row["t"] = round(duration, 4)
                     row["sample_t"] = round(frame["sample_at"] - start, 4)
-                    stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+                    stream.write(json.dumps(_json_safe(row), ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n")
                     count += 1
 
                 for frame in self.frames:
@@ -99,7 +100,7 @@ class _ClipWriter:
                     write(frame)
                 stream.write(json.dumps({"type": "end", "frames": count,
                                          "duration_s": round(duration, 4), "reason": self.reason},
-                                        ensure_ascii=False) + "\n")
+                                        ensure_ascii=False, allow_nan=False) + "\n")
         except (OSError, ValueError, TypeError) as exc:
             error = f"保存失败：{exc}"
         finally:

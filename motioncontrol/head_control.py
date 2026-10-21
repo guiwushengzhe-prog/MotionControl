@@ -2521,6 +2521,8 @@ class HeadController:
         self._runtime_intent_raw_x = 0.0
         self._runtime_span_x = None
         self._last_target_x = 0.0
+        # 实验选项由内核设置，不写入头部校准或个人设置。
+        self.hfhpe_hold = False
         # 模型角度单独存放，不能借用姿态点估计器的中心和噪声。
         self._hfhpe_calibration: dict | None = None
         self._hfhpe_from_last_session = False
@@ -3854,7 +3856,13 @@ class HeadController:
         self.yaw_intent_state = "IDLE"
         self.yaw_velocity = self.yaw_acceleration = 0.0
         drive = 0.0
-        if previous is not None:
+        if self.hfhpe_hold:
+            if abs(filtered) > deadzone:
+                amount = _clamp((abs(filtered) - deadzone) / max(.001, PNP_YAW_SPAN_DEG - deadzone), 0.0, 1.0)
+                sign = -1.0 if self.config["invert_x"] else 1.0
+                drive = math.copysign(amount ** float(self.config["horizontal_curve_gamma"]), sign * filtered)
+                self.yaw_intent_state = "TURN_RIGHT" if drive > 0.0 else "TURN_LEFT"
+        elif previous is not None:
             last_raw, last_filtered = previous
             raw_speed = (abs(raw) - abs(last_raw)) / dt
             filtered_speed = (abs(filtered) - abs(last_filtered)) / dt
@@ -3894,7 +3902,8 @@ class HeadController:
         elif not simple and self._hfhpe_intent.return_latched:
             code, message = "RETURNING", "正在回正；回到中心短暂停稳后重新触发"
         else:
-            code, message = "NEUTRAL", "等待转头；停住或回正时不输出"
+            code, message = "NEUTRAL", ("处于中心稳定区，偏头后持续转向" if simple and self.hfhpe_hold
+                                        else "等待转头；停住或回正时不输出")
         yaw, pitch, roll = self._hfhpe_angles or (None, None, None)
         quality = ("正在记录模型中心" if self._hfhpe_capturing else
                    "已载入上次模型校准" if saved and self._hfhpe_from_last_session else
@@ -4369,17 +4378,24 @@ class HeadController:
         )
         yaw_latched = policy_name not in {"roll_tilt", "head_responsive"} and bool(getattr(self._x_intent_v153, "return_latched", False))
         horizontal_version = HORIZONTAL_ALGORITHM_VERSIONS[policy_name]
+        horizontal_labels = dict(HORIZONTAL_ALGORITHM_LABELS)
+        if self.hfhpe_hold:
+            horizontal_labels["hfhpe_simple"] = "左右转头（模型·持续转向）"
+            if policy_name == "hfhpe_simple":
+                horizontal_version = "hfhpe-held-yaw-v1"
         return {
             **self._horizontal_diagnostics(),
             "signal_version": HEAD_SIGNAL_VERSION,
             "horizontal_algorithm": policy_name,
             "horizontal_algorithm_version": horizontal_version,
             "available_horizontal_algorithms": list(HORIZONTAL_ALGORITHMS),
-            "horizontal_algorithm_labels": dict(HORIZONTAL_ALGORITHM_LABELS),
-            "horizontal_algorithm_label": HORIZONTAL_ALGORITHM_LABELS[policy_name],
+            "horizontal_algorithm_labels": horizontal_labels,
+            "horizontal_algorithm_label": horizontal_labels[policy_name],
+            "hfhpe_hold": bool(self.hfhpe_hold),
             "horizontal_behavior": ("侧倾或转脸时持续转向，快速回正加强制动，进入另一侧才换向" if policy_name == "head_responsive"
                                     else "向左肩或右肩倾斜时持续转向，头回正立即停止" if policy_name == "roll_tilt"
-                                    else "远离正前方时转向，回正或停住时停止；不设回正锁，再向外转头即可响应" if policy_name == "hfhpe_simple"
+                                    else ("偏头保持时持续转向，回正减速，进入中心稳定区停止；角度越大转得越快" if self.hfhpe_hold
+                                          else "远离正前方时转向，回正或停住时停止；不设回正锁，再向外转头即可响应") if policy_name == "hfhpe_simple"
                                     else "转动时移动，偏头停住时停止，回到中心短暂停稳后重新触发"),
             "active_pitch_estimator": self._effective_estimator_algorithm(),
             "frozen22_signature_version": FROZEN22_SIGNATURE_VERSION,

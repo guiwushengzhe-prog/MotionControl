@@ -68,14 +68,17 @@ export async function refreshRecordings(){
 }
 
 let triggerRecordSaving=false,triggerRecordChoices=[],triggerRecordState=null,triggerRecordChoiceKey='',lastSavedClips=-1;
+let triggerRecordDraft=null,triggerRecordRevision=0;
 
-export function renderTriggerRecord(state){
-  if(!state||triggerRecordSaving)return;
-  triggerRecordState=state;
+export function renderTriggerRecord(state,local=false){
+  if(!state||(triggerRecordSaving&&!local))return;
+  if(!local)triggerRecordState=state;
+  if(triggerRecordDraft)state={...state,config:triggerRecordDraft};
   const config=state.config||{},selected=config.triggers||[];
   $('#triggerRecordEnabled').checked=!!config.enabled;
   const names=new Map(triggerRecordChoices.map(item=>[item.key,item.name]));
-  $('#triggerRecordSummary').textContent=selected.length?selected.map(key=>names.get(key)||key).join('、'):'选择动作';
+  $('#triggerRecordSummary').textContent=selected.length?selected.map(key=>names.get(key)||key).join('、'):'选择动作（可多选）';
+  $('#triggerRecordSummary').title='可同时选择多个动作，点已选项目可取消';
   const choices=[...triggerRecordChoices,...selected.filter(key=>!names.has(key)).map(key=>({key,name:key+'（暂不可用）'}))];
   const signature=JSON.stringify(choices);
   const menu=$('#triggerRecordChoices');
@@ -95,27 +98,39 @@ export function renderTriggerRecord(state){
 }
 
 export async function refreshTriggerRecord(){
+  const revision=triggerRecordRevision;
   const data=await api('/api/pose/trigger-recording');
+  if(revision!==triggerRecordRevision)return;
   triggerRecordChoices=data.choices||[];renderTriggerRecord(data.recording);
 }
 
 async function saveTriggerRecord(payload){
+  triggerRecordDraft={...(triggerRecordDraft||triggerRecordState?.config||{}),...payload};
+  ++triggerRecordRevision;renderTriggerRecord(triggerRecordState,true);
   if(triggerRecordSaving)return;
-  triggerRecordSaving=true;$('#triggerRecordEnabled').disabled=true;
-  for(const option of $('#triggerRecordChoices').children)option.disabled=true;
-  try{const data=await post('/api/pose/trigger-recording',payload);triggerRecordState=data.recording}
-  catch(error){notice('录制设置未保存：'+error.message)}
+  triggerRecordSaving=true;
+  try{
+    while(triggerRecordDraft){
+      const revision=triggerRecordRevision,config={...triggerRecordDraft,triggers:[...(triggerRecordDraft.triggers||[])]};
+      try{
+        const data=await post('/api/pose/trigger-recording',config);triggerRecordState=data.recording;
+        if(revision===triggerRecordRevision)triggerRecordDraft=null;
+        ++triggerRecordRevision;
+      }catch(error){
+        if(revision===triggerRecordRevision){triggerRecordDraft=null;notice('录制设置未保存：'+error.message);break}
+      }
+    }
+  }
   finally{
-    triggerRecordSaving=false;$('#triggerRecordEnabled').disabled=false;
-    renderTriggerRecord(triggerRecordState);for(const option of $('#triggerRecordChoices').children)option.disabled=false;
+    triggerRecordSaving=false;renderTriggerRecord(triggerRecordState);
   }
 }
 
 $('#triggerRecordEnabled').addEventListener('change',()=>void saveTriggerRecord({enabled:$('#triggerRecordEnabled').checked}));
 
 $('#triggerRecordChoices').addEventListener('click',event=>{
-  const option=event.target.closest('.trigger-record-option');if(!option||triggerRecordSaving)return;
-  const key=option.dataset.trigger,current=triggerRecordState?.config||{},selected=current.triggers||[];
+  const option=event.target.closest('.trigger-record-option');if(!option)return;
+  const key=option.dataset.trigger,current=triggerRecordDraft||triggerRecordState?.config||{},selected=current.triggers||[];
   const next=selected.includes(key)?selected.filter(item=>item!==key):[...selected,key];
   void saveTriggerRecord({triggers:next,enabled:!!current.enabled&&next.length>0});
 });

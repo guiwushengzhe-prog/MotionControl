@@ -3,8 +3,9 @@
 import time
 
 import numpy as np
+import pytest
 
-from motioncontrol.studio_portrait import MAX_FRAME_AGE, StudioPortrait, render_portrait
+from motioncontrol.studio_portrait import MAX_FRAME_AGE, StudioPortrait, face_geometry, render_portrait
 
 
 def face_pose():
@@ -88,4 +89,84 @@ def test_png_snapshot_and_public_revision_change_together_for_privacy_config():
     assert next_revision > revision
     assert next_revision == portrait.status()["revision"]
     assert portrait.frame_png() is None
+    portrait.close()
+
+
+def test_face_mask_uses_current_face_not_shoulder_size_and_follows_tilt():
+    pose = face_pose()
+    first = face_geometry(pose, 400, 300)
+    pose["left_shoulder"]["x"], pose["right_shoulder"]["x"] = .05, .95
+    assert face_geometry(pose, 400, 300) == first
+    # 从同一组眼鼻点做平移及旋转，不能固定在胸口或保留上一位置。
+    angle = np.deg2rad(25)
+    origin = np.array((.5 * 400, .3 * 300))
+    rotation = np.array(((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle))))
+    moved = {}
+    for name, point in pose.items():
+        x, y = rotation @ (np.array((point["x"] * 400, point["y"] * 300)) - origin) + origin + (40, 20)
+        moved[name] = {"x": x / 400, "y": y / 300, "score": .99}
+    current = face_geometry(moved, 400, 300)
+    assert current["angle"] == pytest.approx(25)
+    assert np.linalg.norm(np.array(current["center"]) - np.array(first["center"])) > 35
+
+
+def test_builtin_mask_aligns_eye_and_nose_markers_without_cropping_the_picture():
+    import cv2
+
+    frame = np.full((300, 400, 3), 180, np.uint8)
+    avatar = np.zeros((320, 320, 4), np.uint8)
+    cv2.circle(avatar, (116, 166), 8, (0, 0, 255, 255), -1)
+    cv2.circle(avatar, (204, 166), 8, (0, 255, 0, 255), -1)
+    cv2.circle(avatar, (160, 195), 8, (255, 0, 0, 255), -1)
+    pose = face_pose()
+    result, reason = render_portrait(frame, pose, None,
+                                    {"background": "original", "face": "avatar", "avatar_preset": "cat", "mirror": False}, avatar)
+    assert reason is None
+    for name, expected in (("left_eye", [0, 0, 255]), ("right_eye", [0, 255, 0]), ("nose", [255, 0, 0])):
+        point = pose[name]
+        assert result[round(point["y"] * 300), round(point["x"] * 400), :3].tolist() == expected
+    assert result[230, 200, :3].tolist() == [180, 180, 180], "面具不覆盖胸口"
+
+
+def test_mask_silhouette_stays_visible_with_transparent_body_and_fail_stop():
+    frame = np.full((300, 400, 3), 180, np.uint8)
+    pose = face_pose()
+    result, _ = render_portrait(frame, pose, np.zeros((300, 400), np.float32),
+                                {"background": "transparent", "face": "avatar", "mirror": False},
+                                np.full((30, 30, 4), (0, 100, 200, 255), np.uint8))
+    assert result[105, 200, 3] == 255
+    assert result[230, 200, 3] == 0
+    pose["nose"]["score"] = .2
+    assert render_portrait(frame, pose, None, {"background": "original", "face": "avatar"})[0] is None
+
+
+@pytest.mark.parametrize("preset", ["cat", "fox", "robot"])
+def test_old_builtin_square_image_uses_current_face_asset_without_changing_config(preset):
+    import base64
+    import cv2
+
+    old_square = np.full((20, 20, 4), (10, 60, 100, 255), np.uint8)
+    _, png = cv2.imencode(".png", old_square)
+    data_url = "data:image/png;base64," + base64.b64encode(png).decode()
+    config = {"face": "avatar", "avatar_preset": preset, "avatar_data_url": data_url}
+    portrait = StudioPortrait(Camera())
+    portrait.update(config)
+    assert portrait._avatar.shape == (320, 320, 4)
+    assert portrait._avatar[0, 0, 3] == portrait._avatar[319, 160, 3] == 0
+    assert portrait._avatar_data_url == config["avatar_data_url"] == data_url
+    portrait.close()
+
+
+def test_custom_avatar_remains_the_uploaded_picture_after_switching_from_builtin():
+    import base64
+    import cv2
+
+    image = np.full((30, 40, 4), (10, 60, 100, 255), np.uint8)
+    _, png = cv2.imencode(".png", image)
+    data_url = "data:image/png;base64," + base64.b64encode(png).decode()
+    portrait = StudioPortrait(Camera())
+    portrait.update({"face": "avatar", "avatar_preset": "cat", "avatar_data_url": data_url})
+    portrait.update({"avatar_preset": ""})
+    assert np.array_equal(portrait._avatar, image)
+    assert portrait._avatar_data_url == data_url
     portrait.close()

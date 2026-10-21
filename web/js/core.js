@@ -33,7 +33,7 @@ export function registerDraftFlusher(flush){draftFlushers.add(flush)}
 
 export function configurationOperation(operation,{skipDrafts=[]}={}){
   const execute=async()=>{
-    const controls=[...document.querySelectorAll('#mappingFields,#personalVoicePanel input,#personalVoicePanel select,#personalVoicePanel button,#headSettings input,#headSettings select')];
+    const controls=[...document.querySelectorAll('#mappingFields,#personalVoicePanel input,#personalVoicePanel select,#personalVoicePanel button,#headSettings input,#headSettings select,#sensitivityExperiments input,#sensitivityExperiments select,#sensitivityExperiments button')];
     const disabled=controls.map(el=>el.disabled);
     controls.forEach(el=>{el.disabled=true});
     configurationBusy=true;

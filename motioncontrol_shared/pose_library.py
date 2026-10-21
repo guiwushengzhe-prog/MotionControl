@@ -152,6 +152,20 @@ BUILTIN: tuple[dict, ...] = (
         ),
     },
 )
+BUILTIN += tuple({
+    "id": ident, "group": "motion", "name": name,
+    "how": how,
+    "ratings": {"intensity": 1, "recognition": 3, "difficulty": 1},
+    "body_parts": {"core": 2}, "passes_zones": (), "frame_s": .65,
+    "frames": (FRONT, _figure(FRONT, **moved), FRONT),
+} for ident, name, how, moved in (
+    ("lean_left", "身体左倾", "在实验与诊断开启侧倾走位；身体向左倾，回正停止",
+     {"nose": (.56, .10), "left_shoulder": (.635, .22), "right_shoulder": (.485, .22)}),
+    ("lean_right", "身体右倾", "在实验与诊断开启侧倾走位；身体向右倾，回正停止",
+     {"nose": (.44, .10), "left_shoulder": (.515, .22), "right_shoulder": (.365, .22)}),
+    ("lean_back", "身体后倾", "在实验与诊断开启后倾后退；轻微向后倾，回正停止",
+     {"nose": (.50, .15), "left_shoulder": (.565, .25), "right_shoulder": (.435, .25)}),
+))
 BUILTIN_IDS = frozenset(entry["id"] for entry in BUILTIN)
 
 # 下架的动作。已经下载过的不再加载（文件不删），配置里绑了它的也不提示去下载；

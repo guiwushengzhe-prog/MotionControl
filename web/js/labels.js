@@ -101,6 +101,9 @@ export const BASE_PROFILE_TRIGGERS=[
   {key:'motion.march',group:'motions',id:'march',name:'原地踏步'},
   {key:'motion.calf_back',group:'motions',id:'calf_back',name:'小腿向后抬起'},
   {key:'motion.jump',group:'motions',id:'jump',name:'跳跃'},
+  {key:'motion.lean_left',group:'motions',id:'lean_left',name:'身体左倾'},
+  {key:'motion.lean_right',group:'motions',id:'lean_right',name:'身体右倾'},
+  {key:'motion.lean_back',group:'motions',id:'lean_back',name:'身体后倾'},
 ];
 
 // 本机的动作库：自带的原地踏步、小腿向后抬起、跳跃，加上从官方动作库下载的。下载的那些
@@ -112,7 +115,7 @@ export let poseLibraryNames={cloud:{},retired:{}};
 // 不能同时绑的动作。现在没有（开合跳下架了），规则和电脑端 motion_conflicts 同一份。
 export const MOTION_CONFLICT_GROUPS=[];
 
-export const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',jump:'跳跃',squat:'下蹲',hands_up:'双手举过头',side_step_jack:'侧步开合'};
+export const MOTION_CONFLICT_NAMES={march:'原地踏步',calf_back:'小腿向后抬起',jump:'跳跃',squat:'下蹲',hands_up:'双手举过头',side_step_jack:'侧步开合',lean_left:'身体左倾',lean_right:'身体右倾',lean_back:'身体后倾'};
 
 export const ACTION_TYPE_LABELS={keyboard:'键盘',mouse_button:'鼠标按键',mouse_wheel:'鼠标滚轮',gamepad:'手柄按键',gamepad_trigger:'手柄扳机',gamepad_axis:'左摇杆',macro:'键盘宏',voice_release:'松开口令按住的键',system:'系统功能',mode:'切换模式'};
 
