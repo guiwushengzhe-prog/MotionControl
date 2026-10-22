@@ -11,7 +11,8 @@ from tools.depth_evaluation.prepare_recording import prepare, read_rows
 
 
 def pose(offset=0):
-    return {str(i): {"x": .3 + (i % 3) * .05 + offset, "y": .2 + (i // 3) * .2, "score": 1} for i in range(9)}
+    names = ["left_shoulder", "right_shoulder", "nose", "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle"]
+    return {name: {"x": .3 + (i % 3) * .05 + offset, "y": .2 + (i // 3) * .2, "score": 1} for i, name in enumerate(names)}
 
 
 def test_person_crop_preserves_surface_distance_and_pixel_location():
@@ -24,6 +25,14 @@ def test_person_crop_preserves_surface_distance_and_pixel_location():
     assert len(result) == 1 and result[0]["z"] == 1.7
     assert result[0]["x"] * rect[2] + rect[0] == pytest.approx(.35 * 640)
     assert result[0]["y"] * rect[3] + rect[1] == pytest.approx(.4 * 360)
+
+
+def test_small_false_person_or_face_only_cannot_lock_the_body_window():
+    small = {name: {**p, "x": .1 + p["x"] * .05, "y": .1 + p["y"] * .05} for name, p in pose().items()}
+    assert person_rect(small, 640, 360) is None
+    incomplete = pose()
+    incomplete["left_hip"]["score"] = .1
+    assert person_rect(incomplete, 640, 360) is None
 
 
 def test_person_window_stays_fixed_through_motion_and_brief_native_tracking_loss(monkeypatch):

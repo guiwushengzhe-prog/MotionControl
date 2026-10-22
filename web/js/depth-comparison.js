@@ -23,7 +23,7 @@ export function renderDepthComparison(state,distance){
     for(const [id,key] of [['depthComparisonModel','model'],['depthComparisonScope','input_scope'],['depthComparisonSize','input_size'],['depthComparisonFps','max_fps']])setProperty($('#'+id),'value',String(config[key]??(key==='input_scope'?'full':'')));
   }
   for(const id of ['depthComparisonEnabled','depthComparisonModel','depthComparisonScope','depthComparisonAutoScale','depthComparisonSize','depthComparisonFps'])setProperty($('#'+id),'disabled',busy);
-  const stateLabel={off:'未开启',waiting:'等待电脑摄像头画面',waiting_person:'等待可靠的人体位置',loading:'正在加载模型',running:'对比运行中',stale:'等待新结果',error:'对比未完成'}[state.state]||'读取中';
+  const stateLabel={off:'未开启',waiting:'等待电脑摄像头画面',waiting_person:'等待可靠人体位置，请让肩部和髋部入镜',loading:'正在加载模型',running:'对比运行中',stale:'等待新结果',error:'对比未完成'}[state.state]||'读取中';
   setText($('#depthComparisonStatus'),`${stateLabel}${result.device_name?' · '+result.device_name:''}${state.error?' · '+state.error:''}${operationError?' · '+operationError:''}`);
   setText($('#depthComparisonNote'),config.auto_scale!==false?'取得可靠Kinect参考后自动采集3秒尺度，再固定下来比较后续画面；原始误差单独显示。':config.model==='zipdepth'?'相对输出尚无米数，可点“重新校准尺度”进行固定尺度对照。':'使用模型原始米制输出；可单独校准一个固定尺度系数。');
   setText($('#depthComparisonReference'),kinectDistance?`Kinect当前躯干表面距离：${fmt(kinectDistance.surface_m,'米',3)} · 范围 ${fmt(kinectDistance.surface_min_m,'米',3)}～${fmt(kinectDistance.surface_max_m,'米',3)} · ${kinectDistance.reference_points}个可靠躯干点（原厂直接测量）`:'Kinect当前躯干距离：等待可靠的同人同步深度；下表保留各模型上次结果。');
