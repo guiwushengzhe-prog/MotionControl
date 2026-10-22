@@ -143,6 +143,30 @@ def test_back_suppresses_only_forward_and_can_combine_with_sideways(kernel, monk
     assert kernel.motion_active == {"jump"}
 
 
+def test_monocular_holds_and_releases_without_depth_and_rejects_old_revision(kernel):
+    kernel.configure_sensitivity_experiments({"fore_aft_source": "monocular", "lean_forward": True, "lean_back": True})
+    kernel.configure_bindings({"motions": {"march": {"action": {"type": "keyboard", "target": "W", "behavior": "hold"}}}})
+    at = time.monotonic()
+    revision = kernel._monocular_neutral_revision
+    for angle, expected in [(-12., "lean_forward"), (12., "lean_back"), (0., None)]:
+        for _ in range(12):
+            at += .05
+            kernel.pose_sample_at = at
+            kernel.publish_monocular_lean({"valid": True, "calibrated": True, "sample_at": at, "angle_deg": angle}, revision)
+            kernel._update_lean_motions_locked(at)
+        assert kernel.motion_active.intersection({"lean_forward", "lean_back"}) == ({expected} if expected else set())
+    assert kernel.latest_depth_body is None
+    kernel.publish_monocular_lean({"valid": True, "calibrated": True, "sample_at": at, "angle_deg": -12.}, revision)
+    kernel._update_lean_motions_locked(at)
+    kernel.pose_sample_at = at + .4
+    kernel._update_lean_motions_locked(at + .4)
+    assert not kernel.motion_active.intersection({"lean_forward", "lean_back"})
+    kernel.start_lean_neutral()
+    kernel.publish_monocular_lean({"valid": True, "calibrated": True, "sample_at": at + .4, "angle_deg": -12.}, revision)
+    assert kernel._latest_monocular_lean is None
+    assert kernel.sensitivity_experiments["side_source"] == kernel.sensitivity_experiments["body_source"] == "model"
+
+
 def test_manual_depth_selection_reports_missing_and_clears_first_step_state(kernel):
     kernel.configure_march_algorithm("responsive")
     kernel.configure_sensitivity_experiments({"first_step": True, "body_source": "depth", "lean_back": True})

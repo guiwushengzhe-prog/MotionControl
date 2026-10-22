@@ -16,6 +16,7 @@ from . import owned_process
 from .depth_comparison_metrics import surface_references
 from .depth_comparison_worker import read_packet, write_packet
 from .depth_input import crop_references, person_rect
+from .monocular_lean import MonocularLean, kinect_pitch
 from .user_paths import user_data_root
 
 MODELS = {
@@ -23,7 +24,7 @@ MODELS = {
     "vda_metric_s": {"name": "VDA-S · 米制流式", "kind": "metric", "temporal": True},
     "zipdepth": {"name": "ZipDepth · 相对逆深度", "kind": "relative_inverse", "temporal": False},
 }
-DEFAULTS = {"enabled": False, "model": "dav2_metric_s", "input_size": 392, "max_fps": 10,
+DEFAULTS = {"enabled": False, "model": "dav2_metric_s", "monocular_model": "vda_metric_s", "input_size": 392, "max_fps": 10,
             "input_scope": "full", "auto_scale": True}
 
 
@@ -31,7 +32,7 @@ def validate_config(current, changes):
     if not isinstance(changes, dict) or set(changes) - set(DEFAULTS):
         raise ValueError("深度对比设置无效")
     value = {**DEFAULTS, **current, **changes}
-    if not isinstance(value["enabled"], bool) or value["model"] not in MODELS:
+    if not isinstance(value["enabled"], bool) or value["model"] not in MODELS or value["monocular_model"] not in MODELS:
         raise ValueError("请选择有效的深度模型与开关")
     if type(value["input_size"]) is not int or value["input_size"] not in (280, 392, 518):
         raise ValueError("请选择280、392或518的输入短边")
@@ -55,6 +56,7 @@ class DepthComparison:
         self._runtime = user_data_root() / "depth_comparison_runtime.json"
         self._pending = None
         self._thread = None
+        self._worker_model = None
         self._stop = threading.Event()
         self._process = None
         self._generation = 0
@@ -66,6 +68,8 @@ class DepthComparison:
         self._results = {}
         self._preview = None
         self._rect = self._source_signature = self._tracking_id = None
+        self.monocular = MonocularLean(persist=bool(getattr(kernel, "_persist", False)))
+        self._monocular_lock = threading.RLock()
         self._latencies, self._inference, self._times = deque(maxlen=120), deque(maxlen=120), deque(maxlen=120)
 
     def installed(self):
@@ -78,10 +82,20 @@ class DepthComparison:
         return {ident: {**info, "available": bool(python_ok and Path(models.get(ident, {}).get("source", "?")).is_dir()
                         and Path(models.get(ident, {}).get("checkpoint", "?")).is_file())} for ident, info in MODELS.items()}
 
+    def _control_requested(self):
+        return getattr(self.kernel, "sensitivity_experiments", {}).get("fore_aft_source") == "monocular"
+
+    def _requested(self):
+        return self.config["enabled"] or self._control_requested()
+
+    def _selected_model(self, config=None):
+        value = self.config if config is None else config
+        return value["monocular_model"] if self._control_requested() else value["model"]
+
     def configure(self, changes):
         with self._lock:
             proposed = validate_config(self.config, changes)
-            if proposed["enabled"] and not self.installed()[proposed["model"]]["available"]:
+            if (proposed["enabled"] or self._control_requested()) and not self.installed()[self._selected_model(proposed)]["available"]:
                 raise ValueError("该模型尚未准备好，请先运行深度对比准备工具")
             remember = getattr(self.kernel, "remember_general_setting", None)
             if remember:
@@ -95,12 +109,12 @@ class DepthComparison:
     def action(self, action):
         if action == "reframe":
             with self._lock:
-                if not self.config["enabled"] or self.config["input_scope"] != "person":
+                if not self._requested() or (self.config["input_scope"] != "person" and not self._control_requested()):
                     raise ValueError("请先开启人体范围对比")
             self.suspend()
             return self.status()
         with self._lock:
-            if not self.config["enabled"] or self._state != "running":
+            if not self._requested() or self._state != "running":
                 raise ValueError("请先开启对比并等待新画面")
             if action == "calibrate":
                 self._calibrate = True
@@ -114,11 +128,19 @@ class DepthComparison:
         return self.status()
 
     def submit(self, frame, pose, depth_body, metadata, rotation, captured_at, signature):
-        if not self.config["enabled"]:
+        if not self._requested():
+            if self._thread is not None:
+                self.suspend()
             return
+        with self._lock:
+            changed_model = self._worker_model is not None and self._worker_model != self._selected_model()
+        if changed_model:
+            self.suspend()
         now = time.monotonic()
         with self._condition:
-            if not self.config["enabled"] or self._state == "error" or now - self._last_submit < 1 / self.config["max_fps"]:
+            mono = self._control_requested()
+            limit = max(10, self.config["max_fps"]) if mono else self.config["max_fps"]
+            if not self._requested() or self._state == "error" or now - self._last_submit < 1 / limit:
                 return
             self._last_submit = now
             if signature != self._source_signature:
@@ -130,12 +152,13 @@ class DepthComparison:
                     self._rect = None
                 self._tracking_id = tracking_id
             height, width = frame.shape[:2]
-            if self.config["input_scope"] == "person" and self._rect is None:
+            scope = "person" if mono else self.config["input_scope"]
+            if scope == "person" and self._rect is None:
                 self._rect = person_rect(pose, width, height)
                 if self._rect is None:
                     self._state = "waiting_person"
                     return
-            rect = self._rect if self.config["input_scope"] == "person" else (0, 0, width, height)
+            rect = self._rect if scope == "person" else (0, 0, width, height)
             x, y, w, h = rect
             references = crop_references(surface_references(depth_body, metadata, rotation), rect, width, height)
             if self._pending is not None:
@@ -145,11 +168,16 @@ class DepthComparison:
                               "sample_at": captured_at, "signature": [signature, self._tracking_id, rect],
                               "frame_region": list(rect), "source_shape": [height, width],
                               "references": references}, frame[y:y+h, x:x+w].copy())
+            self._pending[0].update(lean=mono, input_scope=scope, effective_fps=limit, pose={n: {**p, "x": (p["x"] * width - x) / w, "y": (p["y"] * height - y) / h}
+                for n, p in (pose or {}).items() if isinstance(p, dict) and "x" in p and "y" in p},
+                teacher=kinect_pitch(depth_body), neutral_revision=getattr(self.kernel, "_monocular_neutral_revision", 0))
             if self._thread is None or not self._thread.is_alive():
                 self._stop = threading.Event()
                 self._state, self._error = "loading", ""
                 generation, stop = self._generation, self._stop
-                self._thread = threading.Thread(target=self._run, args=(generation, stop, dict(self.config)),
+                effective = {**self.config, "model": self._selected_model(), "input_scope": scope, "max_fps": limit}
+                self._worker_model = effective["model"]
+                self._thread = threading.Thread(target=self._run, args=(generation, stop, effective),
                                                 name="depth-comparison", daemon=True)
                 self._thread.start()
             self._condition.notify_all()
@@ -162,9 +190,10 @@ class DepthComparison:
             process, thread = self._process, self._thread
             self._pending = self._preview = None
             self._process = self._thread = None
+            self._worker_model = None
             self._calibrate = self._reset = False
             self._rect = self._source_signature = self._tracking_id = None
-            self._state, self._error = "waiting" if self.config["enabled"] else "off", ""
+            self._state, self._error = "waiting" if self._requested() else "off", ""
             self._last_submit = 0
             self._latencies.clear()
             self._inference.clear()
@@ -174,6 +203,12 @@ class DepthComparison:
             owned_process.terminate_and_wait(process)
         if thread and thread is not threading.current_thread():
             thread.join(timeout=3)
+        with self._monocular_lock:
+            self.monocular.flush()
+            self.monocular.reset()
+        publish = getattr(self.kernel, "publish_monocular_lean", None)
+        if publish:
+            publish(None)
 
     def close(self):
         self.suspend()
@@ -182,6 +217,9 @@ class DepthComparison:
         self.suspend()
         with self._lock:
             self._state, self._error = "error", str(error)
+        publish = getattr(self.kernel, "publish_monocular_lean", None)
+        if publish:
+            publish({"valid": False, "calibrated": False, "sample_at": time.monotonic(), "reason": str(error)})
 
     def _run(self, generation, stop, config):
         process = None
@@ -247,6 +285,17 @@ class DepthComparison:
                     if result.get("kind") != "frame":
                         raise RuntimeError(result.get("error", "深度计算没有返回有效帧"))
                     finished = time.monotonic()
+                    if meta.get("lean"):
+                        with self._monocular_lock:
+                            if generation != self._generation or stop.is_set():
+                                break
+                            self.monocular.set_context([config["model"], registry["models"][config["model"]].get("sha256"),
+                                meta["signature"][0], meta["frame_region"], config["input_size"], 1])
+                            experimental = getattr(self.kernel, "sensitivity_experiments", {})
+                            lean = self.monocular.update(result.get("torso"), result["sample_at"],
+                                reference=meta.get("teacher") if 0 <= finished - result["sample_at"] <= .25 else None,
+                                learn=bool(experimental.get("learn_monocular")), revision=meta["neutral_revision"])
+                        result["monocular_lean"] = lean
                     with self._condition:
                         if generation != self._generation or stop.is_set():
                             break
@@ -256,7 +305,7 @@ class DepthComparison:
                             self._inference.append(result["inference_ms"])
                             self._latencies.append(latency)
                             self._times.append(finished)
-                        result.update({"config": config, **info, "kind": "frame", "received_at": finished,
+                        result.update({"config": {**config, "input_scope": meta["input_scope"], "max_fps": meta["effective_fps"]}, **info, "kind": "frame", "received_at": finished,
                             "frame_region": meta["frame_region"], "source_shape": meta["source_shape"],
                             "warmup_remaining": max(0, 2 - processed), "processed_frames": processed,
                             "inference_avg_ms": round(sum(self._inference) / len(self._inference), 2) if self._inference else None,
@@ -265,11 +314,22 @@ class DepthComparison:
                             "fps": round((len(self._times) - 1) / (self._times[-1] - self._times[0]), 2) if len(self._times) > 1 and self._times[-1] > self._times[0] else None})
                         self._results[config["model"]] = result
                         self._preview = preview
+                    if meta.get("lean") and generation == self._generation and not stop.is_set():
+                        publish = getattr(self.kernel, "publish_monocular_lean", None)
+                        if publish:
+                            publish(lean, meta["neutral_revision"])
         except Exception as exc:
             with self._lock:
                 if generation == self._generation and not stop.is_set():
                     self._state, self._error = "error", (str(exc) or "深度模型未能及时返回，请关闭后重试")
         finally:
+            with self._monocular_lock:
+                self.monocular.flush()
+            if generation == self._generation:
+                publish = getattr(self.kernel, "publish_monocular_lean", None)
+                if publish:
+                    publish({"valid": False, "calibrated": False, "sample_at": time.monotonic(),
+                             "reason": self._error or "单目深度已停止"})
             if process is not None:
                 owned_process.terminate_and_wait(process)
                 for stream in (process.stdin, process.stdout):
@@ -290,7 +350,7 @@ class DepthComparison:
 
     def preview(self):
         with self._lock:
-            return self._preview if self.config["enabled"] else None
+            return self._preview if self._requested() else None
 
     def status(self):
         now = time.monotonic()
@@ -299,10 +359,12 @@ class DepthComparison:
             for row in results.values():
                 row["age_ms"] = round((now - row.pop("received_at")) * 1000) if "received_at" in row else None
             state = self._state
-            current = results.get(self.config["model"], {})
+            current = results.get(self._selected_model(), {})
             if state == "running" and current.get("age_ms") is not None and current["age_ms"] > 1500:
                 state = "stale"
             return {"config": dict(self.config), "revision": self._revision, "state": state, "error": self._error,
+                    "active": bool(self._requested()), "control_requested": self._control_requested(),
+                    "active_model": self._selected_model(),
                     "models": self.installed(), "results": results, "skipped_frames": self._skipped,
                     "sequence": current.get("sequence"), "preview_ready": self._preview is not None,
                     "reference": "Kinect 原始深度的关节附近表面采样，非关节中心"}

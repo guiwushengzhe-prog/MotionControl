@@ -193,6 +193,15 @@ def replay_segment(kernel, segment: Segment, on_frame=None) -> list[dict]:
             if isinstance(extra.get("body_angle_learning"), dict):
                 kernel._body_lean.learning.load_snapshot(extra["body_angle_learning"])
                 kernel._body_lean._refresh_learning_context()
+            # 单目读出来自录制，不启动模型或个人学习；按记录年龄换到回放时钟。
+            mono = copy.deepcopy(extra.get("monocular_lean"))
+            if isinstance(mono, dict):
+                age = mono.get("age_s")
+                if isinstance(age, (int, float)) and math.isfinite(age) and age >= 0:
+                    mono["sample_at"] = now - age
+                else:
+                    mono.update(valid=False, reason="录制缺少可靠的单目采样时刻")
+            kernel._latest_monocular_lean = mono if isinstance(mono, dict) else None
             if getattr(kernel, "_replay_head_available", False) and isinstance(extra.get("head_config"), dict):
                 if extra["head_config"] != kernel.head_controller.config:
                     kernel.head_controller.configure(**extra["head_config"])

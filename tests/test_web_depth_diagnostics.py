@@ -47,6 +47,33 @@ def test_three_candidates_and_controls_only_save_explicit_choice(desktop):
     assert not any(path == '/api/output/config' and body and body.get('enabled') for path, body in api.requests)
 
 
+def test_monocular_runs_one_shared_model_and_keeps_original_comparison_preference(desktop):
+    page, api, state, changes = desktop.page, desktop.api, depth_state(), []
+    state.update(active=True, control_requested=True, active_model='vda_metric_s', state='running')
+    state['config'].update(model='zipdepth', monocular_model='vda_metric_s')
+    state['results']['vda_metric_s'] = {'inference_avg_ms': 33, 'comparison': {}}
+    def route(request):
+        body = request.request.post_data_json
+        changes.append(body)
+        state['config'].update(body)
+        state['active_model'] = state['config']['monocular_model']
+        state['revision'] += 1
+        api.fulfill(request, state)
+    page.route('**/api/depth-comparison', route)
+    page.evaluate('(s)=>import("/js/depth-comparison.js").then(m=>m.renderDepthComparison(s))', state)
+    lab(page)
+    assert page.locator('#depthComparisonModel').input_value() == 'vda_metric_s'
+    assert page.locator('#depthComparisonScope').input_value() == 'person'
+    assert page.locator('#depthComparisonScope').is_disabled()
+    expect(page.locator('#depthComparisonRows')).to_contain_text('VDA-S 米制流式 · 当前')
+    expect(page.locator('#depthComparisonNote')).to_contain_text('不依赖Kinect距离校准')
+    assert page.locator('#depthComparisonReframe').is_enabled()
+    with page.expect_response(lambda r: r.url.endswith('/api/depth-comparison') and r.request.method == 'POST'):
+        page.select_option('#depthComparisonModel', 'dav2_metric_s')
+    assert changes == [{'monocular_model': 'dav2_metric_s'}]
+    assert state['config']['model'] == 'zipdepth'
+
+
 def test_real_results_keep_units_dimensions_and_missing_reference_explicit(desktop):
     page = desktop.page
     state = depth_state()

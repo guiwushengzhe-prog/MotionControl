@@ -117,6 +117,7 @@ def main():
             import cv2
             import numpy as np
             from motioncontrol.depth_comparison_metrics import DepthMetrics
+            from motioncontrol.monocular_lean_features import torso_features
             registry = json.loads(Path(args.runtime).read_text(encoding="utf-8-sig"))
             started = time.perf_counter()
             adapter = Adapter(args.model, registry["models"][args.model], args.size)
@@ -151,6 +152,8 @@ def main():
                 torch.cuda.synchronize()
             inference_ms = (time.perf_counter() - started) * 1000
             comparison = metrics.evaluate(depth, meta.get("references", []), now=meta["sample_at"])
+            torso = (torso_features(depth, meta.get("pose"), inverse=args.model == "zipdepth",
+                                    source_height=meta.get("source_shape", [height, width])[0]) if meta.get("lean") else None)
             values = depth[np.isfinite(depth) & (depth > 0)]
             lo, hi = np.percentile(values, (2, 98)) if values.size else (0, 1)
             view = np.uint8(np.clip((np.nan_to_num(depth) - lo) / max(1e-6, hi - lo), 0, 1) * 255)
@@ -162,6 +165,7 @@ def main():
             preview = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()
             result = {"kind": "frame", "sequence": meta["sequence"], "sample_at": meta["sample_at"],
                       "inference_ms": round(inference_ms, 2), "input_shape": adapter.shape,
+                      "torso": torso,
                       "gpu_allocated_mb": round(torch.cuda.memory_allocated() / 2**20, 1) if adapter.device == "cuda" else None,
                       "gpu_reserved_mb": round(torch.cuda.memory_reserved() / 2**20, 1) if adapter.device == "cuda" else None,
                       "comparison": comparison}

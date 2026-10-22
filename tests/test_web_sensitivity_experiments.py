@@ -61,7 +61,7 @@ def test_default_off_and_independent_payloads_do_not_start_devices(desktop):
     page, api = desktop.page, desktop.api
     seed(desktop)
     saved = install_save(desktop)
-    assert page.locator('[data-pane="lab"] .group').first.get_attribute("id") == "sensitivityExperiments"
+    assert page.locator('#sensitivityExperiments').is_visible()
     for selector in ("experimentHeadHold", "experimentFirstStep", "experimentLeanStrafe", "experimentLeanBack", "experimentLeanForward", "experimentDepthLearning", "experimentCompare"):
         assert not page.locator("#" + selector).is_checked()
     for selector, key in [("experimentHeadHold", "head_hold"), ("experimentFirstStep", "first_step"),
@@ -130,6 +130,38 @@ def test_independent_side_and_fore_aft_sources_keep_first_step_and_report_each_c
     wait_saved(page)
     assert "模型骨骼 · 侧倾控制" in page.locator("#experimentModelReadout").text_content()
     assert "深度骨骼 · 前后倾控制" in page.locator("#experimentDepthReadout").text_content()
+
+
+def test_monocular_panel_keeps_axis_choices_and_shows_calibration_hold_and_loss(desktop):
+    page, api = desktop.page, desktop.api
+    experiment = seed(desktop)
+    saved = install_save(desktop)
+    assert page.locator("#monocularLeanPanel").is_hidden()
+    page.select_option("#experimentForeAftSource", "monocular")
+    wait_saved(page)
+    assert saved[-1] == {"fore_aft_source": "monocular"}
+    assert page.locator("#experimentSideSource").input_value() == "model"
+    assert page.locator("#monocularLeanPanel").is_visible()
+    assert not page.locator("#experimentMonocularLearning").is_checked()
+    experiment["monocular"] = {"valid": False, "calibrating": True, "remaining_s": 2.1}
+    def refresh():
+        api.runtime["config_revision"] += 1
+        page.evaluate("runtime=>import('/js/play.js').then(m=>m.renderKernelState(runtime,true))", copy.deepcopy(api.runtime))
+    refresh()
+    assert "2.1 秒" in page.locator("#monocularLeanState").text_content()
+    experiment["monocular"].update(valid=True, calibrating=False, state="forward", angle_deg=-12., sampled_regions=30,
+                                   reason="几何估计", learning={"samples": 64, "reason": "等待后续独立验证"})
+    refresh()
+    assert "前倾" in page.locator("#monocularLeanState").text_content()
+    assert "30 个胸腹区域" in page.locator("#monocularLeanDetail").text_content()
+    assert float(page.locator("#monocularLeanStrength").get_attribute("value")) == .6
+    assert "64 对" in page.locator("#monocularLearningNote").text_content()
+    experiment["monocular"].update(valid=False, reason="单目深度结果已过时，等待新画面")
+    refresh()
+    assert "过时" in page.locator("#monocularLeanState").text_content()
+    assert float(page.locator("#monocularLeanStrength").get_attribute("value")) == 0
+    assert not any(path == "/api/input/source" and body is not None for path, body in api.requests)
+    assert not any(path == "/api/output/config" and body and body.get("enabled") for path, body in api.requests)
 
 
 def test_learning_shows_waiting_validation_and_missing_depth_without_claiming_unverified_success(desktop):
