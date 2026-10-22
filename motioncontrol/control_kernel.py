@@ -5421,7 +5421,7 @@ class NativeCameraService:
                     if self.assist:
                         self.kernel.stereo.observe_pc(pose_map, width, height, captured_at)
                     else:
-                        identity_key = (str(self.camera_device), str(self.model_path), str(self.backend),
+                        identity_key = (str(self.camera_device), str(self.model_path), str(self.selected_backend),
                                         frame_rotation, bool(depth_metadata and depth_metadata.get("image_mirrored")), width, height)
                         if identity_key != body_identity_key:
                             body_identity_key = identity_key

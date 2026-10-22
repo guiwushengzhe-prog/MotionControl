@@ -6,6 +6,7 @@ exercise shutdown races without requiring OpenCV, MediaPipe or a camera.
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -328,18 +329,27 @@ def test_camera_read_failure_closes_resources_and_allows_restart(monkeypatch):
         camera.stop()
 
 
-def test_camera_submits_capture_time_without_building_full_status(monkeypatch):
+@pytest.mark.parametrize("backend", ["dshow", "msmf", "kinect"])
+def test_camera_submits_capture_time_without_building_full_status(monkeypatch, backend):
     capture, detector = FakeCapture(one_frame=True), FakeDetector()
     camera = _camera(monkeypatch, capture, detector)
+    camera.selected_backend = backend
+    camera.rotation = "none"
     try:
         camera.start()
-        _wait_until(lambda: bool(camera.kernel.frames))
+        _wait_until(lambda: bool(camera.kernel.frames) or camera.last_error is not None)
+        assert camera.last_error is None
         source_id, _pose, kwargs = camera.kernel.frames[0]
         assert source_id == "computer_camera"
         assert kwargs["return_status"] is False
         assert kwargs["sample_at"] == camera._latest_capture_at
         assert kwargs["sample_at"] <= time.monotonic()
+        # 首帧必须完成身份标识与提交；不能在获取真实采集方式时异常退出。
+        identity = json.loads(kwargs["body_model_identity"])
+        assert identity[2] == backend
+        assert identity[-2:] == [640, 480]
         _wait_until(lambda: camera.frames == 1)
+        assert camera.running and camera.last_error is None
         metrics = camera.performance()
         stages = metrics["inference_stages_ms"]
         assert all(value is not None and value >= 0 for value in stages.values())
