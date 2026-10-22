@@ -15,6 +15,7 @@ import time
 from . import owned_process
 from .depth_comparison_metrics import surface_references
 from .depth_comparison_worker import read_packet, write_packet
+from .depth_input import crop_references, person_rect
 from .user_paths import user_data_root
 
 MODELS = {
@@ -22,7 +23,8 @@ MODELS = {
     "vda_metric_s": {"name": "VDA-S · 米制流式", "kind": "metric", "temporal": True},
     "zipdepth": {"name": "ZipDepth · 相对逆深度", "kind": "relative_inverse", "temporal": False},
 }
-DEFAULTS = {"enabled": False, "model": "dav2_metric_s", "input_size": 392, "max_fps": 10}
+DEFAULTS = {"enabled": False, "model": "dav2_metric_s", "input_size": 392, "max_fps": 10,
+            "input_scope": "full", "auto_scale": True}
 
 
 def validate_config(current, changes):
@@ -35,6 +37,8 @@ def validate_config(current, changes):
         raise ValueError("请选择280、392或518的输入短边")
     if type(value["max_fps"]) is not int or value["max_fps"] not in (2, 5, 10, 15, 30):
         raise ValueError("请选择有效的对比帧率上限")
+    if value["input_scope"] not in ("full", "person") or not isinstance(value["auto_scale"], bool):
+        raise ValueError("请选择有效的取景范围与尺度校准开关")
     return value
 
 
@@ -61,6 +65,7 @@ class DepthComparison:
         self._calibrate = self._reset = False
         self._results = {}
         self._preview = None
+        self._rect = self._source_signature = self._tracking_id = None
         self._latencies, self._inference, self._times = deque(maxlen=120), deque(maxlen=120), deque(maxlen=120)
 
     def installed(self):
@@ -88,10 +93,16 @@ class DepthComparison:
         return self.status()
 
     def action(self, action):
+        if action == "reframe":
+            with self._lock:
+                if not self.config["enabled"] or self.config["input_scope"] != "person":
+                    raise ValueError("请先开启人体范围对比")
+            self.suspend()
+            return self.status()
         with self._lock:
             if not self.config["enabled"] or self._state != "running":
                 raise ValueError("请先开启对比并等待新画面")
-            if action == "calibrate" and self.config["model"] == "zipdepth":
+            if action == "calibrate":
                 self._calibrate = True
             elif action == "reset":
                 self._reset = True
@@ -110,12 +121,30 @@ class DepthComparison:
             if not self.config["enabled"] or self._state == "error" or now - self._last_submit < 1 / self.config["max_fps"]:
                 return
             self._last_submit = now
+            if signature != self._source_signature:
+                self._source_signature = copy.deepcopy(signature)
+                self._rect = self._tracking_id = None
+            tracking_id = (depth_body or {}).get("tracking_id")
+            if tracking_id is not None:
+                if self._tracking_id is not None and tracking_id != self._tracking_id:
+                    self._rect = None
+                self._tracking_id = tracking_id
+            height, width = frame.shape[:2]
+            if self.config["input_scope"] == "person" and self._rect is None:
+                self._rect = person_rect(pose, width, height)
+                if self._rect is None:
+                    self._state = "waiting_person"
+                    return
+            rect = self._rect if self.config["input_scope"] == "person" else (0, 0, width, height)
+            x, y, w, h = rect
+            references = crop_references(surface_references(depth_body, metadata, rotation), rect, width, height)
             if self._pending is not None:
                 self._skipped += 1
             self._sequence += 1
-            self._pending = ({"sequence": self._sequence, "width": frame.shape[1], "height": frame.shape[0],
-                              "sample_at": captured_at, "signature": signature,
-                              "references": surface_references(depth_body, metadata, rotation)}, frame.copy())
+            self._pending = ({"sequence": self._sequence, "width": w, "height": h,
+                              "sample_at": captured_at, "signature": [signature, self._tracking_id, rect],
+                              "frame_region": list(rect), "source_shape": [height, width],
+                              "references": references}, frame[y:y+h, x:x+w].copy())
             if self._thread is None or not self._thread.is_alive():
                 self._stop = threading.Event()
                 self._state, self._error = "loading", ""
@@ -134,6 +163,7 @@ class DepthComparison:
             self._pending = self._preview = None
             self._process = self._thread = None
             self._calibrate = self._reset = False
+            self._rect = self._source_signature = self._tracking_id = None
             self._state, self._error = "waiting" if self.config["enabled"] else "off", ""
             self._last_submit = 0
             self._latencies.clear()
@@ -164,7 +194,8 @@ class DepthComparison:
             with (logs / "depth-comparison-worker.log").open("ab", buffering=0) as stderr:
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                 process = owned_process.popen([registry["python"], "-X", "utf8", "-m", "motioncontrol.depth_comparison_worker",
-                    "--runtime", str(self._runtime), "--model", config["model"], "--size", str(config["input_size"])],
+                    "--runtime", str(self._runtime), "--model", config["model"], "--size", str(config["input_size"]),
+                    *(["--auto-scale"] if config["auto_scale"] else [])],
                     cwd=str(root), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr, creationflags=flags)
                 with self._lock:
                     if generation != self._generation or stop.is_set():
@@ -195,7 +226,7 @@ class DepthComparison:
                         return
                     self._state = "running"
                     self._results[config["model"]] = {"config": config, **info}
-                processed = 0
+                processed, previous_signature = 0, None
                 while not stop.is_set():
                     with self._condition:
                         while self._pending is None and not stop.is_set():
@@ -206,6 +237,11 @@ class DepthComparison:
                         self._pending = None
                         meta.update(calibrate=self._calibrate, reset=self._reset)
                         self._calibrate = self._reset = False
+                        if meta["signature"] != previous_signature:
+                            self._latencies.clear()
+                            self._inference.clear()
+                            self._times.clear()
+                            processed, previous_signature = 0, meta["signature"]
                     write_packet(process.stdin, meta, frame.tobytes())
                     result, preview = received.get(timeout=45)
                     if result.get("kind") != "frame":
@@ -221,6 +257,7 @@ class DepthComparison:
                             self._latencies.append(latency)
                             self._times.append(finished)
                         result.update({"config": config, **info, "kind": "frame", "received_at": finished,
+                            "frame_region": meta["frame_region"], "source_shape": meta["source_shape"],
                             "warmup_remaining": max(0, 2 - processed), "processed_frames": processed,
                             "inference_avg_ms": round(sum(self._inference) / len(self._inference), 2) if self._inference else None,
                             "inference_p95_ms": self._percentile(self._inference),

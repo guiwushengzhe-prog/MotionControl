@@ -61,19 +61,23 @@ class DepthMetrics:
         self.calibration_until = None
         self.calibration_message = "相对逆深度，尚未校准米制尺度" if relative else "使用模型原生米制输出"
         self.errors = deque(maxlen=3000)
+        self.calibrated_errors = deque(maxlen=3000)
         self.jitter = deque(maxlen=1500)
         self.previous = {}
         self.last_at = None
+        self.calibration_attempted = False
+        self.calibration_correlation = None
 
     def reset_statistics(self):
         self.errors.clear()
+        self.calibrated_errors.clear()
         self.jitter.clear()
         self.previous.clear()
 
     def start_calibration(self, now=None):
-        if not self.relative:
-            raise ValueError("米制模型不需要相对尺度校准")
         self.calibration = []
+        self.calibration_attempted = True
+        self.calibration_correlation = None
         self.calibration_until = (time.monotonic() if now is None else now) + 3
         self.calibration_message = "正在采集3秒尺度参考；校准数据不计入验证误差"
         self.reset_statistics()
@@ -89,8 +93,18 @@ class DepthMetrics:
     def _finish_calibration(self):
         pairs = np.asarray(self.calibration, dtype=np.float64)
         self.calibration_until = None
-        if len(pairs) < 32 or np.ptp(pairs[:, 1]) < .08 or np.ptp(pairs[:, 0]) < 1e-5:
+        if len(pairs) < 32 or (self.relative and (np.ptp(pairs[:, 1]) < .08 or np.ptp(pairs[:, 0]) < 1e-5)):
             self.calibration_message = "尺度参考不足：需可靠深度及有前后差异的表面，保留上次尺度"
+            return
+        if not self.relative:
+            gain = float(np.median(pairs[:, 1] / pairs[:, 0]))
+            residual = np.abs(gain * pairs[:, 0] - pairs[:, 1])
+            if .05 <= gain <= 20 and float(np.median(residual)) <= .15:
+                self.mapping = {"gain": gain}
+                self.calibration_message = f"尺度系数{gain:.3f}已固定；原始误差保留，校正误差只使用后续新帧"
+            else:
+                self.calibration_message = "尺度参考不一致，未采用新校正；原始距离继续显示"
+            self.reset_statistics()
             return
         x, target = pairs[:, 0], 1 / pairs[:, 1]
         keep = np.ones(len(x), dtype=bool)
@@ -102,7 +116,12 @@ class DepthMetrics:
             if keep.sum() < 24:
                 break
         fitted = a * x[keep] + b
-        if keep.sum() >= 24 and a > 0 and np.all(fitted > 0) and np.median(np.abs(1 / fitted - pairs[keep, 1])) <= .15:
+        correlation = (float(np.corrcoef(x[keep], target[keep])[0, 1])
+                       if keep.sum() >= 24 and np.std(x[keep]) > 1e-10 and np.std(target[keep]) > 1e-10 else 0.)
+        self.calibration_correlation = correlation
+        if a <= 0 or correlation < .5:
+            self.calibration_message = "相对值未可靠跟随近大远小的变化，未采用新尺度；原始相对值仍可查看"
+        elif keep.sum() >= 24 and np.all(fitted > 0) and np.median(np.abs(1 / fitted - pairs[keep, 1])) <= .15:
             self.mapping = {"gain": float(a), "offset": float(b), "min": float(x[keep].min()), "max": float(x[keep].max())}
             self.calibration_message = "尺度已固定，当前误差仅使用校准结束后的新帧"
         else:
@@ -110,8 +129,12 @@ class DepthMetrics:
         self.reset_statistics()
 
     def evaluate(self, depth, references, now=None):
-        now = time.monotonic() if now is None else now
         raw = [(item, self.sample(depth, item["x"], item["y"])) for item in references]
+        return self.evaluate_samples(raw, now)
+
+    def evaluate_samples(self, raw, now=None):
+        """同一统计路径也可重放已保存的逐点模型输出，不重复推理或拟合未来帧。"""
+        now = time.monotonic() if now is None else now
         raw = [(item, value) for item, value in raw if value is not None]
         calibrating = self.calibration_until is not None
         if calibrating:
@@ -122,26 +145,45 @@ class DepthMetrics:
         points = []
         for item, value in raw:
             predicted = value
+            corrected = value * self.mapping["gain"] if self.mapping and not self.relative else None
             if self.relative:
                 m = self.mapping
                 margin = (m["max"] - m["min"]) * .2 if m else 0
                 inverse = m["gain"] * value + m["offset"] if m else -1
                 predicted = (1 / inverse if m and m["min"] - margin <= value <= m["max"] + margin and inverse > 0 else None)
+                corrected = predicted
             if predicted is not None and not .1 <= predicted <= 20:
                 predicted = None
+            if corrected is not None and not .1 <= corrected <= 20:
+                corrected = None
             delta = predicted - item["z"] if predicted is not None else None
+            corrected_delta = corrected - item["z"] if corrected is not None else None
             if delta is not None and not calibrating:
                 self.errors.append(delta)
+                if corrected_delta is not None:
+                    self.calibrated_errors.append(corrected_delta)
+                current_error = corrected_delta if corrected_delta is not None else delta
                 previous = self.previous.get(item["name"])
                 stable = previous and 0 < now - previous["at"] <= .6 and abs(item["z"] - previous["z"]) < .01 and math.hypot(item["x"] - previous["x"], item["y"] - previous["y"]) < .01
                 count = previous["stable"] + 1 if stable else 0
                 if count >= 4:
-                    self.jitter.append(delta - previous["error"])
-                self.previous[item["name"]] = {**item, "error": delta, "at": now, "stable": count}
+                    self.jitter.append(current_error - previous["error"])
+                self.previous[item["name"]] = {**item, "error": current_error, "at": now, "stable": count}
             points.append({**item, "raw": round(value, 5), "model_m": round(predicted, 4) if predicted is not None else None,
-                           "error_cm": round(delta * 100, 2) if delta is not None else None})
+                           "error_cm": round(delta * 100, 2) if delta is not None else None,
+                           "calibrated_m": round(corrected, 4) if corrected is not None else None,
+                           "calibrated_error_cm": round(corrected_delta * 100, 2) if corrected_delta is not None else None})
         errors = np.asarray(self.errors)
+        corrected_errors = np.asarray(self.calibrated_errors)
         return {"reference_points": len(raw), "validation_samples": len(errors), "points": points,
+                "raw_mae_cm": round(float(np.mean(np.abs(errors))) * 100, 2) if errors.size and not self.relative else None,
+                "calibrated_mae_cm": round(float(np.mean(np.abs(corrected_errors))) * 100, 2) if corrected_errors.size else None,
+                "calibrated_p95_cm": round(float(np.percentile(np.abs(corrected_errors), 95)) * 100, 2) if corrected_errors.size else None,
+                "calibrated_validation_samples": len(corrected_errors),
+                "scale_ready": self.mapping is not None,
+                "calibration_attempted": self.calibration_attempted,
+                "calibration_correlation": self.calibration_correlation,
+                "scale_gain": self.mapping["gain"] if self.mapping else None,
                 "mae_cm": round(float(np.mean(np.abs(errors))) * 100, 2) if errors.size else None,
                 "p95_cm": round(float(np.percentile(np.abs(errors), 95)) * 100, 2) if errors.size else None,
                 "bias_cm": round(float(np.mean(errors)) * 100, 2) if errors.size else None,
