@@ -1531,6 +1531,8 @@ def performance_snapshot() -> dict:
         data = RUNTIME.performance()
     data["process_cpu_percent"] = process_cpu_percent()
     data["cpu_logical_processors"] = os.cpu_count()
+    if "depth_comparison" not in data:
+        data["depth_comparison"] = RUNTIME.camera.depth_comparison.status()
     return data
 
 
@@ -1856,6 +1858,23 @@ class AdminHandler(_BaseHandler):
             data = performance_snapshot()
             data["version"] = VERSION
             self._send_json(data)
+            return
+        if route == "/api/depth-comparison":
+            self._send_json(RUNTIME.camera.depth_comparison.status())
+            return
+        if route == "/api/depth-comparison/preview":
+            preview = RUNTIME.camera.depth_comparison.preview()
+            if not preview:
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(preview)))
+                self.end_headers()
+                self.wfile.write(preview)
             return
         if route == "/api/stereo":
             self._send_json(stereo_payload())
@@ -2567,6 +2586,20 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": True, **data, **audio_data})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **runtime_status(), "voice": VOICE.status()}, 400)
+            return
+        if route == "/api/depth-comparison":
+            if not self._is_loopback():
+                self._send_json({"error": "深度实验仅限本机设置"}, 403)
+                return
+            try:
+                with PROFILE_UPDATE_LOCK:
+                    if "action" in body:
+                        result = RUNTIME.camera.depth_comparison.action(body["action"])
+                    else:
+                        result = RUNTIME.camera.depth_comparison.configure(body)
+                self._send_json(result)
+            except (ValueError, OSError) as exc:
+                self._send_json({"error": str(exc)}, 400)
             return
         if route == "/api/input/stop":
             if not self._is_loopback():

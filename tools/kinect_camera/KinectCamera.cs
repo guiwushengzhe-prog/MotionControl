@@ -58,7 +58,30 @@ internal static class KinectCamera
         {JointType.AnkleLeft,"left_ankle"}, {JointType.AnkleRight,"right_ankle"},
         {JointType.FootLeft,"left_foot"}, {JointType.FootRight,"right_foot"}
     };
-    static object Bodies(Body[] bodies, CoordinateMapper mapper)
+    static object Surface(CameraSpacePoint point, CoordinateMapper mapper, ushort[] depths, ushort minimum, ushort maximum)
+    {
+        if (depths == null) return null;
+        DepthSpacePoint pixel = mapper.MapCameraPointToDepthSpace(point);
+        if (!Finite(pixel.X) || !Finite(pixel.Y)) return null;
+        int x = (int)Math.Round(pixel.X), y = (int)Math.Round(pixel.Y);
+        if (x < 1 || x >= 511 || y < 1 || y >= 423) return null;
+        var values = new List<ushort>();
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                ushort value = depths[(y+dy)*512+x+dx];
+                if (value >= minimum && value <= maximum) values.Add(value);
+            }
+        if (values.Count < 5) return null;
+        values.Sort();
+        // 轮廓处跨人体和背景的混合邻域不充当可靠表面参考。
+        if (values[values.Count-1] - values[0] > 120) return null;
+        ushort measured = values[values.Count/2];
+        ColorSpacePoint color = mapper.MapDepthPointToColorSpace(new DepthSpacePoint { X=x, Y=y }, measured);
+        if (!Finite(color.X) || !Finite(color.Y)) return null;
+        return Fields("z",measured/1000.0,"color_x",color.X/1920.0,"color_y",color.Y/1080.0);
+    }
+    static object Bodies(Body[] bodies, CoordinateMapper mapper, ushort[] depths, ushort minimum, ushort maximum)
     {
         var result = new List<object>();
         foreach (Body body in bodies)
@@ -73,7 +96,8 @@ internal static class KinectCamera
                 ColorSpacePoint color = mapper.MapCameraPointToColorSpace(p);
                 if (!Finite(color.X) || !Finite(color.Y)) continue;
                 points.Add(pair.Value, Fields("x",p.X,"y",p.Y,"z",p.Z,"score",1.0,
-                    "color_x",color.X / 1920.0,"color_y",color.Y / 1080.0));
+                    "color_x",color.X / 1920.0,"color_y",color.Y / 1080.0,
+                    "surface",Surface(p,mapper,depths,minimum,maximum)));
             }
             result.Add(Fields("tracking_id",body.TrackingId.ToString(),"points",points,
                 "hand_states",Fields(
@@ -160,7 +184,8 @@ internal static class KinectCamera
                 byte[] full = new byte[1920 * 1080 * 4], pixels = new byte[Width * Height * 3];
                 ushort[] depths = new ushort[512 * 424];
                 Body[] bodies = new Body[sensor.BodyFrameSource.BodyCount];
-                double lastColor = -1, lastBody = -1, lastDepth = -1, lastHeartbeat = -1, lastArrival = Qpc();
+                double lastColor = -1, lastBody = -1, lastDepth = -1, lastBodySurface = -1, lastHeartbeat = -1, lastArrival = Qpc();
+                ushort depthMinimum = 500, depthMaximum = 4500;
                 long colorCount = 0, depthCount = 0, bodyCount = 0;
                 object tracked = new object[0], floor = null;
                 double validRatio = 0;
@@ -175,6 +200,8 @@ internal static class KinectCamera
                             {
                                 lastDepth = depth.RelativeTime.TotalSeconds;
                                 depth.CopyFrameDataToArray(depths);
+                                depthMinimum = depth.DepthMinReliableDistance;
+                                depthMaximum = depth.DepthMaxReliableDistance;
                                 int valid = 0;
                                 foreach (ushort value in depths)
                                     if (value >= depth.DepthMinReliableDistance && value <= depth.DepthMaxReliableDistance) valid++;
@@ -188,7 +215,8 @@ internal static class KinectCamera
                             {
                                 lastBody = body.RelativeTime.TotalSeconds;
                                 body.GetAndRefreshBodyData(bodies);
-                                tracked = Bodies(bodies, sensor.CoordinateMapper);
+                                lastBodySurface = lastDepth >= 0 && Math.Abs(lastBody-lastDepth) <= .08 ? lastDepth : -1;
+                                tracked = Bodies(bodies, sensor.CoordinateMapper, lastBodySurface >= 0 ? depths : null, depthMinimum, depthMaximum);
                                 Vector4 plane = body.FloorClipPlane;
                                 floor = Finite(plane.X) && Finite(plane.Y) && Finite(plane.Z)
                                     ? (object)new float[] {plane.X, plane.Y, plane.Z, plane.W} : null;
@@ -222,6 +250,7 @@ internal static class KinectCamera
                                 "sensor_seconds",lastColor,"device_id","kinect2:"+sensor.UniqueKinectId,
                                 "depth_valid",fresh,"depth_ratio",validRatio,"body_valid",bodyFresh,
                                 "body_age_ms",lastBody >= 0 ? (object)(Math.Abs(lastColor-lastBody)*1000) : null,
+                                "surface_age_ms",lastBodySurface >= 0 ? (object)(Math.Abs(lastColor-lastBodySurface)*1000) : null,
                                 "tracked_body_count",((ICollection<object>)tracked).Count,
                                 "bodies",bodyFresh ? tracked : new object[0],
                                 "floor",bodyFresh ? floor : null,"color_frames",colorCount,
