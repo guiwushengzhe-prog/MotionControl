@@ -21,6 +21,7 @@ export function renderRuntimeDiagnostics(p,k={},o={},input={}){
     `处理耗时95%不超过：${number(p.inference_p95_ms,'毫秒')} · 当前画面到结果：${number(p.total_latency_ms,'毫秒')}`,
     `预览 ${number(p.preview_fps,'帧/秒')} · 编码平均 ${number(p.preview_encode_avg_ms,'毫秒')} / 95% ${number(p.preview_encode_p95_ms,'毫秒')} · 画面年龄 ${number(p.preview_last_age_ms,'毫秒')}`,
     `预览平均体积 ${number(p.preview_jpeg_avg_bytes==null?null:p.preview_jpeg_avg_bytes/1024,'KB')} · 当前人体 ${p.recent_humans??'—'} 人`,
+    p.depth_tracking?.distance?`Kinect躯干表面实测：${number(p.depth_tracking.distance.surface_m,'米',3)} · 原厂关节中心：${number(p.depth_tracking.distance.joint_m,'米',3)} · 表面与关节中心是不同测量位置`:'Kinect躯干实测距离：暂无可靠的同人同步表面参考',
     p.last_error?`采集错误：${p.last_error}`:'',
   ]);
   write('diagHead',[

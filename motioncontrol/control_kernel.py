@@ -55,6 +55,7 @@ from motioncontrol.experimental_march import ExperimentMarchLifts
 from motioncontrol.body_lean import BodyLeanController
 from motioncontrol.body_angle_learning import BodyAngleLearning
 from motioncontrol.depth_comparison import DepthComparison
+from motioncontrol.depth_comparison_metrics import kinect_distance_summary
 from motioncontrol import sensitivity_experiments
 from motioncontrol.config_transaction import atomic_bytes
 from motioncontrol import kinect_camera
@@ -5782,6 +5783,7 @@ class NativeCameraService:
                     if (value := _finite((self._latest_depth or {}).get(name))) > 0
                 } if self.selected_backend == "kinect" else {},
                 "depth_tracking": {
+                    "distance": kinect_distance_summary(getattr(self.kernel, "latest_depth_body", None), now),
                     "body_frames": (self._latest_depth or {}).get("body_frames", 0),
                     "body_frame_valid": bool((self._latest_depth or {}).get("body_valid")),
                     "body_age_ms": (self._latest_depth or {}).get("body_age_ms"),

@@ -55,6 +55,29 @@ def test_real_results_keep_units_dimensions_and_missing_reference_explicit(deskt
     assert page.locator('#depthComparisonView').is_hidden()
 
 
+def test_relative_model_shows_uncalibrated_values_instead_of_blank_metres(desktop):
+    page, state = desktop.page, depth_state()
+    state['config'].update(model='zipdepth', enabled=True)
+    state['state'] = 'running'
+    state['results']['zipdepth'] = {'inference_avg_ms': 23.2, 'comparison': {
+        'metric_ready': False, 'reference_points': 11, 'validation_samples': 0,
+        'points': [{'name': 'chest', 'z': .8, 'raw': .08682, 'model_m': None, 'error_cm': None}]}}
+    page.evaluate('''async s=>{const m=await import('/js/depth-comparison.js');m.renderDepthComparison(s,
+      {surface_m:.8,surface_min_m:.7,surface_max_m:.9,reference_points:6});}''', state)
+    lab(page)
+    expect(page.locator('#depthComparisonRows')).to_contain_text('待尺度校准')
+    expect(page.locator('#depthComparisonRows')).to_contain_text('0 / 11')
+    expect(page.locator('#depthComparisonReference')).to_contain_text('0.800米')
+    page.locator('#depthComparisonPoints').evaluate('el=>el.closest("details").open=true')
+    expect(page.locator('#depthComparisonPoints')).to_contain_text('模型相对值 0.08682')
+    expect(page.locator('#depthComparisonPoints')).to_contain_text('尚无米数')
+    state['results']['zipdepth']['comparison'].update(metric_ready=True, mae_cm=12.3, p95_cm=18.5,
+        stationary_jitter_cm=1.1, validation_samples=9, bias_cm=12.3)
+    page.evaluate('(s)=>import("/js/depth-comparison.js").then(m=>m.renderDepthComparison(s))', state)
+    expect(page.locator('#depthComparisonRows')).to_contain_text('12.3厘米')
+    expect(page.locator('#depthComparisonCalibration')).to_contain_text('偏远 12.3厘米')
+
+
 def test_failed_save_restores_checkbox_and_retains_visible_reason(desktop):
     page, api = desktop.page, desktop.api
     state = depth_state()
