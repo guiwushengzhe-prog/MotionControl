@@ -8,7 +8,8 @@ import math
 import statistics
 
 
-SOURCES = ("model", "depth")
+SKELETON_SOURCES = ("model", "depth")
+SOURCES = (*SKELETON_SOURCES, "monocular")
 NAMES = ("left_shoulder", "right_shoulder", "left_hip", "right_hip")
 INDICES = (11, 12, 23, 24)
 NEUTRAL_SECONDS = 1.0
@@ -92,7 +93,7 @@ def _angle(measured, basis):
 
 
 class BodyLeanController:
-    """两路分别量中立姿态；只有手选来源能产生方向动作。"""
+    """骨骼与单目各用自己的中立姿态；只有手选来源能产生方向动作。"""
 
     def __init__(self, neutral=None, learning=None):
         self.learning = learning
@@ -142,7 +143,7 @@ class BodyLeanController:
     def _refresh_learning_context(self):
         if self.learning is None:
             return
-        bases = {source: self._neutral.get(source, {}).get("back") for source in SOURCES}
+        bases = {source: self._neutral.get(source, {}).get("back") for source in SKELETON_SOURCES}
         self._learning_context_ready = bool(self._model_identity) and all(bases.values())
         # 构造内核时先建控制器、后读站姿，不能先用空基准抹掉已保存的校正。
         if not self._learning_context_ready:
@@ -177,12 +178,13 @@ class BodyLeanController:
         for name in SOURCES if source is None else (source,):
             if name not in SOURCES:
                 raise ValueError("身体数据来源无效")
-            self._capture[name] = {axis: {"started": now, "samples": []} for axis in ("side", "back")}
+            self._capture[name] = {axis: ({"started": now, "samples": []} if name != "monocular" else None)
+                                   for axis in ("side", "back")}
             self._states[name].update(active=[], side_deg=None, back_deg=None, back_raw_deg=None,
                                      back_uncorrected_deg=None, remaining_s=NEUTRAL_SECONDS)
 
     @staticmethod
-    def _measure(image_pose, world_pose, depth_body, width, height):
+    def _measure(image_pose, world_pose, depth_body, width, height, monocular=None):
         result = {source: {} for source in SOURCES}
         image = _points(image_pose, 2, image=True)
         if image and width > 0 and height > 0:
@@ -195,15 +197,20 @@ class BodyLeanController:
             # 原生深度使用米制空间；侧倾也投影到相机正面，避免图像比例混入深度。
             result["depth"]["side"] = _torso([(p[0], -p[1]) for p in points])
             result["depth"]["back"] = _torso(points)
+        if isinstance(monocular, dict) and monocular.get("valid") and monocular.get("calibrated"):
+            value = monocular.get("angle_deg")
+            if isinstance(value, (int, float)) and math.isfinite(value) and abs(value) <= 45:
+                angle = math.radians(value)
+                result["monocular"]["back"] = ((0., math.cos(angle), math.sin(angle)), (1., 0., 0.))
         return result
 
     def update(self, image_pose, world_pose, depth_body, width, height, now, *,
                source="model", side_source=None, fore_aft_source=None,
                strafe=False, back=False, forward=False, compare=False,
-               learn_from_depth=False, sample_age_s=0., collect_learning=True, model_identity=None):
+               learn_from_depth=False, sample_age_s=0., collect_learning=True, model_identity=None, monocular=None):
         side_source = source if side_source is None else side_source
         fore_aft_source = source if fore_aft_source is None else fore_aft_source
-        if any(value not in SOURCES for value in (source, side_source, fore_aft_source)):
+        if source not in SKELETON_SOURCES or side_source not in SKELETON_SOURCES or fore_aft_source not in SOURCES:
             raise ValueError("身体数据来源无效")
         if not isinstance(now, (int, float)) or not math.isfinite(now):
             self.reset_tracking()
@@ -225,10 +232,18 @@ class BodyLeanController:
                              back_deg=None, back_raw_deg=None, back_uncorrected_deg=None,
                              active=[], last_at=None, reason="身体走位未开启")
             return set()
-        measurements = self._measure(image_pose, world_pose, depth_body, width, height)
+        mono_at = monocular.get("sample_at") if isinstance(monocular, dict) else None
+        if not isinstance(mono_at, (int, float)) or not 0 <= now - mono_at <= STALE_SECONDS:
+            monocular = None
+        measurements = self._measure(image_pose, world_pose, depth_body, width, height, monocular)
         readiness = {}
         for name in SOURCES:
             state, measured = self._states[name], measurements[name]
+            if name == "monocular":
+                state["monocular"] = copy.deepcopy(monocular)
+                if monocular and monocular.get("valid") and monocular.get("calibrated"):
+                    # 单目读出已经完成三秒中立；统一基准，不再重复量一次站姿。
+                    self._neutral[name] = {"back": {"up": [0., 1., 0.], "axis": [0., 0., 1.]}}
             previous_at = state["last_at"]
             fresh = previous_at is None or not 0 < now - previous_at <= STALE_SECONDS
             if fresh:
@@ -240,7 +255,9 @@ class BodyLeanController:
             required = (["side"] if strafe and (name == side_source or compare) else []) + (
                         ["back"] if (back or forward) and (name == fore_aft_source or compare) else [])
             if compare and not required:
-                required = ["side", "back"]
+                required = ["back"] if name == "monocular" else ["side", "back"]
+            if name == "monocular":
+                required = [axis for axis in required if axis == "back"]
             if self._learning_enabled and "back" not in required:
                 required.append("back")
             dt = min(.1, now - previous_at) if previous_at is not None and now > previous_at else 0
@@ -253,7 +270,7 @@ class BodyLeanController:
                     fresh_axes.add(axis)
                 state[axis + "_valid"] = valid
                 neutral = self._neutral.get(name, {})
-                if axis in required and axis not in neutral and valid and self._capture[name][axis] is None:
+                if name != "monocular" and axis in required and axis not in neutral and valid and self._capture[name][axis] is None:
                     self._capture[name][axis] = {"started": now, "samples": []}
                 capture = self._capture[name][axis]
                 if capture is not None:
@@ -294,6 +311,8 @@ class BodyLeanController:
                                "自然站直，保持约一秒" if pending else "")
             if timed_out:
                 state["reason"] = "站姿采集超时，保留上次有效基准"
+            if name == "monocular" and missing:
+                state["reason"] = (monocular or {}).get("reason", "等待单目深度胸腹区域结果")
         if self._learning_enabled:
             self._update_learning(world_pose, depth_body, now, sample_age_s, readiness, collect_learning)
         return {action for action in self._states[side_source]["active"]
@@ -302,8 +321,8 @@ class BodyLeanController:
                 if (back and action == "lean_back") or (forward and action == "lean_forward")}
 
     def _update_learning(self, world_pose, depth_body, now, sample_age_s, readiness, collect_learning):
-        model, depth = (self._states[source] for source in SOURCES)
-        paired = self._learning_context_ready and all(readiness[source][0] and self._capture[source]["back"] is None for source in SOURCES)
+        model, depth = (self._states[source] for source in SKELETON_SOURCES)
+        paired = self._learning_context_ready and all(readiness[source][0] and self._capture[source]["back"] is None for source in SKELETON_SOURCES)
         try:
             matched = (isinstance(depth_body, dict) and depth_body.get("matched_to_model") is True
                        and depth_body.get("body_valid") is True)
@@ -359,7 +378,9 @@ class BodyLeanController:
             needed = (["side"] if self._strafe and (source == self._side_source or self._compare) else []) + (
                       ["back"] if (self._back or self._forward) and (source == self._fore_aft_source or self._compare) else [])
             if self._compare and not needed:
-                needed = ["side", "back"]
+                needed = ["back"] if source == "monocular" else ["side", "back"]
+            if source == "monocular":
+                needed = [axis for axis in needed if axis == "back"]
             if self._learning_enabled and "back" not in needed:
                 needed.append("back")
             last_at = state.pop("last_at")

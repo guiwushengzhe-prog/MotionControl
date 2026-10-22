@@ -20,7 +20,9 @@ def test_experiment_config_and_neutral_use_the_shared_runtime_revision(applicati
     request.do_POST()
     assert replies[-1][0] == 200
     assert replies[-1][1]["config_revision"] == revision + 2
-    assert all(source["calibrating"] for source in replies[-1][1]["kernel"]["sensitivity_experiments"]["body"]["sources"].values())
+    sources = replies[-1][1]["kernel"]["sensitivity_experiments"]["body"]["sources"]
+    assert all(sources[name]["calibrating"] for name in ("model", "depth"))
+    assert not sources["monocular"]["calibrating"]  # 单目自己的三秒基准由到来的深度区域建立。
 
 
 def test_invalid_experiment_does_not_change_revision_and_remote_cannot_enable(application):

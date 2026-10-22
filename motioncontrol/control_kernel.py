@@ -662,6 +662,8 @@ class ControlKernel:
         self.latest_depth_body = None
         self.march_depth_source = "image"
         self.sensitivity_experiments = dict(sensitivity_experiments.DEFAULTS)
+        self._latest_monocular_lean = None
+        self._monocular_neutral_revision = 0
         self._experimental_march = ExperimentMarchLifts()
         self._body_lean = BodyLeanController(learning=BodyAngleLearning(persist=self._persist))
         self._body_learning_collect = True
@@ -1696,6 +1698,8 @@ class ControlKernel:
                 self.motion_raw["march"] = False
                 self.motion_debounce["march"].update(active=False, on=0, off=0)
             if any(previous[key] != proposed[key] for key in ("side_source", "fore_aft_source", "lean_strafe", "lean_back", "lean_forward")):
+                self._latest_monocular_lean = None
+                self._monocular_neutral_revision += 1
                 self._body_lean.reset_tracking()
                 self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)
             self._body_lean.update(None, None, None, self.width, self.height, time.monotonic(),
@@ -1712,14 +1716,29 @@ class ControlKernel:
         with self._lock:
             now = time.monotonic()
             self._body_lean.start_neutral(now)
+            self._latest_monocular_lean = None
+            self._monocular_neutral_revision += 1
             self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)
             self._dispatch_controls_locked(now)
             return self.status_locked(now)
 
+    def publish_monocular_lean(self, state, revision=None):
+        with self._lock:
+            if revision is not None and revision != self._monocular_neutral_revision:
+                return
+            self._latest_monocular_lean = copy.deepcopy(state)
+            if (state is None or not state.get("valid")) and self.sensitivity_experiments["fore_aft_source"] == "monocular":
+                self.motion_active.difference_update(("lean_forward", "lean_back"))
+                self.motion_raw.update(lean_forward=False, lean_back=False)
+                self._dispatch_controls_locked(time.monotonic())
+
     def _sensitivity_status_locked(self, now: float) -> dict:
         march = self._experimental_march.status()
         first_step = self.sensitivity_experiments["first_step"] and self.march_algorithm == "responsive"
-        return {"config": dict(self.sensitivity_experiments), "body": self._body_lean.status(now),
+        mono = copy.deepcopy(self._latest_monocular_lean)
+        if mono and mono.get("valid") and not 0 <= now - mono.get("sample_at", -math.inf) <= .25:
+            mono.update(valid=False, angle_deg=None, strength=0., state="unavailable", reason="单目深度结果已过时，等待新画面")
+        return {"config": dict(self.sensitivity_experiments), "body": self._body_lean.status(now), "monocular": mono,
                 "first_step_source": self.sensitivity_experiments["body_source"],
                 "first_step_ready": bool(first_step and march["ready"]),
                 "first_step_message": (march["message"] if first_step else
@@ -1739,8 +1758,10 @@ class ControlKernel:
             learn_from_depth=config["learn_from_depth"], sample_age_s=max(0., now - sample_at),
             collect_learning=self._body_learning_collect,
             model_identity=self.latest_body_model_identity,
+            monocular=self._latest_monocular_lean,
         )
         active.difference_update(self.disabled_builtin_actions)
+        self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)
         self.motion_active.update(active)
         for ident in sensitivity_experiments.LEAN_MOTIONS:
             self.motion_raw[ident] = ident in active
@@ -2076,6 +2097,13 @@ class ControlKernel:
                             if name != "lookGate" and state.get("pressed"))
             self.fitness.observe_pose(pose_map, self._pose_sample_time_locked(now), actions=physical)
 
+    def _record_monocular_lean_locked(self, now):
+        state = copy.deepcopy(self._latest_monocular_lean)
+        if isinstance(state, dict):
+            sampled = state.get("sample_at")
+            state["age_s"] = now - sampled if isinstance(sampled, (int, float)) and math.isfinite(sampled) else None
+        return state
+
     def _record_pose_frame_locked(self, pose_map, now, world_pose=None):
         if self.pose_recorder.state not in {"waiting", "recording"}:
             return
@@ -2091,6 +2119,7 @@ class ControlKernel:
                    "head_config": self.head_controller.config,
                    "sensitivity_experiments": self.sensitivity_experiments,
                    "body_lean": self._body_lean.status(now),
+                   "monocular_lean": self._record_monocular_lean_locked(now),
                    **({"body_angle_learning": self._body_lean.learning.snapshot(),
                        "body_lean_neutral": self._body_lean.neutral_snapshot()}
                       if self.sensitivity_experiments["learn_from_depth"] else {}),
@@ -2132,6 +2161,7 @@ class ControlKernel:
                    "head_config": self.head_controller.config,
                    "sensitivity_experiments": self.sensitivity_experiments,
                    "body_lean": self._body_lean.status(now),
+                   "monocular_lean": self._record_monocular_lean_locked(now),
                    **({"body_angle_learning": self._body_lean.learning.snapshot(),
                        "body_lean_neutral": self._body_lean.neutral_snapshot()}
                       if self.sensitivity_experiments["learn_from_depth"] else {}),

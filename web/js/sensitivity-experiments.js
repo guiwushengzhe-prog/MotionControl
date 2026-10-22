@@ -3,9 +3,9 @@ import {$,api,configurationBusy,configurationOperation,flashStatus,post,setPrope
 import {invalidateKernelRequests,kernelEpoch} from './devices.js';
 import {renderKernelState} from './play.js';
 
-const DEFAULTS={head_hold:false,first_step:false,lean_strafe:false,lean_back:false,lean_forward:false,body_source:'model',side_source:'model',fore_aft_source:'model',learn_from_depth:false,compare:false};
-const SWITCHES={head_hold:'experimentHeadHold',first_step:'experimentFirstStep',lean_strafe:'experimentLeanStrafe',lean_back:'experimentLeanBack',lean_forward:'experimentLeanForward',learn_from_depth:'experimentDepthLearning',compare:'experimentCompare'};
-const SOURCE_NAMES={model:'模型骨骼',depth:'深度骨骼'};
+const DEFAULTS={head_hold:false,first_step:false,lean_strafe:false,lean_back:false,lean_forward:false,body_source:'model',side_source:'model',fore_aft_source:'model',learn_from_depth:false,learn_monocular:false,compare:false};
+const SWITCHES={head_hold:'experimentHeadHold',first_step:'experimentFirstStep',lean_strafe:'experimentLeanStrafe',lean_back:'experimentLeanBack',lean_forward:'experimentLeanForward',learn_from_depth:'experimentDepthLearning',learn_monocular:'experimentMonocularLearning',compare:'experimentCompare'};
+const SOURCE_NAMES={model:'模型骨骼',depth:'深度骨骼',monocular:'单目深度'};
 let current=null,saving=false,lastKernel={};
 
 function activeText(value){
@@ -32,11 +32,22 @@ function render(){
     if(!saving)setProperty(input,'checked',config[key]===true);
     setProperty(input,'disabled',saving||configurationBusy||!current||(key==='head_hold'&&!holdAvailable)||(key==='first_step'&&!stepAvailable));
   }
-  if(!saving)for(const [id,key] of [['experimentBodySource','body_source'],['experimentSideSource','side_source'],['experimentForeAftSource','fore_aft_source']])setProperty($('#'+id),'value',config[key]==='depth'?'depth':'model');
+  if(!saving)for(const [id,key] of [['experimentBodySource','body_source'],['experimentSideSource','side_source'],['experimentForeAftSource','fore_aft_source']])setProperty($('#'+id),'value',Object.hasOwn(SOURCE_NAMES,config[key])?config[key]:'model');
   for(const id of ['experimentBodySource','experimentSideSource','experimentForeAftSource','experimentNeutralBtn'])setProperty($('#'+id),'disabled',saving||configurationBusy||!current);
   setText($('#experimentHeadHoldNote'),!holdAvailable?'先在“体感 → 视角”选择左右转头的模型简化方案':config.head_hold?'偏头时持续转向，回到中心停止':'开启后偏头停住仍持续转向；回到中心停止');
   setText($('#experimentFirstStepNote'),!stepAvailable?'先在“体感 → 身体识别”选择灵敏踏步':current?.first_step_message||'首步即可响应，不等待连续踏步');
   const body=current?.body||{},sideSource=body.side_source||config.side_source,foreSource=body.fore_aft_source||config.fore_aft_source;
+  const mono=current?.monocular||{},monoVisible=config.fore_aft_source==='monocular',monoControl=body.sources?.monocular||{};
+  const monoAngle=monoControl.back_valid&&monoControl.back_deg!=null?monoControl.back_deg:mono.angle_deg;
+  const monoState=monoControl.back_valid?(monoControl.active?.includes('lean_forward')?'forward':monoControl.active?.includes('lean_back')?'back':'neutral'):mono.state;
+  setProperty($('#monocularLeanPanel'),'hidden',!monoVisible);
+  const monoName=mono.calibrating?`自然站直，还需 ${Number(mono.remaining_s||0).toFixed(1)} 秒`:mono.valid?
+    `${monoState==='forward'?'前倾':monoState==='back'?'后倾':'中立'} · 估计 ${angle(monoAngle)}`:mono.reason||'等待可靠的单目深度胸腹区域';
+  setText($('#monocularLeanState'),monoName);
+  setProperty($('#monocularLeanStrength'),'value',mono.valid?Math.min(1,Math.abs(Number(monoAngle)||0)/20):0);
+  setText($('#monocularLeanDetail'),mono.valid?`${mono.sampled_regions||0} 个胸腹区域 · ${mono.reason||''} · Kinect不参与预测`:mono.reason||'选择模型并开启电脑识别，先自然站直3秒');
+  const ml=mono.learning||{};
+  setText($('#monocularLearningNote'),`${ml.reason||'开启后自动积累前倾、回正和后倾；后续验证通过才使用个人读出'} · 已采 ${Number(ml.samples)||0} 对 · 后续验证 ${Number(ml.validation_samples)||0} 对${ml.metrics?` · 已启用读出平均差 ${angle(ml.metrics.mae_deg)}`:''}${ml.error?'；'+ml.error:''}`);
   const learning=body.learning||{};
   const depthReady=body.sources?.depth?.back_valid&&body.sources?.depth?.back_calibrated&&!body.sources?.depth?.back_calibrating;
   const learningReason=String(learning.reason||'');

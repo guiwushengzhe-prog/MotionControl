@@ -18,6 +18,50 @@ def strict_json(line):
     return json.loads(line, parse_constant=reject)
 
 
+def test_monocular_recording_replays_age_and_directions_without_camera_or_learning(tmp_path, monkeypatch):
+    kernel = ControlKernel(FakeOutput(), persist=False)
+    kernel.configure_sensitivity_experiments({"fore_aft_source": "monocular", "lean_forward": True, "lean_back": True})
+    kernel.pose_recorder.directory = tmp_path / "poses"
+    kernel.pose_recorder.start(delay_s=0, duration_s=15, now=100.)
+    kernel.trigger_recorder.directory = tmp_path / "triggers"
+    kernel.trigger_recorder.configure({"enabled": True, "triggers": ["motion.lean_forward", "motion.lean_back"], "pre_s": 0., "post_s": 0.})
+    clock = [100.]
+    monkeypatch.setattr("motioncontrol.control_kernel.time.monotonic", lambda: clock[0])
+    snapshot = kernel.replay_snapshot()
+    expected = []
+    try:
+        for index, angle in enumerate([-12.] * 8 + [0.] * 8 + [12.] * 8 + [0.] * 8):
+            clock[0] = 100. + index * .05
+            state = {"valid": True, "calibrated": True, "angle_deg": angle, "sample_at": clock[0] - .08}
+            kernel.publish_monocular_lean(state, kernel._monocular_neutral_revision)
+            kernel.handle_pose_map("computer_camera", pose_map(), width=640, height=360,
+                                   sample_at=clock[0], return_status=False)
+            expected.append(sorted(kernel.motion_active.intersection({"lean_forward", "lean_back"})))
+        assert ["lean_forward"] in expected and ["lean_back"] in expected and expected[-1] == []
+        kernel.pose_recorder.close(2)
+        kernel.trigger_recorder.close()
+        header, *frames = [strict_json(s) for s in kernel.pose_recorder.last_path.read_text(encoding="utf-8").splitlines()]
+        assert frames[0]["extra"]["monocular_lean"]["age_s"] == pytest.approx(.08)
+        clip = next(kernel.trigger_recorder.directory.rglob("*.jsonl"))
+        assert "monocular_lean" in strict_json(clip.read_text(encoding="utf-8").splitlines()[1])["extra"]
+        replay = make_replay_kernel(snapshot)
+        seen = []
+        try:
+            replay_segment(replay, Segment("test", "action", "saved", {}, frames),
+                           lambda c, row: seen.append(sorted(c.motion_active.intersection({"lean_forward", "lean_back"}))))
+            assert seen == expected
+            assert replay._latest_monocular_lean["sample_at"] == pytest.approx(BASE_T + frames[-1]["t"] - .08)
+            assert not replay._body_learning_collect
+            stale = copy.deepcopy(frames[-1])
+            stale["extra"]["monocular_lean"].update(angle_deg=-12, age_s=.5)
+            replay_segment(replay, Segment("test", "action", "saved", {}, [stale]))
+            assert not replay.motion_active.intersection({"lean_forward", "lean_back"})
+        finally:
+            replay.close()
+    finally:
+        kernel.close()
+
+
 def test_multitrigger_clip_keeps_current_sources_profile_and_restores_head(tmp_path, monkeypatch):
     output = FakeOutput()
     output.enabled = False

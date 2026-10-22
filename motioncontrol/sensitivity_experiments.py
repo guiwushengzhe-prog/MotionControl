@@ -10,6 +10,7 @@ DEFAULTS = {
     "side_source": "model",
     "fore_aft_source": "model",
     "learn_from_depth": False,
+    "learn_monocular": False,
     "compare": False,
 }
 LEAN_MOTIONS = ("lean_left", "lean_right", "lean_back", "lean_forward")
@@ -26,8 +27,8 @@ def configure(current, changes):
     linked = result["side_source"] == result["fore_aft_source"] == result["body_source"]
     for key, value in changes.items():
         if key in ("body_source", "side_source", "fore_aft_source"):
-            if value not in {"model", "depth"}:
-                raise ValueError("请选择模型估计或深度实测")
+            if value not in ({"model", "depth", "monocular"} if key == "fore_aft_source" else {"model", "depth"}):
+                raise ValueError("请选择有效的身体识别来源；单目深度仅用于前后倾")
         elif not isinstance(value, bool):
             raise ValueError("实验开关必须为开启或关闭")
         result[key] = value
