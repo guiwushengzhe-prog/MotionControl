@@ -67,6 +67,7 @@ class DepthComparison:
         self._calibrate = self._reset = False
         self._results = {}
         self._preview = None
+        self._preview_demand_until = self._last_preview_at = 0.
         self._rect = self._source_signature = self._tracking_id = None
         self.monocular = MonocularLean(persist=bool(getattr(kernel, "_persist", False)))
         self._monocular_lock = threading.RLock()
@@ -189,6 +190,7 @@ class DepthComparison:
             self._stop.set()
             process, thread = self._process, self._thread
             self._pending = self._preview = None
+            self._preview_demand_until = self._last_preview_at = 0.
             self._process = self._thread = None
             self._worker_model = None
             self._calibrate = self._reset = False
@@ -273,7 +275,8 @@ class DepthComparison:
                             break
                         meta, frame = self._pending
                         self._pending = None
-                        meta.update(calibrate=self._calibrate, reset=self._reset)
+                        meta.update(calibrate=self._calibrate, reset=self._reset,
+                                    preview=self._preview_requested(time.monotonic()))
                         self._calibrate = self._reset = False
                         if meta["signature"] != previous_signature:
                             self._latencies.clear()
@@ -313,7 +316,8 @@ class DepthComparison:
                             "latency_ms": round(latency, 1), "latency_p95_ms": self._percentile(self._latencies),
                             "fps": round((len(self._times) - 1) / (self._times[-1] - self._times[0]), 2) if len(self._times) > 1 and self._times[-1] > self._times[0] else None})
                         self._results[config["model"]] = result
-                        self._preview = preview
+                        if preview:
+                            self._preview = preview
                     if meta.get("lean") and generation == self._generation and not stop.is_set():
                         publish = getattr(self.kernel, "publish_monocular_lean", None)
                         if publish:
@@ -350,7 +354,14 @@ class DepthComparison:
 
     def preview(self):
         with self._lock:
+            self._preview_demand_until = time.monotonic() + 1.
             return self._preview if self._requested() else None
+
+    def _preview_requested(self, now):
+        if now >= self._preview_demand_until or now - self._last_preview_at < 1 / 6:
+            return False
+        self._last_preview_at = now
+        return True
 
     def status(self):
         now = time.monotonic()

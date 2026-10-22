@@ -36,12 +36,20 @@ def write_packet(stream, meta, data=b""):
 
 
 class Adapter:
-    def __init__(self, ident, spec, size):
+    def __init__(self, ident, spec, size, *, optimize=True):
         import torch
         self.torch, self.ident, self.size = torch, ident, size
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         torch.set_num_threads(2)
         self.shape = None
+        self.optimize = bool(optimize)
+        self.optimized_attention = 0
+        self.cached_temporal_layers = 0
+        self.compact_weights = False
+        self.blocking_sync = False
+        if self.optimize and self.device == "cuda":
+            from .depth_optimization import blocking_gpu_wait
+            self.blocking_sync = blocking_gpu_wait(torch)
         sys.path.insert(0, spec["source"])
         if ident == "dav2_metric_s":
             sys.path.insert(0, str(Path(spec["source"]) / "metric_depth"))
@@ -70,6 +78,16 @@ class Adapter:
             self.model.fuse_for_inference()
             if self.device == "cuda":
                 self.model = self.model.half().to(memory_format=torch.channels_last)
+        if self.optimize and self.device == "cuda" and ident != "zipdepth":
+            from .depth_optimization import efficient_attention
+            self.optimized_attention = efficient_attention(self.model)
+            self.cached_temporal_layers = sum(hasattr(module, "_depth_original_stream_forward") for module in self.model.modules())
+        if self.optimize and self.device == "cuda" and ident == "vda_metric_s":
+            # 原库推理已采用半精度；常驻参数跟随计算精度，输出层按原库保留单精度。
+            self.model.half()
+            self.model.head.scratch.output_conv2.float()
+            self.compact_weights = True
+            torch.cuda.empty_cache()
         self.signature = None
 
     def infer(self, frame, signature):
@@ -85,6 +103,9 @@ class Adapter:
                     self.signature = signature
                 depth = self.model.infer_video_depth_one(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), self.size,
                                                         device=self.device, fp32=self.device != "cuda")
+                if self.optimize and hasattr(self.model.transform, "transforms"):
+                    from .depth_optimization import FastImageTransform
+                    self.model.transform = FastImageTransform(self.model.transform)
             else:
                 if self.ident == "dav2_metric_s":
                     tensor, _ = self.model.image2tensor(frame, self.size)
@@ -123,6 +144,7 @@ def main():
             adapter = Adapter(args.model, registry["models"][args.model], args.size)
             metrics = DepthMetrics(relative=args.model == "zipdepth")
             torch = adapter.torch
+            cv2.setNumThreads(1)
         write_packet(binary_out, {"kind": "ready", "device": adapter.device,
                                  "device_name": torch.cuda.get_device_name(0) if adapter.device == "cuda" else "处理器",
                                  "load_ms": round((time.perf_counter() - started) * 1000, 1)})
@@ -154,18 +176,25 @@ def main():
             comparison = metrics.evaluate(depth, meta.get("references", []), now=meta["sample_at"])
             torso = (torso_features(depth, meta.get("pose"), inverse=args.model == "zipdepth",
                                     source_height=meta.get("source_shape", [height, width])[0]) if meta.get("lean") else None)
-            values = depth[np.isfinite(depth) & (depth > 0)]
-            lo, hi = np.percentile(values, (2, 98)) if values.size else (0, 1)
-            view = np.uint8(np.clip((np.nan_to_num(depth) - lo) / max(1e-6, hi - lo), 0, 1) * 255)
-            if args.model != "zipdepth":
-                view = 255 - view
-            view = cv2.applyColorMap(view, cv2.COLORMAP_TURBO)
-            for point in comparison["points"]:
-                cv2.circle(view, (int(point["x"] * width), int(point["y"] * height)), 4, (255, 255, 255), 1)
-            preview = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()
+            preview = b""
+            if meta.get("preview", True):
+                values = depth[np.isfinite(depth) & (depth > 0)]
+                lo, hi = np.percentile(values, (2, 98)) if values.size else (0, 1)
+                view = np.uint8(np.clip((np.nan_to_num(depth) - lo) / max(1e-6, hi - lo), 0, 1) * 255)
+                if args.model != "zipdepth":
+                    view = 255 - view
+                view = cv2.applyColorMap(view, cv2.COLORMAP_TURBO)
+                for point in comparison["points"]:
+                    cv2.circle(view, (int(point["x"] * width), int(point["y"] * height)), 4, (255, 255, 255), 1)
+                preview = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()
             result = {"kind": "frame", "sequence": meta["sequence"], "sample_at": meta["sample_at"],
                       "inference_ms": round(inference_ms, 2), "input_shape": adapter.shape,
                       "torso": torso,
+                      "preview_generated": bool(preview),
+                      "efficient_attention_modules": adapter.optimized_attention,
+                      "cached_temporal_layers": adapter.cached_temporal_layers,
+                      "compact_weights": adapter.compact_weights,
+                      "blocking_gpu_wait": adapter.blocking_sync,
                       "gpu_allocated_mb": round(torch.cuda.memory_allocated() / 2**20, 1) if adapter.device == "cuda" else None,
                       "gpu_reserved_mb": round(torch.cuda.memory_reserved() / 2**20, 1) if adapter.device == "cuda" else None,
                       "comparison": comparison}
