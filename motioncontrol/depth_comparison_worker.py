@@ -109,6 +109,7 @@ def main():
     parser.add_argument("--runtime", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--size", type=int, default=392)
+    parser.add_argument("--auto-scale", action="store_true")
     args = parser.parse_args()
     binary_out, binary_in = sys.stdout.buffer, sys.stdin.buffer
     try:
@@ -139,8 +140,8 @@ def main():
             if previous_at is not None and not 0 < meta["sample_at"] - previous_at <= .6:
                 adapter.signature = None
             previous_at = meta["sample_at"]
-            if meta.get("calibrate"):
-                metrics.start_calibration()
+            if meta.get("calibrate") or (args.auto_scale and meta.get("references") and not metrics.calibration_attempted):
+                metrics.start_calibration(now=meta["sample_at"])
             if meta.get("reset"):
                 metrics.reset_statistics()
             started = time.perf_counter()
@@ -149,7 +150,7 @@ def main():
             if adapter.device == "cuda":
                 torch.cuda.synchronize()
             inference_ms = (time.perf_counter() - started) * 1000
-            comparison = metrics.evaluate(depth, meta.get("references", []))
+            comparison = metrics.evaluate(depth, meta.get("references", []), now=meta["sample_at"])
             values = depth[np.isfinite(depth) & (depth > 0)]
             lo, hi = np.percentile(values, (2, 98)) if values.size else (0, 1)
             view = np.uint8(np.clip((np.nan_to_num(depth) - lo) / max(1e-6, hi - lo), 0, 1) * 255)

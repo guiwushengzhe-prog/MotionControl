@@ -112,7 +112,8 @@ def test_worker_packet_roundtrip_and_truncated_data():
         read_packet(io.BytesIO(b"\xff" * 8))
 
 
-@pytest.mark.parametrize("changes", [{"enabled": 1}, {"model": "unknown"}, {"input_size": 700}, {"max_fps": True}, {"shell": "oops"}])
+@pytest.mark.parametrize("changes", [{"enabled": 1}, {"model": "unknown"}, {"input_size": 700}, {"max_fps": True},
+                                     {"input_scope": "face"}, {"auto_scale": 1}, {"shell": "oops"}])
 def test_configuration_rejects_unknown_or_invalid_values(changes):
     with pytest.raises(ValueError):
         validate_config(DEFAULTS, changes)
@@ -196,3 +197,49 @@ def test_regular_performance_poll_exposes_depth_experiment(application, body_mod
     assert result["depth_comparison"]["state"] == "off"
     if body_mode == "computer":
         assert "hfhpe" in result
+
+
+def test_native_fixed_scale_keeps_raw_error_and_never_learns_from_validation():
+    metrics = DepthMetrics()
+    depth = np.tile(np.linspace(2, 4, 40), (10, 1))
+    points = [{**reference(float(depth[5, i]) / 2, x=(i + .5) / 40), "name": str(i)} for i in range(3, 37)]
+    metrics.start_calibration(now=0)
+    for at in (0, 1, 2, 3):
+        result = metrics.evaluate(depth, points, now=at)
+        assert result["validation_samples"] == result["calibrated_validation_samples"] == 0
+    assert metrics.mapping == {"gain": .5}
+    result = metrics.evaluate(depth, points, now=4)
+    assert result["raw_mae_cm"] > 100 and result["calibrated_mae_cm"] == 0
+    shifted = [{**p, "z": p["z"] + .2} for p in points]
+    result = metrics.evaluate(depth, shifted, now=5)
+    assert result["calibrated_mae_cm"] == 10
+    assert metrics.mapping == {"gain": .5}
+    assert result["points"][0]["model_m"] == round(float(depth[5, 3]), 4)
+    assert result["points"][0]["calibrated_m"] == round(float(depth[5, 3]) / 2, 4)
+
+
+def test_native_failed_recalibration_preserves_previous_fixed_scale():
+    metrics = DepthMetrics()
+    metrics.mapping = {"gain": .5}
+    metrics.start_calibration(now=0)
+    inconsistent = [{**reference(z=1 + i / 10), "name": str(i)} for i in range(20)]
+    for at in (0, 1, 2, 3):
+        result = metrics.evaluate(np.full((10, 10), 3), inconsistent, now=at)
+    assert metrics.mapping == {"gain": .5}
+    assert "不一致" in result["calibration_message"]
+
+
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_relative_scale_rejects_reversed_or_almost_constant_depth(direction):
+    metrics = DepthMetrics(relative=True)
+    metrics.start_calibration(now=0)
+    # 反向变化或者只有极弱相关的噪声，不能靠接近常数的拟合冒充深度。
+    rng = np.random.default_rng(7)
+    values = np.linspace(.04, .1, 200)
+    inverse = .65 - values if direction < 0 else .65 + .01 * values + rng.normal(0, .02, len(values))
+    samples = [(reference(z=float(1 / z)), float(x)) for x, z in zip(values, inverse)]
+    for at in (0, 1, 2, 3):
+        result = metrics.evaluate_samples(samples, now=at)
+    assert not result["scale_ready"] and result["calibration_correlation"] < .5
+    assert "未可靠跟随" in result["calibration_message"]
+    assert metrics.evaluate_samples(samples, now=4)["validation_samples"] == 0

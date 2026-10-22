@@ -36,6 +36,13 @@ def test_three_candidates_and_controls_only_save_explicit_choice(desktop):
     page.check('#depthComparisonEnabled')
     expect(page.locator('#depthComparisonEnabled')).to_be_checked()
     assert changes[-1] == {'enabled': True}
+    with page.expect_response(lambda r: r.url.endswith('/api/depth-comparison') and r.request.method == 'POST'):
+        page.select_option('#depthComparisonScope', 'person')
+    expect(page.locator('#depthComparisonReframe')).to_be_visible()
+    assert changes[-1] == {'input_scope': 'person'}
+    with page.expect_response(lambda r: r.url.endswith('/api/depth-comparison') and r.request.method == 'POST'):
+        page.uncheck('#depthComparisonAutoScale')
+    assert changes[-1] == {'auto_scale': False}
     assert not any(path == '/api/input/source' and body is not None for path, body in api.requests)
     assert not any(path == '/api/output/config' and body and body.get('enabled') for path, body in api.requests)
 
@@ -133,3 +140,20 @@ def test_voice_diagnostic_translates_rejection_and_exposes_audio_queue(desktop):
     expect(desktop.page.locator('#voiceDiagnostic')).to_contain_text('待处理音频：3 块')
     expect(desktop.page.locator('#voiceDiagnostic')).not_to_contain_text('output disabled')
     assert '模型：' not in desktop.page.locator('#voiceDiagnostic').inner_text()
+
+
+def test_raw_and_frozen_calibrated_errors_are_separate_and_failure_is_explicit(desktop):
+    page, state = desktop.page, depth_state()
+    state['results']['dav2_metric_s'] = {'comparison': {'raw_mae_cm': 120, 'calibrated_mae_cm': 9.5,
+        'calibrated_p95_cm': 25.7, 'calibrated_validation_samples': 300, 'reference_points': 20,
+        'scale_ready': True, 'calibration_attempted': True}}
+    state['results']['zipdepth'] = {'comparison': {'calibration_attempted': True, 'metric_ready': False,
+        'scale_ready': False, 'reference_points': 23}}
+    page.evaluate('(s)=>import("/js/depth-comparison.js").then(m=>m.renderDepthComparison(s))', state)
+    lab(page)
+    row = page.locator('#depthComparisonRows tr').nth(0)
+    expect(row.locator('td').nth(4)).to_have_text('120.0厘米')
+    expect(row.locator('td').nth(5)).to_have_text('9.5厘米')
+    expect(row.locator('td').nth(6)).to_have_text('25.7厘米')
+    expect(row.locator('td').nth(8)).to_have_text('300 / 20')
+    expect(page.locator('#depthComparisonRows tr').nth(2)).to_contain_text('尺度校准未通过')

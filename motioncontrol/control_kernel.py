@@ -5421,7 +5421,7 @@ class NativeCameraService:
                         self.depth_comparison.submit(frame, model_pose, depth_body, depth_metadata, frame_rotation,
                             captured_at, [str(self.camera_device), str(self.model_path), str(self.selected_backend),
                                           frame_rotation, bool(depth_metadata and depth_metadata.get("image_mirrored")),
-                                          width, height, (depth_body or {}).get("tracking_id")])
+                                          width, height])
                     except Exception as exc:
                         # 可选对照不能让摄像头和正式识别退出。
                         self.depth_comparison.report_input_error(exc)
