@@ -40,10 +40,10 @@ export function renderDepthComparison(state,distance){
   const bias=comparison.bias_cm;
   setText($('#depthComparisonCalibration'),[comparison.calibration_message,comparison.calibrating?`还需 ${fmt(comparison.calibration_remaining_s,'秒')}`:'',bias!=null?`${activeModel==='zipdepth'?'换算距离':'原始距离'}累计平均${bias>=0?'偏远':'偏近'} ${fmt(Math.abs(bias),'厘米')}`:''].filter(Boolean).join(' · '));
   setText($('#depthComparisonTiming'),`本轮实际 ${fmt(result.fps,' 帧/秒')} · 平均 ${fmt(result.inference_avg_ms,' 毫秒')} · 95%单帧不超过 ${fmt(result.inference_p95_ms,' 毫秒')} · 画面到结果 ${fmt(result.latency_ms,' 毫秒')}`);
-  const ready=(state.active??config.enabled)&&state.preview_ready&&state.state==='running'&&result.age_ms<1500;
-  setProperty($('#depthComparisonView'),'hidden',!ready);
+  const running=(state.active??config.enabled)&&state.state==='running'&&result.age_ms<1500;
+  setProperty($('#depthComparisonView'),'hidden',!running||!state.preview_ready);
   const previewKey=`${state.revision}:${activeModel}:${state.sequence}`;
-  if(ready&&isVisible($('#depthComparisonPanel'))&&lastSequence!==previewKey){lastSequence=previewKey;$('#depthComparisonPreview').src=`/api/depth-comparison/preview?seq=${encodeURIComponent(lastSequence)}`}
+  if(running&&isVisible($('#depthComparisonPanel'))&&lastSequence!==previewKey){lastSequence=previewKey;$('#depthComparisonPreview').src=`/api/depth-comparison/preview?seq=${encodeURIComponent(lastSequence)}`}
   const rows=Object.entries(names).map(([id,name])=>{
     const row=state.results?.[id]||{},m=row.comparison||{},shape=row.input_shape;
     const relative=id==='zipdepth',scaleReady=m.scale_ready??(relative&&m.metric_ready),missing=m.calibrating?'尺度校准中':scaleReady?'等待验证新帧':m.calibration_attempted?'尺度校准未通过':'待尺度校准';

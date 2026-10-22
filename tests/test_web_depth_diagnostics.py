@@ -135,6 +135,26 @@ def test_old_snapshot_does_not_restore_old_model_choice(desktop):
     assert desktop.page.locator('#depthComparisonModel').input_value() == 'zipdepth'
 
 
+def test_preview_first_request_starts_demand_and_hidden_panel_stops_requests(desktop):
+    page, api, state, seen = desktop.page, desktop.api, depth_state(), []
+    state.update(active=True, state='running', sequence=1)
+    state['config']['enabled'] = True
+    state['results']['dav2_metric_s'] = {'age_ms': 0, 'comparison': {}}
+    def preview(route):
+        seen.append(route.request.url)
+        route.fulfill(status=204)
+    page.route('**/api/depth-comparison/preview?*', preview)
+    lab(page)
+    with page.expect_response(lambda r: '/api/depth-comparison/preview?' in r.url):
+        page.evaluate('(s)=>import("/js/depth-comparison.js").then(m=>m.renderDepthComparison(s))', state)
+    assert len(seen) == 1
+    assert page.locator('#depthComparisonView').is_hidden()
+    page.click('#settingsNav [data-pane="view"]')
+    state['sequence'] = 2
+    page.evaluate('(s)=>import("/js/depth-comparison.js").then(m=>m.renderDepthComparison(s))', state)
+    assert len(seen) == 1
+
+
 def test_runtime_details_show_head_hands_actions_output_and_latency(desktop):
     page = desktop.page
     page.evaluate('''async()=>{const {renderRuntimeDiagnostics:r}=await import('/js/runtime-diagnostics.js');r(
