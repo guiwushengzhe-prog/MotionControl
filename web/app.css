@@ -1,4 +1,7 @@
 /* 新手试调复用体感页的配色，放大选项与确认反馈，便于离开鼠标操作。 */
+#depthComparisonPanel,#depthComparisonPanel>.list{min-width:0}
+.depth-preview{margin:1rem;padding:0;max-width:900px}.depth-preview img{display:block;width:100%;height:auto;border-radius:var(--radius-lg)}.depth-preview figcaption{color:var(--text-2);font-size:.8rem;margin-top:.5rem;line-height:1.5}
+.depth-table-wrap{overflow-x:auto;padding:.5rem 1rem}.depth-table{width:100%;border-collapse:collapse;font-size:.8rem;white-space:nowrap}.depth-table th,.depth-table td{padding:.8rem .65rem;border-bottom:1px solid var(--line);text-align:left}.depth-table th{color:var(--text-2);font-weight:500}.depth-actions{display:flex;gap:.7rem;flex-wrap:wrap}.diag-detail{padding:1rem 1.25rem;border-bottom:1px solid var(--line);min-width:0}.diag-detail summary{font-weight:600;cursor:pointer}.diag-detail .diag-text{margin:.8rem 0 0;line-height:1.75;overflow-wrap:anywhere;white-space:pre-wrap}.depth-table td:first-child{font-weight:600}
 .tuning-entry{display:flex;justify-content:space-between;align-items:center;gap:1.2rem;padding:1.1rem 1.3rem;margin-bottom:1.2rem;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-lg)}
 .tuning-entry p{margin:.4rem 0 0;color:var(--text-2);font-size:.9rem}
 dialog.view-tuning{box-sizing:border-box;width:min(1200px,96vw);max-width:none;max-height:96dvh;padding:clamp(1.1rem,3vw,2.5rem);overflow:auto;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:1.5rem;box-shadow:0 25px 90px #0006}

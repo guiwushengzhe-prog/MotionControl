@@ -2,12 +2,14 @@ import {recognitionModelName,renderRecognitionPerformance,renderPhoneModelState}
 // 设置 → 设备：摄像头、手机、麦克风；体感里的游戏输出复用这里的接口。
 import {$,api,formatPerf,notice,post,setProperty} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
-import {cameraInfo,cameraRunning,recognitionState,renderKernelState,renderMainStatus,setPreviewMirror,sourceHasFreshFrame,sourceWaitingForFirstFrame,sourceMode,zoneEditMode} from './play.js';
+import {cameraInfo,cameraRunning,kernelState,recognitionState,renderKernelState,renderMainStatus,setPreviewMirror,sourceHasFreshFrame,sourceWaitingForFirstFrame,sourceMode,zoneEditMode} from './play.js';
 import {runAction} from './shell.js';
 import {S,gameProfile,output} from './state.js';
 import {handMouseConfig} from './view-control.js';
 import {syncPhoneCode} from './phone-connect.js';
 import {renderSpeedSummary} from './view-speed.js';
+import {renderDepthComparison} from './depth-comparison.js';
+import {renderRuntimeDiagnostics} from './runtime-diagnostics.js';
 
 let audioDevice='';
 $('#cameraMirror')?.addEventListener('change',async event=>{
@@ -153,6 +155,8 @@ $('#resourceHintBoost')?.addEventListener('click',e=>{
 let boostPendingNoticed=false;
 
 function renderPerformance(data){
+  renderDepthComparison(data.depth_comparison);
+  renderRuntimeDiagnostics(data,kernelState,output,inputStatus);
   renderRecognitionPerformance(data);
   renderResourceHint(data);
   if(data.kinect_boost_state==='pending'&&!boostPendingNoticed)notice('这个游戏上次 Kinect 被拖慢过，正在申请提高 Kinect 服务优先级：请在 Windows 的管理员确认中选择“是”，没看到窗口时点任务栏里闪烁的图标。');
@@ -193,7 +197,7 @@ function performanceBreakdown(data){
     if(data.thread_target_ms!=null)lines.push(`整帧处理目标：${formatPerf(data.thread_target_ms,' 毫秒')} · ${data.thread_allocation_reason||'自动调整计算线程'}`);
     if(data.process_priority==='above_normal')lines.push('后台调度：高于普通程序，游戏在前台时识别仍优先拿到处理器');
     const parallel=data.hand_scheduling==='parallel_same_frame';
-    lines.push([stage('身体识别调用',stages.pose),stage(parallel?'手部额外等待':'手部识别流程',stages.hands),stage('画面准备与点整理',stages.prepare),stage('控制处理',stages.control)].join(' · '));
+    lines.push([stage('身体识别调用',stages.pose),...(stages.head!=null?[stage('头姿流程',stages.head)]:[]),stage(parallel?'手部额外等待':'手部识别流程',stages.hands),stage('画面准备与点整理',stages.prepare),...(stages.depth_dispatch!=null?[stage('深度对照提交',stages.depth_dispatch)]:[]),stage('控制处理',stages.control)].join(' · '));
     if(parallel&&data.hand_processing_avg_ms!=null)lines.push(`手部独立处理：${formatPerf(data.hand_processing_avg_ms,' 毫秒')} · 与身体并行：${data.hand_parallel_percent??0}% · 已与身体识别重叠的时间不重复计入单帧耗时。`);
     lines.push('身体识别调用包含识别库内部处理；以上均非单独的神经网络耗时。');
   }

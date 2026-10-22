@@ -54,6 +54,7 @@ from motioncontrol.depth_march import DepthMarchLifts
 from motioncontrol.experimental_march import ExperimentMarchLifts
 from motioncontrol.body_lean import BodyLeanController
 from motioncontrol.body_angle_learning import BodyAngleLearning
+from motioncontrol.depth_comparison import DepthComparison
 from motioncontrol import sensitivity_experiments
 from motioncontrol.config_transaction import atomic_bytes
 from motioncontrol import kinect_camera
@@ -4156,6 +4157,7 @@ class NativeCameraService:
         self._auto_pose = AutoPoseChoice()
         self.hand_model_state, self.hand_model_error = "idle", None
         self.hfhpe = HfhpeEstimator()
+        self.depth_comparison = DepthComparison(kernel)
         self.hand_cpu_threads = None
         # 不写死 0。一台电脑上可以有好几个摄像头（内置的、外接的、虚拟的），
         # 而 0 号未必是对着人的那个——以前这个数字没有任何地方能改，插了采集卡
@@ -4238,7 +4240,7 @@ class NativeCameraService:
         self._inference_times: deque[float] = deque(maxlen=120)
         self._inference_durations_ms: deque[float] = deque(maxlen=120)
         self._inference_stages_ms = {
-            name: deque(maxlen=120) for name in ("prepare", "pose", "hands", "control")
+            name: deque(maxlen=120) for name in ("prepare", "pose", "head", "hands", "depth_dispatch", "control")
         }
         self._hand_processing_ms: deque[float] = deque(maxlen=120)
         self._hand_parallel: deque[bool] = deque(maxlen=120)
@@ -5204,6 +5206,7 @@ class NativeCameraService:
                 self.kernel.clear_source("computer_camera")
             except Exception:
                 pass
+            self.depth_comparison.suspend()
 
     def _worker_finished(self, session: _CameraSession) -> None:
         with self._condition:
@@ -5388,8 +5391,10 @@ class NativeCameraService:
                     }
                 # 复用同帧彩色图和现有人体定位，不另开摄像头或运行第二个人头检测器。
                 head_config = getattr(getattr(self.kernel, "head_controller", None), "config", {})
+                head_started_at = time.perf_counter()
                 head_pose = self.hfhpe.process(frame, pose_map, enabled=(not self.assist
                     and head_config.get("enabled", True) and head_config.get("horizontal_algorithm") in {"hfhpe", "hfhpe_simple"}))
+                head_finished_at = time.perf_counter()
                 hands_started_at = time.perf_counter()
                 depth_body = kinect_camera.matching_depth_body(depth_metadata, pose_map, frame_rotation)
                 model_pose = pose_map
@@ -5410,6 +5415,16 @@ class NativeCameraService:
                 self.hand_model_state = "native" if sides and not model_sides else gesture.state
                 self.hand_model_error = None if self.hand_model_state == "native" else gesture.error
                 self.hand_cpu_threads = gesture.cpu_threads
+                if not self.assist and not session.stop.is_set():
+                    try:
+                        self.depth_comparison.submit(frame, model_pose, depth_body, depth_metadata, frame_rotation,
+                            captured_at, [str(self.camera_device), str(self.model_path), str(self.selected_backend),
+                                          frame_rotation, bool(depth_metadata and depth_metadata.get("image_mirrored")),
+                                          width, height, (depth_body or {}).get("tracking_id")])
+                    except Exception as exc:
+                        # 可选对照不能让摄像头和正式识别退出。
+                        self.depth_comparison.report_input_error(exc)
+                depth_dispatched_at = time.perf_counter()
                 with self._condition:
                     if session.stop.is_set() or self._session is not session:
                         break
@@ -5450,10 +5465,12 @@ class NativeCameraService:
                     self._inference_durations_ms.append(inference_ms)
                     # 点转换计入预处理；控制处理包含等待提交锁的时间。
                     stages = {
-                        "prepare": prepared_at - started + hands_started_at - pose_finished_at,
+                        "prepare": prepared_at - started + hands_started_at - pose_finished_at - (head_finished_at - head_started_at),
                         "pose": pose_finished_at - prepared_at,
+                        "head": head_finished_at - head_started_at,
                         "hands": hands_finished_at - hands_started_at,
-                        "control": processing_finished_at - hands_finished_at,
+                        "depth_dispatch": depth_dispatched_at - hands_finished_at,
+                        "control": processing_finished_at - depth_dispatched_at,
                     }
                     for name, duration in stages.items():
                         self._inference_stages_ms[name].append(duration * 1000.0)
@@ -5561,6 +5578,7 @@ class NativeCameraService:
             self._fail_session(session, str(exc))
         finally:
             self.hfhpe.close()
+            self.depth_comparison.suspend()
             try:
                 scheduled.close()
             finally:
@@ -5637,6 +5655,7 @@ class NativeCameraService:
 
     def stop(self) -> dict:
         self.cancel_start()
+        self.depth_comparison.suspend()
         with self._lock:
             session = self._session
             if session is None:
@@ -5730,6 +5749,8 @@ class NativeCameraService:
                 "auto_model_reason": self._auto_pose.reason,
                 "hand_model_state": self.hand_model_state, "hand_model_error": self.hand_model_error,
                 "camera_resolution": resolution,
+                "hfhpe": self.hfhpe.status(),
+                "depth_comparison": self.depth_comparison.status(),
                 "capture_fps": self._round_or_none(self._rate(self._capture_times), 2),
                 "backend": self.selected_backend,
                 "backend_name": self._backend_display_name(self.selected_backend_name),

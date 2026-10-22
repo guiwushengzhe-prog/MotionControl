@@ -3,6 +3,7 @@ import {$,api,configurationOperation,post,setProperty,setText,syncChildren} from
 import {ACTION_TYPE_LABELS,SYSTEM_TARGET_NAMES,bindingsForDisplay,targetLabel} from './labels.js';
 import {fillBehaviorControl,fillTargetControl,makeKeyCaptureInput,makeTypeSelect,readBindingAction,syncRuleTriggerChoices,syncVoiceReleaseChoices} from './mapping.js';
 import {gameProfile} from './state.js';
+import {voiceDiagnosticText} from './voice-diagnostics.js';
 
 export let voiceInputReady=false;
 export let voiceInputIssue='正在准备';
@@ -216,7 +217,7 @@ function renderVoiceStatus(s=voice.status){
   const clash=$('#voiceConflicts');if(clash){const list=s.phrase_conflicts||[];setProperty(clash,'hidden',!list.length);setText(clash,list.length?`${list.join('；')}。同名的只有一条会生效，改掉其中一条的说法。`:'')}
   // 换游戏、装别人的配置带进来的口令没经过输入框，这里兜底照实说。
   const unheard=$('#voiceUnheard');if(unheard){const list=s.unheard||[];setProperty(unheard,'hidden',!list.length);setText(unheard,list.length?`这几句口令里有语音认不出的字，说了也听不到：${list.slice(0,6).map(item=>`${item.phrase}（${(item.chars||[]).join('、')}）`).join('；')}${list.length>6?` 等 ${list.length} 句`:''}。换个说法。`:'')}
-  const diag=$('#voiceDiagnostic');setText(diag,[`模式：${s.recognizer_mode||'—'}`,`词条：${s.supported_count??'—'}`,`模型：${modelPath}`,`音频：${s.audio_ready?'已准备':'未准备'} / ${s.audio_alive||s.stream_alive?'运行中':'空闲'}`,`音量：${Number(s.rms||0).toFixed(0)} · 字节：${s.bytes_received||0}`,`实时识别：${partial||'—'}`,`最后完成：${phrase||'—'}`,`电脑执行：${s.last_executed===true?'已执行':s.last_executed===false?'未执行':'未确认'}`,`错误：${s.last_error||'—'}`].join('\n'));
+  const diag=$('#voiceDiagnostic');setText(diag,voiceDiagnosticText(s));
   document.dispatchEvent(new Event('motioncontrol:voice-state'));
 }
 

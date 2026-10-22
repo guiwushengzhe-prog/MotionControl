@@ -386,6 +386,19 @@
 
 <section class="settings-pane" data-pane="lab" hidden="">
 <h1 class="pane-title">实验与诊断</h1>
+<div class="group" id="depthComparisonPanel">
+<h2 class="group-title">单目深度对比</h2>
+<div class="list">
+<div class="row"><label class="row-main" for="depthComparisonEnabled"><span class="name">开启深度对比</span><span class="sub">复用电脑摄像头画面；每次运行一个候选，结果仅用于对照</span></label><input class="switch" id="depthComparisonEnabled" type="checkbox"/></div>
+<div class="row"><label class="row-main" for="depthComparisonModel">对比模型</label><select id="depthComparisonModel"><option value="dav2_metric_s">V2-S · 室内米制</option><option value="vda_metric_s">VDA-S · 米制流式</option><option value="zipdepth">ZipDepth · 相对逆深度</option></select></div>
+<div class="row"><label class="row-main" for="depthComparisonSize"><span class="name">输入短边</span><span class="sub">越大越精细、计算越多；实际尺寸显示在下表</span></label><select id="depthComparisonSize"><option value="280">280像素</option><option value="392" selected>392像素</option><option value="518">518像素</option></select></div>
+<div class="row"><label class="row-main" for="depthComparisonFps">对比帧率上限</label><select id="depthComparisonFps"><option value="2">2帧/秒</option><option value="5">5帧/秒</option><option value="10" selected>10帧/秒</option><option value="15">15帧/秒</option><option value="30">30帧/秒</option></select></div>
+<div class="row stack"><span class="statusline" id="depthComparisonStatus" role="status">读取中…</span><span class="sub" id="depthComparisonNote"></span><span class="sub" id="depthComparisonTiming"></span><span class="sub" id="depthComparisonCalibration"></span><div class="depth-actions"><button class="btn" id="depthComparisonCalibrate" type="button" hidden>校准Zip尺度（3秒）</button><button class="btn" id="depthComparisonReset" type="button">重置本轮统计</button></div></div>
+<figure class="depth-preview" id="depthComparisonView" hidden><img id="depthComparisonPreview" alt="当前候选的深度结果，白色标记为可靠表面参考位置"/><figcaption>暖色较近、冷色较远；每帧颜色范围自动调整，请用距离数值判断变化。</figcaption></figure>
+<div class="depth-table-wrap"><table class="depth-table"><thead><tr><th>模型</th><th>资源</th><th>本轮速度</th><th>实际输入</th><th>平均绝对差</th><th>95%误差</th><th>近静止波动</th><th>验证点数</th><th>本进程预留显存</th></tr></thead><tbody id="depthComparisonRows"></tbody></table></div>
+<details class="diag-detail"><summary>当前参考点距离</summary><pre class="diag-text" id="depthComparisonPoints"></pre></details>
+<p class="group-foot">误差对照Kinect原始深度的表面采样，包含时间差与配准误差；不是关节中心精度。各模型按当前设置分别统计。相对模型校准帧不计入验证；近静止波动只统计参考距离及位置均稳定的片段。</p>
+</div></div>
 <div class="group" id="sensitivityExperiments">
 <h2 class="group-title">灵敏度实验</h2>
 <div class="list">
@@ -425,6 +438,11 @@
 <h2 class="group-title">运行状态</h2>
 <div class="list diag">
 <div class="row stack"><span class="name" id="perfSummary">实时诊断</span><pre class="diag-text" id="perfDetails">等待本地服务诊断数据。</pre></div>
+<details class="diag-detail"><summary>采集、预览与时延分布</summary><pre class="diag-text" id="diagCapture"></pre></details>
+<details class="diag-detail" open><summary>头部、校准与视角门控</summary><pre class="diag-text" id="diagHead"></pre></details>
+<details class="diag-detail" open><summary>手部识别与握拳接管</summary><pre class="diag-text" id="diagHands"></pre></details>
+<details class="diag-detail" open><summary>身体动作、区域与学习</summary><pre class="diag-text" id="diagActions"></pre></details>
+<details class="diag-detail" open><summary>系统输出与录制状态</summary><pre class="diag-text" id="diagOutput"></pre></details>
 <div class="row stack"><span class="name">语音 <span class="tag" id="voiceMode">未就绪</span></span><pre class="diag-text" id="voiceDiagnostic"></pre><span class="sub model-path" id="voiceModelPath"></span></div>
 <div class="row stack"><span class="name">防晃</span><span class="sub" aria-live="polite" id="bodyMotionGuardStatus">读取中…</span></div>
 </div>

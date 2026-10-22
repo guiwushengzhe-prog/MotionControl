@@ -419,6 +419,8 @@ def test_camera_inference_failure_automatically_releases_resources(monkeypatch):
 
     monkeypatch.setattr(detector, "detect_for_video", failed_inference)
     camera = _camera(monkeypatch, capture, detector)
+    depth_released = threading.Event()
+    monkeypatch.setattr(camera.depth_comparison, "suspend", depth_released.set)
     try:
         camera.start()
         assert detector.entered.wait(1)
@@ -429,6 +431,7 @@ def test_camera_inference_failure_automatically_releases_resources(monkeypatch):
         assert not camera.status()["running"]
         assert capture.release_count == detector.close_count == 1
         assert camera.kernel.frames == []
+        assert depth_released.is_set(), "相机失败应停止额外深度计算"
     finally:
         capture.finish.set()
         camera.stop()
