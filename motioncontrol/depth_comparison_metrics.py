@@ -34,6 +34,25 @@ def surface_references(body, metadata, rotation="none"):
     return result
 
 
+def kinect_distance_summary(body, now):
+    """直接报告新鲜原厂躯干表面距离，与模型推理及尺度校准无关。"""
+    sample_at = body.get("sample_at") if isinstance(body, dict) else None
+    if not isinstance(sample_at, (int, float)) or not 0 <= now - sample_at <= .25:
+        return None
+    torso = {"pelvis", "spine_mid", "chest", "neck", "left_shoulder", "right_shoulder", "left_hip", "right_hip"}
+    references = [p for p in surface_references(body, body) if p["name"] in torso]
+    if len(references) < 2:
+        return None
+    values = [p["z"] for p in references]
+    joints = [float(body["points"][p["name"]]["z"]) for p in references
+              if isinstance(body["points"][p["name"]].get("z"), (int, float))
+              and math.isfinite(body["points"][p["name"]]["z"])]
+    return {"surface_m": round(float(np.median(values)), 3), "surface_min_m": round(min(values), 3),
+            "surface_max_m": round(max(values), 3), "joint_m": round(float(np.median(joints)), 3) if joints else None,
+            "reference_points": len(values), "sample_age_ms": round((now - sample_at) * 1000),
+            "surface_age_ms": body["surface_age_ms"]}
+
+
 class DepthMetrics:
     def __init__(self, relative=False):
         self.relative = relative

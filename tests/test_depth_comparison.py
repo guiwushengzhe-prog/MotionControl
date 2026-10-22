@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from motioncontrol.depth_comparison import DEFAULTS, DepthComparison, validate_config
-from motioncontrol.depth_comparison_metrics import DepthMetrics, surface_references
+from motioncontrol.depth_comparison_metrics import DepthMetrics, kinect_distance_summary, surface_references
 from motioncontrol.depth_comparison_worker import read_packet, write_packet
 from test_configuration_coordination import application  # noqa: F401
 from test_profile_api_v2 import request_for
@@ -26,6 +26,20 @@ def test_raw_surface_reference_is_distinct_from_skeleton_joint_center():
     assert surface_references(body, {"surface_age_ms": 81}) == []
     body["body_valid"] = False
     assert surface_references(body, {"surface_age_ms": 0}) == []
+
+
+def test_native_torso_distance_uses_surface_metres_without_any_model():
+    body = {"matched_to_model": True, "body_valid": True, "sample_at": 10, "surface_age_ms": 12,
+            "points": {name: {"score": 1, "z": z + .1,
+                "surface": {"z": z, "color_x": .5, "color_y": .5}}
+                for name, z in (("left_shoulder", .7), ("right_shoulder", .9), ("left_wrist", .5))}}
+    result = kinect_distance_summary(body, 10.05)
+    assert result["surface_m"] == .8 and result["joint_m"] == .9
+    assert result["reference_points"] == 2, "手在躯干前面时不能改变躯干参考距离"
+    assert result["sample_age_ms"] == 50
+    assert kinect_distance_summary(body, 10.3) is None
+    body["surface_age_ms"] = 90
+    assert kinect_distance_summary(body, 10.05) is None
 
 
 def test_metric_error_uses_native_metres_and_counts_future_frames_without_alignment():

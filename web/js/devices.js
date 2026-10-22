@@ -155,7 +155,7 @@ $('#resourceHintBoost')?.addEventListener('click',e=>{
 let boostPendingNoticed=false;
 
 function renderPerformance(data){
-  renderDepthComparison(data.depth_comparison);
+  renderDepthComparison(data.depth_comparison,data.depth_tracking?.distance??null);
   renderRuntimeDiagnostics(data,kernelState,output,inputStatus);
   renderRecognitionPerformance(data);
   renderResourceHint(data);
