@@ -14,7 +14,7 @@ if(pane){
     <div class="fitness-card"><div class="fitness-heading"><h3>今日目标</h3><span id="fitnessLevel">等级 1</span></div>
       <p id="fitnessToday"></p><progress id="fitnessProgress" max="1" value="0" aria-label="每日目标进度"></progress><p id="fitnessCheckins" class="muted"></p>
     </div>
-    <div class="fitness-card"><div class="fitness-heading"><h3>最近运动</h3><span class="muted">最近12次</span></div><div id="fitnessHistory" class="fitness-history">还没有运动记录</div></div>
+    <details class="fitness-card fitness-details" id="fitnessHistorySection"><summary><span>最近运动</span><span>最近12次</span></summary><div id="fitnessHistory" class="fitness-history">还没有运动记录</div></details>
     <details class="fitness-card fitness-details"><summary><span>手环心率</span><span id="fitnessHeartStatus">未收到心率</span></summary>
       <div class="fitness-metrics"><div><strong id="fitnessHeartNow">—</strong><span>当前 · 次/分</span></div><div><strong id="fitnessHeartAvg">—</strong><span>本次平均 · 次/分</span></div><div><strong id="fitnessHeartMax">—</strong><span>本次最高 · 次/分</span></div></div>
       <p class="muted">在手环上打开心率广播，再用电脑蓝牙连接，也可以通过手机读取。连接后可预览心率，开始控制后计入本次运动。</p>
