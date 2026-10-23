@@ -659,18 +659,18 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .pose-rating > span:first-child { width: 2.6em; }
 .pose-dots { display: inline-flex; gap: .1875rem; }
 .pose-dots i { width: .375rem; height: .375rem; border-radius: 50%; background: var(--fill-2); }
-.pose-dots i.on { background: var(--accent); }
+.pose-dots i.on { background: var(--text-2); }
 .pose-parts { margin-top: .1875rem; color: var(--text-3); font-size: .75rem; }
 .pose-library-source { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .5rem; padding-top: .625rem;
   border-top: 1px solid var(--line); color: var(--text-3); font-size: .75rem; }
 .pose-library-source .btn { min-height: 1.625rem; }
 .pose-library-source-actions { display: inline-flex; align-items: center; gap: .375rem; }
-.btn.pose-library-remove { min-height: 1.625rem; padding: 0 .5rem; background: transparent; color: var(--danger); font-size: .7812rem; }
-.btn.pose-library-remove:hover:not(:disabled) { background: var(--danger-tint); }
+.btn.pose-library-remove { min-height: 1.625rem; padding: 0 .5rem; background: transparent; color: var(--text-2); font-size: .7812rem; }
+.btn.pose-library-remove:hover:not(:disabled) { background: var(--fill-2); color: var(--danger); }
 /* 卡片上的键位：绑了写键；没绑写「加到映射」，是个按钮。改键在上面那张表里。 */
-.custom-pose-key { flex: none; height: 1.625rem; padding: 0 .625rem; border: 0; border-radius: .4375rem; background: var(--ok-tint); color: var(--ok);
+.custom-pose-key { flex: none; height: 1.625rem; padding: 0 .625rem; border: 1px solid var(--line); border-radius: .4375rem; background: var(--fill-2); color: var(--text);
   font-size: .7812rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.custom-pose-key.add { background: var(--tint); color: var(--on-tint); font-weight: 500; }
+.custom-pose-key.add { background: transparent; color: var(--text-2); font-weight: 500; }
 .custom-pose-key:hover { filter: brightness(1.08); }
 .pose-cloud .pose-library:not([hidden]) { margin-top: .125rem; }
 
@@ -732,7 +732,8 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .side-ico { display: grid; place-items: center; flex: none; width: 1.375rem; height: 1.375rem; color: var(--text-2); }
 .side-ico svg { width: 1.125rem; height: 1.125rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .settings-panes { min-width: 0; }
-.settings-pane { display: grid; gap: 1.75rem; --setting-control-width: 17.5rem; }
+.settings-pane { display: grid; gap: 1.75rem; --setting-control-width: 17.5rem;
+  --on-tint: var(--text); --tint: var(--fill-2); --warn: var(--text-2); --warn-tint: var(--fill); }
 .settings-section { display: grid; gap: 1.375rem; min-width: 0; scroll-margin-top: 7rem; }
 .settings-section + .settings-section { border-top: 1px solid var(--line); padding-top: 1.75rem; margin-top: .375rem; }
 .settings-section-title { font-size: 1.0625rem; font-weight: 650; }
@@ -787,6 +788,17 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .settings-pane .group-foot { padding-inline: .25rem; line-height: 1.6; }
 .settings-pane .range-in b { min-width: 3.5rem; }
 .settings-pane .diag-text { overflow-wrap: anywhere; }
+.settings-pane .btn.primary, .settings-pane .btn.link { background: var(--fill); border-color: var(--line); color: var(--text); }
+.settings-pane .btn.primary:hover:not(:disabled), .settings-pane .btn.link:hover:not(:disabled) { background: var(--fill-2); }
+.settings-pane .btn.danger, .settings-pane .btn.link.danger { color: var(--text-2); background: transparent; }
+.settings-pane .btn.danger:hover:not(:disabled) { color: var(--danger); background: var(--fill); }
+.settings-pane :focus-visible { outline-color: var(--text-2); }
+.settings-pane select:focus, .settings-pane input:not([type=checkbox]):not([type=range]):focus { border-color: var(--text-2); box-shadow: 0 0 0 .125rem var(--line); }
+.settings-pane .binding-output:focus-within { border-color: var(--text-2); box-shadow: 0 0 0 .125rem var(--line); }
+.settings-pane .macro-step.with-prev { box-shadow: inset .1875rem 0 0 var(--line-strong); }
+.settings-pane .studio-avatar-presets button[aria-pressed="true"] { border-color: var(--text-2); color: var(--text); }
+.settings-pane .tag { color: var(--text-2); background: var(--fill); }
+#gamesPanel .library-sub .btn.link { color: var(--text-2); }
 .voice-prefix { margin-right: .25rem; color: var(--text-3); }
 .voice-wake-row { flex-wrap: wrap; gap: .5rem 1rem; }
 /* 宽度只靠 flex-basis 给：再写死 width 会把最小内容宽撑到 20rem，320px 窄屏横向溢出。 */
@@ -893,8 +905,56 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .stereo-views figure { margin: 0; max-width: 100%; min-width: 0; }
 .stereo-views canvas { display: block; width: auto; height: auto; max-width: 100%; max-height: 11.25rem; border-radius: var(--radius-sm); background: #050608; }
 .stereo-views figcaption { margin-top: .25rem; color: var(--text-2); font-size: .75rem; }
-.diag-text { margin: 0; color: var(--text-2); font: .75rem/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diag-text { margin: 0; color: var(--text-2); font: .84375rem/1.65 var(--font); font-variant-numeric: tabular-nums; white-space: pre-wrap; overflow-wrap: anywhere; }
 .diag-text:empty { display: none; }
+.diag-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem 1.5rem; padding: .5rem 0; }
+.diag-metrics>div { display: grid; gap: .375rem; min-width: 0; }
+.diag-metrics span { color: var(--text-2); font-size: .8125rem; }
+.diag-metrics strong { color: var(--text); font-size: 1.375rem; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.diag-readout, .diag-detail .diag-readout { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 1.75rem; white-space: normal; margin-top: .75rem; }
+.diag-field { min-width: 0; margin: 0; padding: .625rem 0; border-bottom: 1px solid var(--line); }
+.diag-field dt { color: var(--text-2); font-size: .78125rem; margin-bottom: .25rem; }
+.diag-field dd { color: var(--text); margin: 0; font-size: .875rem; overflow-wrap: anywhere; }
+.diag-field.wide, .diag-note { grid-column: 1 / -1; }
+.diag-note { color: var(--text-2); font-size: .8125rem; line-height: 1.65; padding: .625rem 0; }
+@media(max-width:640px){.diag-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.diag-readout,.diag-detail .diag-readout{grid-template-columns:minmax(0,1fr)}}
+
+/* 运动记录复用设置的字体、控件和灰色卡片，主要数值在首屏。 */
+#pane-fitness { gap: 1.125rem; }
+.fitness-card { min-width: 0; padding: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); }
+.fitness-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; }
+.fitness-heading h3 { font-size: .9375rem; font-weight: 650; }
+.fitness-heading>span, .fitness-details summary>span+span { color: var(--text-2); font-size: .8125rem; font-weight: 400; }
+.fitness-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1rem; margin: 1.25rem 0; }
+.fitness-metrics>div { display: flex; flex-direction: column; gap: .375rem; min-width: 0; }
+.fitness-metrics strong { font-size: 2rem; line-height: 1.3; font-weight: 650; font-variant-numeric: tabular-nums; }
+.fitness-metrics span { color: var(--text-2); font-size: .8125rem; }
+.fitness-card .muted { line-height: 1.65; }
+.fitness-card p+p { margin-top: .5rem; }
+.fitness-card .muted:empty { display: none; }
+.fitness-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.fitness-details>summary { cursor: pointer; display: flex; align-items: center; flex-wrap: wrap; gap: .5rem 1rem; font-size: .9375rem; font-weight: 650; list-style: none; }
+.fitness-details>summary::after { content: '⌄'; margin-left: auto; color: var(--text-2); }
+.fitness-details[open]>summary::after { transform: rotate(180deg); }
+.fitness-details[open]>summary { border-bottom: 1px solid var(--line); padding-bottom: 1rem; margin-bottom: 1rem; }
+.fitness-details>summary::-webkit-details-marker { display: none; }
+.fitness-fields { display: grid; margin: -.875rem -1.25rem 0; }
+.fitness-fields>.row+.row { border-top: 1px solid var(--line); }
+.fitness-card progress { display: block; appearance: none; border: 0; width: 100%; height: .5rem; margin: .875rem 0; border-radius: var(--radius); overflow: hidden; background: var(--fill-2); accent-color: var(--text-2); }
+.fitness-card progress::-webkit-progress-bar { background: var(--fill-2); }
+.fitness-card progress::-webkit-progress-value { background: var(--text-2); border-radius: var(--radius); }
+.fitness-card progress::-moz-progress-bar { background: var(--text-2); border-radius: var(--radius); }
+#fitnessToday, #fitnessCloudText { margin-top: .75rem; font-size: .84375rem; }
+.fitness-history-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 0; }
+.fitness-history-row+.fitness-history-row { border-top: 1px solid var(--line); }
+.fitness-history-date { display: grid; gap: .25rem; min-width: 0; font-size: .84375rem; }
+.fitness-history-date>span { color: var(--text-2); font-size: .75rem; }
+.fitness-history-values { display: grid; grid-template-columns: repeat(3,minmax(3.5rem,1fr)); gap: 1.25rem; flex: 0 1 22rem; text-align: right; }
+.fitness-history-values>div { display: grid; gap: .125rem; }
+.fitness-history-values strong { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fitness-history-values span { color: var(--text-2); font-size: .75rem; }
+.fitness-empty { padding: 1.5rem 0 .5rem; color: var(--text-2); font-size: .84375rem; }
+@media(max-width:640px){.fitness-metrics strong{font-size:1.625rem}.fitness-history-row{align-items:flex-start;flex-direction:column}.fitness-history-values{width:100%;flex-basis:auto;gap:.5rem}.fitness-history-values>div:first-child{text-align:left}.fitness-card{padding:1rem}.fitness-fields{margin:-.875rem -1rem 0}}
 .model-path { overflow-wrap: anywhere; }
 
 .trigger-record-picker { position: relative; max-width: 32.5rem; }

@@ -4,38 +4,39 @@ import {ComputerHeartRate} from './heart-rate.js';
 
 const pane=document.getElementById('pane-fitness');
 if(pane){
-  pane.innerHTML=`<h2>运动记录</h2>
-    <p class="muted">体感游戏中的身体活动自动记录。热量按动作和体重估算，原地踏步记为步数。</p>
+  pane.innerHTML=`<h1 class="pane-title">运动记录</h1>
+    <p class="pane-sub">查看体感游戏中的活动积累。热量按体重和动作估算。</p>
     <div class="fitness-card"><div class="fitness-heading"><h3>这次运动</h3><span id="fitnessStatus">未开始</span></div>
       <div class="fitness-metrics"><div><strong id="fitnessMinutes">0.0</strong><span>活动分钟</span></div><div><strong id="fitnessSteps">0</strong><span>步数</span></div><div><strong id="fitnessKcal">0.0</strong><span>估算活动千卡</span></div></div>
       <p class="muted">开始控制时自动记录，暂停控制或停止识别时自动保存本次。有效活动满 3 分钟才计入历史记录和每日累计。</p>
       <p id="fitnessError" class="muted" role="status"></p>
     </div>
-    <div class="fitness-card"><div class="fitness-heading"><h3>手环心率</h3><span id="fitnessHeartStatus">未收到心率</span></div>
+    <div class="fitness-card"><div class="fitness-heading"><h3>今日目标</h3><span id="fitnessLevel">等级 1</span></div>
+      <p id="fitnessToday"></p><progress id="fitnessProgress" max="1" value="0" aria-label="每日目标进度"></progress><p id="fitnessCheckins" class="muted"></p>
+    </div>
+    <div class="fitness-card"><div class="fitness-heading"><h3>最近运动</h3><span class="muted">最近12次</span></div><div id="fitnessHistory" class="fitness-history">还没有运动记录</div></div>
+    <details class="fitness-card fitness-details"><summary><span>手环心率</span><span id="fitnessHeartStatus">未收到心率</span></summary>
       <div class="fitness-metrics"><div><strong id="fitnessHeartNow">—</strong><span>当前 · 次/分</span></div><div><strong id="fitnessHeartAvg">—</strong><span>本次平均 · 次/分</span></div><div><strong id="fitnessHeartMax">—</strong><span>本次最高 · 次/分</span></div></div>
       <p class="muted">在手环上打开心率广播，再用电脑蓝牙连接，也可以通过手机读取。连接后可预览心率，开始控制后计入本次运动。</p>
-      <div class="fitness-actions"><button id="fitnessHeartConnect" type="button">连接手环</button><button id="fitnessHeartDisconnect" type="button" hidden>断开</button><button id="fitnessPhoneConnect" type="button">通过手机读取</button></div>
+      <div class="fitness-actions"><button class="btn" id="fitnessHeartConnect" type="button">连接手环</button><button class="btn" id="fitnessHeartDisconnect" type="button" hidden>断开</button><button class="btn" id="fitnessPhoneConnect" type="button">通过手机读取</button></div>
       <p id="fitnessHeartConnection" class="muted" role="status"></p>
-    </div>
-    <div class="fitness-card"><div class="fitness-heading"><h3>身体数据与目标</h3><span id="fitnessLevel">等级 1</span></div>
-      <p id="fitnessToday"></p><progress id="fitnessProgress" max="1" value="0" aria-label="每日目标进度"></progress><p id="fitnessCheckins" class="muted"></p>
+    </details>
+    <details class="fitness-card fitness-details"><summary><span>身体数据与目标</span><span>体重、每日目标</span></summary>
       <form id="fitnessProfile"><div class="fitness-fields">
-        <label>体重（千克）<input name="weight_kg" type="number" min="20" max="300" step="0.1" required></label>
-        <label>年龄<input name="age" type="number" min="10" max="100" step="1" placeholder="不填"></label>
-        <label>性别<select name="sex"><option value="">不填</option><option value="male">男</option><option value="female">女</option></select></label>
-        <label>每日主目标<select name="primary_goal"><option value="minutes">活动分钟</option><option value="steps">步数</option><option value="kcal">估算活动热量</option></select></label>
-        <label>活动分钟目标<input name="goal_active_minutes" type="number" min="1" max="300" required></label>
-        <label>步数目标<input name="goal_steps" type="number" min="1" max="100000" required></label>
-        <label>活动千卡目标<input name="goal_kcal" type="number" min="1" max="5000" required></label>
-      </div><button type="submit">保存身体数据与目标</button></form>
+        <div class="row"><label class="row-main" for="fitnessWeight"><span class="name">体重</span><span class="sub">用于估算活动热量，单位千克</span></label><input id="fitnessWeight" name="weight_kg" type="number" min="20" max="300" step="0.1" required></div>
+        <div class="row"><label class="row-main" for="fitnessAge"><span class="name">年龄</span><span class="sub">可选，结合心率估算热量</span></label><input id="fitnessAge" name="age" type="number" min="10" max="100" step="1" placeholder="不填"></div>
+        <div class="row"><label class="row-main" for="fitnessSex">性别</label><select id="fitnessSex" name="sex"><option value="">不填</option><option value="male">男</option><option value="female">女</option></select></div>
+        <div class="row"><label class="row-main" for="fitnessGoal">每日主目标</label><select id="fitnessGoal" name="primary_goal"><option value="minutes">活动分钟</option><option value="steps">步数</option><option value="kcal">估算活动热量</option></select></div>
+        <div class="row"><label class="row-main" for="fitnessGoalMinutes">活动分钟目标</label><input id="fitnessGoalMinutes" name="goal_active_minutes" type="number" min="1" max="300" required></div>
+        <div class="row"><label class="row-main" for="fitnessGoalSteps">步数目标</label><input id="fitnessGoalSteps" name="goal_steps" type="number" min="1" max="100000" required></div>
+        <div class="row"><label class="row-main" for="fitnessGoalKcal">活动千卡目标</label><input id="fitnessGoalKcal" name="goal_kcal" type="number" min="1" max="5000" required></div>
+      </div><div class="fitness-actions"><button class="btn" type="submit">保存身体数据与目标</button></div></form>
       <p class="muted">默认体重为70千克，请按实际体重修改。年龄、性别可以不填，读到手环心率时用来估热量。达到主目标自动打卡；已完成的打卡会保留。</p>
-    </div>
+    </details>
     <div class="fitness-card"><div class="fitness-heading"><h3>云端同步</h3><span id="fitnessCloudState"></span></div>
       <p id="fitnessCloudText" class="muted"></p>
-      <div class="fitness-actions"><button id="fitnessCloudLogin">登录账号</button><button id="fitnessCloudCancel" hidden>取消</button><button id="fitnessCloudLogout" hidden>退出登录</button></div>
-    </div>
-    <div class="fitness-card"><h3>最近运动</h3><div id="fitnessHistory" class="fitness-history">还没有运动记录</div></div>`;
-  const style=document.createElement('style');style.textContent=`#pane-fitness .fitness-card{background:var(--card,#1c1c1e);border:1px solid var(--line,#333);border-radius:18px;padding:20px;margin:18px 0}#pane-fitness .fitness-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}#pane-fitness h3{margin:0 0 12px}#pane-fitness .fitness-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0 22px}#pane-fitness .fitness-metrics div{display:flex;flex-direction:column;gap:6px}#pane-fitness strong{font-size:30px}#pane-fitness .fitness-metrics span{font-size:13px;color:var(--muted,#aaa)}#pane-fitness .fitness-actions{display:flex;gap:12px;flex-wrap:wrap}#pane-fitness .fitness-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:15px;margin:18px 0}#pane-fitness label{display:flex;flex-direction:column;gap:8px}#pane-fitness input,#pane-fitness select{width:100%;box-sizing:border-box}#pane-fitness progress{width:100%;height:12px;accent-color:#0a84ff}#pane-fitness .fitness-history-row{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--line,#333);flex-wrap:wrap}#pane-fitness .muted{color:var(--muted,#aaa);line-height:1.6}@media(max-width:480px){#pane-fitness .fitness-card{padding:15px}#pane-fitness strong{font-size:24px}}`;document.head.append(style);
+      <div class="fitness-actions"><button class="btn" id="fitnessCloudLogin">登录账号</button><button class="btn" id="fitnessCloudCancel" hidden>取消</button><button class="btn" id="fitnessCloudLogout" hidden>退出登录</button></div>
+    </div>`;
   const el=id=>document.getElementById(id),form=el('fitnessProfile');
   let state={},editing=false,busy=false,lastHistory='',lastHistoryAt=0;
   const heart=new ComputerHeartRate(renderHeartConnection);
@@ -145,8 +146,18 @@ if(pane){
       const result=await api('/api/fitness/history'),rows=(result.sessions||[]).slice(-12).reverse(),signature=JSON.stringify(rows);
       if(signature===lastHistory)return;lastHistory=signature;
       const container=el('fitnessHistory');container.replaceChildren();
-      if(!rows.length){container.textContent='还没有运动记录';return}
-      for(const row of rows){const item=document.createElement('div');item.className='fitness-history-row';const date=document.createElement('span'),summary=document.createElement('span');date.textContent=new Date(row.started_at_ms).toLocaleString('zh-CN');summary.textContent=`${minutes(row.active_seconds)} 分钟 · ${number(row.steps)} 步 · ${row.kcal_source==='heart_rate'?'按心率估算':'估算'} ${number(row.estimated_kcal).toFixed(1)} 千卡${row.hr_avg!=null?` · 平均心率 ${Math.round(row.hr_avg)}`:''}`;item.append(date,summary);container.append(item)}
+      if(!rows.length){container.classList.add('fitness-empty');container.textContent='运动满3分钟后，本次记录会显示在这里。';return}
+      container.classList.remove('fitness-empty');
+      for(const row of rows){
+        const item=document.createElement('div'),date=document.createElement('div'),time=document.createElement('time'),note=document.createElement('span'),values=document.createElement('div');
+        item.className='fitness-history-row';date.className='fitness-history-date';values.className='fitness-history-values';
+        const at=new Date(row.started_at_ms),dated=Number.isFinite(at.getTime());time.textContent=dated?at.toLocaleString('zh-CN',{month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'}):'时间未记录';if(dated)time.dateTime=at.toISOString();
+        note.textContent=row.hr_avg!=null?`平均心率 ${Math.round(row.hr_avg)} 次/分`:'活动估算';date.append(time,note);
+        for(const [value,label] of [[minutes(row.active_seconds),'分钟'],[number(row.steps).toLocaleString(),'步'],[number(row.estimated_kcal).toFixed(1),row.kcal_source==='heart_rate'?'心率估算千卡':'估算千卡']]){
+          const metric=document.createElement('div'),strong=document.createElement('strong'),caption=document.createElement('span');strong.textContent=value;caption.textContent=label;metric.append(strong,caption);values.append(metric);
+        }
+        item.append(date,values);container.append(item);
+      }
     }catch(error){if(heart.active)heart.disconnect('后台连接已断开，手环读取已停止');setText(el('fitnessError'),error.message)}
   }
   setInterval(()=>{void poll()},1000);document.querySelector('#settingsNav [data-pane="fitness"]')?.addEventListener('click',()=>{setTimeout(()=>{void poll()},0)});

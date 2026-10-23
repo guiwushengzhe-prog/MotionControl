@@ -1,5 +1,6 @@
 // 把现有状态串成可读的处理链，不增加识别、录制或独立状态轮询。
-import {$,setText} from './core.js';
+import {$} from './core.js';
+import {renderDiagnosticLines} from './diagnostic-view.js';
 
 const number=(v,unit='',digits=1)=>v!=null&&Number.isFinite(Number(v))?`${Number(v).toFixed(digits)}${unit}`:'—';
 const yes=(v,on='是',off='否')=>v==null?'—':v?on:off;
@@ -10,7 +11,7 @@ const motion={march:'踏步',back_leg_raise:'小腿后抬',jump:'跳跃',squat:'
 const handState={idle:'待机',disabled:'已关闭',lost:'手部丢失',open:'张手',engaged:'握拳接管',moving:'移动中'};
 const gripSource={kinect:'Kinect原厂张合',hand:'手指关节',pose:'人体指尖',none:'无有效数据'};
 
-function write(id,lines){setText($('#'+id),lines.filter(Boolean).join('\n'))}
+function write(id,lines){renderDiagnosticLines($('#'+id),lines)}
 
 export function renderRuntimeDiagnostics(p,k={},o={},input={}){
   const h=k.head||{},hands=h.hand_mouse||{},axes=hands.axes||{},exp=k.sensitivity_experiments||{},body=exp.body||{};
