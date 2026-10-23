@@ -11,6 +11,8 @@ def control_posts(api):
 
 def prepare(desktop, *, calibrated=True):
     api, page = desktop.api, desktop.page
+    api.runtime["camera"].update(running=True, frames=100, last_frame_age_ms=0)
+    api.runtime["kernel"]["pose"] = {"nose": {"x": .5, "y": .3, "score": .95}}
     api.hand["config"].update(enabled=False, horizontal_hand="off", vertical_hand="off")
     api.runtime["kernel"]["head"].update(
         enabled=True, calibrated=calibrated, horizontal_calibrated=calibrated,
@@ -21,7 +23,7 @@ def prepare(desktop, *, calibrated=True):
         path = urlparse(route.request.url).path
         api.requests.append((path, route.request.post_data_json))
         if path.endswith("/start"):
-            api.runtime["kernel"]["head"].update(calibrating=True, notice="正在校准")
+            api.runtime["kernel"]["head"].update(calibrating=True, calibrates_body=True, notice="正在校准")
         elif path.endswith("/cancel"):
             api.runtime["kernel"]["head"].update(calibrating=False, notice="校准已取消")
         api.fulfill(route, api.runtime)
@@ -79,6 +81,7 @@ def test_primary_calibration_pauses_output_before_start_and_disables_menu(deskto
     with page.expect_response(lambda response: response.url.endswith("/api/head/calibration/start")):
         page.locator("#calBtn").click()
     page.wait_for_function("calBtn.textContent==='取消校准'")
+    assert "身体" in page.locator("#calibrationPrompt").inner_text()
     posts = control_posts(api)
     assert posts == [("/api/output/config", {"enabled": False}), ("/api/head/calibration/start", {})]
     assert page.locator("#calMenuBtn").is_disabled()

@@ -48,19 +48,3 @@ def load(raw):
             except (ValueError, TypeError):
                 pass
     return result
-
-
-def lean_binding(forward, ident):
-    """只为明确的前进方向派生默认方向；自定义绑定优先，特殊键位不猜。"""
-    action = (forward or {}).get("action", {})
-    if not isinstance(action, dict):
-        return None
-    kind, target = action.get("type"), action.get("target")
-    directions = {
-        ("keyboard", "W"): ("A", "D", "S", "W"),
-        ("keyboard", "UP"): ("LEFT", "RIGHT", "DOWN", "UP"),
-        ("gamepad_axis", "LS_UP"): ("LS_LEFT", "LS_RIGHT", "LS_DOWN", "LS_UP"),
-    }.get((kind, target))
-    if directions is None or ident not in LEAN_MOTIONS:
-        return None
-    return {"action": {"type": kind, "target": directions[LEAN_MOTIONS.index(ident)], "behavior": "hold"}}

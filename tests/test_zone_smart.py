@@ -218,7 +218,8 @@ def test_with_motion_can_be_switched_per_zone(kernel):
     kernel.configure_bindings({"zones": {
         "leftHand": {"action": {"type": "gamepad", "target": "X"}, "with_motion": True},
         "headJump": {"action": {"type": "gamepad", "target": "A"}, "with_motion": False},
-    }})
+    }, "motions": {"hands_up": {"action": {"type": "gamepad", "target": "Y"}},
+                    "jump": {"action": {"type": "gamepad", "target": "Y"}}}})
     kernel.configure_motions(HANDS_UP + JUMP)
     overlaps = kernel.status()["zone_overlaps"]
     assert overlaps["leftHand"]["yields"] is False
@@ -247,14 +248,16 @@ def test_a_system_function_zone_needs_a_steady_hold(kernel, monkeypatch):
     assert kernel.zone_state["leftHand"]["pressed"]
 
 
-def test_a_system_function_zone_waits_while_any_motion_is_going(kernel, monkeypatch):
+@pytest.mark.parametrize("mapped", [False, True])
+def test_a_system_function_zone_waits_only_for_mapped_motions(kernel, monkeypatch, mapped):
     kernel.configure_motions([{"id": "squat", "enabled": True, "type": "gamepad", "target": "Y"}])
-    kernel.configure_bindings({"zones": {"leftHand": {"action": {"type": "system", "target": "ZONES.FREEZE"}}}})
+    kernel.configure_bindings({"zones": {"leftHand": {"action": {"type": "system", "target": "ZONES.FREEZE"}}},
+                               "motions": {"squat": {"action": {"type": "gamepad", "target": "Y"}}} if mapped else {}})
     feed = start(kernel, monkeypatch)
     kernel.motion_raw["squat"] = True
     feed(into(kernel, standing(), "leftHand", .12), int(SYSTEM_HOLD_S * FPS) + 5)
-    assert not kernel.zone_state["leftHand"]["pressed"]
-    assert not kernel.zones_frozen
+    assert kernel.zone_state["leftHand"]["pressed"] is not mapped
+    assert kernel.zones_frozen is not mapped
 
 
 # ---------- 疑似误按，提示去录 ----------

@@ -664,6 +664,7 @@ class ControlKernel:
         self.sensitivity_experiments = dict(sensitivity_experiments.DEFAULTS)
         self._latest_monocular_lean = None
         self._monocular_neutral_revision = 0
+        self._calibration_resets_body = False
         self._experimental_march = ExperimentMarchLifts()
         self._body_lean = BodyLeanController(learning=BodyAngleLearning(persist=self._persist))
         self._body_learning_collect = True
@@ -692,6 +693,7 @@ class ControlKernel:
         # v0.9.7 unified trigger -> output layer. Profile bindings are stored
         # independently from recognition so changing games never changes pose rules.
         self.control_bindings: dict[str, dict] = {}
+        self._profile_bindings_active = False
         self._zone_point_groups: dict[str, tuple] = {}
         self.trigger_previous: set[str] = set()
         self._rule_previous: set[str] = set()
@@ -1128,6 +1130,7 @@ class ControlKernel:
     def _install_bindings_locked(self, bindings: dict | None, mode: dict | None) -> None:
         previous_points = {name: self._zone_point_groups_locked(name) for name in self.runtime_body_zones}
         self.control_bindings = self._apply_macro_behavior_locked(flatten_bindings(bindings))
+        self._profile_bindings_active = True
         self._zone_point_groups.clear()
         for name, points in previous_points.items():
             if points != self._zone_point_groups_locked(name):
@@ -1381,12 +1384,17 @@ class ControlKernel:
             self.body_last_at = 0.0
             return self.status_locked(time.monotonic())
 
-    def start_calibration(self) -> dict:
+    def start_calibration(self, *, reset_body: bool = True) -> dict:
         with self._lock:
-            self.head_controller.start_center(time.monotonic(), kind="manual")
-            self.head = self.head_controller.status(time.monotonic())
+            now = time.monotonic()
+            self._calibration_resets_body = reset_body
+            self.head_controller.start_center(now, kind="manual")
+            self.head = self.head_controller.status(now)
+            # 首页、语音和快捷操作共用这一入口，同时重设身体各路站姿。
+            if reset_body:
+                self._start_lean_neutral_locked(now)
             self._safe_output(self.output.apply, 0.0, 0.0)
-            return self.status_locked(time.monotonic())
+            return self.status_locked(now)
 
     # ---------- 录我的动作 ----------
 
@@ -1715,12 +1723,17 @@ class ControlKernel:
     def start_lean_neutral(self) -> dict:
         with self._lock:
             now = time.monotonic()
-            self._body_lean.start_neutral(now)
-            self._latest_monocular_lean = None
-            self._monocular_neutral_revision += 1
-            self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)
-            self._dispatch_controls_locked(now)
+            self._start_lean_neutral_locked(now)
             return self.status_locked(now)
+
+    def _start_lean_neutral_locked(self, now: float) -> None:
+        self._body_lean.reset_tracking()
+        self._body_lean.start_neutral(now)
+        self._latest_monocular_lean = None
+        self._monocular_neutral_revision += 1
+        self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)
+        self.motion_raw.update(dict.fromkeys(sensitivity_experiments.LEAN_MOTIONS, False))
+        self._dispatch_controls_locked(now)
 
     def publish_monocular_lean(self, state, revision=None):
         with self._lock:
@@ -2047,7 +2060,7 @@ class ControlKernel:
         endpoint therefore starts the same finite reference capture instead of
         writing a center directly from one frame.
         """
-        return self.start_calibration()
+        return self.start_calibration(reset_body=False)
 
     # ---------- pose processing ----------
 
@@ -2511,7 +2524,11 @@ class ControlKernel:
     def _zone_mapped_locked(self, name: str) -> bool:
         if name == "lookGate":
             return self._gate_available()
-        binding = self._effective_binding_locked(f"zone.{name}")
+        return self._trigger_mapped_locked(f"zone.{name}")
+
+    def _trigger_mapped_locked(self, trigger: str) -> bool:
+        """所有动作与区域共用绑定判断；缺失的宏也不算可用绑定。"""
+        binding = self._effective_binding_locked(trigger)
         action = (binding or {}).get("action")
         if not isinstance(action, dict) or not action.get("type") or not action.get("target"):
             return False
@@ -2609,18 +2626,8 @@ class ControlKernel:
 
     def _bound_action_triggers_locked(self) -> list[str]:
         """绑了键的动作和姿势（内置、下载的、自己录的），框要不要让路只看这些。"""
-        idents = [f"motion.{ident}" for ident in (*BUILTIN_MOTIONS, *self._motion_rules)]
-        idents += [f"pose.{ident}" for ident in self._pose_rules]
-        store = self.custom_pose_store
-        if store is not None:
-            idents += [f"pose.{entry['id']}" for entry in getattr(store, "poses", ())
-                       if isinstance(entry, dict) and entry.get("id")]
-        out = []
-        for trigger in dict.fromkeys(idents):
-            action = (self._effective_binding_locked(trigger) or {}).get("action")
-            if isinstance(action, dict) and action.get("type") and action.get("target"):
-                out.append(trigger)
-        return out
+        return [trigger for trigger, _name in self._intent_actions_locked()
+                if self._trigger_mapped_locked(trigger)]
 
     def _zone_with_motion_locked(self, zone: str, binding: dict | None) -> bool:
         """这个框设成了「做动作时也要按」没有。没设过的：要跳才碰得到的框默认是，
@@ -2957,15 +2964,7 @@ class ControlKernel:
         same effective mapping decision as game output so an unused detector
         cannot suppress horizontal head control.
         """
-        binding = self._effective_binding_locked(f"motion.{ident}")
-        if not isinstance(binding, dict):
-            return False
-        action = binding.get("action")
-        return bool(
-            isinstance(action, dict)
-            and str(action.get("type", "")).strip()
-            and str(action.get("target", "")).strip()
-        )
+        return self._trigger_mapped_locked(f"motion.{ident}")
 
     def _prune_body_motion_action_risk_locked(self) -> None:
         """Immediately forget action-risk state for motions that are not mapped."""
@@ -3349,15 +3348,7 @@ class ControlKernel:
             self._dispatch_controls_locked(time.monotonic())
 
     def _effective_bindings_locked(self) -> dict[str, dict]:
-        """每个触发器**真正会按下去的**那一份，界面照这个显示。
-
-        为什么不能直接给 control_bindings：区域和动作有一层内置的兜底。配置里没有
-        zone.headJump 这一条时，它照样按 A——兜底在 _effective_binding_locked 里。
-        于是界面读配置读出个空，写「未映射」，而人在游戏里明明被按了一个键。
-
-        这种不一致最难查：界面说没绑，实际有反应，两边都"没报错"。所以真正会生效的
-        那份必须由内核算好报出来，不能让界面自己再猜一遍——猜就一定会有第二套规则。
-        """
+        """界面只读真正可用的绑定；游戏档案优先，未加载档案时兼容旧运行入口。"""
         triggers = set(self.control_bindings)
         triggers.update(f"zone.{name}" for name in self.runtime_body_zones)
         triggers.update(f"motion.{item.get('id')}" for item in self.motion_config
@@ -3366,7 +3357,7 @@ class ControlKernel:
         out: dict[str, dict] = {}
         for trigger in triggers:
             binding = self._effective_binding_locked(trigger)
-            if binding:
+            if self._trigger_mapped_locked(trigger):
                 out[trigger] = _snapshot_copy(binding)
         return out
 
@@ -3391,13 +3382,13 @@ class ControlKernel:
                 legacy = self.control_bindings.get(f"zone.{alias}")
                 if legacy is not None:
                     return None if legacy.get("disabled") else legacy
+            if self._profile_bindings_active:
+                return None
             return {"action": {"type": "gamepad", "target": RUNTIME_BODY_ZONES[ident]["button"], "behavior": "hold"}}
-        if prefix == "motion":
+        if prefix == "motion" and not self._profile_bindings_active:
             for item in self.motion_config:
                 if item.get("id") == ident and item.get("enabled") and item.get("target"):
                     return {"action": {"type": item.get("type", "gamepad"), "target": item.get("target"), "behavior": "hold"}}
-            if ident in sensitivity_experiments.LEAN_MOTIONS:
-                return sensitivity_experiments.lean_binding(self._effective_binding_locked("motion.march"), ident)
         return None
 
     def effective_bindings(self) -> dict[str, dict]:
@@ -3462,13 +3453,8 @@ class ControlKernel:
         return {"id": trigger, "action": copy.deepcopy(action)}
 
     def _mapped_triggers_locked(self, triggers) -> set[str]:
-        """其中真的绑了键的那些。手机上只显示这些。
-
-        没绑键的动作做了也不按任何键，手机头顶再写一个「下蹲 → 未映射」、框再亮一
-        下，人只会以为它起作用了。要看它认没认出来，去电脑上的「动作测试」页——
-        那一页照样全列，靠的是 recent_triggers 和区域的 recognized。
-        """
-        return {trigger for trigger in triggers if self._effective_binding_locked(trigger)}
+        """首页、手机反馈和实际输出共用有效绑定条件；原始识别供诊断使用。"""
+        return {trigger for trigger in triggers if self._trigger_mapped_locked(trigger)}
 
     def note_trigger(self, trigger: str, action: dict | None, label: str | None = None) -> None:
         """记一次触发。语音走的不是内核这条路，所以由 server 调进来。
@@ -3610,7 +3596,7 @@ class ControlKernel:
         holds = []
         for trigger in sorted(active):
             binding = self._effective_binding_locked(trigger)
-            if not binding:
+            if not self._trigger_mapped_locked(trigger):
                 continue
             alternate = binding.get("alternate_action")
             mode = binding.get("alternate_mode")
@@ -4070,7 +4056,7 @@ class ControlKernel:
             "vertical_pitch_velocity": round(float(self.vertical_pitch_velocity), 4),
             "vertical_pitch_acceleration": round(float(self.vertical_pitch_acceleration), 4),
             "vertical_pitch_intent_state": self.vertical_pitch_intent_state,
-            "head": _snapshot_copy(self.head),
+            "head": {**_snapshot_copy(self.head), "calibrates_body": self._calibration_resets_body},
             "handheld_sources": sensors,
             "last_error": self.last_error,
         }

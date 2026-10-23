@@ -62,11 +62,7 @@ export function voiceLatchText(status){
   return keys.length?`语音按住 ${keys.join('、')}`:null;
 }
 
-// 界面上显示"按的是哪个键"时，读的必须是内核算好的那份。
-//
-// control_bindings 是配置，而区域和动作还有一层内置兜底：配置里没有
-// zone.headJump 时它照样按 A。直接读配置会写成「未映射」，而人在游戏里
-// 明明被按了一个键——这种"界面说没绑、实际有反应"最难查，两边都不报错。
+// 所有显示入口读内核算好的有效绑定；游戏档案缺少的动作不从别处派生按键。
 export function bindingsForDisplay(){
   return kernelState?.effective_bindings||kernelState?.control_bindings||{};
 }
@@ -78,9 +74,8 @@ export function triggerKeyLabel(triggerKey){
   return text||'未映射';
 }
 
-// 绑没绑键。没绑的做了也不按任何键，所以除了开始页的触发显示，哪里都不显示它触发了——
-// 亮一下只会让人以为它起作用了。
-export function triggerMapped(triggerKey){return triggerKeyLabel(triggerKey)!=='未映射'}
+// 没有有效绑定的动作不显示触发，避免把原始识别误认为已输出按键。
+export function triggerMapped(triggerKey){return !['未映射','宏已丢失'].includes(triggerKeyLabel(triggerKey))}
 
 // 手部一块圈里有上下两个绑定，所以它的标注天然是两个键，写成 "Y / X"。
 export function zoneKeyLabel(id,def){
