@@ -386,21 +386,6 @@
 
 <section class="settings-pane" data-pane="lab" hidden="">
 <h1 class="pane-title">实验与诊断</h1>
-<div class="group" id="depthComparisonPanel">
-<h2 class="group-title">单目深度对比</h2>
-<div class="list">
-<div class="row"><label class="row-main" for="depthComparisonEnabled"><span class="name">开启深度对比</span><span class="sub">复用电脑摄像头画面；每次运行一个候选，结果仅用于对照</span></label><input class="switch" id="depthComparisonEnabled" type="checkbox"/></div>
-<div class="row"><label class="row-main" for="depthComparisonModel">对比模型</label><select id="depthComparisonModel"><option value="dav2_metric_s">V2-S · 室内米制</option><option value="vda_metric_s">VDA-S · 米制流式</option><option value="zipdepth">ZipDepth · 相对逆深度</option></select></div>
-<div class="row"><label class="row-main" for="depthComparisonScope"><span class="name">输入范围</span><span class="sub">人体范围复用现有骨骼定位，固定窗口避免动作时反复变焦</span></label><select id="depthComparisonScope"><option value="full">全画面</option><option value="person">人体附近</option></select></div>
-<div class="row"><label class="row-main" for="depthComparisonAutoScale"><span class="name">用Kinect固定校准尺度</span><span class="sub">先采集3秒参考，随后固定尺度验证；原始误差单独保留</span></label><input class="switch" id="depthComparisonAutoScale" type="checkbox" checked/></div>
-<div class="row"><label class="row-main" for="depthComparisonSize"><span class="name">输入短边</span><span class="sub">越大越精细、计算越多；实际尺寸显示在下表</span></label><select id="depthComparisonSize"><option value="280">280像素</option><option value="392" selected>392像素</option><option value="518">518像素</option></select></div>
-<div class="row"><label class="row-main" for="depthComparisonFps">对比帧率上限</label><select id="depthComparisonFps"><option value="2">2帧/秒</option><option value="5">5帧/秒</option><option value="10" selected>10帧/秒</option><option value="15">15帧/秒</option><option value="30">30帧/秒</option></select></div>
-<div class="row stack"><span class="statusline" id="depthComparisonStatus" role="status">读取中…</span><span class="sub" id="depthComparisonNote"></span><span class="sub" id="depthComparisonReference"></span><span class="sub" id="depthComparisonTiming"></span><span class="sub" id="depthComparisonCalibration"></span><div class="depth-actions"><button class="btn" id="depthComparisonCalibrate" type="button">重新校准尺度（3秒）</button><button class="btn" id="depthComparisonReframe" type="button" hidden>重新取人体范围</button><button class="btn" id="depthComparisonReset" type="button">重置本轮统计</button></div></div>
-<figure class="depth-preview" id="depthComparisonView" hidden><img id="depthComparisonPreview" alt="当前候选的深度结果，白色标记为可靠表面参考位置"/><figcaption>暖色较近、冷色较远；每帧颜色范围自动调整，请用距离数值判断变化。</figcaption></figure>
-<div class="depth-table-wrap"><table class="depth-table"><thead><tr><th>模型</th><th>资源</th><th>本轮速度</th><th>实际输入</th><th>原始平均误差</th><th>固定校准后误差</th><th>校准后95%误差</th><th>近静止波动</th><th>验证累计 / 本帧参考</th><th>本进程预留显存</th></tr></thead><tbody id="depthComparisonRows"></tbody></table></div>
-<details class="diag-detail"><summary>当前参考点距离</summary><pre class="diag-text" id="depthComparisonPoints"></pre></details>
-<p class="group-foot">误差对照Kinect原始深度的表面采样，包含时间差与配准误差；不是关节中心精度。原始误差与固定校准后误差分列，校准帧均不计入验证；近静止波动只统计参考距离及位置均稳定的片段。相对值不能可靠跟随深浅变化时不换算米数。</p>
-</div></div>
 <div class="group" id="sensitivityExperiments">
 <h2 class="group-title">灵敏度实验</h2>
 <div class="list">
@@ -410,13 +395,15 @@
 <div class="row"><label class="row-main" for="experimentLeanBack"><span class="name">身体后倾后退</span><span class="sub">后倾时触发后退</span></label><input class="switch" id="experimentLeanBack" type="checkbox" disabled/></div>
 <div class="row"><label class="row-main" for="experimentLeanForward"><span class="name">身体前倾前进</span><span class="sub">前倾时向前，回到站姿停止</span></label><input class="switch" id="experimentLeanForward" type="checkbox" disabled/></div>
 <div class="row"><label class="row-main" for="experimentSideSource">侧倾来源</label><select id="experimentSideSource" aria-label="侧倾来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select></div>
-<div class="row"><label class="row-main" for="experimentForeAftSource">前后倾来源</label><select id="experimentForeAftSource" aria-label="前后倾来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option><option value="monocular">单目深度（实验）</option></select></div>
+<div class="row"><label class="row-main" for="experimentForeAftSource">前后倾来源</label><select id="experimentForeAftSource" aria-label="前后倾来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option><option value="monocular">单目前后倾（实验）</option></select></div>
+<div class="row"><label class="row-main" for="monocularLeanModel"><span class="name">单目前后倾模型</span><span class="sub" id="monocularLeanModelNote">复用已有骨骼点，仅处理器计算；个人研究使用</span></label><select id="monocularLeanModel"><option value="mocapnet_personal">MocapNET · 处理器个人研究</option></select></div>
+<div class="row"><label class="row-main" for="monocularLeanFps"><span class="name">前后倾识别帧率</span><span class="sub">仅影响新增前后倾计算；不改变原有人体识别帧率</span></label><select id="monocularLeanFps"><option value="15">15帧/秒</option><option value="30">30帧/秒</option></select></div>
+<div class="row stack"><span class="statusline" id="monocularLeanRuntime" role="status">未开启单目前后倾</span><span class="sub" id="monocularLeanTiming"></span></div>
 <div class="row"><label class="row-main" for="experimentBodySource"><span class="name">首步响应来源</span><span class="sub" id="experimentBodyStatus" role="status">等待当前状态…</span></label><select id="experimentBodySource" aria-label="首步响应来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select><button class="btn" id="experimentNeutralBtn" type="button" disabled>重设站姿</button></div>
 <div class="row"><label class="row-main" for="experimentCompare"><span class="name">显示两路对照</span><span class="sub">仅作对照；控制按各方向选择的来源分别计算</span></label><input class="switch" id="experimentCompare" type="checkbox" disabled/></div>
 <div class="row"><label class="row-main" for="experimentDepthLearning"><span class="name">深度辅助学习</span><span class="sub" id="experimentDepthLearningNote">站在镜头前时，自动学习个人前后倾角度校正</span></label><input class="switch" id="experimentDepthLearning" type="checkbox" disabled/></div>
 <div id="monocularLeanPanel" hidden>
-<div class="row"><label class="row-main" for="monocularLeanModel"><span class="name">单目前后倾模型</span><span class="sub">复用现有深度计算，固定人体范围；先自然站直3秒</span></label><select id="monocularLeanModel"><option value="vda_metric_s">VDA-S · 米制流式</option><option value="dav2_metric_s">V2-S · 室内米制</option><option value="zipdepth">ZipDepth · 相对逆深度</option></select></div>
-<div class="row stack"><strong id="monocularLeanState" role="status">等待单目深度结果</strong><span class="sub" id="monocularLeanDetail"></span><label for="monocularLeanStrength">倾斜强度</label><meter id="monocularLeanStrength" min="0" max="1" value="0"></meter><span class="sub">前倾停住持续前进，后倾停住持续后退，回正释放；仅电脑摄像头</span></div>
+<div class="row stack"><strong id="monocularLeanState" role="status">等待单目前后倾结果</strong><span class="sub" id="monocularLeanDetail"></span><label for="monocularLeanStrength">倾斜强度</label><meter id="monocularLeanStrength" min="0" max="1" value="0"></meter><span class="sub">前倾停住持续前进，后倾停住持续后退，回正释放；仅电脑摄像头</span></div>
 <div class="row"><label class="row-main" for="experimentMonocularLearning"><span class="name">用Kinect教单目前后倾</span><span class="sub" id="monocularLearningNote">自动积累自然动作，后续验证通过才使用个人读出；识别可独立运行</span></label><input class="switch" id="experimentMonocularLearning" type="checkbox" disabled/></div>
 </div>
 <div class="experiment-comparison" id="experimentComparison" hidden><div id="experimentModelReadout"></div><div id="experimentDepthReadout"></div></div>

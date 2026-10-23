@@ -80,7 +80,10 @@ def validate_readout(mapping, samples, center, origin=None):
 
 
 class MonocularLean:
-    def __init__(self, root=None, *, persist=False):
+    def __init__(self, root=None, *, persist=False, feature_dim=7):
+        if feature_dim not in (7, 42):
+            raise ValueError("单目前后倾特征维度不支持")
+        self.feature_dim = feature_dim
         self.path = Path(root if root is not None else user_data_root()) / "monocular_lean_learning.json"
         self.persist = persist
         self.context = ""
@@ -120,7 +123,9 @@ class MonocularLean:
                 if isinstance(samples, list) and all(self._valid_sample(s) for s in samples):
                     self.profile["samples"] = samples[-512:]
                 active = candidate.get("active")
-                if active and validate_readout(active["mapping"], active["validation"], active["center"], active.get("origin")) is not None:
+                if (active and np.asarray(active["mapping"]["mean"]).shape == (self.feature_dim,)
+                        and all(self._valid_sample(s) for s in active["validation"])
+                        and validate_readout(active["mapping"], active["validation"], active["center"], active.get("origin")) is not None):
                     self.profile["active"] = active
             except (KeyError, TypeError, ValueError, IndexError, AttributeError):
                 self.last_error = "已保存模型未通过核对，使用几何读出"
@@ -129,11 +134,10 @@ class MonocularLean:
             self.last_pair = -math.inf
             self.reset()
 
-    @staticmethod
-    def _valid_sample(sample):
+    def _valid_sample(self, sample):
         try:
             f = np.asarray(sample["features"], dtype=float)
-            return f.shape == (7,) and np.isfinite(f).all() and math.isfinite(sample["reference"]) and abs(sample["reference"]) <= 70
+            return f.shape == (self.feature_dim,) and np.isfinite(f).all() and math.isfinite(sample["reference"]) and abs(sample["reference"]) <= 70
         except (TypeError, ValueError, KeyError):
             return False
 
@@ -187,7 +191,7 @@ class MonocularLean:
             self.revision = revision
         if torso is None:
             self.filtered = self.last_at = None
-            return {"valid": False, "calibrated": self.neutral is not None, "reason": "等待可靠的胸腹内部深度区域", "sample_at": at}
+            return {"valid": False, "calibrated": self.neutral is not None, "reason": "等待可靠的肩髋骨骼点" if self.feature_dim == 42 else "等待可靠的胸腹内部深度区域", "sample_at": at}
         if self.last_at is not None and (at <= self.last_at or at - self.last_at > .6):
             self.filtered = None
         if self.neutral is None:
@@ -209,8 +213,15 @@ class MonocularLean:
         if learn:
             self._learn(torso, reference, at)
         active = self.profile["active"]
-        value = (readout(active["mapping"], torso["features"]) - readout(active["mapping"], self.neutral["features"])
-                 if active else torso["geometric_deg"] - self.neutral["geometric_deg"])
+        if active:
+            value = readout(active["mapping"], torso["features"]) - readout(active["mapping"], self.neutral["features"])
+        elif torso.get("personal_research"):
+            coef = np.asarray(torso.get("linear_coef"), dtype=float)
+            if coef.shape != (self.feature_dim,) or not np.isfinite(coef).all():
+                return {"valid": False, "calibrated": True, "sample_at": at, "reason": "个人倾角读出无效"}
+            value = float((np.asarray(torso["features"]) - self.neutral["features"]) @ coef)
+        else:
+            value = torso["geometric_deg"] - self.neutral["geometric_deg"]
         value = max(-45., min(45., value))
         # 走位控制器已有一次短时平滑；这里不再叠加滤波。
         self.filtered = value
@@ -222,10 +233,11 @@ class MonocularLean:
                     "error": self.last_error}
         return {"valid": True, "calibrated": True, "calibrating": False, "remaining_s": 0,
                 "sample_at": at, "angle_deg": float(self.filtered), "raw_deg": float(value),
+                "feature_dim": self.feature_dim, "personal_research": bool(torso.get("personal_research")),
                 "strength": round(min(1., abs(self.filtered) / 20), 3),
                 "state": "forward" if self.filtered <= -7 else "back" if self.filtered >= 7 else "neutral",
-                "reason": "已验证的个人读出" if active else "实验几何估计；尚未通过独立动作验收",
-                "readout": "learned" if active else "geometric", "learning": learning,
+                "reason": "已验证的个人读出" if active else "个人研究倾角读出；待更多独立条件检验" if torso.get("personal_research") else "实验几何估计；尚未通过独立动作验收",
+                "readout": "learned" if active else "personal_research" if torso.get("personal_research") else "geometric", "learning": learning,
                 "sampled_regions": torso["sampled_regions"], "reference_used_for_prediction": False}
 
     def flush(self):
