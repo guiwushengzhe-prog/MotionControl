@@ -399,6 +399,8 @@
 <div class="row"><label class="row-main" for="experimentForeAftSource">前后倾来源</label><select id="experimentForeAftSource" aria-label="前后倾来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option><option value="monocular">单目前后倾（实验）</option></select></div>
 <div class="row"><label class="row-main" for="monocularLeanModel"><span class="name">单目前后倾模型</span><span class="sub" id="monocularLeanModelNote">复用已有骨骼点，仅处理器计算；个人研究使用</span></label><select id="monocularLeanModel"><option value="mocapnet_personal">MocapNET · 处理器个人研究</option></select></div>
 <div class="row"><label class="row-main" for="monocularLeanFps"><span class="name">前后倾识别帧率</span><span class="sub">仅影响新增前后倾计算；不改变原有人体识别帧率</span></label><select id="monocularLeanFps"><option value="15">15帧/秒</option><option value="30">30帧/秒</option></select></div>
+<div class="row"><label class="row-main" for="monocularForwardThreshold"><span class="name">单目前倾响应门槛</span><span class="sub">越小越容易触发；回正后释放</span></label><div class="range-in"><input id="monocularForwardThreshold" aria-label="单目前倾响应门槛" type="range" min="2" max="15" step="0.5" value="7"/><b id="monocularForwardThresholdValue">7.0°</b></div></div>
+<div class="row"><label class="row-main" for="monocularBackThreshold"><span class="name">单目后倾响应门槛</span><span class="sub">后倾估计幅度偏小时可单独降低</span></label><div class="range-in"><input id="monocularBackThreshold" aria-label="单目后倾响应门槛" type="range" min="2" max="15" step="0.5" value="7"/><b id="monocularBackThresholdValue">7.0°</b></div></div>
 <div class="row stack"><span class="statusline" id="monocularLeanRuntime" role="status">未开启单目前后倾</span><span class="sub" id="monocularLeanTiming"></span></div>
 <div class="row"><label class="row-main" for="leanComparisonRecording"><span class="name">记录前后倾对照</span><span class="sub">持续记录单目与 Kinect 对前倾、中立、后倾的同帧判断；只保存状态与角度</span></label><input class="switch" id="leanComparisonRecording" type="checkbox" disabled/></div>
 <div class="row stack" id="leanComparisonRecordingPanel" hidden>
@@ -407,7 +409,7 @@
 <span class="sub" id="leanComparisonRecordingClasses"></span>
 <span class="sub" id="leanComparisonRecordingRecent"></span>
 <span class="sub" id="leanComparisonRecordingFile" style="overflow-wrap:anywhere"></span>
-<span class="sub">两边统一按 7° 划分三状态；未校准、缺少可靠深度、不同步或过时的结果单列，不计入一致率。重设站姿时请自然站直约3秒。</span>
+<span class="sub">深度按7°、单目按当前前后响应门槛比较三状态，记录保留原七度判断；未校准、缺少可靠深度、不同步或过时的结果单列，不计入一致率。重设站姿时请自然站直约3秒。</span>
 </div>
 <div class="row"><label class="row-main" for="experimentBodySource"><span class="name">首步响应来源</span><span class="sub" id="experimentBodyStatus" role="status">等待当前状态…</span></label><select id="experimentBodySource" aria-label="首步响应来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select><button class="btn" id="experimentNeutralBtn" type="button" disabled>重设站姿</button></div>
 <div class="row"><label class="row-main" for="experimentCompare"><span class="name">显示两路对照</span><span class="sub">仅作对照；控制按各方向选择的来源分别计算</span></label><input class="switch" id="experimentCompare" type="checkbox" disabled/></div>

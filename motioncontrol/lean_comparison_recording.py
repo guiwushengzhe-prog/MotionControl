@@ -15,7 +15,7 @@ from .body_lean import BACK_ON
 
 STATES = ("forward", "neutral", "back")
 LABELS = {"forward": "前倾", "neutral": "中立", "back": "后倾"}
-SCHEMA = "motioncontrol.lean_comparison.v1"
+SCHEMA = "motioncontrol.lean_comparison.v2"
 MAX_FILE_BYTES = 16 * 1024 ** 2
 
 
@@ -23,8 +23,8 @@ def _finite(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _state(angle):
-    return "forward" if angle <= -BACK_ON else "back" if angle >= BACK_ON else "neutral"
+def _state(angle, forward_on=BACK_ON, back_on=BACK_ON):
+    return "forward" if angle <= -forward_on else "back" if angle >= back_on else "neutral"
 
 
 class LeanComparisonRecorder:
@@ -60,7 +60,7 @@ class LeanComparisonRecorder:
             try:
                 stream.write(json.dumps({"schema": SCHEMA, "type": "header", "started_at": at.isoformat(),
                     "states": LABELS, "threshold_deg": BACK_ON,
-                    "comparison": "同帧倾角均按同一进入阈值划分三状态；非游戏控制滞回后的按键状态",
+                    "comparison": "深度按七度、单目按当帧响应门槛划分三状态；保留单目原七度状态供复核，不含控制平滑及释放滞回",
                     "reference": "Kinect 匹配同人的可靠肩髋；沿用单目三秒中立期间的深度基准",
                     "contains_images": False}, ensure_ascii=False) + "\n")
                 stream.flush()
@@ -129,7 +129,8 @@ class LeanComparisonRecorder:
             if not self.enabled or comparison.get("token") != self.token:
                 return
             at = meta["sample_at"]
-            context = (str(meta["signature"]), meta["neutral_revision"])
+            forward_on, back_on = comparison.get("forward_on_deg", BACK_ON), comparison.get("back_on_deg", BACK_ON)
+            context = (str(meta["signature"]), meta["neutral_revision"], forward_on, back_on)
             if context != self._context:
                 self._end_span()
                 self._previous = None
@@ -159,7 +160,9 @@ class LeanComparisonRecorder:
             row = {"type": "frame", "at": wall_at, "sample_at": at, "sequence": meta["sequence"],
                 "model": comparison["model"], "neutral_revision": meta["neutral_revision"],
                 "tracking_id": comparison.get("tracking_id"),
-                "monocular": {"state": _state(angle) if _finite(angle) else None,
+                "monocular": {"state": _state(angle, forward_on, back_on) if _finite(angle) else None,
+                              "original_state": _state(angle) if _finite(angle) else None,
+                              "readout": mono.get("readout"),
                               "angle_deg": round(angle, 3) if _finite(angle) else None},
                 "depth": {"state": _state(depth_angle) if _finite(depth_angle) else None,
                           "angle_deg": round(depth_angle, 3) if _finite(depth_angle) else None,
@@ -167,6 +170,7 @@ class LeanComparisonRecorder:
                           "sample_at": depth_at if _finite(depth_at) else None,
                           "neutral_deg": neutral_reference if _finite(neutral_reference) else None},
                 "latency_ms": round(max(0., finished - at) * 1000, 1),
+                "thresholds": {"monocular_forward_on_deg": forward_on, "monocular_back_on_deg": back_on, "depth_on_deg": BACK_ON},
                 "comparable": comparable, "agree": None, "reason": reason}
             if self._previous and self._previous["comparable"] and comparable:
                 dt = at - self._previous["sample_at"]

@@ -1,6 +1,6 @@
 """已有桌面页面中的对照开关与三状态统计；接口和个人目录隔离。"""
 from test_web_optimization import desktop, mock_browser  # noqa: F401
-from test_web_sensitivity_experiments import seed
+from test_web_sensitivity_experiments import seed, install_save, wait_saved
 
 
 def test_recording_switch_and_counts_keep_control_source_and_do_not_overflow(desktop):
@@ -37,3 +37,17 @@ def test_recording_switch_and_counts_keep_control_source_and_do_not_overflow(des
     assert not any(path in ("/api/input/source", "/api/output/config", "/api/sensitivity-experiments") and body
                    for path, body in api.requests)
     assert not desktop.errors
+
+
+def test_forward_and_backward_thresholds_save_separately(desktop):
+    seed(desktop)
+    saved = install_save(desktop)
+    page = desktop.page
+    for selector, value, key in [("#monocularForwardThreshold", "6", "monocular_forward_on_deg"),
+                                  ("#monocularBackThreshold", "3", "monocular_back_on_deg")]:
+        page.locator(selector).fill(value)
+        page.locator(selector).dispatch_event('change')
+        wait_saved(page)
+        assert saved[-1] == {key: float(value)}
+    assert page.locator('#monocularForwardThresholdValue').text_content() == '6.0°'
+    assert page.locator('#monocularBackThresholdValue').text_content() == '3.0°'

@@ -1772,6 +1772,8 @@ class ControlKernel:
             collect_learning=self._body_learning_collect,
             model_identity=self.latest_body_model_identity,
             monocular=self._latest_monocular_lean,
+            monocular_forward_on_deg=config["monocular_forward_on_deg"],
+            monocular_back_on_deg=config["monocular_back_on_deg"],
         )
         active.difference_update(self.disabled_builtin_actions)
         self.motion_active.difference_update(sensitivity_experiments.LEAN_MOTIONS)

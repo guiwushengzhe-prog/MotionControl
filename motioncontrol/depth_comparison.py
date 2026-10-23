@@ -209,9 +209,12 @@ class DepthComparison:
                 for n, p in (pose or {}).items() if isinstance(p, dict) and "x" in p and "y" in p},
                 teacher=kinect_pitch(depth_body), neutral_revision=getattr(self.kernel, "_monocular_neutral_revision", 0))
             if self.lean_recording.enabled:
+                sensitivity = getattr(self.kernel, "sensitivity_experiments", {})
                 self._pending[0]["lean_comparison"] = {"token": self.lean_recording.token,
                     "depth_sample_at": (depth_body or {}).get("sample_at"),
-                    "tracking_id": tracking_id, "model": self._selected_model()}
+                    "tracking_id": tracking_id, "model": self._selected_model(),
+                    "forward_on_deg": sensitivity.get("monocular_forward_on_deg", 7.),
+                    "back_on_deg": sensitivity.get("monocular_back_on_deg", 7.)}
             if self._thread is None or not self._thread.is_alive():
                 self._stop = threading.Event()
                 self._state, self._error = "loading", ""

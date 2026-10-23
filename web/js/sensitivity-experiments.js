@@ -34,6 +34,12 @@ function render(){
   }
   if(!saving)for(const [id,key] of [['experimentBodySource','body_source'],['experimentSideSource','side_source'],['experimentForeAftSource','fore_aft_source']])setProperty($('#'+id),'value',Object.hasOwn(SOURCE_NAMES,config[key])?config[key]:'model');
   for(const id of ['experimentBodySource','experimentSideSource','experimentForeAftSource','experimentNeutralBtn'])setProperty($('#'+id),'disabled',saving||configurationBusy||!current);
+  for(const [id,key] of [['monocularForwardThreshold','monocular_forward_on_deg'],['monocularBackThreshold','monocular_back_on_deg']]){
+    const value=Number(config[key]??7);
+    if(!saving)setProperty($('#'+id),'value',String(value));
+    setText($('#'+id+'Value'),`${value.toFixed(1)}°`);
+    setProperty($('#'+id),'disabled',saving||configurationBusy||!current);
+  }
   setText($('#experimentHeadHoldNote'),!holdAvailable?'先在“体感 → 视角”选择左右转头的模型简化方案':config.head_hold?'偏头时持续转向，回到中心停止':'开启后偏头停住仍持续转向；回到中心停止');
   setText($('#experimentFirstStepNote'),!stepAvailable?'先在“体感 → 身体识别”选择灵敏踏步':current?.first_step_message||'首步即可响应，不等待连续踏步');
   const body=current?.body||{},sideSource=body.side_source||config.side_source,foreSource=body.fore_aft_source||config.fore_aft_source;
@@ -108,3 +114,7 @@ $('#experimentBodySource')?.addEventListener('change',event=>void save({body_sou
 $('#experimentSideSource')?.addEventListener('change',event=>void save({side_source:event.target.value}));
 $('#experimentForeAftSource')?.addEventListener('change',event=>void save({fore_aft_source:event.target.value}));
 $('#experimentNeutralBtn')?.addEventListener('click',()=>void save({},true));
+for(const [id,key] of [['monocularForwardThreshold','monocular_forward_on_deg'],['monocularBackThreshold','monocular_back_on_deg']]){
+  $('#'+id)?.addEventListener('input',event=>setText($('#'+id+'Value'),`${Number(event.target.value).toFixed(1)}°`));
+  $('#'+id)?.addEventListener('change',event=>void save({[key]:Number(event.target.value)}));
+}
