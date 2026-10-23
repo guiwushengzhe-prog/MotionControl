@@ -1,4 +1,5 @@
 """灵敏度实验配置；识别开关不改变既有游戏档案。"""
+import math
 
 DEFAULTS = {
     "head_hold": False,
@@ -12,6 +13,8 @@ DEFAULTS = {
     "learn_from_depth": False,
     "learn_monocular": False,
     "compare": False,
+    "monocular_forward_on_deg": 7.0,
+    "monocular_back_on_deg": 7.0,
 }
 LEAN_MOTIONS = ("lean_left", "lean_right", "lean_back", "lean_forward")
 
@@ -26,7 +29,11 @@ def configure(current, changes):
             result[key] = result["body_source"]
     linked = result["side_source"] == result["fore_aft_source"] == result["body_source"]
     for key, value in changes.items():
-        if key in ("body_source", "side_source", "fore_aft_source"):
+        if key in ("monocular_forward_on_deg", "monocular_back_on_deg"):
+            if type(value) not in (int, float) or not math.isfinite(value) or not 2 <= value <= 15:
+                raise ValueError("单目前后倾响应门槛需要在2°至15°之间")
+            value = float(value)
+        elif key in ("body_source", "side_source", "fore_aft_source"):
             if value not in ({"model", "depth", "monocular"} if key == "fore_aft_source" else {"model", "depth"}):
                 raise ValueError("请选择有效的身体识别来源；单目深度仅用于前后倾")
         elif not isinstance(value, bool):

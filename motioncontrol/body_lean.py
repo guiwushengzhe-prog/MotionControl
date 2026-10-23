@@ -107,6 +107,7 @@ class BodyLeanController:
         self._source = "model"
         self._side_source = self._fore_aft_source = "model"
         self._strafe = self._back = self._forward = self._compare = False
+        self._mono_forward_on = self._mono_back_on = BACK_ON
         self.load_neutral(neutral)
         self.reset_tracking()
 
@@ -207,7 +208,8 @@ class BodyLeanController:
     def update(self, image_pose, world_pose, depth_body, width, height, now, *,
                source="model", side_source=None, fore_aft_source=None,
                strafe=False, back=False, forward=False, compare=False,
-               learn_from_depth=False, sample_age_s=0., collect_learning=True, model_identity=None, monocular=None):
+               learn_from_depth=False, sample_age_s=0., collect_learning=True, model_identity=None, monocular=None,
+               monocular_forward_on_deg=BACK_ON, monocular_back_on_deg=BACK_ON):
         side_source = source if side_source is None else side_source
         fore_aft_source = source if fore_aft_source is None else fore_aft_source
         if source not in SKELETON_SOURCES or side_source not in SKELETON_SOURCES or fore_aft_source not in SOURCES:
@@ -221,6 +223,7 @@ class BodyLeanController:
             self.reset_tracking()
         self._side_source, self._fore_aft_source = side_source, fore_aft_source
         self._source, self._strafe, self._back, self._forward, self._compare = source, bool(strafe), bool(back), bool(forward), bool(compare)
+        self._mono_forward_on, self._mono_back_on = monocular_forward_on_deg, monocular_back_on_deg
         if self._learning_enabled and not learn_from_depth:
             self.flush_learning()
         self._learning_enabled = bool(learn_from_depth and self.learning is not None)
@@ -297,8 +300,10 @@ class BodyLeanController:
             readiness[name] = (back_ready, active)
             left_on = side_ready and side >= (SIDE_OFF if "lean_left" in active else SIDE_ON)
             right_on = side_ready and side <= -(SIDE_OFF if "lean_right" in active else SIDE_ON)
-            back_on = back_ready and backward >= (BACK_OFF if "lean_back" in active else BACK_ON)
-            forward_on = back_ready and backward <= -(BACK_OFF if "lean_forward" in active else BACK_ON)
+            back_threshold = self._mono_back_on if name == "monocular" else BACK_ON
+            forward_threshold = self._mono_forward_on if name == "monocular" else BACK_ON
+            back_on = back_ready and backward >= back_threshold * (BACK_OFF / BACK_ON if "lean_back" in active else 1)
+            forward_on = back_ready and backward <= -forward_threshold * (BACK_OFF / BACK_ON if "lean_forward" in active else 1)
             state["active"] = (["lean_left"] if left_on else ["lean_right"] if right_on else []) + (["lean_back"] if back_on else ["lean_forward"] if forward_on else [])
             state["valid"] = bool(required) and all(state[axis + "_valid"] for axis in required)
             missing = [axis for axis in required if not state[axis + "_valid"]]
@@ -411,4 +416,6 @@ class BodyLeanController:
                 "learning": {"enabled": self._learning_enabled, **learning},
                 "thresholds": {"side_on_deg": SIDE_ON, "side_off_deg": SIDE_OFF,
                                "back_on_deg": BACK_ON, "back_off_deg": BACK_OFF,
-                               "forward_on_deg": BACK_ON, "forward_off_deg": BACK_OFF}}
+                               "forward_on_deg": BACK_ON, "forward_off_deg": BACK_OFF,
+                               "monocular_forward_on_deg": self._mono_forward_on,
+                               "monocular_back_on_deg": self._mono_back_on}}

@@ -36,7 +36,7 @@ def test_same_frame_states_and_mismatch_timeline_are_written_then_stop(tmp_path)
     r.stop()
     content = r.path.read_text(encoding="utf-8")
     rows = [json.loads(line) for line in content.splitlines()]
-    assert rows[0]["schema"] == "motioncontrol.lean_comparison.v1"
+    assert rows[0]["schema"] == "motioncontrol.lean_comparison.v2"
     assert rows[-1]["type"] == "summary" and rows[-1]["valid"] == 4
     record(r, 1.4)
     assert r.path.read_text(encoding="utf-8") == content
