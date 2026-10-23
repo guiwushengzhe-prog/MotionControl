@@ -22,7 +22,13 @@ def test_fitness_summary_history_and_profile_remain_readable_and_editable(deskto
     page.click('[data-view="devices"]')
     page.click('#settingsNav [data-pane="fitness"]')
     expect(page.locator('#fitnessSteps')).to_have_text('1,234')
+    assert page.locator('#fitnessHistorySection').get_attribute('open') is None
+    expect(page.locator('#fitnessHistory')).to_be_hidden()
+    page.locator('#fitnessHistorySection>summary').click()
+    expect(page.locator('#fitnessHistory')).to_be_visible()
     expect(page.locator('#fitnessHistory .fitness-history-values')).to_contain_text('49.3')
+    page.locator('#fitnessHistorySection>summary').click()
+    expect(page.locator('#fitnessHistory')).to_be_hidden()
     assert page.locator('.fitness-details:has(#fitnessProfile)').get_attribute('open') is None
     page.locator('.fitness-details:has(#fitnessProfile)>summary').click()
     expect(page.locator('#fitnessWeight')).to_have_value('70')
