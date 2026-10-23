@@ -159,10 +159,10 @@ def test_monocular_source_reuses_same_frame_even_when_diagnostics_are_off(monkey
     meta, frame = comparison._pending
     assert meta["lean"] and not comparison.config["enabled"]
     assert meta["teacher"] is None and meta["references"] == []
-    assert meta["input_scope"] == "person" and frame.shape[1] < 320
+    assert meta["input_scope"] == "pose" and frame is None
     assert comparison.status()["control_requested"] is True
-    assert comparison.status()["active_model"] == "vda_metric_s"
-    assert comparison.config["model"] == "dav2_metric_s", "单目默认VDA不覆盖此前深度对比的模型偏好"
+    assert comparison.status()["active_model"] == "mocapnet_personal"
+    assert comparison.config["model"] == "dav2_metric_s", "轻量单目选择独立于已退役的深度对比偏好"
 
 
 def test_switching_between_comparison_and_monocular_restarts_only_the_owned_model(monkeypatch):
@@ -185,10 +185,10 @@ def test_switching_between_comparison_and_monocular_restarts_only_the_owned_mode
     frame = np.zeros((240, 320, 3), np.uint8)
     kernel.sensitivity_experiments["fore_aft_source"] = "monocular"
     comparison.submit(frame, pose, None, None, "none", 2., "source")
-    assert joined == [True] and started == ["vda_metric_s"]
-    assert comparison._worker_model == "vda_metric_s"
+    assert joined == [True] and started == ["mocapnet_personal"]
+    assert comparison._worker_model == "mocapnet_personal"
     kernel.sensitivity_experiments["fore_aft_source"] = "model"
     comparison.submit(frame, pose, None, None, "none", 3., "source")
-    assert started == ["vda_metric_s", "zipdepth"]
+    assert started == ["mocapnet_personal", "zipdepth"]
     assert comparison._worker_model == "zipdepth"
     comparison.close()

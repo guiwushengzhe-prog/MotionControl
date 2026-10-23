@@ -42,10 +42,10 @@ function render(){
   const monoState=monoControl.back_valid?(monoControl.active?.includes('lean_forward')?'forward':monoControl.active?.includes('lean_back')?'back':'neutral'):mono.state;
   setProperty($('#monocularLeanPanel'),'hidden',!monoVisible);
   const monoName=mono.calibrating?`自然站直，还需 ${Number(mono.remaining_s||0).toFixed(1)} 秒`:mono.valid?
-    `${monoState==='forward'?'前倾':monoState==='back'?'后倾':'中立'} · 估计 ${angle(monoAngle)}`:mono.reason||'等待可靠的单目深度胸腹区域';
+    `${monoState==='forward'?'前倾':monoState==='back'?'后倾':'中立'} · 估计 ${angle(monoAngle)}`:mono.reason||'等待可靠的肩髋骨骼点';
   setText($('#monocularLeanState'),monoName);
   setProperty($('#monocularLeanStrength'),'value',mono.valid?Math.min(1,Math.abs(Number(monoAngle)||0)/20):0);
-  setText($('#monocularLeanDetail'),mono.valid?`${mono.sampled_regions||0} 个胸腹区域 · ${mono.reason||''} · Kinect不参与预测`:mono.reason||'让双肩和双髋完整入镜；首次识别或重设站姿后自然站直3秒');
+  setText($('#monocularLeanDetail'),mono.valid?`${mono.personal_research?'复用人体骨骼点 · 处理器计算':`${mono.sampled_regions||0} 个胸腹区域`} · ${mono.reason||''} · Kinect不参与预测`:mono.reason||'让双肩和双髋完整入镜；首次识别或重设站姿后自然站直3秒');
   const ml=mono.learning||{};
   setText($('#monocularLearningNote'),`${ml.reason||'开启后自动积累前倾、回正和后倾；后续验证通过才使用个人读出'} · 已采 ${Number(ml.samples)||0} 对 · 后续验证 ${Number(ml.validation_samples)||0} 对${ml.metrics?` · 已启用读出平均差 ${angle(ml.metrics.mae_deg)}`:''}${ml.error?'；'+ml.error:''}`);
   const learning=body.learning||{};

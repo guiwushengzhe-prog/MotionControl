@@ -24,7 +24,8 @@ MODELS = {
     "vda_metric_s": {"name": "VDA-S · 米制流式", "kind": "metric", "temporal": True},
     "zipdepth": {"name": "ZipDepth · 相对逆深度", "kind": "relative_inverse", "temporal": False},
 }
-DEFAULTS = {"enabled": False, "model": "dav2_metric_s", "monocular_model": "vda_metric_s", "input_size": 392, "max_fps": 10,
+LEAN_MODELS = {"mocapnet_personal": {"name": "MocapNET · 处理器个人研究", "kind": "pose_features", "temporal": False}}
+DEFAULTS = {"enabled": False, "model": "dav2_metric_s", "monocular_model": "mocapnet_personal", "input_size": 392, "max_fps": 15,
             "input_scope": "full", "auto_scale": True}
 
 
@@ -32,7 +33,7 @@ def validate_config(current, changes):
     if not isinstance(changes, dict) or set(changes) - set(DEFAULTS):
         raise ValueError("深度对比设置无效")
     value = {**DEFAULTS, **current, **changes}
-    if not isinstance(value["enabled"], bool) or value["model"] not in MODELS or value["monocular_model"] not in MODELS:
+    if not isinstance(value["enabled"], bool) or value["model"] not in MODELS or value["monocular_model"] not in {**MODELS, **LEAN_MODELS}:
         raise ValueError("请选择有效的深度模型与开关")
     if type(value["input_size"]) is not int or value["input_size"] not in (280, 392, 518):
         raise ValueError("请选择280、392或518的输入短边")
@@ -53,6 +54,10 @@ class DepthComparison:
             self.config = validate_config(DEFAULTS, getter("depth_comparison", {}))
         except (ValueError, TypeError):
             self.config = dict(DEFAULTS)
+        # 旧三模型对比已从界面退役，不能因历史保存的开关在后台继续计算。
+        self.config["enabled"] = False
+        if self.config["monocular_model"] not in LEAN_MODELS:
+            self.config["monocular_model"] = "mocapnet_personal"
         self._runtime = user_data_root() / "depth_comparison_runtime.json"
         self._pending = None
         self._thread = None
@@ -81,7 +86,9 @@ class DepthComparison:
             registry, python_ok = {}, False
         models = registry.get("models", {})
         return {ident: {**info, "available": bool(python_ok and Path(models.get(ident, {}).get("source", "?")).is_dir()
-                        and Path(models.get(ident, {}).get("checkpoint", "?")).is_file())} for ident, info in MODELS.items()}
+                        and Path(models.get(ident, {}).get("checkpoint", "?")).is_file()
+                        and (ident not in LEAN_MODELS or Path(models.get(ident, {}).get("readout", "?")).is_file()))}
+                for ident, info in {**MODELS, **LEAN_MODELS}.items()}
 
     def _control_requested(self):
         return getattr(self.kernel, "sensitivity_experiments", {}).get("fore_aft_source") == "monocular"
@@ -140,7 +147,8 @@ class DepthComparison:
         now = time.monotonic()
         with self._condition:
             mono = self._control_requested()
-            limit = max(10, self.config["max_fps"]) if mono else self.config["max_fps"]
+            pose_only = self._selected_model() in LEAN_MODELS
+            limit = max(15 if pose_only else 10, self.config["max_fps"]) if mono else self.config["max_fps"]
             if not self._requested() or self._state == "error" or now - self._last_submit < 1 / limit:
                 return
             self._last_submit = now
@@ -153,7 +161,7 @@ class DepthComparison:
                     self._rect = None
                 self._tracking_id = tracking_id
             height, width = frame.shape[:2]
-            scope = "person" if mono else self.config["input_scope"]
+            scope = "pose" if pose_only else "person" if mono else self.config["input_scope"]
             if scope == "person" and self._rect is None:
                 self._rect = person_rect(pose, width, height)
                 if self._rect is None:
@@ -161,14 +169,14 @@ class DepthComparison:
                     return
             rect = self._rect if scope == "person" else (0, 0, width, height)
             x, y, w, h = rect
-            references = crop_references(surface_references(depth_body, metadata, rotation), rect, width, height)
+            references = [] if pose_only else crop_references(surface_references(depth_body, metadata, rotation), rect, width, height)
             if self._pending is not None:
                 self._skipped += 1
             self._sequence += 1
             self._pending = ({"sequence": self._sequence, "width": w, "height": h,
                               "sample_at": captured_at, "signature": [signature, self._tracking_id, rect],
                               "frame_region": list(rect), "source_shape": [height, width],
-                              "references": references}, frame[y:y+h, x:x+w].copy())
+                              "references": references}, None if pose_only else frame[y:y+h, x:x+w].copy())
             self._pending[0].update(lean=mono, input_scope=scope, effective_fps=limit, pose={n: {**p, "x": (p["x"] * width - x) / w, "y": (p["y"] * height - y) / h}
                 for n, p in (pose or {}).items() if isinstance(p, dict) and "x" in p and "y" in p},
                 teacher=kinect_pitch(depth_body), neutral_revision=getattr(self.kernel, "_monocular_neutral_revision", 0))
@@ -233,7 +241,8 @@ class DepthComparison:
             logs.mkdir(parents=True, exist_ok=True)
             with (logs / "depth-comparison-worker.log").open("ab", buffering=0) as stderr:
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                process = owned_process.popen([registry["python"], "-X", "utf8", "-m", "motioncontrol.depth_comparison_worker",
+                module = "motioncontrol.mocap_lean_worker" if config["model"] in LEAN_MODELS else "motioncontrol.depth_comparison_worker"
+                process = owned_process.popen([registry["python"], "-X", "utf8", "-m", module,
                     "--runtime", str(self._runtime), "--model", config["model"], "--size", str(config["input_size"]),
                     *(["--auto-scale"] if config["auto_scale"] else [])],
                     cwd=str(root), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr, creationflags=flags)
@@ -283,7 +292,9 @@ class DepthComparison:
                             self._inference.clear()
                             self._times.clear()
                             processed, previous_signature = 0, meta["signature"]
-                    write_packet(process.stdin, meta, frame.tobytes())
+                    # 原厂标签仅供本进程的可选学习；推理进程不接触参考答案。
+                    outgoing = {key: value for key, value in meta.items() if key != "teacher"}
+                    write_packet(process.stdin, outgoing, b"" if frame is None else frame.tobytes())
                     result, preview = received.get(timeout=45)
                     if result.get("kind") != "frame":
                         raise RuntimeError(result.get("error", "深度计算没有返回有效帧"))
@@ -292,8 +303,13 @@ class DepthComparison:
                         with self._monocular_lock:
                             if generation != self._generation or stop.is_set():
                                 break
+                            dimension = 42 if config["model"] in LEAN_MODELS else 7
+                            if self.monocular.feature_dim != dimension:
+                                self.monocular.flush()
+                                self.monocular = MonocularLean(persist=bool(getattr(self.kernel, "_persist", False)), feature_dim=dimension)
                             self.monocular.set_context([config["model"], registry["models"][config["model"]].get("sha256"),
-                                meta["signature"][0], meta["frame_region"], config["input_size"], 1])
+                                meta["signature"][0], meta["frame_region"], config["input_size"] if dimension == 7 else
+                                registry["models"][config["model"]].get("readout_sha256"), 1])
                             experimental = getattr(self.kernel, "sensitivity_experiments", {})
                             lean = self.monocular.update(result.get("torso"), result["sample_at"],
                                 reference=meta.get("teacher") if 0 <= finished - result["sample_at"] <= .25 else None,

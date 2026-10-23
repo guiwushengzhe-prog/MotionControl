@@ -4,7 +4,7 @@ import {$,setText} from './core.js';
 const number=(v,unit='',digits=1)=>v!=null&&Number.isFinite(Number(v))?`${Number(v).toFixed(digits)}${unit}`:'—';
 const yes=(v,on='是',off='否')=>v==null?'—':v?on:off;
 const method={roll_tilt:'头部侧倾',head_responsive:'侧倾与转脸',gesture_v188:'骨骼转头',hfhpe:'模型转头·原规则',hfhpe_simple:'模型转头·简化回正',off:'关闭',left:'左手握拳',right:'右手握拳',head_pitch:'抬头低头'};
-const source={model:'模型骨骼',depth:'Kinect深度骨骼',computer:'电脑摄像头',computer_camera:'电脑摄像头',phone:'手机摄像头',mixed:'分别选择'};
+const source={model:'模型骨骼',depth:'Kinect深度骨骼',monocular:'单目前后倾',computer:'电脑摄像头',computer_camera:'电脑摄像头',phone:'手机摄像头',mixed:'分别选择'};
 const state={IDLE:'静止',NEUTRAL:'中心区',ACTIVE:'正在输出',MOVING:'正在移动',RETURNING:'正在回正',ENGAGED:'已接管',DISENGAGED:'未接管'};
 const motion={march:'踏步',back_leg_raise:'小腿后抬',jump:'跳跃',squat:'下蹲',lean_left:'身体左倾',lean_right:'身体右倾',lean_back:'身体后倾',lean_forward:'身体前倾'};
 const handState={idle:'待机',disabled:'已关闭',lost:'手部丢失',open:'张手',engaged:'握拳接管',moving:'移动中'};
@@ -46,6 +46,7 @@ export function renderRuntimeDiagnostics(p,k={},o={},input={}){
     `已映射区域：${zones.length} 个 · 当前点亮 ${zones.filter(([,z])=>z.pressed||z.recognized).length} 个 · 触发方式 ${k.zone_trigger_mode==='simple'?'灵敏':'智能'} · 固定区域 ${yes(k.zones_frozen)}`,
     `侧倾来源：${source[body.side_source]||'—'} · 前后倾来源：${source[body.fore_aft_source]||'—'} · ${body.active?.map(x=>motion[x]||x).join('、')||'未触发走位'}`,
     ...['model','depth'].map(key=>{const s=body.sources?.[key]||{};return `${source[key]}：侧倾 ${number(s.side_deg,'°')} · 前后倾 ${number(s.back_deg,'°')} · ${s.reason||'—'}`}),
+    exp.monocular?.personal_research?`MocapNET个人研究：${number(exp.monocular.angle_deg,'°')} · 仅处理器 · ${exp.monocular.reason||'—'}`:'',
     `学习：${yes(body.learning?.enabled,'开启','关闭')} · 已采 ${body.learning?.accepted_samples??0} 对 · 验证 ${body.learning?.validation_samples??0} 对 · ${body.learning?.reason||'—'}`,
   ]);
   const os=o.server||o;
