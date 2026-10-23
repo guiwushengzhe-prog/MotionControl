@@ -400,6 +400,15 @@
 <div class="row"><label class="row-main" for="monocularLeanModel"><span class="name">单目前后倾模型</span><span class="sub" id="monocularLeanModelNote">复用已有骨骼点，仅处理器计算；个人研究使用</span></label><select id="monocularLeanModel"><option value="mocapnet_personal">MocapNET · 处理器个人研究</option></select></div>
 <div class="row"><label class="row-main" for="monocularLeanFps"><span class="name">前后倾识别帧率</span><span class="sub">仅影响新增前后倾计算；不改变原有人体识别帧率</span></label><select id="monocularLeanFps"><option value="15">15帧/秒</option><option value="30">30帧/秒</option></select></div>
 <div class="row stack"><span class="statusline" id="monocularLeanRuntime" role="status">未开启单目前后倾</span><span class="sub" id="monocularLeanTiming"></span></div>
+<div class="row"><label class="row-main" for="leanComparisonRecording"><span class="name">记录前后倾对照</span><span class="sub">持续记录单目与 Kinect 对前倾、中立、后倾的同帧判断；只保存状态与角度</span></label><input class="switch" id="leanComparisonRecording" type="checkbox" disabled/></div>
+<div class="row stack" id="leanComparisonRecordingPanel" hidden>
+<strong id="leanComparisonRecordingState" role="status"></strong>
+<span class="sub" id="leanComparisonRecordingCounts"></span>
+<span class="sub" id="leanComparisonRecordingClasses"></span>
+<span class="sub" id="leanComparisonRecordingRecent"></span>
+<span class="sub" id="leanComparisonRecordingFile" style="overflow-wrap:anywhere"></span>
+<span class="sub">两边统一按 7° 划分三状态；未校准、缺少可靠深度、不同步或过时的结果单列，不计入一致率。重设站姿时请自然站直约3秒。</span>
+</div>
 <div class="row"><label class="row-main" for="experimentBodySource"><span class="name">首步响应来源</span><span class="sub" id="experimentBodyStatus" role="status">等待当前状态…</span></label><select id="experimentBodySource" aria-label="首步响应来源" disabled><option value="model">模型骨骼</option><option value="depth">深度骨骼</option></select><button class="btn" id="experimentNeutralBtn" type="button" disabled>重设站姿</button></div>
 <div class="row"><label class="row-main" for="experimentCompare"><span class="name">显示两路对照</span><span class="sub">仅作对照；控制按各方向选择的来源分别计算</span></label><input class="switch" id="experimentCompare" type="checkbox" disabled/></div>
 <div class="row"><label class="row-main" for="experimentDepthLearning"><span class="name">深度辅助学习</span><span class="sub" id="experimentDepthLearningNote">站在镜头前时，自动学习个人前后倾角度校正</span></label><input class="switch" id="experimentDepthLearning" type="checkbox" disabled/></div>

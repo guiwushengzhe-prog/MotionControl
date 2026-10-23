@@ -17,6 +17,7 @@ from .depth_comparison_metrics import surface_references
 from .depth_comparison_worker import read_packet, write_packet
 from .depth_input import crop_references, person_rect
 from .monocular_lean import MonocularLean, kinect_pitch
+from .lean_comparison_recording import LeanComparisonRecorder
 from .user_paths import user_data_root
 
 MODELS = {
@@ -77,6 +78,12 @@ class DepthComparison:
         self.monocular = MonocularLean(persist=bool(getattr(kernel, "_persist", False)))
         self._monocular_lock = threading.RLock()
         self._latencies, self._inference, self._times = deque(maxlen=120), deque(maxlen=120), deque(maxlen=120)
+        self.lean_recording = LeanComparisonRecorder(user_data_root() / "recordings" / "前后倾对照")
+        if getter("lean_comparison_recording", False) is True:
+            try:
+                self.lean_recording.start()
+            except OSError as exc:
+                self.lean_recording.error = "对照记录未能开始：" + str(exc)
 
     def installed(self):
         try:
@@ -94,11 +101,32 @@ class DepthComparison:
         return getattr(self.kernel, "sensitivity_experiments", {}).get("fore_aft_source") == "monocular"
 
     def _requested(self):
-        return self.config["enabled"] or self._control_requested()
+        return self.config["enabled"] or self._control_requested() or self.lean_recording.enabled
 
     def _selected_model(self, config=None):
         value = self.config if config is None else config
-        return value["monocular_model"] if self._control_requested() else value["model"]
+        return value["monocular_model"] if self._control_requested() or self.lean_recording.enabled else value["model"]
+
+    def configure_recording(self, changes):
+        if not isinstance(changes, dict) or set(changes) != {"enabled"} or type(changes["enabled"]) is not bool:
+            raise ValueError("对照记录开关必须为开启或关闭")
+        enabled = changes["enabled"]
+        with self._lock:
+            previous = self.lean_recording.enabled
+            if enabled and not previous:
+                self.lean_recording.start()
+            try:
+                remember = getattr(self.kernel, "remember_general_setting", None)
+                if remember:
+                    remember("lean_comparison_recording", enabled)
+            except Exception:
+                if not previous:
+                    self.lean_recording.stop()
+                raise
+            if not enabled:
+                self.lean_recording.stop()
+            self._revision += 1
+        return self.status()
 
     def configure(self, changes):
         with self._lock:
@@ -146,7 +174,7 @@ class DepthComparison:
             self.suspend()
         now = time.monotonic()
         with self._condition:
-            mono = self._control_requested()
+            mono = self._control_requested() or self.lean_recording.enabled
             pose_only = self._selected_model() in LEAN_MODELS
             limit = max(15 if pose_only else 10, self.config["max_fps"]) if mono else self.config["max_fps"]
             if not self._requested() or self._state == "error" or now - self._last_submit < 1 / limit:
@@ -180,6 +208,10 @@ class DepthComparison:
             self._pending[0].update(lean=mono, input_scope=scope, effective_fps=limit, pose={n: {**p, "x": (p["x"] * width - x) / w, "y": (p["y"] * height - y) / h}
                 for n, p in (pose or {}).items() if isinstance(p, dict) and "x" in p and "y" in p},
                 teacher=kinect_pitch(depth_body), neutral_revision=getattr(self.kernel, "_monocular_neutral_revision", 0))
+            if self.lean_recording.enabled:
+                self._pending[0]["lean_comparison"] = {"token": self.lean_recording.token,
+                    "depth_sample_at": (depth_body or {}).get("sample_at"),
+                    "tracking_id": tracking_id, "model": self._selected_model()}
             if self._thread is None or not self._thread.is_alive():
                 self._stop = threading.Event()
                 self._state, self._error = "loading", ""
@@ -192,6 +224,7 @@ class DepthComparison:
             self._condition.notify_all()
 
     def suspend(self):
+        self.lean_recording.pause("识别暂停或来源更新，等待新画面")
         with self._condition:
             self._generation += 1
             self._revision += 1
@@ -222,6 +255,7 @@ class DepthComparison:
 
     def close(self):
         self.suspend()
+        self.lean_recording.stop()
 
     def report_input_error(self, error):
         self.suspend()
@@ -293,7 +327,7 @@ class DepthComparison:
                             self._times.clear()
                             processed, previous_signature = 0, meta["signature"]
                     # 原厂标签仅供本进程的可选学习；推理进程不接触参考答案。
-                    outgoing = {key: value for key, value in meta.items() if key != "teacher"}
+                    outgoing = {key: value for key, value in meta.items() if key not in ("teacher", "lean_comparison")}
                     write_packet(process.stdin, outgoing, b"" if frame is None else frame.tobytes())
                     result, preview = received.get(timeout=45)
                     if result.get("kind") != "frame":
@@ -315,6 +349,13 @@ class DepthComparison:
                                 reference=meta.get("teacher") if 0 <= finished - result["sample_at"] <= .25 else None,
                                 learn=bool(experimental.get("learn_monocular")), revision=meta["neutral_revision"])
                         result["monocular_lean"] = lean
+                        with self._lock:
+                            if generation == self._generation and not stop.is_set():
+                                if result.get("sequence") == meta["sequence"] and result.get("sample_at") == meta["sample_at"]:
+                                    self.lean_recording.observe(meta, lean, self.monocular.neutral_reference,
+                                        finished=finished, revision=getattr(self.kernel, "_monocular_neutral_revision", 0))
+                                else:
+                                    self.lean_recording.pause("模型结果与提交帧编号不匹配，未计入对照")
                     with self._condition:
                         if generation != self._generation or stop.is_set():
                             break
@@ -342,6 +383,7 @@ class DepthComparison:
             with self._lock:
                 if generation == self._generation and not stop.is_set():
                     self._state, self._error = "error", (str(exc) or "深度模型未能及时返回，请关闭后重试")
+                    self.lean_recording.pause(self._error)
         finally:
             with self._monocular_lock:
                 self.monocular.flush()
@@ -394,4 +436,5 @@ class DepthComparison:
                     "active_model": self._selected_model(),
                     "models": self.installed(), "results": results, "skipped_frames": self._skipped,
                     "sequence": current.get("sequence"), "preview_ready": self._preview is not None,
+                    "lean_recording": self.lean_recording.status(),
                     "reference": "Kinect 原始深度的关节附近表面采样，非关节中心"}
