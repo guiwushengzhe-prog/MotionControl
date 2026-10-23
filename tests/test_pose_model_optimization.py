@@ -115,3 +115,28 @@ def test_detector_uses_original_for_masks_standard_model_and_incompatible_runtim
     if not expected:
         assert calls[-1].base_options.model_asset_path == str(path)
     assert len(calls) == (2 if fails else 1)
+
+
+def test_auto_uses_full_with_limited_memory_without_rewriting_user_preference(tmp_path, monkeypatch):
+    import motioncontrol.cpu_inference as cpu
+    monkeypatch.setattr(cpu, "available_commit_memory", lambda: 1500 * 1024 ** 2)
+    path = tmp_path / "model.task"
+    path.write_bytes(b"original")
+    camera = NativeCameraService(SimpleNamespace(general_setting=lambda key, default: default))
+    camera.configure_models({"full": path, "heavy": path})
+    camera.model_preference = "auto"
+    calls = []
+    python = SimpleNamespace(BaseOptions=lambda **kw: SimpleNamespace(**kw))
+    vision = SimpleNamespace(PoseLandmarkerOptions=lambda **kw: SimpleNamespace(**kw),
+                             PoseLandmarker=object(), RunningMode=SimpleNamespace(VIDEO=1))
+    monkeypatch.setitem(sys.modules, "mediapipe", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "mediapipe.tasks", SimpleNamespace(python=python))
+    monkeypatch.setitem(sys.modules, "mediapipe.tasks.python", SimpleNamespace(vision=vision))
+    def create(task, options, **kwargs):
+        calls.append(options)
+        return object(), 2, None
+    monkeypatch.setattr(cpu, "create_cpu_task", create)
+    camera._create_detector()
+    assert camera.actual_model == "full" and camera.model_preference == "auto"
+    assert "内存" in camera._auto_pose.reason
+    assert calls[0].base_options.model_asset_path == str(path)
