@@ -8,6 +8,38 @@ import types
 import warnings
 
 
+def available_commit_memory():
+    """Windows 当前进程还能申请的内存，包含虚拟内存；读取失败不冒充内存不足。"""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [("length", wintypes.DWORD), ("load", wintypes.DWORD)] + [
+            (name, ctypes.c_ulonglong) for name in ("physical", "physical_free", "commit_limit",
+                "commit_free", "virtual", "virtual_free", "reserved")]
+
+    status = MemoryStatus()
+    status.length = ctypes.sizeof(status)
+    try:
+        query = ctypes.WinDLL("kernel32", use_last_error=True).GlobalMemoryStatusEx
+        query.argtypes = [ctypes.POINTER(MemoryStatus)]
+        query.restype = wintypes.BOOL
+        return int(status.commit_free) if query(ctypes.byref(status)) else None
+    except (AttributeError, OSError):
+        return None
+
+
+def require_inference_memory(minimum_mb=512):
+    """先保留内存余量再进入原生识别库；原生线程的分配失败无法靠 Python 捕获。"""
+    available = available_commit_memory()
+    if available is not None and available < minimum_mb * 1024 ** 2:
+        raise MemoryError(f"系统可用内存（含虚拟内存）只剩 {available / 1024 ** 2:.0f} MB，"
+                          "已暂停识别以保留控制页面；释放内存后可重试识别")
+    return available
+
+
 class FrameThreadBudget:
     """根据正常识别的整帧耗时分配线程，不轮流跑各个线程档位。"""
     def __init__(self):
@@ -193,6 +225,7 @@ def cpu_options(base_options, threads):
 
 
 def create_cpu_task(task_type, options, *, hands=False, threads=None):
+    require_inference_memory()
     original = options.base_options
     capacity = thread_budget(hands=hands)
     requested = min(capacity, threads if threads is not None else (1 if hands else 2))
@@ -203,6 +236,7 @@ def create_cpu_task(task_type, options, *, hands=False, threads=None):
         if threads is None:
             raise
         options.base_options = original
+        require_inference_memory()
         return task_type.create_from_options(options), None, "计算线程设置未被运行库接受"
     if threads is None:
         return detector, None, "当前运行库未开放计算线程设置"
@@ -219,5 +253,6 @@ def create_cpu_task(task_type, options, *, hands=False, threads=None):
     except Exception:
         detector.close()
         options.base_options = original
+        require_inference_memory()
         return task_type.create_from_options(options), None, "实际计算图未能确认线程设置"
     return detector, threads, None

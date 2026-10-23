@@ -69,6 +69,26 @@ def test_runtime_without_native_thread_api_does_not_claim_multicore():
     assert wrapped is base and threads is None
 
 
+def test_low_commit_memory_rejects_before_entering_native_task(monkeypatch):
+    import motioncontrol.cpu_inference as module
+    monkeypatch.setattr(module, "available_commit_memory", lambda: 120 * 1024 ** 2)
+    calls = []
+    task = SimpleNamespace(create_from_options=lambda options: calls.append(options))
+    with pytest.raises(MemoryError, match="120 MB"):
+        create_cpu_task(task, SimpleNamespace(base_options=object()))
+    assert calls == []
+    with pytest.raises(MemoryError):
+        module.require_inference_memory(128)
+
+
+def test_memory_check_failure_does_not_disable_recognition(monkeypatch):
+    import motioncontrol.cpu_inference as module
+    monkeypatch.setattr(module, "available_commit_memory", lambda: None)
+    assert module.require_inference_memory() is None
+    monkeypatch.setattr(module, "available_commit_memory", lambda: 1600 * 1024 ** 2)
+    assert module.require_inference_memory() == 1600 * 1024 ** 2
+
+
 @pytest.mark.parametrize("failure", ["create", "graph"])
 def test_unconfirmed_threads_close_partial_task_and_restore_original_options(monkeypatch, failure):
     import motioncontrol.cpu_inference as module

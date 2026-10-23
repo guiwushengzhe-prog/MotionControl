@@ -4743,6 +4743,12 @@ class NativeCameraService:
             self.model_path = paths.get("full")
 
     def _create_detector(self, choice=None, *, cpu_threads=None):
+        from motioncontrol.cpu_inference import available_commit_memory
+        available = available_commit_memory()
+        if (choice is None and self.model_preference == "auto" and self.model_paths.get("full")
+                and available is not None and available < 2 * 1024 ** 3):
+            choice = "full"
+            self._auto_pose.reason = "系统可用内存较少，自动使用标准模型"
         choice = choice or (self.model_preference if self.model_preference != "auto" else
                             "heavy" if self.model_paths.get("heavy") else "full")
         self.actual_model = choice
@@ -5064,7 +5070,7 @@ class NativeCameraService:
                 self.last_error = "本地 Python 未安装 opencv-python；电脑摄像头内核无法启动"
                 self.lifecycle = "failed"
                 raise CameraUnavailable(self.last_error) from exc
-            detector = None
+            capture = detector = None
             try:
                 self._auto_pose = AutoPoseChoice()
                 self._cpu_budget = FrameThreadBudget()
@@ -5074,6 +5080,10 @@ class NativeCameraService:
                 if self.process_priority is None:
                     # 游戏在前台时识别仍优先拿到处理器，以跟上摄像头供帧为目标。
                     self.process_priority = prioritize_process()
+                # 先确认设备实际供帧。设备离线时不加载模型，避免白占内存。
+                capture, first_frame = self._select_capture(cv2)
+                if self._start_cancel.is_set():
+                    raise CameraUnavailable("摄像头启动已取消")
                 try:
                     mp, detector = self._create_detector()
                 except Exception:
@@ -5083,11 +5093,9 @@ class NativeCameraService:
                     self._auto_pose.reason = "高精度模型无法加载，继续使用标准模型"
                 if self._start_cancel.is_set():
                     raise CameraUnavailable("摄像头启动已取消")
-                capture, first_frame = self._select_capture(cv2)
-                if self._start_cancel.is_set():
-                    capture.release()
-                    raise CameraUnavailable("摄像头启动已取消")
             except CameraUnavailable as exc:
+                if capture is not None:
+                    capture.release()
                 if detector is not None:
                     try:
                         detector.close()
@@ -5097,6 +5105,8 @@ class NativeCameraService:
                 self.lifecycle = "failed"
                 raise
             except Exception as exc:
+                if capture is not None:
+                    capture.release()
                 self.last_error = str(exc)
                 self.lifecycle = "failed"
                 try:
@@ -5325,6 +5335,7 @@ class NativeCameraService:
         gesture = scheduled.gesture
         previous_pose, previous_sample_at, previous_geometry = None, 0.0, None
         body_identity_key, body_identity = None, None
+        next_memory_check = 0.0
         try:
             import cv2
             while True:
@@ -5344,6 +5355,10 @@ class NativeCameraService:
                     self.skipped_frames += skipped
                 if frame is None:
                     continue
+                if time.monotonic() >= next_memory_check:
+                    from motioncontrol.cpu_inference import require_inference_memory
+                    require_inference_memory(128)
+                    next_memory_check = time.monotonic() + 1.0
                 # 复用同一采集流；只有录制要求抠图时才启用模型的分割输出。
                 # 换的是同一个模型：「自动」已经因为太慢退到 Full 的，不能借这一下又换回 Heavy。
                 if (self._studio_require_mask != self._detector_masks_enabled
@@ -5501,6 +5516,12 @@ class NativeCameraService:
                 plan = self._cpu_budget.observe({key: value * 1000 for key, value in stages.items()},
                     target_fps, self.pose_cpu_threads, gesture.cpu_threads, visible=bool(landmarks), now=finished)
                 adjusted = False
+                if plan:
+                    from motioncontrol.cpu_inference import available_commit_memory
+                    available = available_commit_memory()
+                    if available is not None and available < 2 * 1024 ** 3:
+                        self._cpu_budget.defer(finished, "系统内存余量较少，保留当前识别线程")
+                        plan = None
                 if plan:
                     from motioncontrol.cpu_inference import thread_budget
                     plan = (min(plan[0], thread_budget()), min(plan[1], thread_budget(hands=True)))

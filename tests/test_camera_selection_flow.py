@@ -62,6 +62,36 @@ def test_camera_start_failure_does_not_exit_application(application, monkeypatch
     assert not app.INPUT_BRIDGE.status()["body_enabled"]
 
 
+def test_offline_camera_does_not_load_native_models(application, monkeypatch):
+    camera = application.RUNTIME.camera
+    calls = []
+    def offline(_cv2):
+        raise CameraUnavailable("设备离线")
+    monkeypatch.setattr(camera, "_select_capture", offline)
+    monkeypatch.setattr(camera, "_create_detector", lambda *args, **kwargs: calls.append("model"))
+    with pytest.raises(CameraUnavailable, match="设备离线"):
+        camera.start()
+    assert not calls
+    assert camera.lifecycle == "failed"
+
+
+def test_model_memory_failure_releases_opened_camera_and_keeps_service(application, monkeypatch):
+    import numpy as np
+    from types import SimpleNamespace
+    camera = application.RUNTIME.camera
+    released = []
+    capture = SimpleNamespace(release=lambda: released.append(True))
+    monkeypatch.setattr(camera, "_select_capture", lambda cv2: (capture, np.zeros((4,4,3),np.uint8)))
+    def memory_failure(*args, **kwargs):
+        raise MemoryError("系统可用内存不足")
+    monkeypatch.setattr(camera, "_create_detector", memory_failure)
+    with pytest.raises(CameraUnavailable, match="系统可用内存不足"):
+        camera.start()
+    assert released == [True]
+    assert camera.lifecycle == "failed" and not camera.running
+    assert not application.OUTPUT.status()["enabled"]
+
+
 def test_stop_recognition_keeps_web_server_and_restart_available(application, monkeypatch):
     app = application
     camera, _events = mock_camera(app, monkeypatch)
