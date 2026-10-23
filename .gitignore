@@ -55,6 +55,8 @@ cloud/apk_bundle/
 # 靠它关掉提交里的 Claude 署名。里面只放署名设置，本机的权限和钩子写
 # settings.local.json，那个照样挡在外面。
 AGENTS.md
+# 根目录只放可公开的项目接入规范，随功能一起维护；分目录本机说明仍忽略。
+!/AGENTS.md
 CLAUDE.md
 .claude/*
 !.claude/settings.json

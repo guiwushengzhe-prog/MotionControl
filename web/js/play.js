@@ -111,7 +111,8 @@ function draw(map,target=ctx,w=canvas.width,h=canvas.height,mirror=false){
 
 function zoneIsMapped(id,def,state){
   if(def.gate)return !!kernelState?.vertical_look?.enabled;
-  if(typeof state?.mapped==='boolean')return state.mapped;
+  if(state?.mapped===false)return false;
+  if(kernelState?.effective_bindings)return triggerMapped('zone.'+id);
   const label=zoneKeyLabel(id,def);
   return label!=='未映射'&&label!=='宏已丢失';
 }
@@ -165,7 +166,9 @@ function renderCalibrationOverlay(hs={}){
   const phase=String(hs.center_phase||'prepare');
   const phaseName={prepare:'准备',collect:'记录自然中心'}[phase]||'设置中心';
   setStyle(cancel,'display','block');setText(stage,phaseName);
-  setText(prompt,notice||'看向游戏屏幕中心，保持自然站姿/坐姿');
+  const body=hs.calibrates_body===true;
+  setText(layer.querySelector('.calibration-kicker'),body?'校准视角与身体站姿':'校准正前方');
+  setText(prompt,body?`${notice||'看向游戏屏幕中心'}；身体保持自然站姿/坐姿，同时校准视角、侧倾和前后倾`:notice||'看向游戏屏幕中心，保持自然姿势');
   const remaining=Math.max(0,Number(hs.center_remaining_s||0));
   const valid=Number(hs.center_valid_s||0),required=Math.max(.1,Number(hs.center_required_s||2.2));
   const samples=Number(hs.center_sample_count||0),targetSamples=Math.max(1,Number(hs.center_target_samples||32));
@@ -376,6 +379,7 @@ export function renderKernelState(runtime,force=false){
   renderViewHud(hs,guardBlocked);
   if(hs.calibrated!==undefined){
     setText($('#calBtn'),hs.calibrating?'取消校准':(hs.horizontal_calibrated??hs.calibrated)?'重新校准':'站好并校准');
+    setProperty($('#calBtn'),'title','同时校准视角与身体站姿');
     const canCenter=sourceHasFreshFrame()&&!!(hs.horizontal_calibrated??hs.calibrated)&&!hs.calibrating;
     setProperty($('#calMenuBtn'),'disabled',!canCenter);setProperty($('#centerBtn'),'disabled',!canCenter);
     if(!canCenter){setProperty($('#calMenu'),'hidden',true);setAttribute($('#calMenuBtn'),'aria-expanded','false')}
@@ -453,7 +457,7 @@ export async function refreshPreview(){
   finally{perfUi.previewBusy=false}
 }
 
-export async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'校准已取消':'校准已开始：看向游戏屏幕中心，保持自然姿势')}catch(e){notice('中心设置失败：'+(e?.message||e))}}
+export async function startCalibration(){const running=!!kernelState?.head?.calibrating;try{renderKernelState(await post(running?'/api/head/calibration/cancel':'/api/head/calibration/start',{}));notice(running?'校准已取消':'校准已开始：看向屏幕中心，自然站直，同时重设视角与身体站姿')}catch(e){notice('中心设置失败：'+(e?.message||e))}}
 
 export async function centerHead(){try{renderKernelState(await post('/api/head/calibration/center',{}));notice('视角中心已更新。')}catch(e){notice('视角回正失败：'+(e?.message||e))}}
 
@@ -475,7 +479,7 @@ function drawOverlayZones(octx,w,h,zones={}){
 function renderOverlay(map=currentPoseMap){
   if(!overlay.win||overlay.win.closed||!overlay.canvas||!overlay.ctx)return;const c=overlay.canvas,octx=overlay.ctx;fitCanvas(c,(Number(kernelState?.width)||640)/(Number(kernelState?.height)||480),500000);const w=c.width,h=c.height;octx.setTransform(1,0,0,1,0,0);octx.clearRect(0,0,w,h);octx.fillStyle='#050608';octx.fillRect(0,0,w,h);
   draw(map,octx,w,h,previewMirrored);
-  drawOverlayZones(octx,w,h,kernelState?.zones||{});const buttons=kernelState?.buttons||[],motions=kernelState?.motions||[];const gate=!!kernelState?.vertical_gate_active;const latch=voiceLatchText(output);const text=gate?'上下视角已开启':(buttons.length?`区域 ${buttons.join('+')}`:(motions.length?`动作 ${motions.join('+')}`:(map?'未触发':'未识别人体')));octx.fillStyle=latch?'rgba(70,32,0,.78)':'rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle=latch?'#ffc46b':'#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.textAlign='left';octx.textBaseline='alphabetic';octx.fillText(latch?`${latch} · 说松开才会放`:`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))
+  drawOverlayZones(octx,w,h,kernelState?.zones||{});const names=new Map(profileTriggers().map(item=>[item.key,item.name]));const active=[...activeTriggerKeys()].map(key=>names.get(key)||key);const gate=!!kernelState?.vertical_gate_active;const latch=voiceLatchText(output);const text=gate?'上下视角已开启':active.length?active.join('、'):(map?'未触发':'未识别人体');octx.fillStyle=latch?'rgba(70,32,0,.78)':'rgba(0,0,0,.62)';octx.fillRect(0,h-Math.max(25,h/10),w,Math.max(25,h/10));octx.fillStyle=latch?'#ffc46b':'#fff';octx.font=`600 ${Math.max(12,Math.round(w/32))}px system-ui,sans-serif`;octx.textAlign='left';octx.textBaseline='alphabetic';octx.fillText(latch?`${latch} · 说松开才会放`:`${output.enabled?'输出开':'输出关'} · ${text}`,Math.max(7,w/70),h-Math.max(7,h/70))
 }
 
 export async function toggleOverlay(){if(overlay.win&&!overlay.win.closed){try{overlay.win.close()}catch{}overlay.win=null;overlay.canvas=null;overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗';return}if(!window.documentPictureInPicture?.requestWindow){notice('当前浏览器不支持置顶游戏悬浮窗。');return}try{const pip=await window.documentPictureInPicture.requestWindow({width:420,height:315});pip.document.title='MotionControl';pip.document.body.style.cssText='margin:0;overflow:hidden;background:#050608;width:100vw;height:100vh';const c=pip.document.createElement('canvas');c.width=640;c.height=480;c.style.cssText='display:block;width:100vw;height:100vh;object-fit:contain;background:#050608';pip.document.body.appendChild(c);overlay.win=pip;overlay.canvas=c;overlay.ctx=c.getContext('2d');pip.addEventListener('pagehide',()=>{overlay.win=overlay.canvas=overlay.ctx=null;$('#overlayBtn').textContent='悬浮窗'},{once:true});$('#overlayBtn').textContent='关闭悬浮';renderOverlay(currentPoseMap)}catch(e){notice('悬浮窗启动失败：'+(e?.message||e))}}
@@ -721,17 +725,25 @@ export async function followZones(){
  * 它就放在映射表正上方，不另开一页：看到「左手区 → Y」不对，往下一眼就是改它的
  * 那一行。点一条还能直接跳过去。两件事本来就是同一件事，分两个地方只会让人来回找。
  */
-// 默认只给绑了键的；开始页的触发显示要的是认出来的全部，传 all。区域的 pressed 本身
-// 就不含没绑键的，那一页要看 recognized。
-function activeTriggerKeys({all = false} = {}) {
+// 首页、映射表与悬浮窗只显示当前真正有绑定的触发；原始识别留在诊断数据中。
+function activeTriggerKeys() {
   const k = kernelState || {};
   const out = new Set();
   for (const [id, zone] of Object.entries(k.zones || {})) {
-    if (all ? (zone?.recognized ?? zone?.pressed) : zone?.pressed) out.add('zone.' + id);
+    if (zone?.mapped!==false&&zone?.pressed) out.add('zone.' + id);
   }
   for (const id of k.motions || []) out.add('motion.' + id);
   for (const id of k.poses_active || []) out.add('pose.' + id);
-  return all ? out : new Set([...out].filter(triggerMapped));
+  return new Set([...out].filter(triggerMapped));
+}
+
+function mappedTriggerEvents(){
+  return (kernelState?.recent_triggers||[]).filter(event=>{
+    const text=actionKeyText(event.action),key=String(event.trigger||'');
+    if(!text||text==='宏已丢失')return false;
+    // 通用语音指令没有游戏绑定条目，其成功执行记录仍保留。
+    return key.startsWith('voice.')?true:triggerMapped(key);
+  });
 }
 
 /** 触发之后高亮多久。太短了人还没把视线从镜头挪回屏幕就已经灭了。 */
@@ -769,8 +781,7 @@ function renderTriggerLive() {
   const names = new Map(profileTriggers().map(item => [item.key, item.name]));
   const bindings = bindingsForDisplay();
   const now = Number(kernelState?.now) || 0;
-  // 记录里的动作是触发那一刻绑的键；没绑的那几条不在这里显示，只在开始页。
-  const events = (kernelState?.recent_triggers || []).filter(event => actionKeyText(event.action));
+  const events = mappedTriggerEvents();
   const active = [...activeTriggerKeys()].filter(key => names.has(key));
 
   for (const box of boxes) {
@@ -804,8 +815,7 @@ function renderTriggerLive() {
 /* --- 开始页上的触发显示（原来的「动作测试」页） ------------------------------------
  * 站到镜头前做个动作，看打中了什么、按的是哪个键。人在几米外，所以字必须大。
  *
- * 没绑键的动作也列出来，这是最有用的一条信息：动作亮了、键位写着「没绑」，说明识别
- * 是好的，只是没绑——而这两种情况在游戏里的表现完全一样，都是"我做了但没反应"。
+ * 绑定判断与实际输出共用内核结果，未绑定动作不出现在大字、历史或动作格子中。
  */
 
 /* 大字停多久。太短了人还没把视线从镜头挪回屏幕就已经没了。 */
@@ -819,9 +829,7 @@ const TRIGGER_CHIP_NAMES = {march: '踏步', calf_back: '小腿后抬', jump: '�
 
 let rangeTargetKeys = '';
 
-// 画面下面那排：本机认得的身体动作全列上。区域不列——画面里的框自己会亮。
-// 画面下面那排：绑了键的身体动作。没绑的不列——它被认出来时，画面上的大字照样会
-// 写「××× → 没绑键」。区域也不列：画面里的框自己会亮。
+// 画面下面只列已绑定动作；区域由画面里的框显示。
 function rangeTriggers() {
   return profileTriggers().filter(item => (item.group === 'motions' || item.group === 'poses') && triggerMapped(item.key));
 }
@@ -849,8 +857,7 @@ function buildRangeTargets(triggers) {
 
 /* 「动作测试」并进了开始页：
  * - 做了动作、说了口令，画面上用大字写「原地踏步 → W」，几米外也看得清；
- * - 画面下面那排动作，认出来就亮——没绑键的也亮，键位写「没绑」，这正是
- *   「做了但游戏没反应」最常见的原因；
+ * - 画面下面那排已绑定动作，认出来就亮；
  * - 右边「最近触发」列出最近几次，点一条去改它的键。
  * 游戏控制没开时照样显示，大字下面补一句「游戏里不会按」。 */
 function renderRange() {
@@ -866,9 +873,9 @@ function renderRange() {
   const names = new Map(profileTriggers().map(item => [item.key, item.name]));
   const bindings = bindingsForDisplay();
   const now = Number(kernelState?.now) || 0;
-  const events = kernelState?.recent_triggers || [];
-  const held = activeTriggerKeys({all: true});
-  const keyText = action => actionKeyText(action) || '没绑键';
+  const events = mappedTriggerEvents();
+  const held = activeTriggerKeys();
+  const keyText = action => actionKeyText(action) || '';
 
   // 大字：正按着的优先，其次是刚打中的那一下；都没有就不出现。
   const hit = document.getElementById('rangeHit');
@@ -893,7 +900,7 @@ function renderRange() {
     if (when.textContent !== note) when.textContent = note;
   }
 
-  // 动作格子：按着的常亮，刚打中的闪一下。没绑键的写「没绑」。
+  // 已绑定动作格子：按着的常亮，刚打中的闪一下。
   const fresh = new Set(events.filter(event => now - Number(event.at || 0) <= RANGE_FLASH_S)
                               .map(event => String(event.trigger || '')));
   for (const target of document.querySelectorAll('.range-target')) {

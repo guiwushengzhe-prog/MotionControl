@@ -64,20 +64,19 @@ def test_failed_save_retains_the_previous_runtime_and_file(kernel, monkeypatch):
     assert kernel._general_settings_path().read_bytes() == previous
 
 
-def test_lean_bindings_are_derived_from_known_forward_direction_and_user_override_wins(kernel):
+def test_new_lean_actions_require_explicit_bindings(kernel):
     kernel.configure_bindings({"motions": {"march": {"action": {"type": "keyboard", "target": "W", "behavior": "hold"}},
                                            "calf_back": {"action": {"type": "keyboard", "target": "Z", "behavior": "hold"}}}})
     effective = kernel.effective_bindings()
-    assert [effective["motion." + ident]["action"]["target"] for ident in ("lean_left", "lean_right", "lean_back")] == ["A", "D", "S"]
+    assert not set(effective).intersection({"motion." + ident for ident in ("lean_left", "lean_right", "lean_back", "lean_forward")})
     assert effective["motion.calf_back"]["action"]["target"] == "Z"
-    assert effective["motion.lean_forward"]["action"]["target"] == "W"
     kernel.configure_bindings({"motions": {"march": {"action": {"type": "gamepad_axis", "target": "LS_UP"}},
                                            "lean_left": {"action": {"type": "keyboard", "target": "Q"}},
                                            "lean_forward": {"action": {"type": "keyboard", "target": "UP"}},
                                            "lean_right": {"disabled": True}}})
     assert kernel.effective_bindings()["motion.lean_left"]["action"]["target"] == "Q"
     assert "motion.lean_right" not in kernel.effective_bindings()
-    assert kernel.effective_bindings()["motion.lean_back"]["action"]["target"] == "LS_DOWN"
+    assert "motion.lean_back" not in kernel.effective_bindings()
     assert kernel.effective_bindings()["motion.lean_forward"]["action"]["target"] == "UP"
     kernel.configure_bindings({"motions": {"march": {"action": {"type": "keyboard", "target": "F"}}}})
     assert "motion.lean_back" not in kernel.effective_bindings()
@@ -89,10 +88,8 @@ def test_forward_disable_releases_existing_motion_and_old_settings_default_off(k
     kernel.motion_active.add("lean_forward")
     kernel.configure_sensitivity_experiments({"lean_forward": False})
     assert "lean_forward" not in kernel.motion_active
-    from motioncontrol.sensitivity_experiments import load, lean_binding
+    from motioncontrol.sensitivity_experiments import load
     assert not load({"lean_back": True})["lean_forward"]
-    assert lean_binding({"action": {"type": "keyboard", "target": "F"}}, "lean_forward") is None
-    assert lean_binding({"action": {"type": "keyboard", "target": "UP"}}, "lean_forward")["action"]["target"] == "UP"
 
 
 def test_forward_switch_survives_recording_snapshot_and_old_replay_defaults_off(kernel):
@@ -133,7 +130,10 @@ def test_legacy_source_is_preserved_but_independent_axis_choices_survive_body_so
 
 
 def test_back_suppresses_only_forward_and_can_combine_with_sideways(kernel, monkeypatch):
-    kernel.configure_bindings({"motions": {"march": {"action": {"type": "keyboard", "target": "W", "behavior": "hold"}}}})
+    kernel.configure_bindings({"motions": {
+        "march": {"action": {"type": "keyboard", "target": "W", "behavior": "hold"}},
+        "lean_back": {"action": {"type": "keyboard", "target": "S", "behavior": "hold"}},
+    }})
     monkeypatch.setattr(kernel._body_lean, "update", lambda *args, **kwargs: {"lean_right", "lean_back"})
     kernel.motion_active = {"march", "jump"}
     kernel._update_lean_motions_locked(time.monotonic())
@@ -191,3 +191,74 @@ def test_delayed_phone_sample_cannot_drive_experiments_while_status_says_stale(k
     kernel._update_lean_motions_locked(now)
     assert observed == [(None, None, None)]
     assert not kernel.motion_active
+
+
+def test_home_calibration_resets_all_body_sources_and_rejects_old_monocular_results(kernel):
+    kernel.configure_sensitivity_experiments({"side_source": "model", "fore_aft_source": "monocular",
+                                             "lean_strafe": True, "lean_forward": True, "lean_back": True})
+    previous_config = copy.deepcopy(kernel.sensitivity_experiments)
+    previous_revision = kernel._monocular_neutral_revision
+    kernel.motion_active.update(("jump", "lean_forward", "lean_left"))
+    kernel.motion_raw.update(lean_forward=True, lean_left=True)
+    kernel.publish_monocular_lean({"valid": True, "calibrated": True, "angle_deg": -15,
+                                   "sample_at": time.monotonic()}, previous_revision)
+    state = kernel.start_calibration()
+    assert state["head"]["calibrating"]
+    assert state["head"]["calibrates_body"]
+    assert kernel.sensitivity_experiments == previous_config
+    assert kernel._monocular_neutral_revision == previous_revision + 1
+    assert state["sensitivity_experiments"]["monocular"] is None
+    assert kernel.motion_active == {"jump"}
+    assert not any(kernel.motion_raw[key] for key in ("lean_left", "lean_right", "lean_forward", "lean_back"))
+    for source in ("model", "depth"):
+        status = state["sensitivity_experiments"]["body"]["sources"][source]
+        assert status["side_calibrating"] and status["back_calibrating"]
+        assert status["active"] == []
+    kernel.publish_monocular_lean({"valid": True, "angle_deg": -15}, previous_revision)
+    assert kernel._latest_monocular_lean is None
+    kernel.start_lean_neutral()
+    assert kernel._monocular_neutral_revision == previous_revision + 2
+
+
+@pytest.mark.parametrize("trigger", ["motion.lean_forward", "motion.lean_back", "motion.future_action",
+                                     "pose.future_pose", "zone.headJump"])
+def test_unbound_profile_controls_never_inherit_or_output(trigger, kernel):
+    kernel.configure_motions([{"id": "lean_forward", "enabled": True, "type": "keyboard", "target": "W"}])
+    kernel.configure_bindings({"motions": {"march": {"action": {"type": "keyboard", "target": "W"}}}})
+    prefix, ident = trigger.split(".", 1)
+    {"motion": kernel.motion_active, "pose": kernel.pose_active}.get(prefix, set()).add(ident)
+    if prefix == "zone":
+        kernel.zone_state[ident]["pressed"] = True
+    kernel._dispatch_controls_locked(time.monotonic())
+    assert trigger not in kernel.effective_bindings()
+    assert not kernel._trigger_mapped_locked(trigger)
+    assert not kernel._mapped_triggers_locked({trigger})
+    assert trigger not in kernel._bound_action_triggers_locked()
+    assert not any(action["id"] == trigger for action in kernel.output.actions)
+
+
+def test_explicit_new_action_binding_is_shared_by_dispatch_and_zone_conflicts(kernel):
+    kernel.configure_bindings({"motions": {"lean_forward": {"action": {"type": "keyboard", "target": "W"}}}})
+    kernel.motion_active.add("lean_forward")
+    kernel._dispatch_controls_locked(time.monotonic())
+    assert kernel._mapped_triggers_locked({"motion.lean_forward"}) == {"motion.lean_forward"}
+    assert "motion.lean_forward" in kernel._bound_action_triggers_locked()
+    assert kernel.output.actions == [{"id": "motion.lean_forward", "action": {"type": "keyboard", "target": "W", "behavior": "hold"}}]
+
+
+def test_head_only_recenter_keeps_body_neutral_revision(kernel):
+    before = kernel._monocular_neutral_revision
+    kernel.set_current_center()
+    assert kernel.head_controller.calibrating
+    assert not kernel.status()["head"]["calibrates_body"]
+    assert kernel._monocular_neutral_revision == before
+
+
+def test_missing_macro_is_not_mapped_for_actions_output_or_phone_feedback(kernel):
+    kernel.configure_bindings({"motions": {"lean_forward": {"action": {"type": "macro", "target": "missing"}}}})
+    kernel.motion_active.add("lean_forward")
+    kernel._dispatch_controls_locked(time.monotonic())
+    assert "motion.lean_forward" not in kernel.effective_bindings()
+    assert "motion.lean_forward" not in kernel._bound_action_triggers_locked()
+    assert not kernel._mapped_triggers_locked({"motion.lean_forward"})
+    assert not kernel.output.actions

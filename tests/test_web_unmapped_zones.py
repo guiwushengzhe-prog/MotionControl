@@ -54,6 +54,7 @@ def test_preview_and_overlay_keep_real_frame_aspect_after_resize(desktop, size):
     page = desktop.page
     state = runtime(desktop.api, binding={"action": {"type": "keyboard", "target": "Q"}}, mapped=True,
                     width=size[0], height=size[1])
+    desktop.api.runtime = state
     page.evaluate("""async()=>{
       const m=await import('/js/play.js'),c=document.createElement('canvas');
       c.style.cssText='position:fixed;width:420px;height:315px';document.body.append(c);
@@ -70,3 +71,64 @@ def test_preview_and_overlay_keep_real_frame_aspect_after_resize(desktop, size):
         }""")
         for ratio in dimensions.values():
             assert ratio == pytest.approx(size[0] / size[1], rel=.01)
+
+
+def test_unbound_actions_never_appear_in_home_feedback_even_if_recognized(desktop):
+    page, api = desktop.page, desktop.api
+    state = runtime(api)
+    state["kernel"].update(motions=["lean_forward", "lean_back", "future_action"],
+                            poses_active=["future_pose"], now=100,
+                            recent_triggers=[
+                                {"at": 99.9, "trigger": "motion.lean_forward", "action": None},
+                                {"at": 100, "trigger": "motion.future_action",
+                                 "action": {"type": "keyboard", "target": "Q"}},
+                            ])
+    api.runtime = state
+    page.evaluate("""async()=>{
+      const m=await import('/js/play.js'),c=document.createElement('canvas');
+      c.style.cssText='position:fixed;width:420px;height:315px';document.body.append(c);
+      const ctx=c.getContext('2d');window.feedbackText=[];
+      ctx.fillText=(text)=>feedbackText.push(text);
+      m.overlay.win={closed:false};m.overlay.canvas=c;m.overlay.ctx=ctx;
+    }""")
+    render(page, state)
+    assert page.locator("#rangeHit").is_hidden()
+    assert page.locator("#rangeTargets .range-target").count() == 0
+    assert page.locator("#recentCard").is_hidden()
+    text = page.evaluate("feedbackText.join('|')")
+    assert "未触发" in text
+    assert not any(word in text for word in ("lean", "future", "身体前倾", "身体后倾", "Q"))
+
+
+def test_unbinding_removes_chips_live_text_and_past_events_immediately(desktop):
+    page, api = desktop.page, desktop.api
+    binding = {"action": {"type": "keyboard", "target": "W", "behavior": "hold"}}
+    state = runtime(api)
+    state["kernel"].update(motions=["lean_forward"], now=100,
+                            effective_bindings={"motion.lean_forward": binding},
+                            recent_triggers=[{"at": 99.9, "trigger": "motion.lean_forward", **binding}])
+    api.runtime = state
+    render(page, state)
+    assert page.locator('#rangeTargets [data-trigger="motion.lean_forward"]').is_visible()
+    assert "身体前倾 → W" in page.locator("#rangeHitWhat").inner_text()
+    assert page.locator("#recentCard").is_visible()
+    state["kernel"]["effective_bindings"] = {}
+    state["kernel"]["control_bindings"] = {"motion.lean_forward": {"disabled": True}}
+    render(page, state)
+    assert page.locator('#rangeTargets [data-trigger="motion.lean_forward"]').count() == 0
+    assert page.locator("#rangeHit").is_hidden()
+    assert page.locator("#recentCard").is_hidden()
+
+
+def test_unmapped_latest_event_does_not_hide_a_bound_trigger(desktop):
+    page, api = desktop.page, desktop.api
+    binding = {"action": {"type": "keyboard", "target": "SPACE"}}
+    state = runtime(api)
+    state["kernel"].update(motions=[], now=100, effective_bindings={"motion.jump": binding},
+                            recent_triggers=[{"at": 99.8, "trigger": "motion.jump", **binding},
+                                             {"at": 100, "trigger": "motion.lean_back", "action": None}])
+    api.runtime = state
+    render(page, state)
+    assert page.locator("#rangeHit").is_visible()
+    assert "跳跃 → SPACE" in page.locator("#rangeHitWhat").inner_text()
+    assert "身体后倾" not in page.locator("#rangeLog").inner_text()
