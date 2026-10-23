@@ -66,6 +66,8 @@ def test_library_source_dividers_align_with_different_description_lengths(ui):
 
     def library(route):
         data = route.fetch().json()
+        # 此例只核对三种说明长度和一张追加卡片，与动作目录总数无关。
+        data["library"] = data["library"][:3]
         for index, item in enumerate(data["library"]):
             item["how"] = ["短说明", "这条动作说明需要换成两行来显示，说明长度不同也不能影响来源栏对齐。",
                            "稍长的说明。这一项有不同长度的内容。选择它之后仍然可以在来源栏直接删除。"][index]

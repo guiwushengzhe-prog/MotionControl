@@ -10,6 +10,7 @@ import {syncPhoneCode} from './phone-connect.js';
 import {renderSpeedSummary} from './view-speed.js';
 import {renderDepthComparison} from './depth-comparison.js';
 import {renderRuntimeDiagnostics} from './runtime-diagnostics.js';
+import {renderDiagnosticLines,renderDiagnosticMetrics} from './diagnostic-view.js';
 
 let audioDevice='';
 $('#cameraMirror')?.addEventListener('change',async event=>{
@@ -176,12 +177,15 @@ function renderPerformance(data){
   if(line)line.textContent=phase==='stopping'?'正在停止识别，请稍候…':phase==='stop_failed'?'停止识别未完成，请重试停止':phase==='starting'?'正在启动摄像头，请稍候…':phase==='stopped'?'识别已停止':sourceWaitingForFirstFrame()?'正在等待摄像头画面':black?'摄像头画面全黑':live?(Number.isFinite(fps)&&fps>0?`识别中 · ${Math.round(fps)} 帧/秒`:'识别中'):sourceMode==='computer'&&cameraInfo?.last_error?cameraInfo.last_error:cameraRunning?'摄像头没有新画面':'未开始';
   if(line&&!S.sourceConnecting&&live&&sourceMode==='computer'){if(!black&&data.depth_active)line.textContent+=' · 深度已启用';else if(!black&&data.depth_error)line.textContent+=' · '+data.depth_error}
   $('#perfSummary').textContent='识别';
-  $('#perfDetails').textContent=[
-    `采集帧率：${formatPerf(data.capture_fps)} · 识别帧率：${formatPerf(data.inference_fps)}${data.network_fps!=null?` · 手机传来：${formatPerf(data.network_fps)}`:''}`,
-    `总延迟：${formatPerf(data.total_latency_ms,' 毫秒')} · 单帧处理平均：${formatPerf(data.inference_avg_ms,' 毫秒')}`,
-    `预览：${data.preview_ready?'已就绪':'未就绪'} · 跳过旧帧：${data.dropped_frames??0} · 后台占整机处理器：${formatPerf(data.process_cpu_percent,'%')}`,
+  renderDiagnosticMetrics($('#perfMetrics'),[
+    ['采集帧率',formatPerf(data.capture_fps,' 帧/秒')],['识别帧率',formatPerf(data.inference_fps??data.network_fps,' 帧/秒')],
+    ['画面到结果',formatPerf(data.total_latency_ms,' 毫秒')],['单帧处理',formatPerf(data.inference_avg_ms,' 毫秒')],
+    ['整机处理器占用',formatPerf(data.process_cpu_percent,'%')],['预览',data.preview_ready?'已就绪':'未就绪'],
+  ]);
+  renderDiagnosticLines($('#perfDetails'),[
+    `跳过旧帧：${data.dropped_frames??0} · 手机传来：${formatPerf(data.network_fps,' 帧/秒')}`,
     ...performanceBreakdown(data),
-  ].join('\n');
+  ]);
 }
 
 function performanceBreakdown(data){

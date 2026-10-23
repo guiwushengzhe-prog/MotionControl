@@ -443,13 +443,14 @@
 <div class="group" id="performancePanel">
 <h2 class="group-title">运行状态</h2>
 <div class="list diag">
-<div class="row stack"><span class="name" id="perfSummary">实时诊断</span><pre class="diag-text" id="perfDetails">等待本地服务诊断数据。</pre></div>
-<details class="diag-detail"><summary>采集、预览与时延分布</summary><pre class="diag-text" id="diagCapture"></pre></details>
-<details class="diag-detail" open><summary>头部、校准与视角门控</summary><pre class="diag-text" id="diagHead"></pre></details>
-<details class="diag-detail" open><summary>手部识别与握拳接管</summary><pre class="diag-text" id="diagHands"></pre></details>
-<details class="diag-detail" open><summary>身体动作、区域与学习</summary><pre class="diag-text" id="diagActions"></pre></details>
-<details class="diag-detail" open><summary>系统输出与录制状态</summary><pre class="diag-text" id="diagOutput"></pre></details>
-<div class="row stack"><span class="name">语音 <span class="tag" id="voiceMode">未就绪</span></span><pre class="diag-text" id="voiceDiagnostic"></pre><span class="sub model-path" id="voiceModelPath"></span></div>
+<div class="row stack"><span class="name" id="perfSummary">实时诊断</span><div class="diag-metrics" id="perfMetrics"></div></div>
+<details class="diag-detail"><summary>模型、线程与处理环节</summary><div class="diag-text" id="perfDetails">等待本地服务诊断数据。</div></details>
+<details class="diag-detail"><summary>采集、预览与时延分布</summary><div class="diag-text" id="diagCapture"></div></details>
+<details class="diag-detail"><summary>头部、校准与视角门控</summary><div class="diag-text" id="diagHead"></div></details>
+<details class="diag-detail"><summary>手部识别与握拳接管</summary><div class="diag-text" id="diagHands"></div></details>
+<details class="diag-detail"><summary>身体动作、区域与学习</summary><div class="diag-text" id="diagActions"></div></details>
+<details class="diag-detail"><summary>系统输出与录制状态</summary><div class="diag-text" id="diagOutput"></div></details>
+<details class="diag-detail"><summary>语音 <span class="tag" id="voiceMode">未就绪</span></summary><div class="diag-text" id="voiceDiagnostic"></div><span class="sub model-path" id="voiceModelPath"></span></details>
 <div class="row stack"><span class="name">防晃</span><span class="sub" aria-live="polite" id="bodyMotionGuardStatus">读取中…</span></div>
 </div>
 </div>
