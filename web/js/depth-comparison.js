@@ -1,12 +1,34 @@
 // 沿用现有性能轮询，只显示单目前后倾；旧三模型对比面板已移除。
 import {$,api,configurationOperation,post,setProperty,setText} from './core.js';
 
-let current=null,busy=false,operationError='';
+let current=null,busy=false,recordingBusy=false,operationError='';
 const fmt=(value,unit='')=>value!=null&&Number.isFinite(Number(value))?`${Number(value).toFixed(1)}${unit}`:'—';
+const stateName=value=>({forward:'前倾',neutral:'中立',back:'后倾'})[value]||'无有效结果';
+
+function renderRecording(state){
+  const record=state.lean_recording||{},latest=record.latest;
+  if(!recordingBusy)setProperty($('#leanComparisonRecording'),'checked',record.enabled===true);
+  setProperty($('#leanComparisonRecording'),'disabled',recordingBusy);
+  setProperty($('#leanComparisonRecordingPanel'),'hidden',!record.enabled&&!record.file&&!record.error);
+  const fresh=latest&&Number.isFinite(Number(latest.sample_at))&&state.results?.mocapnet_personal?.age_ms<1500;
+  const label=record.enabled?(fresh&&latest.comparable?
+    `正在记录 · 单目${stateName(latest.monocular?.state)} / 深度${stateName(latest.depth?.state)} · ${latest.agree?'一致':'不一致'}`:
+    `正在记录 · ${fresh&&latest.reason?latest.reason:'等待新画面与可靠深度参考'}`):'记录已关闭，文件已保留';
+  setText($('#leanComparisonRecordingState'),record.error||label);
+  setText($('#leanComparisonRecordingCounts'),`同帧有效 ${record.valid||0} 帧 · 一致 ${fmt(record.agreement_percent,'%')} · 不一致 ${record.disagree||0} 帧 / ${fmt(record.mismatch_seconds,'秒')} · 不可比较 ${record.invalid||0} 帧`);
+  setText($('#leanComparisonRecordingClasses'),['forward','neutral','back'].map(key=>{
+    const row=record.matrix?.[key]||{},total=Object.values(row).reduce((sum,n)=>sum+(Number(n)||0),0);
+    return `深度${stateName(key)}：一致 ${row[key]||0} / ${total}`;
+  }).join(' · '));
+  setText($('#leanComparisonRecordingRecent'),record.recent_disagreements?.length?
+    '最近不一致：'+record.recent_disagreements.slice(0,3).map(item=>`单目${stateName(item.monocular)} / 深度${stateName(item.depth)}（${fmt(item.seconds,'秒')}，${item.frames}帧）`).join('；'):'尚无不一致片段');
+  setText($('#leanComparisonRecordingFile'),record.file?`记录文件：${record.file}`:`保存目录：${record.directory||'用户数据目录'}`);
+}
 
 export function renderDepthComparison(state){
   if(!state||(state.revision!=null&&current?.revision!=null&&state.revision<current.revision))return;
   current=state;
+  renderRecording(state);
   const config=state.config||{},selected='mocapnet_personal',result=state.results?.[selected]||{};
   if(!busy){
     setProperty($('#monocularLeanModel'),'value',selected);
@@ -32,3 +54,11 @@ async function save(changes){
 
 $('#monocularLeanModel')?.addEventListener('change',()=>void save({}));
 $('#monocularLeanFps')?.addEventListener('change',event=>void save({max_fps:Number(event.target.value)}));
+$('#leanComparisonRecording')?.addEventListener('change',async event=>{
+  if(recordingBusy)return;
+  const enabled=event.target.checked;
+  recordingBusy=true;operationError='';renderDepthComparison(current);
+  try{await configurationOperation(async()=>renderDepthComparison(await post('/api/lean-comparison-recording',{enabled})))}
+  catch(error){operationError='对照记录设置未完成：'+error.message;try{current=await api('/api/depth-comparison')}catch{}}
+  finally{recordingBusy=false;renderDepthComparison(current)}
+});

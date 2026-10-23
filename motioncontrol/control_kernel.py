@@ -6080,6 +6080,7 @@ class LocalControlRuntime:
         try:
             self.camera.stop_and_wait()
         finally:
+            self.camera.depth_comparison.lean_recording.stop()
             self.kernel.close()
 
 

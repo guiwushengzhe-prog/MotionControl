@@ -1859,7 +1859,7 @@ class AdminHandler(_BaseHandler):
             data["version"] = VERSION
             self._send_json(data)
             return
-        if route == "/api/depth-comparison":
+        if route in {"/api/depth-comparison", "/api/lean-comparison-recording"}:
             self._send_json(RUNTIME.camera.depth_comparison.status())
             return
         if route == "/api/depth-comparison/preview":
@@ -2587,13 +2587,15 @@ class AdminHandler(_BaseHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc), **runtime_status(), "voice": VOICE.status()}, 400)
             return
-        if route == "/api/depth-comparison":
+        if route in {"/api/depth-comparison", "/api/lean-comparison-recording"}:
             if not self._is_loopback():
                 self._send_json({"error": "深度实验仅限本机设置"}, 403)
                 return
             try:
                 with PROFILE_UPDATE_LOCK:
-                    if "action" in body:
+                    if route == "/api/lean-comparison-recording":
+                        result = RUNTIME.camera.depth_comparison.configure_recording(body)
+                    elif "action" in body:
                         result = RUNTIME.camera.depth_comparison.action(body["action"])
                     else:
                         result = RUNTIME.camera.depth_comparison.configure(body)
