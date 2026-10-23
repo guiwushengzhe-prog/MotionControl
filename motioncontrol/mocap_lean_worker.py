@@ -37,6 +37,10 @@ class MocapPoseFeatures:
         if (len(self.keys) != 42 or len(set(self.keys)) != 42 or self.coef.shape != (42,)
                 or not np.isfinite(self.coef).all()):
             raise ValueError("个人倾角读出参数无效")
+        self.learning_indices = [i for i, key in enumerate(self.keys)
+            if key.split("_")[0] in ("hip", "abdomen", "chest") and key.endswith("rotation")]
+        if len(self.learning_indices) != 9:
+            raise ValueError("个人倾角需要完整的髋、腹、胸旋转量")
         sys.path.insert(0, str(source))
         # 上游 tools.py 与本项目包同名；只在隔离进程内绑定，不污染体感进程。
         module_spec = importlib.util.spec_from_file_location("tools", source / "tools.py")
@@ -112,7 +116,8 @@ def main():
         with contextlib.redirect_stdout(sys.stderr):
             adapter = MocapPoseFeatures(spec)
         write_packet(output, {"kind": "ready", "device": "cpu", "device_name": "处理器 · MocapNET个人研究",
-            "load_ms": round((time.perf_counter()-started)*1000, 1), "feature_only": True, "feature_dim": 42})
+            "load_ms": round((time.perf_counter()-started)*1000, 1), "feature_only": True, "feature_dim": 42,
+            "learning_feature_indices": adapter.learning_indices})
         while True:
             meta, payload = read_packet(incoming)
             width, height = meta["width"], meta["height"]

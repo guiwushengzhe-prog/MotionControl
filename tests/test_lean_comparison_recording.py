@@ -136,10 +136,11 @@ def test_worker_pairs_reference_after_prediction_without_sending_reference_to_mo
     engine._runtime = runtime
     stop = threading.Event()
     kernel.publish_monocular_lean = lambda *_: stop.set()
-    engine.monocular = SimpleNamespace(feature_dim=42, neutral_reference=0., flush=lambda: None,
+    indices = (0, 1, 2, 3, 4, 5, 16, 18, 20)
+    engine.monocular = SimpleNamespace(feature_dim=42, feature_indices=indices, neutral_reference=0., flush=lambda: None,
         set_context=lambda *_: None, update=lambda *_args, **_kwargs: {"valid": True, "calibrated": True, "angle_deg": -12.})
     output = io.BytesIO()
-    write_packet(output, {"kind": "ready"})
+    write_packet(output, {"kind": "ready", "learning_feature_indices": list(indices)})
     write_packet(output, {"kind": "frame", "sample_at": 10., "sequence": 1, "inference_ms": 2., "torso": {}})
     output.seek(0)
     process = SimpleNamespace(stdin=io.BytesIO(), stdout=output)

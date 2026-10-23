@@ -33,11 +33,12 @@ def kinect_pitch(body):
         return None
 
 
-def fit_readout(samples):
+def fit_readout(samples, feature_indices=None):
     x = np.asarray([s["features"] for s in samples], dtype=float)
     y = np.asarray([s["reference"] for s in samples], dtype=float)
+    indices = list(range(x.shape[1])) if feature_indices is None else list(feature_indices)
     mean, scale = x.mean(axis=0), np.maximum(x.std(axis=0), 1e-4)
-    z = np.column_stack(((x - mean) / scale, np.ones(len(x))))
+    z = np.column_stack(((x[:, indices] - mean[indices]) / scale[indices], np.ones(len(x))))
     # 按参考角度段等权，久站样本不会淹没少量前倾、后倾。
     bins = np.floor(y / 4).astype(int)
     counts = Counter(bins)
@@ -45,8 +46,10 @@ def fit_readout(samples):
     weights *= len(weights) / weights.sum()
     penalty = np.eye(z.shape[1])
     penalty[-1, -1] = 0
-    coef = np.linalg.solve(z.T @ (z * weights[:, None]) + penalty, z.T @ (y * weights))
-    return {"mean": mean.tolist(), "scale": scale.tolist(), "coef": coef.tolist()}
+    fitted = np.linalg.solve(z.T @ (z * weights[:, None]) + penalty, z.T @ (y * weights))
+    coef = np.zeros(x.shape[1] + 1)
+    coef[indices], coef[-1] = fitted[:-1], fitted[-1]
+    return {"mean": mean.tolist(), "scale": scale.tolist(), "coef": coef.tolist(), "feature_indices": indices}
 
 
 def readout(mapping, features):
@@ -63,7 +66,7 @@ def coverage(samples, center, minimum):
 
 
 def validate_readout(mapping, samples, center, origin=None):
-    if not coverage(samples, center, 32):
+    if not coverage(samples, center, 64):
         return None
     true = np.asarray([s["reference"] - center for s in samples])
     predicted = np.asarray([readout(mapping, s["features"]) - (center if origin is None else origin) for s in samples])
@@ -75,15 +78,31 @@ def validate_readout(mapping, samples, center, origin=None):
     neutral_false_trigger = float(np.mean(np.abs(predicted[np.abs(true) <= 3]) >= 7))
     if error.mean() > 3 or np.percentile(error, 95) > 6 or agreement < .9 or neutral_false_trigger > .05:
         return None
+    directional = {}
+    for name, sign in (("forward", -1), ("back", 1)):
+        mask = sign * true >= 7
+        if mask.sum() < 8:
+            return None
+        gain = float(np.median(predicted[mask] / true[mask]))
+        recall = float(np.mean(sign * predicted[mask] >= 7))
+        # 两个方向单独验收，避免中立帧掩盖缩幅、漏检或单向误差。
+        if not .75 <= gain <= 1.25 or recall < .8 or error[mask].mean() > 3:
+            return None
+        directional[name] = {"gain": gain, "recall": recall, "mae_deg": float(error[mask].mean())}
     return {"mae_deg": float(error.mean()), "p95_deg": float(np.percentile(error, 95)),
-            "direction_agreement": agreement, "neutral_false_trigger": neutral_false_trigger, "samples": len(samples)}
+            "direction_agreement": agreement, "neutral_false_trigger": neutral_false_trigger,
+            "directions": directional, "samples": len(samples)}
 
 
 class MonocularLean:
-    def __init__(self, root=None, *, persist=False, feature_dim=7):
+    def __init__(self, root=None, *, persist=False, feature_dim=7, feature_indices=None):
         if feature_dim not in (7, 42):
             raise ValueError("单目前后倾特征维度不支持")
         self.feature_dim = feature_dim
+        self.feature_indices = tuple(range(feature_dim)) if feature_indices is None else tuple(feature_indices)
+        if (not self.feature_indices or len(set(self.feature_indices)) != len(self.feature_indices)
+                or any(type(i) is not int or not 0 <= i < feature_dim for i in self.feature_indices)):
+            raise ValueError("单目前后倾学习范围无效")
         self.path = Path(root if root is not None else user_data_root()) / "monocular_lean_learning.json"
         self.persist = persist
         self.context = ""
@@ -123,16 +142,27 @@ class MonocularLean:
                 if isinstance(samples, list) and all(self._valid_sample(s) for s in samples):
                     self.profile["samples"] = samples[-512:]
                 active = candidate.get("active")
-                if (active and np.asarray(active["mapping"]["mean"]).shape == (self.feature_dim,)
+                if (active and self._mapping_allowed(active["mapping"])
                         and all(self._valid_sample(s) for s in active["validation"])
                         and validate_readout(active["mapping"], active["validation"], active["center"], active.get("origin")) is not None):
                     self.profile["active"] = active
+                elif active:
+                    self.learning_message = "上次个人学习未通过躯干范围或双向幅度复核，使用基础估计"
             except (KeyError, TypeError, ValueError, IndexError, AttributeError):
                 self.last_error = "已保存模型未通过核对，使用几何读出"
             self.profiles[signature] = self.profile
             self.pending = None
             self.last_pair = -math.inf
             self.reset()
+
+    def _mapping_allowed(self, mapping):
+        mean, scale, coef = (np.asarray(mapping[key], dtype=float) for key in ("mean", "scale", "coef"))
+        if (mean.shape != (self.feature_dim,) or scale.shape != (self.feature_dim,)
+                or coef.shape != (self.feature_dim + 1,) or not np.isfinite(mean).all()
+                or not np.isfinite(scale).all() or not np.isfinite(coef).all() or (scale <= 0).any()):
+            return False
+        excluded = [i for i in range(self.feature_dim) if i not in self.feature_indices]
+        return bool(np.all(coef[excluded] == 0))
 
     def _valid_sample(self, sample):
         try:
@@ -156,6 +186,10 @@ class MonocularLean:
                 prior_origin = readout(prior["mapping"], self.neutral["features"]) if prior else 0
                 prior_errors = ([abs(readout(prior["mapping"], s["features"]) - prior_origin - (s["reference"] - self.neutral_reference)) for s in self.pending["validation"]]
                                 if prior else None)
+                if prior is None and torso.get("personal_research"):
+                    coef = np.asarray(torso["linear_coef"], dtype=float)
+                    prior_errors = [abs(float((np.asarray(s["features"]) - self.neutral["features"]) @ coef)
+                                        - (s["reference"] - self.neutral_reference)) for s in self.pending["validation"]]
                 if prior_errors is None or check["mae_deg"] < float(np.mean(prior_errors)) - .1:
                     self.profile["active"] = {k: v for k, v in self.pending.items() if k != "at"}
                     self.profile["active"]["metrics"] = check
@@ -176,7 +210,7 @@ class MonocularLean:
         del samples[:-512]
         self.dirty = True
         if self.pending is None and coverage(samples, self.neutral_reference, 64):
-            mapping = fit_readout(samples)
+            mapping = fit_readout(samples, self.feature_indices)
             self.pending = {"mapping": mapping, "center": self.neutral_reference,
                             "origin": readout(mapping, self.neutral["features"]), "validation": [], "at": at}
             self.learning_message = "候选已冻结，等待后续前倾、回正和后倾验证"
@@ -210,6 +244,12 @@ class MonocularLean:
             refs = [s[2] for s in recent if s[2] is not None]
             self.neutral_reference = float(np.median(refs)) if refs else None
             self.collect.clear()
+            active = self.profile["active"]
+            if (active and self.neutral_reference is not None and validate_readout(active["mapping"],
+                    active["validation"], self.neutral_reference, readout(active["mapping"], self.neutral["features"])) is None):
+                self.profile["active"] = None
+                self.dirty = True
+                self.learning_message = "旧个人读出不适合本次站姿，使用基础估计并等待新的双向验证"
         if learn:
             self._learn(torso, reference, at)
         active = self.profile["active"]
@@ -227,6 +267,7 @@ class MonocularLean:
         self.filtered = value
         self.last_at = at
         learning = {"enabled": bool(learn), "samples": len(self.profile["samples"]), "active": active is not None,
+                    "feature_count": len(self.feature_indices),
                     "validation_samples": len(self.pending["validation"]) if self.pending else 0,
                     "metrics": active.get("metrics") if active else None,
                     "reason": self.learning_message if self.neutral_reference is not None else "需要Kinect在重设中立姿态时提供可靠参考，单目识别可独立运行",

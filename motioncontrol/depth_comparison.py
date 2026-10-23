@@ -341,9 +341,11 @@ class DepthComparison:
                             if generation != self._generation or stop.is_set():
                                 break
                             dimension = 42 if config["model"] in LEAN_MODELS else 7
-                            if self.monocular.feature_dim != dimension:
+                            indices = tuple(info["learning_feature_indices"]) if dimension == 42 else tuple(range(dimension))
+                            if self.monocular.feature_dim != dimension or self.monocular.feature_indices != indices:
                                 self.monocular.flush()
-                                self.monocular = MonocularLean(persist=bool(getattr(self.kernel, "_persist", False)), feature_dim=dimension)
+                                self.monocular = MonocularLean(persist=bool(getattr(self.kernel, "_persist", False)),
+                                    feature_dim=dimension, feature_indices=indices)
                             self.monocular.set_context([config["model"], registry["models"][config["model"]].get("sha256"),
                                 meta["signature"][0], meta["frame_region"], config["input_size"] if dimension == 7 else
                                 registry["models"][config["model"]].get("readout_sha256"), 1])
