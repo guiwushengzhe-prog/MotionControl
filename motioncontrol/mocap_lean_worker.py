@@ -12,6 +12,7 @@ import time
 from types import SimpleNamespace
 
 from .depth_comparison_worker import read_packet, write_packet
+from .mocap_readout import TorsoReadout
 
 
 class MocapPoseFeatures:
@@ -32,15 +33,8 @@ class MocapPoseFeatures:
         head = json.loads(raw)
         if head.get("type") != "mocapnet_personal_readout" or head.get("model_sha256") != spec["sha256"]:
             raise ValueError("个人倾角读出与当前网络不匹配")
-        self.keys = head["keys"]
-        self.coef = np.asarray(head["weights"], dtype=np.float64)
-        if (len(self.keys) != 42 or len(set(self.keys)) != 42 or self.coef.shape != (42,)
-                or not np.isfinite(self.coef).all()):
-            raise ValueError("个人倾角读出参数无效")
-        self.learning_indices = [i for i, key in enumerate(self.keys)
-            if key.split("_")[0] in ("hip", "abdomen", "chest") and key.endswith("rotation")]
-        if len(self.learning_indices) != 9:
-            raise ValueError("个人倾角需要完整的髋、腹、胸旋转量")
+        self.readout = TorsoReadout(head)
+        self.keys, self.learning_indices = self.readout.keys, self.readout.indices
         sys.path.insert(0, str(source))
         # 上游 tools.py 与本项目包同名；只在隔离进程内绑定，不污染体感进程。
         module_spec = importlib.util.spec_from_file_location("tools", source / "tools.py")
@@ -97,9 +91,12 @@ class MocapPoseFeatures:
         values = np.asarray([output[k] / (100 if k.endswith("position") else 180) for k in self.keys], dtype=np.float64)
         if not np.isfinite(values).all():
             return None
-        return {"features": values.tolist(), "linear_coef": self.coef.tolist(),
-                "geometric_deg": float(values @ self.coef), "sampled_regions": 0,
-                "personal_research": True, "source": "mocapnet_personal"}
+        result = {"features": values.tolist(), "readout_kind": self.readout.kind,
+                  "geometric_deg": self.readout.infer(values), "sampled_regions": 0,
+                  "personal_research": True, "source": "mocapnet_personal"}
+        if self.readout.coef is not None:
+            result["linear_coef"] = self.readout.coef.tolist()
+        return result
 
 
 def main():
