@@ -167,7 +167,9 @@ class MonocularLean:
     def _valid_sample(self, sample):
         try:
             f = np.asarray(sample["features"], dtype=float)
-            return f.shape == (self.feature_dim,) and np.isfinite(f).all() and math.isfinite(sample["reference"]) and abs(sample["reference"]) <= 70
+            return (f.shape == (self.feature_dim,) and np.isfinite(f).all()
+                    and math.isfinite(sample["reference"]) and abs(sample["reference"]) <= 70
+                    and ("base_deg" not in sample or math.isfinite(sample["base_deg"])))
         except (TypeError, ValueError, KeyError):
             return False
 
@@ -175,6 +177,8 @@ class MonocularLean:
         if reference is None or self.neutral_reference is None or at - self.last_pair < .25:
             return
         sample = {"features": list(torso["features"]), "reference": float(reference)}
+        if torso.get("readout_kind") == "local_torso_v1":
+            sample["base_deg"] = float(torso["geometric_deg"])
         if not self._valid_sample(sample):
             return
         self.last_pair = at
@@ -187,9 +191,13 @@ class MonocularLean:
                 prior_errors = ([abs(readout(prior["mapping"], s["features"]) - prior_origin - (s["reference"] - self.neutral_reference)) for s in self.pending["validation"]]
                                 if prior else None)
                 if prior is None and torso.get("personal_research"):
-                    coef = np.asarray(torso["linear_coef"], dtype=float)
-                    prior_errors = [abs(float((np.asarray(s["features"]) - self.neutral["features"]) @ coef)
-                                        - (s["reference"] - self.neutral_reference)) for s in self.pending["validation"]]
+                    if torso.get("readout_kind") == "local_torso_v1":
+                        prior_errors = [abs(s["base_deg"] - self.neutral["geometric_deg"]
+                                            - (s["reference"] - self.neutral_reference)) for s in self.pending["validation"]]
+                    else:
+                        coef = np.asarray(torso["linear_coef"], dtype=float)
+                        prior_errors = [abs(float((np.asarray(s["features"]) - self.neutral["features"]) @ coef)
+                                            - (s["reference"] - self.neutral_reference)) for s in self.pending["validation"]]
                 if prior_errors is None or check["mae_deg"] < float(np.mean(prior_errors)) - .1:
                     self.profile["active"] = {k: v for k, v in self.pending.items() if k != "at"}
                     self.profile["active"]["metrics"] = check
@@ -255,7 +263,7 @@ class MonocularLean:
         active = self.profile["active"]
         if active:
             value = readout(active["mapping"], torso["features"]) - readout(active["mapping"], self.neutral["features"])
-        elif torso.get("personal_research"):
+        elif torso.get("personal_research") and torso.get("readout_kind") != "local_torso_v1":
             coef = np.asarray(torso.get("linear_coef"), dtype=float)
             if coef.shape != (self.feature_dim,) or not np.isfinite(coef).all():
                 return {"valid": False, "calibrated": True, "sample_at": at, "reason": "个人倾角读出无效"}
