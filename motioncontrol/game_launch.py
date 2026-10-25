@@ -21,6 +21,9 @@ def elevated_command(root: Path, arguments=(), *, wait_for_pid: int = 0,
     """Use the same installation and interpreter; never launch arbitrary paths."""
     root = Path(root).resolve()
     args = list(arguments)
+    if "--user-data-dir" not in args:
+        from motioncontrol.user_paths import user_data_root
+        args.extend(["--user-data-dir", str(user_data_root().resolve())])
     if "--wait-for-pid" in args:
         index = args.index("--wait-for-pid")
         del args[index:index + 2]

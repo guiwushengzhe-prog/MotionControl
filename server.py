@@ -17,6 +17,14 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+# 在任何配置模块导入前确定管理员交接使用的数据目录。
+if __name__ == "__main__":
+    _location_parser = argparse.ArgumentParser(add_help=False)
+    _location_parser.add_argument("--user-data-dir")
+    _location_args, _ = _location_parser.parse_known_args()
+    if _location_args.user_data_dir:
+        os.environ["MOTIONCONTROL_USER_DIR"] = str(Path(_location_args.user_data_dir).resolve())
+
 # 换包不在这里做。server.py 就住在要被换掉的那个目录里，而启动时的工作目录也是
 # 它——Windows 不允许删除或改名自己所在的目录，退回时会删到一半然后失败，把安装
 # 掏空。真撞过一次，测试里 app/ 变成了空的。
@@ -53,10 +61,10 @@ from motioncontrol.game_launch import is_administrator, launch_as_administrator,
 from motioncontrol import kinect_camera
 from motioncontrol_shared import macro_schema, pose_library
 from motioncontrol_shared.describe import trigger_name
-from motioncontrol_shared.profile_schema import action_catalog, normalize_binding
+from motioncontrol_shared.profile_schema import action_catalog, flatten_bindings, normalize_binding
 from motioncontrol_shared.mapping_schema import DEFAULT_EMERGENCY_STOP, shared_voice_command_id
 from motioncontrol_shared.pose_points import POSE_CONNECTIONS, POSE_POINT_LABELS
-from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config
+from motioncontrol_shared.motion_conflicts import motion_conflict_payload, validate_motion_config, validate_motion_bindings
 from motioncontrol.output_backend import GAMEPAD_AXES, KEY_CODES, XUSB_GAMEPAD_BUTTONS, GlobalHotkeys, KeyboardOutput, OutputManager, _UNSET
 from motioncontrol_shared.model_share import ModelShare
 from motioncontrol.recognition_models import RecognitionModels
@@ -67,6 +75,7 @@ from motioncontrol.pairing import PairingKey
 from motioncontrol.windows_firewall import WindowsFirewall
 from functools import lru_cache
 from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, user_path
+
 from motioncontrol.recording_storage import organize_recordings, recordings_summary
 from motioncontrol.owned_process import ensure_lifetime_job
 from motioncontrol.update_status import UpdateStatus
@@ -105,7 +114,7 @@ MODEL_COMPAT_RELATIVE = Path("mediapipe") / "pose_landmarker_full_compatible_075
 # and VoiceService all read their files at import time -- migrating afterwards
 # would silently hand the user defaults on their first upgraded launch.
 _MIGRATED = migrate_legacy_user_data(ROOT)
-for _journal_name in (".profile-install.journal", ".view-control.journal"):
+for _journal_name in (".profile-store.journal", ".profile-install.journal", ".view-control.journal"):
     recover(user_data_root() / _journal_name)
 if _MIGRATED:
     print("已从旧版程序目录迁移用户数据：" + "、".join(_MIGRATED))
@@ -167,7 +176,10 @@ def runtime_status() -> dict:
     # Capture the revision with the state it describes; a poll started before
     # a successful configuration change cannot overwrite its response.
     with PROFILE_UPDATE_LOCK:
+        _reconcile_profile_configuration()
         return {**RUNTIME.status(), "config_revision": CONFIG_REVISION,
+                "profile_sync": {"selected_id": PROFILES.selected_id(), "revision": PROFILES.revision(),
+                                 "error": PROFILES.last_error},
                 "preview_mirror": STUDIO.config["mirror"]}
 PROFILES = GameProfileStore(ROOT)
 # Kinect 是否被拖慢按游戏记住，下次开这个游戏时先申请提高原厂服务优先级。
@@ -209,6 +221,46 @@ def _apply_effective_profile() -> dict:
         KERNEL.configure_bindings(profile.get("bindings", {}), mode=profile["mode"])
         VOICE.configure_profile_bindings(profile.get("bindings", {}), PROFILES.mode_bindings())
     return profile
+
+
+_profile_reconcile_at = 0.
+
+
+def _reconcile_profile_configuration(*, force=False):
+    """文件恢复或外部修改后，协调重载身体、语音与页面使用的绑定。"""
+    global CONFIG_REVISION, _profile_reconcile_at
+    with PROFILE_UPDATE_LOCK, PROFILES._lock:
+        now = time.monotonic()
+        if not force and now - _profile_reconcile_at < 1:
+            return
+        _profile_reconcile_at = now
+        previous_selection, previous_custom = PROFILES._selection, PROFILES._custom
+        previous = _active_profile()
+        reloaded = PROFILES.refresh_from_disk()
+        try:
+            current = _active_profile()
+            inconsistent = (KERNEL.control_bindings != flatten_bindings(current.get("bindings", {}))
+                            or VOICE._profile_bindings != current.get("bindings", {}))
+            if not reloaded and not inconsistent:
+                return
+            validate_motion_bindings(current.get("bindings", {}))
+            VOICE.check_profile_phrases(current.get("bindings", {}))
+            changed = any(previous.get(key) != current.get(key)
+                          for key in ("selected_id", "bindings", "regions", "mode"))
+            if changed or inconsistent:
+                SYSTEM_COMMANDS.invalidate()
+                OUTPUT.emergency_stop()
+                _apply_effective_profile()
+                if not reloaded:
+                    PROFILES.recovery_count += 1
+                    PROFILES.recovery_message = "已统一恢复身体与语音的游戏绑定"
+            CONFIG_REVISION += 1
+        except Exception as error:
+            PROFILES._selection, PROFILES._custom = previous_selection, previous_custom
+            PROFILES._disk_stamp = None
+            PROFILES.last_error = f"配置重载未完成，保留原绑定：{error}"
+            OUTPUT.emergency_stop()
+            _apply_effective_profile()
 
 
 def switch_game_mode(target) -> dict:
@@ -1174,10 +1226,14 @@ def _stage_profile_selection(document: dict, game_id: str | None) -> dict:
 
 
 @contextmanager
-def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_layout: bool = False):
+def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_layout: bool = False,
+                                       expected_revision=None):
     """Commit files and both binding consumers together, or restore all three."""
     global MOTION_CONFIG, CONFIG_REVISION
+    _reconcile_profile_configuration(force=True)
     with PROFILE_UPDATE_LOCK, PROFILES._lock, VOICE._lock, KERNEL._lock:
+        if expected_revision is not None and expected_revision != PROFILES.revision():
+            raise ProfileSelectionChanged("游戏配置已在后台更新，请合并未保存的修改后再保存")
         previous_selection = copy.deepcopy(PROFILES._selection)
         previous_custom = copy.deepcopy(PROFILES._custom)
         previous_motions = copy.deepcopy(MOTION_CONFIG)
@@ -1195,7 +1251,7 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_
         runtime_updated = False
         try:
             with file_transaction(
-                [PROFILES.selection_path, PROFILES.custom_games_path, MOTION_CONFIG_FILE,
+                [PROFILES.selection_path, PROFILES.custom_games_path, PROFILES.backup_path, MOTION_CONFIG_FILE,
                  *([KERNEL._general_settings_path()] if zone_layout else [])],
                 user_data_root() / ".profile-install.journal",
             ):
@@ -1222,6 +1278,7 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_
             SYSTEM_COMMANDS.invalidate()
             PROFILES._selection = previous_selection
             PROFILES._custom = previous_custom
+            PROFILES._disk_stamp = PROFILES._stamp()
             MOTION_CONFIG = previous_motions
             GAME_MODE.update(previous_game_mode)
             if zone_layout:
@@ -1570,6 +1627,7 @@ def performance_line() -> str:
 def performance_logger(stop_event: threading.Event) -> None:
     quiet_ticks = 0
     while not stop_event.wait(5.0):
+        _reconcile_profile_configuration()
         data = performance_snapshot()
         active = bool(data.get("running")) or bool(data.get("preview_ready")) or data.get("recent_humans", 0)
         if not active:
@@ -1758,11 +1816,22 @@ class AdminHandler(_BaseHandler):
             # request can finish sending its acknowledgement first.
             threading.Thread(target=self.server.shutdown, name="motion-shutdown", daemon=True).start()
             return
+        if route == "/api/health":
+            if not self._is_loopback():
+                self._send_json({"error": "运行核对只允许本机访问"}, 403)
+                return
+            _reconcile_profile_configuration(force=True)
+            self._send_json({"app": "MotionControl", "version": VERSION, "pid": os.getpid(),
+                             "program_root": str(ROOT.resolve()), "user_data_root": str(user_data_root().resolve()),
+                             "config_revision": CONFIG_REVISION, "configuration": PROFILES.persistence_status()})
+            return
         if route == "/api/game-profiles/catalog":
+            _reconcile_profile_configuration()
             query = parse_qs(parsed.query).get("q", [""])[0]
             self._send_json({"version": VERSION, **PROFILES.list_games(query)})
             return
         if route == "/api/game-profiles/selected":
+            _reconcile_profile_configuration()
             # ?mode= 读某个模式的按键给映射表编辑；不带就是当前正在用的模式。
             wanted = parse_qs(parsed.query, keep_blank_values=True).get("mode", [None])[0]
             with PROFILE_UPDATE_LOCK:
@@ -1772,7 +1841,8 @@ class AdminHandler(_BaseHandler):
                     return
                 profile = PROFILES.effective_profile(None if wanted.upper() in {"", "DEFAULT"} else wanted) if wanted is not None else active
             self._send_json({"version": VERSION, "profile": profile, "active_mode": active["mode"],
-                             "launch": _game_launch_status(profile)})
+                             "launch": _game_launch_status(profile), "configuration": PROFILES.persistence_status(),
+                             "config_revision": CONFIG_REVISION})
             return
         if route == "/api/game-profiles/profile":
             profile_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -2395,7 +2465,7 @@ class AdminHandler(_BaseHandler):
                 return
             try:
                 SYSTEM_COMMANDS.invalidate()
-                with _profile_configuration_transaction():
+                with _profile_configuration_transaction(expected_revision=body.get("expected_revision")):
                     if route.endswith("/select"):
                         profile = PROFILES.select(str(body.get("id", "")))
                     else:
@@ -3103,7 +3173,12 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--no-start-recognition", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--wait-for-pid", type=int, default=0, help=argparse.SUPPRESS)
+    ap.add_argument("--user-data-dir", help=argparse.SUPPRESS)
     args = ap.parse_args()
+
+    if not os.environ.get("MOTIONCONTROL_USER_DIR"):
+        from motioncontrol.data_location import remember_user_data
+        remember_user_data(user_data_root())
 
     if args.wait_for_pid and not wait_for_previous_process(args.wait_for_pid):
         raise SystemExit("旧版程序没有退出，已取消重启，避免两个实例争用端口")

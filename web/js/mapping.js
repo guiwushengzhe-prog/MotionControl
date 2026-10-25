@@ -17,8 +17,52 @@ let profileRevision=0;
 export let profileSwitching=false;
 let profileConflict=false;
 let profileSearchRevision=0;
+let serverProfileRevision='',profileSyncFlight=null,profileSyncRetryAt=0,profileSyncError='';
 const regionNameDrafts=new Map();
 registerDraftFlusher(saveProfileBindings);
+
+function rememberProfileRevision(data){
+  const profile=data.profile;
+  if(profile&&profile.selected_id===gameProfile.selected?.selected_id&&(profile.mode?.id||null)===(gameProfile.selected.mode?.id||null)){
+    // 区域改名等操作也可能合入后台新状态；保留草稿行，更新其它行的保存基底。
+    gameProfile.overrides=profile.overrides||{};gameProfile.selected.overrides=gameProfile.overrides;
+  }
+  serverProfileRevision=profile?.configuration_revision||data.configuration?.revision||'';
+}
+async function postOverrides(body){
+  const data=await post('/api/game-profiles/overrides',{...body,...(serverProfileRevision?{expected_revision:serverProfileRevision}:{})});
+  rememberProfileRevision(data);return data;
+}
+
+export function syncGameProfile(sync){
+  if(sync?.error&&!profileDirty.size){
+    profileSyncError='配置重读未完成，保留当前绑定：'+sync.error;
+    setText($('#profileSaveStatus'),profileSyncError);setClass($('#profileSaveStatus'),'error',true);return;
+  }
+  if(profileSyncError&&!sync?.error){
+    if($('#profileSaveStatus').textContent===profileSyncError){setText($('#profileSaveStatus'),'');setClass($('#profileSaveStatus'),'error',false)}
+    profileSyncError='';
+  }
+  if(!sync?.revision||sync.revision===serverProfileRevision||!gameProfile.selected||profileSwitching||profileFlight||profileSyncFlight||Date.now()<profileSyncRetryAt)return;
+  if(profileDirty.size){
+    clearTimeout(profileAutoSaveTimer);profileConflict=true;
+    setText($('#profileSaveStatus'),'后台配置已更新，你未保存的修改已保留');
+    setClass($('#profileSaveStatus'),'error',true);
+    setText($('#retryProfileSaveBtn'),'合并我的修改再保存');setProperty($('#retryProfileSaveBtn'),'hidden',false);
+    return;
+  }
+  const revision=profileRevision,serverRevision=serverProfileRevision;
+  profileSyncFlight=(async()=>{
+    const data=await api('/api/game-profiles/selected');
+    if(profileDirty.size||revision!==profileRevision||serverRevision!==serverProfileRevision||profileSwitching||profileFlight)return;
+    acceptModeProfile(data);
+    await Promise.all([searchProfiles(),refreshVoiceCommands()]);
+  })().catch(error=>{
+    serverProfileRevision='';
+    profileSyncRetryAt=Date.now()+2000;
+    setText($('#profileSaveStatus'),'配置同步未完成，正在等待重连：'+error.message);
+  }).finally(()=>{profileSyncFlight=null});
+}
 
 // 跳到映射表里的那一行并高亮。组可能是折叠的，得先展开，否则滚过去是一片空。
 export function revealBindingRow(triggerKey){
@@ -230,6 +274,7 @@ export async function refreshProfile(){
   const [selected,actions]=await Promise.all([api('/api/game-profiles/selected'),api('/api/output/actions')]);
   gameProfile.selected=selected.profile||null;gameProfile.actions=actions.actions||{};gameProfile.overrides=gameProfile.selected?.overrides||{};
   gameProfile.activeMode=selected.active_mode||{id:null,name:'默认'};
+  rememberProfileRevision(selected);
   gameLaunch=selected.launch||null;
   gameProfile.zonePointLabels=actions.zone_point_labels||{};
   gameProfile.zoneSegments=actions.zone_segments||[];
@@ -304,6 +349,7 @@ export function renderCurrentMode(mode){
 }
 
 function acceptModeProfile(data){
+  rememberProfileRevision(data);
   gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
   gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
   if(data.launch)gameLaunch=data.launch;
@@ -388,6 +434,7 @@ async function saveRegionNameDrafts(profile_id,excludeRegion=null){
     const name=draft.name.trim();
     if(!name)throw new Error('区域名称不能为空');
     const data=await post('/api/game-profiles/regions',{op:'update',profile_id,id,name});
+    rememberProfileRevision(data);
     gameProfile.selected.regions=data.profile.regions;
     if(regionNameDrafts.get(id)===draft){regionNameDrafts.delete(id);profileDirty.delete('region-name.'+id)}
   }
@@ -406,7 +453,7 @@ async function removeRegion(trigger){
     if(gameProfile.selected.selected_id!==profile_id||(gameProfile.selected.mode?.id||null)!==mode_id)throw new Error('游戏或模式已切换，请重新删除区域');
     await saveRegionNameDrafts(profile_id,trigger.id);
     if([...profileDirty].some(key=>key!==trigger.key&&!key.startsWith('region-name.'))){
-      const data=await post('/api/game-profiles/overrides',{profile_id,mode_id,overrides:readProfileOverrides(trigger.key)});
+      const data=await postOverrides({profile_id,mode_id,overrides:readProfileOverrides(trigger.key)});
       gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
     }
     acceptModeProfile(await post('/api/game-profiles/regions',{op:'remove',profile_id,id:trigger.id}));
@@ -446,6 +493,7 @@ export async function addCustomGame(){
       {name,appid:$('#customGameAppid').value});
     $('#customGameName').value='';$('#customGameAppid').value='';
     const picked=await post('/api/game-profiles/select',{id:data.game.id});
+    rememberProfileRevision(picked);
     gameProfile.selected=picked.profile;gameProfile.overrides=picked.profile.overrides||{};++profileApplies;
     gameProfile.activeMode=picked.active_mode||picked.profile.mode;
     gameLaunch=picked.launch||null;
@@ -462,7 +510,7 @@ export async function renameCustomGame(){
   if(name===null)return;
   await profileOperation(async()=>{
     const data=await post('/api/game-profiles/custom/rename',{id:current.id,name});
-    gameProfile.selected={...current,name:data.game.name};
+    acceptModeProfile(await api('/api/game-profiles/selected'));
     await searchProfiles();renderProfileHeader();
     notice(`已改名为「${data.game.name}」`);
   });
@@ -478,6 +526,7 @@ export async function removeCustomGame(){
     const data=await post('/api/game-profiles/custom/remove',{id:current.id});
     gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
     const selected=await api('/api/game-profiles/selected');gameLaunch=selected.launch||null;gameProfile.activeMode=selected.active_mode;
+    rememberProfileRevision(selected);
     await refreshVoiceCommands();renderProfileBindingRows();await searchProfiles();renderProfileHeader();
     notice(`已删掉，当前游戏退回「${data.profile.name}」`);
   });
@@ -488,6 +537,7 @@ export async function applySelectedProfile(){
   await profileOperation(async()=>{
     await saveProfileBindings();
     const data=await post('/api/game-profiles/select',{id});
+    rememberProfileRevision(data);
     gameProfile.selected=data.profile;++profileApplies;
     gameProfile.activeMode=data.active_mode||data.profile.mode;
     gameProfile.overrides=data.profile.overrides||{};
@@ -1410,7 +1460,7 @@ async function removeMappingBinding(trigger){
     await saveRegionNameDrafts(profile_id);
     // 被删除的行可以尚未填完；其它行的编辑和这次删除一起保存。
     const overrides=readProfileOverrides(trigger.key);overrides[trigger.key]=null;
-    const data=await post('/api/game-profiles/overrides',{profile_id,mode_id,overrides});
+    const data=await postOverrides({profile_id,mode_id,overrides});
     gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
     gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
     profileDirty.clear();++profileRevision;profileConflict=false;
@@ -1427,12 +1477,13 @@ export async function saveProfileBindings(){
   clearTimeout(profileAutoSaveTimer);
   if(profileFlight){await profileFlight;return saveProfileBindings()}
   if(!profileDirty.size)return;
+  if(profileConflict){const error=new Error('后台配置已经更新，请先合并未保存的修改');error.status=409;throw error}
   const id=gameProfile.selected.selected_id||gameProfile.selected.id,revision=profileRevision;
   $('#profileSaveStatus').textContent='正在保存…';$('#retryProfileSaveBtn').hidden=true;
   profileFlight=(async()=>{
     await saveRegionNameDrafts(id);
     if([...profileDirty].some(key=>!key.startsWith('region-name.'))){
-      const data=await post('/api/game-profiles/overrides',{profile_id:id,mode_id:gameProfile.selected.mode?.id||null,overrides:readProfileOverrides()});
+      const data=await postOverrides({profile_id:id,mode_id:gameProfile.selected.mode?.id||null,overrides:readProfileOverrides()});
       gameProfile.selected=data.profile;gameProfile.overrides=data.profile.overrides||{};
       gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
     }
@@ -1445,7 +1496,7 @@ export async function saveProfileBindings(){
     profileConflict=error.status===409;
     clearTimeout(profileSavedTimer);
     $('#profileSaveStatus').textContent='没保存上：'+error.message;$('#profileSaveStatus').classList.add('error');
-    $('#retryProfileSaveBtn').textContent=profileConflict?'重新选择本游戏再保存':'重试保存';
+    $('#retryProfileSaveBtn').textContent=profileConflict?'合并我的修改再保存':'重试保存';
     $('#retryProfileSaveBtn').hidden=false;throw error;
   }finally{profileFlight=null}
   if(profileDirty.size)return saveProfileBindings();
@@ -1461,7 +1512,13 @@ export async function retryProfileBindings(){
   if(!profileConflict)return saveProfileBindings();
   await profileOperation(async()=>{
     const id=gameProfile.selected.selected_id||gameProfile.selected.id;
+    const mode=gameProfile.selected.mode?.id||'DEFAULT';
     await post('/api/game-profiles/select',{id});
+    const latest=await api('/api/game-profiles/selected?mode='+encodeURIComponent(mode));
+    // 保留正在编辑的行，仅将这些行合到后台最新绑定，避免覆盖其它窗口的改动。
+    rememberProfileRevision(latest);
+    gameProfile.overrides=latest.profile.overrides||{};
+    gameProfile.selected.overrides=gameProfile.overrides;
     profileConflict=false;
     await saveProfileBindings();
   },{recoverConflict:true});
@@ -1475,6 +1532,7 @@ export function scheduleProfileAutoSave(event){
   const row=event?.target.closest('.binding-row');if(!row||profileSwitching)return;
   profileDirty.add(row.dataset.trigger);profileRevision++;
   clearTimeout(profileAutoSaveTimer);
+  if(profileConflict)return;
   const pendingRule=row.querySelector('.binding-alternate .binding-rule-trigger');
   if(pendingRule&&!pendingRule.value){
     $('#profileSaveStatus').textContent='先选好配合的动作，才能保存';
@@ -1489,7 +1547,7 @@ export async function resetProfileBindings(){
   await profileOperation(async()=>{
     await saveProfileBindings();
     const profile_id=gameProfile.selected.selected_id||gameProfile.selected.id;
-    const data=await post('/api/game-profiles/overrides',{profile_id,mode_id:gameProfile.selected.mode?.id||null,overrides:{}});
+    const data=await postOverrides({profile_id,mode_id:gameProfile.selected.mode?.id||null,overrides:{}});
     gameProfile.selected=data.profile;gameProfile.overrides={};
     gameProfile.activeMode=data.active_mode||gameProfile.activeMode;
     // 恢复默认就是回到默认那几行，这次手动加进来的没绑的动作一起收回动作库。

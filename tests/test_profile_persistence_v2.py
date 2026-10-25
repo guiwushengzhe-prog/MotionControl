@@ -51,7 +51,7 @@ def test_failed_save_preserves_memory_and_disk(tmp_path):
     store = make_store(tmp_path)
     store.set_overrides(mapping("Q"))
     before = store.selection_path.read_bytes()
-    with patch("motioncontrol.game_profiles.os.replace", side_effect=PermissionError("文件被占用")):
+    with patch("motioncontrol.config_transaction.os.replace", side_effect=PermissionError("文件被占用")):
         with pytest.raises(PermissionError):
             store.set_overrides(mapping("E"))
         with pytest.raises(PermissionError):
@@ -77,6 +77,6 @@ def test_invalid_legacy_mapping_is_not_rewritten(tmp_path):
     store = make_store(tmp_path)
     original = b'{"schema":"motioncontrol.profile_selection.v1","overrides":[]}'
     store.selection_path.write_bytes(original)
-    with pytest.raises(ValueError, match="原文件已保留"):
+    with pytest.raises(ValueError, match="未找到有效副本"):
         GameProfileStore(tmp_path)
     assert store.selection_path.read_bytes() == original

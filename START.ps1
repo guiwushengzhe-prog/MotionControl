@@ -1,6 +1,58 @@
+param([switch]$Desktop)
+
 $ErrorActionPreference = 'Stop'
 $env:PYTHONUTF8 = '1'
 Set-Location $PSScriptRoot
+
+$multicorePython = Join-Path $PSScriptRoot '.venv-multicore\Scripts\python.exe'
+$python = if (Test-Path -LiteralPath $multicorePython) { $multicorePython } else { 'python' }
+$location = @(& $python -X utf8 -m motioncontrol.user_paths --locate --register 2>&1)
+if ($LASTEXITCODE -eq 2 -and $Desktop) {
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show(($location -join "`n"), '请定位原数据目录') | Out-Null
+    $picker = [System.Windows.Forms.FolderBrowserDialog]::new()
+    try {
+        $picker.Description = '请选择迁移后的 MotionControl 原数据文件夹，里面应有游戏配置、动作或校准文件。'
+        if ($picker.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 2 }
+        $location = @(& $python -X utf8 -m motioncontrol.user_paths --remember $picker.SelectedPath 2>&1)
+    } finally { $picker.Dispose() }
+}
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ($location -join "`n")
+    exit 2
+}
+$env:MOTIONCONTROL_USER_DIR = [string]$location[-1]
+
+function Get-MotionControlRealPath {
+    param([string]$Path)
+    $directory = [System.IO.DirectoryInfo]::new([System.IO.Path]::GetFullPath($Path))
+    $original = $directory.FullName
+    $suffix = ''
+    while ($null -ne $directory -and $null -ne $directory.Parent) {
+        if ([System.IO.Directory]::Exists($directory.FullName)) {
+            $target = $directory.ResolveLinkTarget($true)
+            if ($null -ne $target) {
+                return ([System.IO.Path]::Combine($target.FullName, $suffix)).TrimEnd('\', '/')
+            }
+        }
+        $suffix = [System.IO.Path]::Combine($directory.Name, $suffix)
+        $directory = $directory.Parent
+    }
+    return $original.TrimEnd('\', '/')
+}
+
+function Assert-MotionControlInstance {
+    $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/health' -TimeoutSec 4
+    $dataRoot = if ($env:MOTIONCONTROL_USER_DIR) { $env:MOTIONCONTROL_USER_DIR } else { Join-Path $env:LOCALAPPDATA 'MotionControl' }
+    if ($health.app -ne 'MotionControl' -or
+            $health.program_root -ne (Get-MotionControlRealPath $PSScriptRoot) -or
+            $health.user_data_root -ne (Get-MotionControlRealPath $dataRoot)) {
+        throw "正在运行的程序位置或数据目录不同：$($health.program_root)；$($health.user_data_root)。请从对应位置打开，或先退出那份程序。"
+    }
+    if ($health.configuration.state -ne 'ready') {
+        throw "现有程序的配置尚未恢复：$($health.configuration.error)"
+    }
+}
 
 function Wait-MotionControlAdministrator {
     param([string]$GameId, [int]$TimeoutSeconds = 60)
@@ -14,6 +66,7 @@ function Wait-MotionControlAdministrator {
                 $cameraState = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/kernel/status' -TimeoutSec 2
                 if ($cameraState.body_mode -in @('computer', 'phone') -and
                         $null -ne $cameraState.camera -and $null -ne $cameraState.kernel) {
+                    Assert-MotionControlInstance
                     return $cameraState
                 }
             }
@@ -58,9 +111,10 @@ try {
 }
 if ($running -and $running.StatusCode -eq 200) {
     try {
+        Assert-MotionControlInstance
         $selected = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/game-profiles/selected' -TimeoutSec 2
     } catch {
-        Write-Host '现有程序未能返回游戏设置，未打开页面或另起后台。请稍后重试。'
+        Write-Host "现有程序未能通过运行核对，未打开页面或另起后台：$($_.Exception.Message)"
         exit 1
     }
     $cameraState = $null
@@ -133,7 +187,29 @@ if ($running -and $running.StatusCode -eq 200) {
     exit 0
 }
 
-$multicorePython = Join-Path $PSScriptRoot '.venv-multicore\Scripts\python.exe'
+if ($Desktop) {
+    $logs = Join-Path $env:MOTIONCONTROL_USER_DIR 'logs'
+    New-Item -ItemType Directory -Path $logs -Force | Out-Null
+    $service = Start-Process -FilePath $python -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru `
+        -ArgumentList @('-X', 'utf8', 'server.py', '--no-browser') `
+        -RedirectStandardOutput (Join-Path $logs 'startup.stdout.log') `
+        -RedirectStandardError (Join-Path $logs 'startup.stderr.log')
+    $deadline = (Get-Date).AddSeconds(75)
+    $ready = $false
+    while ((Get-Date) -lt $deadline) {
+        try { Assert-MotionControlInstance; $ready = $true; break } catch {}
+        # 普通进程可能已成功交接给管理员进程，不能把正常退出当作启动失败。
+        if ($service.HasExited -and $service.ExitCode -ne 0) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $ready) {
+        Write-Host "程序尚未就绪，请查看 $logs 中的启动记录。"
+        exit 1
+    }
+    Start-Process 'http://127.0.0.1:8766/'
+    exit 0
+}
+
 if (Test-Path -LiteralPath $multicorePython) {
     & $multicorePython -X utf8 server.py
 } else {

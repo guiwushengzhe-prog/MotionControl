@@ -91,20 +91,27 @@ export function notice(text){
 $('#notice').addEventListener('click',()=>notice(''));
 
 export async function api(path,opt={}){
-  let response;
   // 8s suits local calls. A cloud call is a download plus an apply on the far
   // side of the internet, so callers may ask for longer rather than being told
   // the local service is unresponsive when it is the network that is slow.
   const {timeoutMs=8000,...init}=opt;
-  try{response=await fetch(path,{...init,signal:AbortSignal.timeout(timeoutMs)})}
-  catch{throw new Error('本地服务无响应，请检查连接后重试')}
-  let data;
-  try{data=await response.json()}catch{throw new Error('服务响应无法读取')}
-  if(!response.ok||data.ok===false){
-    const error=new Error(data.error||`服务请求失败（${response.status}）`);
-    error.status=response.status;throw error;
+  const signal=AbortSignal.timeout(timeoutMs),readOnly=['GET','HEAD'].includes((init.method||'GET').toUpperCase());
+  for(let attempt=0;attempt<2;attempt++){
+    let response,data,error;
+    try{response=await fetch(path,{cache:'no-store',...init,signal})}
+    catch{error=new Error('本地服务无响应，请检查连接后重试')}
+    if(response){
+      try{data=await response.json()}catch{error=new Error('服务响应无法读取')}
+      if(!error&&(!response.ok||data.ok===false)){
+        error=new Error(data.error||`服务请求失败（${response.status}）`);error.status=response.status;
+      }
+    }
+    if(!error)return data;
+    // 只重试无副作用的读取，共用原来的总超时；保存、添加、删除不能重复执行。
+    const transient=!response||[502,503,504].includes(response.status);
+    if(!readOnly||attempt||!transient||signal.aborted)throw error;
+    await new Promise(resolve=>setTimeout(resolve,250));
   }
-  return data;
 }
 
 export async function post(path,data,timeoutMs){return api(path,{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8'},body:JSON.stringify(data),timeoutMs})}

@@ -381,7 +381,7 @@ def test_conflicted_mapping_retry_reselects_before_saving_the_same_draft(desktop
     api.override_failure_status = 409
     row = page.locator('.binding-row[data-trigger="zone.leftHand"]')
     row.locator('.binding-target-box select').select_option("Y")
-    page.wait_for_function("!retryProfileSaveBtn.hidden && retryProfileSaveBtn.textContent.includes('重新选择')")
+    page.wait_for_function("!retryProfileSaveBtn.hidden && retryProfileSaveBtn.textContent.includes('合并')")
     page.click("#retryProfileSaveBtn")
     page.wait_for_function("retryProfileSaveBtn.hidden && profileSaveStatus.textContent === '已保存'")
     paths = [path for path, _ in api.requests if path in ("/api/game-profiles/select", "/api/game-profiles/overrides")]
@@ -389,6 +389,80 @@ def test_conflicted_mapping_retry_reselects_before_saving_the_same_draft(desktop
     assert api.profile["bindings"]["zones"]["leftHand"]["action"]["target"] == "Y"
     assert row.locator('.binding-target-box select').input_value() == "Y"
     assert page.locator("#mappingFields").is_enabled()
+
+
+@pytest.mark.parametrize("method,status,expected_calls", [("GET", 503, 2), ("GET", 403, 1), ("POST", 503, 1)])
+def test_transient_retry_is_bounded_and_never_repeats_mutations(desktop, method, status, expected_calls):
+    page, seen = desktop.page, []
+
+    def reply(route):
+        seen.append(route.request.method)
+        desktop.api.fulfill(route, {"error": "临时不可用"} if len(seen) == 1 else {"value": 42},
+                            status if len(seen) == 1 else 200)
+
+    page.route(ORIGIN + "/api/recovery-test", reply)
+    result = page.evaluate("""async method=>{
+        const {api}=await import('/js/core.js');
+        try{return await api('/api/recovery-test',{method})}catch(error){return {error:error.message,status:error.status}}
+    }""", method)
+    assert len(seen) == expected_calls
+    assert result == ({"ok": True, "value": 42} if expected_calls == 2 else {"error": "临时不可用", "status": status})
+
+
+def test_clean_page_follows_reloaded_game_without_writing_back(desktop):
+    page, api = desktop.page, desktop.api
+    api.profile["configuration_revision"] = "before"
+    page.evaluate("async()=>{const m=await import('/js/mapping.js');await m.refreshProfile()}")
+    api.profile["name"] = "自动恢复的游戏"
+    api.profile["bindings"]["zones"]["leftHand"]["action"]["target"] = "Y"
+    api.profile["configuration_revision"] = "after"
+    page.evaluate("async()=>{const m=await import('/js/mapping.js');m.syncGameProfile({revision:'after'})}")
+    page.wait_for_function("currentGameName.textContent === '自动恢复的游戏'")
+    assert page.locator('.binding-row[data-trigger="zone.leftHand"] .binding-target-box select').input_value() == "Y"
+    assert not any(path == "/api/game-profiles/overrides" for path, _ in api.requests)
+
+
+def test_background_change_preserves_draft_and_retry_merges_latest_other_binding(desktop):
+    page, api = desktop.page, desktop.api
+    api.profile["configuration_revision"] = "before"
+    page.evaluate("async()=>{const m=await import('/js/mapping.js');await m.refreshProfile()}")
+    page.click('[data-view="games"]')
+    row = page.locator('.binding-row[data-trigger="zone.leftHand"]')
+    row.locator('.binding-target-box select').select_option("Y")
+    other = {"action": {"type": "gamepad", "target": "B", "behavior": "hold"}}
+    api.profile["overrides"]["zone.rightHand"] = other
+    api.profile["bindings"]["zones"]["rightHand"] = other
+    api.profile["configuration_revision"] = "after"
+    page.evaluate("async()=>{const m=await import('/js/mapping.js');m.syncGameProfile({revision:'after'})}")
+    page.wait_for_timeout(500)
+    assert row.locator('.binding-target-box select').input_value() == "Y"
+    assert not any(path == "/api/game-profiles/overrides" for path, _ in api.requests)
+    assert "未保存的修改已保留" in page.locator("#profileSaveStatus").text_content()
+    page.click("#retryProfileSaveBtn")
+    page.wait_for_function("profileSaveStatus.textContent === '已保存'")
+    assert api.profile["overrides"]["zone.rightHand"] == other
+    assert api.profile["bindings"]["zones"]["leftHand"]["action"]["target"] == "Y"
+    writes = [body for path, body in api.requests if path == "/api/game-profiles/overrides"]
+    assert len(writes) == 1 and writes[0]["expected_revision"] == "after"
+
+
+def test_delayed_background_read_cannot_undo_a_finished_game_selection(desktop):
+    page, api = desktop.page, desktop.api
+    api.profile["configuration_revision"] = "initial"
+    api.profile["mode"] = {"id": None, "name": "默认"}
+    page.evaluate("async()=>{await (await import('/js/mapping.js')).refreshProfile()}")
+    old = copy.deepcopy(api.profile)
+    held = []
+    page.route(ORIGIN + "/api/game-profiles/selected", lambda route: held.append(route))
+    page.evaluate("async()=>{(await import('/js/mapping.js')).syncGameProfile({revision:'background'})}")
+    page.wait_for_timeout(50)
+    assert len(held) == 1
+    api.profile.update(name="用户刚选的游戏", configuration_revision="own-selection")
+    page.evaluate("async()=>{await (await import('/js/mapping.js')).applySelectedProfile()}")
+    assert page.locator("#currentGameName").text_content() == "用户刚选的游戏"
+    api.fulfill(held[0], {"profile": old})
+    page.wait_for_timeout(150)
+    assert page.locator("#currentGameName").text_content() == "用户刚选的游戏"
 
 
 def test_touch_narrow_windows_and_all_settings_panes_stay_within_width(mock_browser):

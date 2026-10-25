@@ -19,8 +19,9 @@ is the part that knows about %LOCALAPPDATA%.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
+
+from motioncontrol.config_transaction import atomic_bytes
 
 from motioncontrol_shared.user_layout import (
     LEGACY_PROGRAM_FILES,
@@ -30,6 +31,7 @@ from motioncontrol_shared.user_layout import (
 )
 
 _OVERRIDE_ENV = "MOTIONCONTROL_USER_DIR"
+_located_root = None
 
 
 def user_data_root() -> Path:
@@ -41,8 +43,11 @@ def user_data_root() -> Path:
     override = os.environ.get(_OVERRIDE_ENV, "").strip()
     if override:
         return Path(override)
-    base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
-    return Path(base) / "MotionControl"
+    global _located_root
+    if _located_root is None:
+        from motioncontrol.data_location import locate_user_data
+        _located_root = locate_user_data()
+    return _located_root
 
 
 def user_path(key: str) -> Path:
@@ -71,13 +76,10 @@ def migrate_legacy_user_data(program_root: Path | str) -> list[str]:
         if destination.exists() or not source.exists():
             continue
         try:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+            atomic_bytes(destination, source.read_bytes())
             migrated.append(key)
         except OSError as exc:
-            # A failed migration must not stop the app: the user simply keeps
-            # the defaults, which is recoverable, unlike refusing to start.
-            print(f"用户数据迁移失败（{key}）：{exc}")
+            raise OSError(f"用户数据迁移未完成（{key}），原文件已保留；已停止启动，避免载入默认配置：{exc}") from exc
     return migrated
 
 
@@ -95,3 +97,22 @@ __all__ = [
     "user_data_root",
     "user_path",
 ]
+
+
+if __name__ == "__main__":
+    import argparse
+    from motioncontrol.data_location import remember_user_data
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--locate", action="store_true")
+    parser.add_argument("--register", action="store_true")
+    parser.add_argument("--remember", type=Path)
+    args = parser.parse_args()
+    try:
+        # 启动器与服务共用定位规则；明确设置的目录优先。
+        root = args.remember or user_data_root()
+        if args.register or args.remember:
+            root = remember_user_data(root, require_existing=args.remember is not None)
+        print(root)
+    except (OSError, ValueError) as error:
+        print(str(error))
+        raise SystemExit(2)

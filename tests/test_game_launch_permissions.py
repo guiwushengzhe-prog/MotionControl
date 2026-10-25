@@ -100,7 +100,7 @@ def test_relaunch_uses_same_installation_and_one_wait_argument():
     assert directory == str(ROOT)
     assert str(ROOT / "server.py") in parameters
     assert parameters.count("--wait-for-pid") == 1
-    assert "34" in parameters and "12" not in parameters
+    assert "--wait-for-pid 34" in parameters and "--wait-for-pid 12" not in parameters
 
 
 def test_admin_restart_persists_then_stops_old_server(isolated_user_data, monkeypatch):

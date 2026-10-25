@@ -37,7 +37,13 @@ function Start-Process {
     param($FilePath)
     $global:mcStartTest.events.Add(@{ kind = 'browser'; path = $FilePath })
 }
-function python { throw '测试不得启动新后台' }
+function python {
+    if ($args -contains '--locate') {
+        $global:LASTEXITCODE = 0
+        return Join-Path $env:LOCALAPPDATA 'MotionControl'
+    }
+    throw '测试不得启动新后台'
+}
 function Invoke-WebRequest {
     param($Uri, $TimeoutSec)
     if ($Uri -ne 'http://127.0.0.1:8766/') { throw '测试请求地址不正确' }
@@ -47,6 +53,16 @@ function Invoke-RestMethod {
     param($Uri, $Method = 'Get', $TimeoutSec, $ContentType, $Body)
     $path = ([uri]$Uri).AbsolutePath
     $global:mcStartTest.events.Add(@{ kind = 'api'; path = $path; method = $Method })
+    if ($path -eq '/api/health') {
+        if ($scenario.health_error) { throw $scenario.health_error }
+        if ($scenario.health) { return $scenario.health }
+        return [pscustomobject]@{
+            app = 'MotionControl'
+            program_root = Split-Path $env:MC_START_TEST_SCRIPT
+            user_data_root = Join-Path $env:LOCALAPPDATA 'MotionControl'
+            configuration = @{ state = 'ready' }
+        }
+    }
     if ($global:mcStartTest.index -ge $global:mcStartTest.calls.Count) {
         $global:mcStartTest.events.Add(@{ kind = 'unexpected'; path = $path })
         throw '测试请求超出预期'
@@ -94,13 +110,15 @@ def launch(value=None, *, error=None):
     return call("game-profiles/launch-mode", value, method="Post", error=error)
 
 
-def run_start(tmp_path, calls, *, inherited_restart=False):
+def run_start(tmp_path, calls, *, inherited_restart=False, health=None, health_error=None):
     harness = tmp_path / "startup_harness.ps1"
     harness.write_text(HARNESS, encoding="utf-8")
     env = os.environ.copy()
     env.update(MC_START_TEST_SCRIPT=str(ROOT / "START.ps1"),
-               MC_START_TEST_SCENARIO=json.dumps({"calls": calls, "inherited_restart": inherited_restart}),
+               MC_START_TEST_SCENARIO=json.dumps({"calls": calls, "inherited_restart": inherited_restart,
+                                                  "health": health, "health_error": health_error}),
                LOCALAPPDATA=str(tmp_path))
+    env.pop("MOTIONCONTROL_USER_DIR", None)
     result = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-File", str(harness)],
                             capture_output=True, text=True, encoding="utf-8", env=env, timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -112,6 +130,22 @@ def run_start(tmp_path, calls, *, inherited_restart=False):
     data["messages"] = "\n".join(event["text"] for event in data["events"] if event["kind"] == "message")
     data["browser"] = [event for event in data["events"] if event["kind"] == "browser"]
     return data
+
+
+@pytest.mark.parametrize("problem", ["program", "data", "configuration", "old_version"])
+def test_does_not_reuse_another_checkout_data_directory_or_unready_instance(tmp_path, problem):
+    health = {"app": "MotionControl", "program_root": str(ROOT),
+              "user_data_root": str(tmp_path / "MotionControl"), "configuration": {"state": "ready"}}
+    if problem == "program":
+        health["program_root"] = str(tmp_path / "other-program")
+    elif problem == "data":
+        health["user_data_root"] = str(tmp_path / "other-data")
+    elif problem == "configuration":
+        health["configuration"] = {"state": "error", "error": "文件正在恢复"}
+    data = run_start(tmp_path, [], health=health, health_error="现有版本尚不支持运行核对" if problem == "old_version" else None)
+    assert data["code"] == 1 and not data["browser"]
+    assert "未能通过运行核对" in data["messages"]
+    assert not any(e.get("path") == "/api/game-profiles/launch-mode" for e in data["events"])
 
 
 def test_waits_for_same_game_administrator_and_kernel_before_starting_camera(tmp_path):

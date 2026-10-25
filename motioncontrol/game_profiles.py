@@ -10,15 +10,15 @@ falling back to the generic profile when a generated library is missing.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
-import os
-import tempfile
 import threading
 import uuid
 from pathlib import Path
 
 from motioncontrol_shared.catalog import catalog_entry, load_catalog, load_profile
 from motioncontrol.user_paths import user_path
+from motioncontrol.config_transaction import atomic_bytes, recover, replace_documents
 from motioncontrol_shared.motion_conflicts import validate_motion_bindings
 from motioncontrol_shared.regions import (
     MAX_CUSTOM_REGIONS, is_region_id, normalize_region_name, normalize_region_rect, normalize_regions,
@@ -72,18 +72,57 @@ class GameProfileStore:
         self.selection_path = (Path(selection_path) if selection_path is not None
                                else user_path("profile_selection"))
         # 玩家自己添加的游戏。和选择、覆盖一样是用户数据，不进程序目录。
-        self.custom_games_path = user_path("custom_games")
+        self.custom_games_path = self.selection_path.parent / user_path("custom_games").name
+        self.backup_path = self.selection_path.with_name(self.selection_path.name + ".last-good")
+        self.journal_path = self.selection_path.parent / ".profile-store.journal"
         self._lock = threading.RLock()
         self._catalog: dict | None = None
         self._catalog_mtime_ns = -1
+        self.recovery_count = 0
+        self.recovery_message = self.last_error = ""
+        self._migrated = False
+        self._revision_state = None
+        recover(self.journal_path)
         self._selection = self._load_selection()
         self._custom = self._load_custom_games()
+        self._disk_stamp = self._stamp()
+        if self._migrated:
+            self._save_selection(self._selection)
+        elif self.selection_path.exists():
+            atomic_bytes(self.backup_path, self._encoded_state(self._selection, self._custom))
+
+    def _stamp(self):
+        def stamp(path):
+            try:
+                stat = path.stat()
+                return stat.st_mtime_ns, stat.st_size, stat.st_ino
+            except FileNotFoundError:
+                return None
+        return tuple(stamp(p) for p in (self.selection_path, self.custom_games_path))
 
     def _load_selection(self) -> dict:
         try:
             original = self.selection_path.read_bytes()
-        except FileNotFoundError:
-            return {"schema": SELECTION_SCHEMA, "selected_id": "generic-xbox", "overrides_by_profile": {}}
+            return self._parse_selection(original)
+        except (FileNotFoundError, ValueError, UnicodeError) as error:
+            if not self.backup_path.exists():
+                if isinstance(error, FileNotFoundError):
+                    return {"schema": SELECTION_SCHEMA, "selected_id": "generic-xbox", "overrides_by_profile": {}}
+                raise ValueError("游戏配置无法读取，未找到有效副本；原文件已保留") from error
+            raw = self.backup_path.read_bytes()
+            restored = self._parse_selection(raw)
+            if self.selection_path.exists():
+                damaged = self.selection_path.read_bytes()
+                digest = hashlib.sha256(damaged).hexdigest()[:16]
+                preserved = self.selection_path.with_name(self.selection_path.name + f".invalid-{digest}")
+                if not preserved.exists():
+                    atomic_bytes(preserved, damaged)
+            atomic_bytes(self.selection_path, raw)
+            self.recovery_count += 1
+            self.recovery_message = "已从最近有效副本恢复游戏配置，损坏内容已保留"
+            return restored
+
+    def _parse_selection(self, original: bytes) -> dict:
         data = json.loads(original.decode("utf-8-sig"))
         if not isinstance(data, dict):
             raise ValueError("游戏配置格式无法读取，原文件已保留")
@@ -96,7 +135,7 @@ class GameProfileStore:
             except FileExistsError:
                 pass
             data = migrated
-            self._save_selection(data)
+            self._migrated = True
         if data.get("schema") != SELECTION_SCHEMA or not isinstance(data.get("overrides_by_profile"), dict):
             raise ValueError("游戏配置格式无法读取，原文件已保留")
         if not isinstance(data.get("selected_id"), str) or any(
@@ -122,30 +161,74 @@ class GameProfileStore:
             raise ValueError("游戏区域数据无效，原文件已保留")
         for items in regions.values():
             normalize_regions(items)
+        for overrides in [*data["overrides_by_profile"].values(),
+                          *(mode.get("overrides", {}) for modes in game_modes.values() for mode in modes)]:
+            validate_motion_bindings(_merge_bindings({}, overrides))
+        if "custom_games" in data:
+            games = data["custom_games"]
+            if not isinstance(games, list) or any(
+                not isinstance(game, dict) or not isinstance(game.get("id"), str)
+                or not game["id"].startswith(self.CUSTOM_PREFIX)
+                or not isinstance(game.get("name"), str) or not game["name"].strip() for game in games
+            ):
+                raise ValueError("自建游戏信息无效，原文件已保留")
         return data
 
-    def _save_selection(self, selection: dict) -> None:
+    @staticmethod
+    def _encoded_state(selection, custom):
         selection = copy.deepcopy(selection)
-        if hasattr(self, "_custom"):
-            # The selection file is the cloud-shareable game configuration.
-            # Include custom-game identity so another PC can install its bindings
-            # and launch preference without already having this local game ID.
-            games = self._custom["games"]
-            if games:
-                selection["custom_games"] = copy.deepcopy(games)
-            else:
-                selection.pop("custom_games", None)
-        self.selection_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.selection_path.parent, delete=False) as stream:
-                temporary = Path(stream.name)
-                json.dump(selection, stream, ensure_ascii=False, indent=2)
-            os.replace(temporary, self.selection_path)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-        self._selection = selection
+        selection["custom_games"] = copy.deepcopy(custom["games"])
+        return json.dumps(selection, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
+
+    def _save_selection(self, selection: dict, custom: dict | None = None) -> None:
+        if self._stamp() != self._disk_stamp:
+            raise ProfileSelectionChanged("配置文件已更新，已阻止旧状态覆盖，请重新读取后重试")
+        custom = copy.deepcopy(self._custom if custom is None else custom)
+        encoded = self._encoded_state(selection, custom)
+        selection = self._parse_selection(encoded)
+        replace_documents({self.selection_path: selection, self.custom_games_path: custom,
+                           self.backup_path: selection}, self.journal_path)
+        self._selection, self._custom = selection, custom
+        self._disk_stamp = self._stamp()
+        self.last_error = ""
+
+    def refresh_from_disk(self) -> bool:
+        """只在文件变化时重读；失败保留已生效配置并阻止旧状态写回。"""
+        with self._lock:
+            try:
+                if self._stamp() == self._disk_stamp:
+                    return False
+                selection = self._load_selection()
+                custom = self._load_custom_games(selection)
+                changed = selection != self._selection or custom != self._custom
+                self._selection, self._custom = selection, custom
+                self._disk_stamp = self._stamp()
+                self.last_error = ""
+                if changed:
+                    self.recovery_count += 1
+                    self.recovery_message = "已重新载入完整游戏配置"
+                return changed
+            except (OSError, ValueError, TypeError) as error:
+                self.last_error = f"配置重载未完成，继续使用最近有效状态：{error}"
+                return False
+
+    def persistence_status(self):
+        with self._lock:
+            return {"state": "error" if self.last_error else "ready", "error": self.last_error,
+                    "revision": self.revision(),
+                    "recovery_count": self.recovery_count, "message": self.recovery_message,
+                    "selection_path": str(self.selection_path.resolve()),
+                    "custom_games_path": str(self.custom_games_path.resolve())}
+
+    def revision(self):
+        with self._lock:
+            state = self._selection, self._custom
+            # 保存与重读都整体替换状态；每次轮询不重复编码全部游戏的绑定。
+            if self._revision_state is None or any(a is not b for a, b in zip(state, self._revision_state)):
+                raw = json.dumps(state, sort_keys=True, ensure_ascii=False).encode("utf-8")
+                self._revision_value = hashlib.sha256(raw).hexdigest()[:20]
+                self._revision_state = state
+            return self._revision_value
 
     # ---- 玩家自己添加的游戏 -------------------------------------------------
     #
@@ -158,12 +241,16 @@ class GameProfileStore:
 
     CUSTOM_PREFIX = "custom-"
 
-    def _load_custom_games(self) -> dict:
-        """读自定义游戏。坏了就当没有，不能让它拦住整个控制器。"""
-        try:
-            data = json.loads(self.custom_games_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {"schema": CUSTOM_GAMES_SCHEMA, "games": []}
+    def _load_custom_games(self, selection=None) -> dict:
+        """完整游戏配置内的自建条目为准；兼容旧版的独立文件。"""
+        selection = self._selection if selection is None else selection
+        if isinstance(selection.get("custom_games"), list):
+            data = {"games": selection["custom_games"]}
+        else:
+            try:
+                data = json.loads(self.custom_games_path.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError):
+                return {"schema": CUSTOM_GAMES_SCHEMA, "games": []}
         if not isinstance(data, dict) or not isinstance(data.get("games"), list):
             return {"schema": CUSTOM_GAMES_SCHEMA, "games": []}
         games = []
@@ -183,20 +270,7 @@ class GameProfileStore:
         return {"schema": CUSTOM_GAMES_SCHEMA, "games": games}
 
     def _save_custom_games(self, data: dict) -> None:
-        self.custom_games_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
-                                             dir=self.custom_games_path.parent,
-                                             delete=False) as stream:
-                temporary = Path(stream.name)
-                json.dump(data, stream, ensure_ascii=False, indent=2)
-            os.replace(temporary, self.custom_games_path)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-        self._custom = data
-        self._save_selection(self._selection)
+        self._save_selection(self._selection, custom=data)
 
     def import_custom_game(self, record: dict) -> None:
         """Install the same custom game ID from a shared game configuration."""
@@ -265,8 +339,6 @@ class GameProfileStore:
             if self._custom_entry(ident) is None:
                 raise KeyError(f"没有这个自定义游戏：{ident}")
             games = [x for x in self._custom["games"] if x["id"] != ident]
-            self._save_custom_games({"schema": CUSTOM_GAMES_SCHEMA, "games": games})
-
             selection = copy.deepcopy(self._selection)
             selection["overrides_by_profile"].pop(ident, None)
             selection.get("launch_mode_by_profile", {}).pop(ident, None)
@@ -275,7 +347,7 @@ class GameProfileStore:
             # 正选着它就退回通用档，否则界面会指向一个已经不存在的游戏。
             if selection["selected_id"] == ident:
                 selection["selected_id"] = "generic-xbox"
-            self._save_selection(selection)
+            self._save_selection(selection, custom={"schema": CUSTOM_GAMES_SCHEMA, "games": games})
             return self.effective_profile()
 
     def rename_custom_game(self, profile_id: str, name: str) -> dict:
@@ -368,8 +440,9 @@ class GameProfileStore:
             except Exception:
                 # A missing generated library must not brick the existing controller.
                 profile = self.get_profile("generic-xbox")
+                profile["requested_id"] = selected_id
+                profile["unavailable"] = True
                 selected_id = "generic-xbox"
-                self._save_selection({**self._selection, "selected_id": selected_id})
             modes = self._modes_for(selected_id)
             mode = next((item for item in modes if item["id"] == mode_id), None) if mode_id else None
             overrides = (mode.get("overrides", {}) if mode
@@ -381,6 +454,8 @@ class GameProfileStore:
             profile["modes"] = [{"id": None, "name": DEFAULT_MODE_NAME},
                                 *({"id": item["id"], "name": item["name"]} for item in modes)]
             profile["regions"] = copy.deepcopy(self._selection.get("regions_by_profile", {}).get(selected_id, []))
+            # 与这份快照同时取版本，避免响应中的新版本配上旧绑定。
+            profile["configuration_revision"] = self.revision()
             return profile
 
     # 独立框的名称和位置跟着游戏，各模式只保存它们的按键与触发点。

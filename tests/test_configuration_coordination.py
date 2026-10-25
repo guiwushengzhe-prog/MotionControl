@@ -125,7 +125,8 @@ def test_failed_bundle_restores_disk_memory_and_both_consumers(application, monk
     app = application
     initial_revision = app.CONFIG_REVISION
     app._install_game_bundle(game_bundle())
-    paths = [app.PROFILES.selection_path, app.PROFILES.custom_games_path, app.MOTION_CONFIG_FILE]
+    paths = [app.PROFILES.selection_path, app.PROFILES.custom_games_path, app.PROFILES.backup_path,
+             app.MOTION_CONFIG_FILE]
     files = {p: p.read_bytes() if p.exists() else None for p in paths}
     selection = copy.deepcopy(app.PROFILES._selection)
     bindings = copy.deepcopy(app.KERNEL.control_bindings)

@@ -133,6 +133,20 @@ def test_missing_legacy_files_are_not_an_error(program, isolated_user_data):
     assert user_paths.migrate_legacy_user_data(program) == []
 
 
+def test_failed_migration_keeps_original_and_can_retry_without_partial_destination(program, isolated_user_data, monkeypatch):
+    source = write_legacy(program, "voice_mappings.json", {"mappings": [{"phrase": "保留原口令"}]})
+    original = source.read_bytes()
+    writer = user_paths.atomic_bytes
+    monkeypatch.setattr(user_paths, "atomic_bytes", lambda *args: (_ for _ in ()).throw(OSError("磁盘写满")))
+    with pytest.raises(OSError, match="避免载入默认配置"):
+        user_paths.migrate_legacy_user_data(program)
+    assert source.read_bytes() == original
+    assert not user_paths.user_path("voice_mappings").exists()
+    monkeypatch.setattr(user_paths, "atomic_bytes", writer)
+    assert user_paths.migrate_legacy_user_data(program) == ["voice_mappings"]
+    assert user_paths.user_path("voice_mappings").read_bytes() == original
+
+
 def test_scene_data_migrates_but_is_not_syncable(program, isolated_user_data):
     """It moves out of the program folder, and stays out of the cloud bundle."""
     write_legacy(program, "scene_layout.json", {"version": 1})

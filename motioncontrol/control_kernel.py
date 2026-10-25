@@ -4324,8 +4324,8 @@ class NativeCameraService:
 
     def _backend_cache_path(self) -> Path:
         """Keep hardware-specific selection outside the source tree/portable package."""
-        root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
-        return root / "MotionControl" / "camera_backend.json"
+        from motioncontrol.user_paths import user_path
+        return user_path("camera_backend")
 
     def _load_backend_cache(self) -> dict:
         path = self._backend_cache_path()

@@ -5,7 +5,7 @@ import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMer
 import {renderTriggerRecord} from './diagnostics.js';
 import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,bodyZones,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
 import {paintCustomPoseScores,paintPoseCountdown,paintPoseLibrary} from './library.js';
-import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode,renderProfileBindingRows} from './mapping.js';
+import {paintZoneConflictNotes,revealBindingRow,renderCurrentMode,renderProfileBindingRows,syncGameProfile} from './mapping.js';
 import {actionBusy,currentView,loadProfiles,profileLoading,profileReady,runAction,showView,tutorial} from './shell.js';
 import {S,gameProfile,head,output} from './state.js';
 import {handMouseConfig,renderHfhpeStatus,renderViewControl,syncControlLabels} from './view-control.js';
@@ -343,6 +343,7 @@ export function renderKernelState(runtime,force=false){
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
   renderCurrentMode(k.game_mode);
+  syncGameProfile(runtime?.profile_sync);
   currentPoseMap=sourceHasFreshFrame()&&(k.pose_age_ms==null||Number(k.pose_age_ms)<3000)?k.pose||null:null;
   // 录姿势的倒计时在服务端，按钮和口令触发的是同一个。这里只负责画出来。
   const capture=runtime?.pose_capture,captureSignature=JSON.stringify([capture?.counting,capture?.purpose,capture?.remaining_s,capture?.pose_id,capture?.message]);
