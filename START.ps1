@@ -1,4 +1,4 @@
-param([switch]$Desktop)
+param([switch]$Desktop, [switch]$NoBrowser)
 
 $ErrorActionPreference = 'Stop'
 $env:PYTHONUTF8 = '1'
@@ -22,6 +22,12 @@ if ($LASTEXITCODE -ne 0) {
     exit 2
 }
 $env:MOTIONCONTROL_USER_DIR = [string]$location[-1]
+$snapshot = @(& $python -X utf8 -m motioncontrol.startup_identity --root $PSScriptRoot 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ($snapshot -join "`n")
+    exit 2
+}
+$expected = ($snapshot -join "`n") | ConvertFrom-Json
 
 function Get-MotionControlRealPath {
     param([string]$Path)
@@ -41,19 +47,28 @@ function Get-MotionControlRealPath {
     return $original.TrimEnd('\', '/')
 }
 
-function Assert-MotionControlInstance {
+function Read-MotionControlInstance {
     $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/health' -TimeoutSec 4
     if ($health.shutting_down) {
         throw '现有程序正在退出，请稍候再打开。'
     }
     $dataRoot = if ($env:MOTIONCONTROL_USER_DIR) { $env:MOTIONCONTROL_USER_DIR } else { Join-Path $env:LOCALAPPDATA 'MotionControl' }
     if ($health.app -ne 'MotionControl' -or
-            $health.program_root -ne (Get-MotionControlRealPath $PSScriptRoot) -or
-            $health.user_data_root -ne (Get-MotionControlRealPath $dataRoot)) {
+            (Get-MotionControlRealPath $health.program_root) -ne (Get-MotionControlRealPath $PSScriptRoot) -or
+            (Get-MotionControlRealPath $health.user_data_root) -ne (Get-MotionControlRealPath $dataRoot)) {
         throw "正在运行的程序位置或数据目录不同：$($health.program_root)；$($health.user_data_root)。请从对应位置打开，或先退出那份程序。"
     }
     if ($health.configuration.state -ne 'ready') {
         throw "现有程序的配置尚未恢复：$($health.configuration.error)"
+    }
+    return $health
+}
+
+function Assert-MotionControlInstance {
+    $health = Read-MotionControlInstance
+    if ($health.runtime_identity.source_revision -ne $expected.source_revision -or
+            $health.configuration.revision -ne $expected.configuration_revision) {
+        throw '后台加载的程序或游戏配置与磁盘不一致，未打开旧状态。请暂停控制后重新打开。'
     }
 }
 
@@ -111,6 +126,31 @@ try {
     $running = Invoke-WebRequest -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2
 } catch {
     $running = $null
+}
+if ($running -and $running.StatusCode -eq 200) {
+    try {
+        $health = Read-MotionControlInstance
+        if ($health.runtime_identity.source_revision -ne $expected.source_revision -or
+                $health.configuration.revision -ne $expected.configuration_revision) {
+            $outputState = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/output-status' -TimeoutSec 3
+            if ($outputState.enabled -ne $false) { throw '当前控制仍在运行，请先暂停控制，再打开以恢复完整游戏配置。' }
+            $oldPid = [int]$health.pid
+            if ($oldPid -le 0) { throw '旧后台未提供进程标识，不能自动替换。' }
+            Write-Host '检测到旧后台的程序或游戏配置未更新，正在退出这份后台并重新载入原配置。'
+            $stopped = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/shutdown' -Method Post `
+                -ContentType 'application/json' -Body '{}' -TimeoutSec 15
+            if ($stopped.ok -ne $true -or $stopped.shutting_down -ne $true) { throw '旧后台未确认退出，已停止本次启动。' }
+            $stopDeadline = (Get-Date).AddSeconds(25)
+            while (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {
+                if ((Get-Date) -ge $stopDeadline) { throw '旧后台仍在释放设备，请稍候再打开；没有强行结束进程。' }
+                Start-Sleep -Milliseconds 250
+            }
+            try { $running = Invoke-WebRequest -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2 } catch { $running = $null }
+        }
+    } catch {
+        Write-Host "现有程序未能通过运行核对：$($_.Exception.Message)"
+        exit 1
+    }
 }
 if ($running -and $running.StatusCode -eq 200) {
     try {
@@ -186,7 +226,7 @@ if ($running -and $running.StatusCode -eq 200) {
         }
     }
     Write-Host 'MotionControl 已在运行，正在打开控制页面。'
-    Start-Process 'http://127.0.0.1:8766/'
+    if (-not $NoBrowser) { Start-Process 'http://127.0.0.1:8766/' }
     exit 0
 }
 
@@ -209,13 +249,13 @@ if ($Desktop) {
         Write-Host "程序尚未就绪，请查看 $logs 中的启动记录。"
         exit 1
     }
-    Start-Process 'http://127.0.0.1:8766/'
+    if (-not $NoBrowser) { Start-Process 'http://127.0.0.1:8766/' }
     exit 0
 }
 
 if (Test-Path -LiteralPath $multicorePython) {
-    & $multicorePython -X utf8 server.py
+    if ($NoBrowser) { & $multicorePython -X utf8 server.py --no-browser } else { & $multicorePython -X utf8 server.py }
 } else {
-    python -X utf8 server.py
+    if ($NoBrowser) { python -X utf8 server.py --no-browser } else { python -X utf8 server.py }
 }
 exit $LASTEXITCODE
