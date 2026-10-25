@@ -136,6 +136,13 @@ class GameProfileStore:
                 pass
             data = migrated
             self._migrated = True
+        return self.validate_selection(data)
+
+    @classmethod
+    def validate_selection(cls, data: dict) -> dict:
+        """读取、恢复预览共用校验；不访问或修改用户文件。"""
+        if not isinstance(data, dict):
+            raise ValueError("游戏配置格式无法读取，原文件已保留")
         if data.get("schema") != SELECTION_SCHEMA or not isinstance(data.get("overrides_by_profile"), dict):
             raise ValueError("游戏配置格式无法读取，原文件已保留")
         if not isinstance(data.get("selected_id"), str) or any(
@@ -168,7 +175,7 @@ class GameProfileStore:
             games = data["custom_games"]
             if not isinstance(games, list) or any(
                 not isinstance(game, dict) or not isinstance(game.get("id"), str)
-                or not game["id"].startswith(self.CUSTOM_PREFIX)
+                or not game["id"].startswith(cls.CUSTOM_PREFIX)
                 or not isinstance(game.get("name"), str) or not game["name"].strip() for game in games
             ):
                 raise ValueError("自建游戏信息无效，原文件已保留")
@@ -219,6 +226,11 @@ class GameProfileStore:
                     "recovery_count": self.recovery_count, "message": self.recovery_message,
                     "selection_path": str(self.selection_path.resolve()),
                     "custom_games_path": str(self.custom_games_path.resolve())}
+
+    def configuration_document(self):
+        """完整备份共用已加载的游戏身份和全部绑定。"""
+        with self._lock:
+            return json.loads(self._encoded_state(self._selection, self._custom))
 
     def revision(self):
         with self._lock:

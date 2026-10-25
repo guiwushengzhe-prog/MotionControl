@@ -42,6 +42,7 @@ from motioncontrol.cloud_client import CloudClient, CloudError, backup_user_data
 from motioncontrol.cloud_metadata_cache import PublicMetadataCache
 from motioncontrol.command_executor import CommandExecutor
 from motioncontrol.config_transaction import atomic_bytes, file_transaction, recover
+from motioncontrol import configuration_backup
 from motioncontrol.view_control import configure_view_control
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
 from motioncontrol.key_macros import MacroError, MacroStore
@@ -100,6 +101,8 @@ def application_root() -> Path:
 ROOT = application_root()
 STARTUP_SOURCE_REVISION = source_revision(ROOT)
 WEB_DIR = ROOT / "web"
+if configuration_backup.apply_pending_configuration(user_data_root()):
+    print("已恢复本地配置备份；恢复前副本保留在用户目录的 backups 中。")
 FIREWALL = WindowsFirewall(user_path("firewall_setup"))
 PAIRING = PairingKey(user_path("pairing_key"))
 CONFIG_DIR = ROOT / "config"
@@ -1689,6 +1692,36 @@ def _begin_shutdown():
     return True
 
 
+def _backup_configuration():
+    """与配置修改共用锁；先保存尚在内存中的运动和个人角度学习。"""
+    with PROFILE_UPDATE_LOCK, KERNEL._lock:
+        if KERNEL.retry_settings_save(force=True)["state"] not in {"ready", "disabled"}:
+            raise ValueError("还有设置未能保存，请先重新保存，再导出完整备份")
+        FITNESS.flush()
+        if FITNESS.error:
+            raise ValueError(FITNESS.error)
+        KERNEL._body_lean.learning.flush()
+        if KERNEL._body_lean.learning.status().get("pending_save"):
+            raise ValueError("个人角度学习尚未保存，请稍后重新备份")
+        with RUNTIME.camera.depth_comparison._monocular_lock:
+            RUNTIME.camera.depth_comparison.monocular.flush()
+            if RUNTIME.camera.depth_comparison.monocular.dirty:
+                raise ValueError("单目前后倾学习尚未保存，请稍后重新备份")
+            with KERNEL.intent_store._lock:
+                snapshot = configuration_backup.capture_configuration(user_data_root(),
+                    documents={"game_profile_selection.json": PROFILES.configuration_document()})
+    return configuration_backup.export_configuration(user_data_root(), version=VERSION, snapshot=snapshot)
+
+
+def _check_configuration_restore():
+    if OUTPUT.enabled:
+        raise ValueError("请先暂停游戏控制，再恢复配置")
+    if (any(not item.get("finished") for item in STUDIO.state()["recordings"]) or
+            KERNEL.pose_recorder.status().get("state") in {"waiting", "recording", "saving"} or
+            (KERNEL.intent_session is not None and KERNEL.intent_session.active)):
+        raise ValueError("请先结束录制，再恢复配置")
+
+
 def _close_application(device_server, admin_server, device_thread, perf_stop, perf_thread):
     _begin_shutdown()
     steps = [
@@ -2166,6 +2199,53 @@ class AdminHandler(_BaseHandler):
         if SHUTTING_DOWN.is_set():
             self._body()
             self._send_json({"ok": False, "error": "程序正在退出，请重新打开后再操作"}, 503)
+            return
+        if route.startswith("/api/data-backup/"):
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or (origin and origin not in {
+                    f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
+                self.close_connection = True
+                self._send_json({"error": "请从本机设置页面备份或恢复配置"}, 403)
+                return
+            try:
+                if route == "/api/data-backup/preview":
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= configuration_backup.MAX_PACKAGE_BYTES:
+                        self.close_connection = True
+                        self._send_json({"error": "请选择不超过32兆的配置备份包"}, 413)
+                        return
+                    raw = self.rfile.read(length)
+                    if len(raw) != length:
+                        raise ValueError("备份文件传输未完成")
+                    with PROFILE_UPDATE_LOCK:
+                        preview = configuration_backup.preview_configuration(user_data_root(), raw)
+                    self._send_json({"ok": True, "preview": preview})
+                    return
+                body = self._body()
+                if not isinstance(body, dict):
+                    raise ValueError("备份操作无法读取")
+                if route == "/api/data-backup/export":
+                    raw = _backup_configuration()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/zip")
+                    self.send_header("Content-Disposition", 'attachment; filename="MotionControl-' + time.strftime("%Y%m%d-%H%M%S") + '.zip"')
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                if route == "/api/data-backup/restore":
+                    with PROFILE_UPDATE_LOCK, KERNEL._lock:
+                        _check_configuration_restore()
+                        staged = configuration_backup.stage_configuration(user_data_root(), body.get("token"), body.get("mode"), version=VERSION)
+                        first = _begin_shutdown()
+                    self._send_json({"ok": True, **staged, "pid": os.getpid(), "shutting_down": True})
+                    if first:
+                        threading.Thread(target=self.server.shutdown, name="motion-restore-exit", daemon=True).start()
+                    return
+                self._send_json({"error": "未找到这个备份操作"}, 404)
+            except (OSError, ValueError) as error:
+                self._send_json({"ok": False, "error": "配置备份或恢复未完成：" + str(error)}, 400)
             return
         if route == "/api/settings/retry":
             origin = self.headers.get("Origin")

@@ -130,7 +130,7 @@ try {
 if ($running -and $running.StatusCode -eq 200) {
     try {
         $health = Read-MotionControlInstance
-        if ($health.runtime_identity.source_revision -ne $expected.source_revision -or
+        if ($expected.restore_pending -eq $true -or $health.runtime_identity.source_revision -ne $expected.source_revision -or
                 $health.configuration.revision -ne $expected.configuration_revision) {
             $outputState = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/output-status' -TimeoutSec 3
             if ($outputState.enabled -ne $false) { throw '当前控制仍在运行，请先暂停控制，再打开以恢复完整游戏配置。' }

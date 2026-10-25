@@ -22,6 +22,11 @@ def source_revision(root):
 def startup_snapshot(root):
     from .game_profiles import GameProfileStore
     from .user_paths import user_data_root
+    from .configuration_backup import projected_selection
+    projected = projected_selection(user_data_root(), Path(root))
+    if projected is not None:
+        return {"source_revision": source_revision(root), "configuration_revision": projected[0],
+                "selected_id": projected[1], "user_data_root": str(user_data_root().resolve()), "restore_pending": True}
     store = GameProfileStore(Path(root))
     return {"source_revision": source_revision(root), "configuration_revision": store.revision(),
             "selected_id": store.selected_id(), "user_data_root": str(user_data_root().resolve())}

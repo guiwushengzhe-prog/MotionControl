@@ -392,6 +392,14 @@
 
 <section class="settings-pane" data-pane="lab" hidden="">
 <h1 class="pane-title">实验与诊断</h1>
+<div class="group" id="configurationBackup">
+<h2 class="group-title">配置备份与恢复</h2>
+<div class="list">
+<div class="row"><div class="row-main"><span class="name">导出完整配置</span><span class="sub">包含所有游戏绑定、自建游戏、动作、宏、个人口令、运动记录、校准与学习数据</span></div><button class="btn" id="backupExportBtn" type="button">导出备份</button></div>
+<div class="row"><div class="row-main"><span class="name">从备份恢复</span><span class="sub">先检查并预览，恢复前保留当前配置；退出程序后在下次启动时完成恢复</span></div><button class="btn" id="backupImportBtn" type="button">选择备份</button><input id="backupFile" type="file" accept=".zip,application/zip" hidden/></div>
+<div class="row stack"><span class="sub">备份仅保存到本地。包含个人设置与学习记录，可能含参考图片和自定义头像，请妥善保存。账户、手机配对钥匙、模型权重和普通录像不进入配置包。</span><span class="statusline" id="backupStatus" role="status"></span></div>
+</div>
+</div>
 <div class="group" id="sensitivityExperiments">
 <h2 class="group-title">灵敏度实验</h2>
 <div class="list">
@@ -484,4 +492,5 @@
 <div class="tour-foot"><button class="tour-link" id="tourSkipBtn">这步跳过</button><button class="btn" hidden="" id="tourChoiceBtn"></button><button class="btn primary" hidden="" id="tourNextBtn">好</button></div></section></div>
 <dialog aria-labelledby="calibrationStage" class="calibration-overlay" id="calibrationOverlay"><div class="calibration-card"><div class="calibration-kicker">校准视角与身体站姿</div><div class="calibration-stage" id="calibrationStage">准备校准</div><div class="calibration-prompt" id="calibrationPrompt">请看向游戏屏幕中心，身体自然站直</div><div class="calibration-countdown" id="calibrationCountdown">3.0</div><div class="calibration-progress"><div id="calibrationProgressBar"></div></div><div class="calibration-detail" id="calibrationDetail"></div><button class="calibration-cancel" id="calibrationCancel">取消校准</button></div></dialog>
 <dialog aria-labelledby="exitTitle" aria-describedby="exitStatus" id="exitDialog"><div class="dialog-head"><h2 id="exitTitle">正在退出 MotionControl</h2></div><p id="exitStatus" role="status">正在释放设备，请稍候…</p><button class="btn" id="exitCheckBtn" type="button" hidden>重新核对</button></dialog>
+<dialog aria-labelledby="backupPreviewTitle" id="backupPreviewDialog"><div class="dialog-head"><h2 id="backupPreviewTitle">恢复配置备份</h2><button class="btn" id="backupPreviewClose" type="button">取消</button></div><p id="backupPreviewSummary"></p><p class="sub" id="backupPreviewDate"></p><div class="row"><label class="row-main" for="backupRestoreMode">恢复方式</label><select class="sel" id="backupRestoreMode"><option value="full">本机恢复 · 包含校准与模型登记</option><option value="portable">跨电脑恢复 · 保留目标设备与校准</option></select></div><details class="diag-detail"><summary>查看包含的文件</summary><ul id="backupPreviewFiles"></ul></details><p class="sub">确认后程序退出；再次打开时恢复备份。恢复前配置会保存在用户目录的 backups 文件夹。账户与手机配对保持当前电脑的状态。</p><p class="statusline" id="backupPreviewStatus" role="status"></p><button class="btn" id="backupRestoreBtn" type="button">保留当前副本并恢复</button></dialog>
 </div><script src="/app.js" type="module"></script></body></html>

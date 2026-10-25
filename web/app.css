@@ -986,6 +986,7 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
 .dialog-head h2 { font-size: 1.125rem; font-weight: 650; }
 #exitDialog { width: min(30rem, 94vw); border: 1px solid var(--line); }
 #exitStatus { margin: 1rem 0; color: var(--text-2); line-height: 1.6; }
+#backupPreviewFiles { margin: .75rem 0; padding-left: 1.25rem; color: var(--text-2); line-height: 1.8; overflow-wrap: anywhere; }
 #voiceCommandsMask { width: min(56.25rem, 94vw); }
 .voice-group { margin-top: 1.125rem; }
 .voice-group h3 { margin-bottom: .5rem; color: var(--text-2); font-size: .8125rem; font-weight: 500; }

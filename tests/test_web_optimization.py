@@ -73,11 +73,21 @@ class LocalApi:
             content_type = "text/css" if file.suffix == ".css" else "text/javascript" if file.suffix == ".js" else "text/html"
             route.fulfill(path=str(file), content_type=content_type)
             return
+        if path == "/api/data-backup/preview":
+            self.requests.append((path, None))
+            self.fulfill(route, {"preview": {"token": "a" * 64, "same_data": True, "created_at": "2026-10-26T08:00:00Z",
+                "games": 6, "custom_games": 1, "macros": 2, "poses": 1,
+                "files": [{"name": "game_profile_selection.json", "bytes": 2048}]}})
+            return
         body = route.request.post_data_json if route.request.method == "POST" else None
         self.requests.append((path, body))
         if path == "/api/shutdown":
             self.shutting_down = True
             self.fulfill(route, {"shutting_down": True, "pid": 123})
+            return
+        if path == "/api/data-backup/restore":
+            self.shutting_down = True
+            self.fulfill(route, {"pending": True, "shutting_down": True, "pid": 123})
             return
         if path == "/api/health":
             if self.shutting_down:
