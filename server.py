@@ -79,6 +79,7 @@ from motioncontrol.user_paths import migrate_legacy_user_data, user_data_root, u
 from motioncontrol.recording_storage import organize_recordings, recordings_summary
 from motioncontrol.owned_process import ensure_lifetime_job
 from motioncontrol.update_status import UpdateStatus
+from motioncontrol.startup_identity import source_revision
 
 # 版本号只有一处，在 motioncontrol/version.py。这里不再写数字：写了就会有第二个
 # 数字要记得跟着改，而漏改一次是看不出来的——界面和文件名各说各的。
@@ -97,6 +98,7 @@ def application_root() -> Path:
 
 
 ROOT = application_root()
+STARTUP_SOURCE_REVISION = source_revision(ROOT)
 WEB_DIR = ROOT / "web"
 FIREWALL = WindowsFirewall(user_path("firewall_setup"))
 PAIRING = PairingKey(user_path("pairing_key"))
@@ -1905,6 +1907,7 @@ class AdminHandler(_BaseHandler):
                 return
             _reconcile_profile_configuration(force=True)
             self._send_json({"app": "MotionControl", "version": VERSION, "pid": os.getpid(),
+                             "runtime_identity": {"source_revision": STARTUP_SOURCE_REVISION},
                              "shutting_down": SHUTTING_DOWN.is_set(),
                              "program_root": str(ROOT.resolve()), "user_data_root": str(user_data_root().resolve()),
                              "config_revision": CONFIG_REVISION, "configuration": PROFILES.persistence_status()})

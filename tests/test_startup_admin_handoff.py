@@ -20,6 +20,7 @@ $ErrorActionPreference = 'Stop'
 $scenario = $env:MC_START_TEST_SCENARIO | ConvertFrom-Json
 $global:mcStartTest = @{
     calls = @($scenario.calls); index = 0; elapsed = 0
+    stopped = $false
     events = [System.Collections.Generic.List[object]]::new()
 }
 if ($scenario.inherited_restart) { $global:restart = @{ restarting = $true } }
@@ -38,15 +39,26 @@ function Start-Process {
     $global:mcStartTest.events.Add(@{ kind = 'browser'; path = $FilePath })
 }
 function python {
+    if ($args -contains 'motioncontrol.startup_identity') {
+        $global:LASTEXITCODE = 0
+        return @{source_revision='test-build';configuration_revision='test-config'} | ConvertTo-Json -Compress
+    }
     if ($args -contains '--locate') {
         $global:LASTEXITCODE = 0
         return Join-Path $env:LOCALAPPDATA 'MotionControl'
     }
+    if ($scenario.allow_start -and $args -contains 'server.py') {
+        $global:mcStartTest.events.Add(@{kind='start'; arguments=@($args)})
+        $global:LASTEXITCODE=0
+        return
+    }
     throw '测试不得启动新后台'
 }
+function Get-Process { param($Id,$ErrorAction) return $null }
 function Invoke-WebRequest {
     param($Uri, $TimeoutSec)
     if ($Uri -ne 'http://127.0.0.1:8766/') { throw '测试请求地址不正确' }
+    if ($global:mcStartTest.stopped) { throw '隔离旧后台已退出' }
     return [pscustomobject]@{ StatusCode = 200 }
 }
 function Invoke-RestMethod {
@@ -60,7 +72,8 @@ function Invoke-RestMethod {
             app = 'MotionControl'
             program_root = Split-Path $env:MC_START_TEST_SCRIPT
             user_data_root = Join-Path $env:LOCALAPPDATA 'MotionControl'
-            configuration = @{ state = 'ready' }
+            runtime_identity = @{source_revision='test-build'}
+            configuration = @{ state = 'ready'; revision='test-config' }
         }
     }
     if ($global:mcStartTest.index -ge $global:mcStartTest.calls.Count) {
@@ -74,11 +87,12 @@ function Invoke-RestMethod {
         throw '测试请求顺序不正确'
     }
     if ($next.error) { throw $next.error }
+    if ($path -eq '/api/shutdown') { $global:mcStartTest.stopped=$true }
     return $next.value
 }
 $global:LASTEXITCODE = 0
 try {
-    & $env:MC_START_TEST_SCRIPT
+    & $env:MC_START_TEST_SCRIPT -NoBrowser:([bool]$scenario.no_browser)
     $resultCode = $LASTEXITCODE
 } catch {
     $global:mcStartTest.events.Add(@{ kind = 'uncaught'; text = $_.Exception.Message })
@@ -110,13 +124,14 @@ def launch(value=None, *, error=None):
     return call("game-profiles/launch-mode", value, method="Post", error=error)
 
 
-def run_start(tmp_path, calls, *, inherited_restart=False, health=None, health_error=None):
+def run_start(tmp_path, calls, *, inherited_restart=False, health=None, health_error=None, allow_start=False, no_browser=False):
     harness = tmp_path / "startup_harness.ps1"
     harness.write_text(HARNESS, encoding="utf-8")
     env = os.environ.copy()
     env.update(MC_START_TEST_SCRIPT=str(ROOT / "START.ps1"),
                MC_START_TEST_SCENARIO=json.dumps({"calls": calls, "inherited_restart": inherited_restart,
-                                                  "health": health, "health_error": health_error}),
+                                                  "health": health, "health_error": health_error, "allow_start": allow_start,
+                                                  "no_browser": no_browser}),
                LOCALAPPDATA=str(tmp_path))
     env.pop("MOTIONCONTROL_USER_DIR", None)
     result = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-File", str(harness)],
@@ -250,3 +265,48 @@ def test_start_does_not_reuse_or_restart_an_instance_while_it_is_exiting(tmp_pat
     data = run_start(tmp_path, [], health={"shutting_down": True})
     assert data["code"] == 1 and not data["browser"]
     assert "正在退出" in data["messages"]
+
+
+@pytest.mark.parametrize("stale", ["code", "configuration", "legacy"])
+def test_stale_instance_is_gracefully_replaced_without_reusing_wrong_game(tmp_path, stale):
+    health = {"app": "MotionControl", "pid": 12345, "program_root": str(ROOT),
+              "user_data_root": str(tmp_path / "MotionControl"),
+              "runtime_identity": {"source_revision": "test-build"},
+              "configuration": {"state": "ready", "revision": "test-config"}}
+    if stale == "code":
+        health["runtime_identity"]["source_revision"] = "old-build"
+    elif stale == "configuration":
+        health["configuration"]["revision"] = "wrong-game"
+    else:
+        health.pop("runtime_identity")
+    data = run_start(tmp_path, [call("output-status", {"enabled": False}),
+                               call("shutdown", {"ok": True, "shutting_down": True}, method="Post")],
+                     health=health, allow_start=True)
+    assert data["code"] == 0 and not data["browser"]
+    assert sum(event["kind"] == "start" for event in data["events"]) == 1
+    assert "重新载入原配置" in data["messages"]
+
+
+def test_stale_instance_with_active_game_output_is_not_restarted(tmp_path):
+    health = {"app": "MotionControl", "pid": 12345, "program_root": str(ROOT),
+              "user_data_root": str(tmp_path / "MotionControl"), "configuration": {"state": "ready"}}
+    data = run_start(tmp_path, [call("output-status", {"enabled": True})], health=health)
+    assert data["code"] == 1 and not data["browser"]
+    assert "先暂停控制" in data["messages"]
+    assert not any(event["kind"] == "start" for event in data["events"])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows 目录联接")
+def test_canonical_and_junction_data_paths_are_the_same_instance(tmp_path):
+    import _winapi
+    real = tmp_path / "MotionControl"
+    real.mkdir()
+    alias = tmp_path / "old-data-link"
+    _winapi.CreateJunction(str(real), str(alias))
+    health = {"app": "MotionControl", "pid": 12345, "program_root": str(ROOT), "user_data_root": str(alias),
+              "runtime_identity": {"source_revision": "test-build"},
+              "configuration": {"state": "ready", "revision": "test-config"}}
+    data = run_start(tmp_path, [call("game-profiles/selected", selected(required=False)),
+                               call("kernel/status", camera(running=True))], health=health, no_browser=True)
+    assert data["code"] == 0 and not data["browser"]
+    assert not any(event["kind"] == "start" for event in data["events"])

@@ -233,6 +233,21 @@ def desktop(mock_browser):
     context.close()
 
 
+def test_top_game_name_opens_picker_directly_and_focuses_search(desktop):
+    page, api = desktop.page, desktop.api
+    page.click('.game-chip[data-open-game-picker="true"]')
+    assert page.locator('#gamesPanel').is_visible()
+    assert page.locator('#gamePicker').is_visible()
+    assert page.locator('#profileSearch').evaluate('(input)=>document.activeElement===input')
+    assert page.locator('#switchGameBtn').get_attribute('aria-expanded') == 'true'
+    assert page.locator('.game-chip[data-open-game-picker="true"]').get_attribute('aria-expanded') == 'true'
+    page.click('#switchGameBtn')
+    assert page.locator('#gamePicker').is_hidden()
+    assert page.locator('.game-chip[data-open-game-picker="true"]').get_attribute('aria-expanded') == 'false'
+    page.click('.game-chip[data-open-game-picker="true"]')
+    assert page.locator('#gamePicker').is_visible()
+
+
 def test_search_keeps_newest_results_when_old_request_arrives_last(desktop):
     page, api = desktop.page, desktop.api
     api.hold_catalog = True

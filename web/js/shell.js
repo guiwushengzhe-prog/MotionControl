@@ -220,7 +220,10 @@ export const headSaver=autosaver(pushHeadConfig,'headSaveStatus','retryHeadBtn',
 
 const voiceSaver=autosaver(saveVoiceMappings,'voiceSaveStatus','retryVoiceBtn');
 
-document.querySelectorAll('[data-view],[data-go]').forEach(el=>el.addEventListener('click',()=>showView(el.dataset.view||el.dataset.go)));
+document.querySelectorAll('[data-view],[data-go]').forEach(el=>el.addEventListener('click',()=>{
+  showView(el.dataset.view||el.dataset.go);
+  if(el.dataset.openGamePicker==='true'&&currentView==='games')openGamePicker();
+}));
 function showRecognitionControl(){
   showView('play');if(currentView!=='play')return;
   const target=$(!$('#sourceStartBtn').hidden?'#sourceStartBtn':'#sourceStopBtn');
@@ -589,12 +592,18 @@ try{if(localStorage.getItem(LIBRARY_KEY)==='0')setLibraryOpen(false)}catch{}
 export function togglePanel(buttonId,panelId,open){
   const panel=$('#'+panelId),button=$('#'+buttonId);
   const next=open??panel.hidden;panel.hidden=!next;button.setAttribute('aria-expanded',String(next));
+  document.querySelectorAll(`[aria-controls="${panelId}"]`).forEach(control=>control.setAttribute('aria-expanded',String(next)));
   return next;
 }
 
-$('#switchGameBtn').addEventListener('click',()=>{
-  if(!togglePanel('switchGameBtn','gamePicker'))return;
+function openGamePicker(){
+  togglePanel('switchGameBtn','gamePicker',true);
   togglePanel('cloudOpenBtn','cloudPanel',false);$('#profileSearch').focus();void runAction(searchProfiles);
+}
+
+$('#switchGameBtn').addEventListener('click',()=>{
+  if(!$('#gamePicker').hidden){togglePanel('switchGameBtn','gamePicker',false);return}
+  openGamePicker();
 });
 
 $('#cloudOpenBtn').addEventListener('click',()=>{
