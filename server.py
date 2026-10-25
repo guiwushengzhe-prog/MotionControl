@@ -114,7 +114,7 @@ MODEL_COMPAT_RELATIVE = Path("mediapipe") / "pose_landmarker_full_compatible_075
 # and VoiceService all read their files at import time -- migrating afterwards
 # would silently hand the user defaults on their first upgraded launch.
 _MIGRATED = migrate_legacy_user_data(ROOT)
-for _journal_name in (".profile-store.journal", ".profile-install.journal", ".view-control.journal"):
+for _journal_name in (".general-settings.journal", ".profile-store.journal", ".profile-install.journal", ".view-control.journal"):
     recover(user_data_root() / _journal_name)
 if _MIGRATED:
     print("已从旧版程序目录迁移用户数据：" + "、".join(_MIGRATED))
@@ -179,6 +179,7 @@ def runtime_status() -> dict:
     with PROFILE_UPDATE_LOCK:
         _reconcile_profile_configuration()
         return {**RUNTIME.status(), "config_revision": CONFIG_REVISION,
+                "settings_persistence": KERNEL.settings_persistence_status(),
                 "profile_sync": {"selected_id": PROFILES.selected_id(), "revision": PROFILES.revision(),
                                  "error": PROFILES.last_error},
                 "preview_mirror": STUDIO.config["mirror"]}
@@ -1257,11 +1258,12 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_
                              ("zone_state", "zone_rects", "trigger_previous", "_rule_previous", "_mode_held",
                               "_sequence_next", "_selected_active", "_voice_rule_pulses", "action_chain",
                               "action_chain_result")} if zone_layout else None
+        previous_settings = KERNEL._settings_store.snapshot() if zone_layout else None
         runtime_updated = False
         try:
             with file_transaction(
                 [PROFILES.selection_path, PROFILES.custom_games_path, PROFILES.backup_path, MOTION_CONFIG_FILE,
-                 *([KERNEL._general_settings_path()] if zone_layout else [])],
+                 *([KERNEL._general_settings_path(), KERNEL._settings_store.backup_path] if zone_layout else [])],
                 user_data_root() / ".profile-install.journal",
             ):
                 yield
@@ -1282,6 +1284,8 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_
                 else:
                     KERNEL.configure_motions(MOTION_CONFIG)
                     _apply_effective_profile()
+                if zone_layout and KERNEL.settings_persistence_status()["state"] not in {"ready", "disabled"}:
+                    raise OSError(KERNEL.settings_persistence_status()["error"])
             CONFIG_REVISION += 1
         except BaseException:
             SYSTEM_COMMANDS.invalidate()
@@ -1291,6 +1295,7 @@ def _profile_configuration_transaction(*, preserve_controls: bool = False, zone_
             MOTION_CONFIG = previous_motions
             GAME_MODE.update(previous_game_mode)
             if zone_layout:
+                KERNEL._settings_store.restore(previous_settings)
                 for name, value in previous_layout.items():
                     setattr(KERNEL, name, value)
             if not preserve_controls or runtime_updated or zone_layout:
@@ -1637,6 +1642,7 @@ def performance_logger(stop_event: threading.Event) -> None:
     quiet_ticks = 0
     while not stop_event.wait(5.0):
         _reconcile_profile_configuration()
+        KERNEL.retry_settings_save()
         data = performance_snapshot()
         active = bool(data.get("running")) or bool(data.get("preview_ready")) or data.get("recent_humans", 0)
         if not active:
@@ -1721,6 +1727,13 @@ class _BaseHandler(SimpleHTTPRequestHandler):
         pass
 
     def _send_json(self, data: dict, status: int = 200):
+        if getattr(self, "command", "") == "POST":
+            receipt = KERNEL.settings_write_receipt()
+            if receipt:
+                data = {**data, "settings_persistence": receipt}
+                if 200 <= status < 300 and receipt["state"] not in {"ready", "disabled"}:
+                    data.update(ok=False, applied=True, error=receipt["error"])
+                    status = 503
         raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         try:
             self.send_response(status)
@@ -2124,6 +2137,7 @@ class AdminHandler(_BaseHandler):
 
     def do_POST(self):
         global CONFIG_REVISION
+        KERNEL.begin_settings_request()
         route = urlparse(self.path).path
         if route == "/api/shutdown":
             origin = self.headers.get("Origin")
@@ -2134,6 +2148,9 @@ class AdminHandler(_BaseHandler):
             if not isinstance(self._body(), dict):
                 self._send_json({"error": "退出请求无法读取"}, 400)
                 return
+            if KERNEL.settings_persistence_status()["state"] not in {"ready", "disabled"}:
+                self._send_json({"error": "还有设置尚未保存，请先重新保存或恢复备份，程序仍在运行"}, 409)
+                return
             first = _begin_shutdown()
             self._send_json({"ok": True, "pid": os.getpid(), "shutting_down": True})
             if first:
@@ -2142,6 +2159,21 @@ class AdminHandler(_BaseHandler):
         if SHUTTING_DOWN.is_set():
             self._body()
             self._send_json({"ok": False, "error": "程序正在退出，请重新打开后再操作"}, 503)
+            return
+        if route == "/api/settings/retry":
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or (origin and origin not in {
+                    f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
+                self._send_json({"error": "请从本机设置页面操作"}, 403)
+                return
+            body = self._body()
+            if not isinstance(body, dict) or set(body) - {"repair"} or ("repair" in body and type(body["repair"]) is not bool):
+                self._send_json({"error": "保存请求无效"}, 400)
+                return
+            with PROFILE_UPDATE_LOCK:
+                state = KERNEL.retry_settings_save(force=True, repair=body.get("repair", False))
+            self._send_json({"ok": state["state"] in {"ready", "disabled"}, "settings_persistence": state,
+                             **({"error": state["error"]} if state.get("error") else {})})
             return
         if route.startswith("/api/studio/") or route in {"/api/fitness/control", "/api/fitness/heart-rate",
                                                           "/api/fitness/heart-rate-input", "/api/cloud/account/login",

@@ -3,7 +3,7 @@ import {refreshRecognitionModels,selectPoseModel,sendHeavyModel} from './recogni
 import {createTutorial} from '../tutorial.js';
 import {fistHands,intentAction,renderBodyDescs,zoneFit} from './body.js';
 import {cloudRefresh,loadCloudEndpoint} from './cloud.js';
-import {$,api,autosaver,clamp,configurationOperation,isVisible,notice,post} from './core.js';
+import {$,api,autosaver,clamp,configurationOperation,isVisible,notice,post,retrySettingsSave} from './core.js';
 import {CAMERA_REQUEST_TIMEOUT,emergencyStop,emergencyStops,inputStatus,noteOutputMix,refreshAudioDevices,refreshCameraConfig,refreshInput,refreshOutput,refreshPerformance,refreshStereo,refreshXinput,renderCameraDevices,renderCameraDepth,renderCameraRotation,renderInputStatus,renderOutput,renderStereo,selectCamera,setOutput,setSource,setXinputMerge,setXinputMotionLeft,stereoState,stopRecognition,syncCameraDeviceRow,updateInputConfig,updateOutputConfig} from './devices.js';
 import {cancelPoseRecord,refreshPoseRecord,refreshRecordings,refreshTriggerRecord,startPoseRecord} from './diagnostics.js';
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
@@ -300,6 +300,7 @@ bind('exitAppBtn',()=>exitApplication(()=>{
     throw new Error('请先结束录制并等待保存完成，再退出程序');
   }
 }));
+bind('retrySettingsSaveBtn',()=>retrySettingsSave({allowRepair:true}));
 
 bind('poseRecordBtn',async()=>{if(await startPoseRecord())showView('play')});
 

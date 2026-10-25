@@ -313,6 +313,7 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .banner { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .625rem; padding: .625rem .75rem .625rem .875rem; border-radius: .75rem; font-size: .8125rem; }
 .banner > span { flex: 1; min-width: 12.5rem; }
 .banner.warn { background: var(--warn-tint); color: var(--warn); }
+#settingsSaveWarning { width: calc(100% - 3rem); max-width: 77rem; margin: 1rem auto 0; border: 1px solid var(--line); background: var(--card); color: var(--text-2); }
 
 /* --- 开始页 ---------------------------------------------------------------- */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 1.25rem; align-items: start; }

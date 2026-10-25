@@ -33,7 +33,7 @@ def configure_view_control(kernel, horizontal: str, vertical: str) -> dict:
             payload = kernel.general_settings_payload()
             payload["hand_mouse"] = dict(hand.config)
             payload["vertical_look"]["enabled"] = look["enabled"]
-            documents = {kernel._general_settings_path(): payload}
+            documents = kernel._settings_store.documents(payload)
             if profile_path:
                 documents[Path(profile_path)] = head.profile_document()
             replace_documents(documents, kernel._general_settings_path().parent / ".view-control.journal")
@@ -41,6 +41,8 @@ def configure_view_control(kernel, horizontal: str, vertical: str) -> dict:
         kernel.head_controller = head
         kernel.hand_mouse_controller = hand
         kernel.vertical_look = look
+        if kernel._persist:
+            kernel._settings_store.committed(payload)
         kernel.vertical_gate_active = False
         kernel._reset_vertical_head_locked()
         kernel._safe_output(kernel.output.apply, 0.0, 0.0)

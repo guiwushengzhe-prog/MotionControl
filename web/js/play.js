@@ -1,6 +1,6 @@
 // 开始页：画面、区域框、准备卡片、触发大字、挪动区域、悬浮窗。
 import {renderIntent,renderMisfireHint,renderZoneFit,renderZoneFreeze} from './body.js';
-import {$,agoText,api,clamp,configurationOperation,fitCanvas,isVisible,notice,post,setAttribute,setClass,setProperty,setStyle,setText,syncChildren} from './core.js';
+import {$,agoText,api,clamp,configurationOperation,fitCanvas,isVisible,notice,post,setAttribute,setClass,setProperty,setStyle,setText,syncChildren,updateSettingsPersistence} from './core.js';
 import {inputStatus,kernelEpoch,outputConnected,setOutput,setSource,setXinputMerge,renderCameraDepth,syncCameraDeviceRow} from './devices.js';
 import {renderTriggerRecord} from './diagnostics.js';
 import {BODY_ZONES,EDGES,actionKeyText,bindingsForDisplay,bodyZones,profileTriggers,triggerMapped,voiceLatchText,zoneKeyLabel} from './labels.js';
@@ -346,6 +346,7 @@ export function renderKernelState(runtime,force=false){
     }
   }
   latestRuntime=runtime;
+  if(runtime?.settings_persistence)updateSettingsPersistence(runtime.settings_persistence);
   if(typeof runtime?.preview_mirror==='boolean')setPreviewMirror(runtime.preview_mirror);
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   const camera=runtime?.camera||{running:cameraRunning};

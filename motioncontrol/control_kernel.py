@@ -58,6 +58,7 @@ from motioncontrol.depth_comparison import DepthComparison
 from motioncontrol.depth_comparison_metrics import kinect_distance_summary
 from motioncontrol import sensitivity_experiments
 from motioncontrol.config_transaction import atomic_bytes
+from motioncontrol.settings_persistence import SettingsPersistence
 from motioncontrol import kinect_camera
 from motioncontrol.hfhpe import HfhpeEstimator
 from motioncontrol.recognition_models import (
@@ -747,6 +748,7 @@ class ControlKernel:
         # legacy headJump binding remains the only behavior.
         self.action_chain = HoldChain(DEFAULT_ACTION_CHAIN)
         self._general_raw: dict = {}
+        self._settings_store = SettingsPersistence(self._general_settings_path()) if self._persist else None
         self.body_reference = None
         if self._persist:
             self._load_general_settings()
@@ -790,14 +792,9 @@ class ControlKernel:
         scene_layout.json 里，而没定位过区域的人根本没有那个文件。于是每次启动
         都悄悄回到默认值——玩家只会觉得「我明明开过」，界面上看不出任何异常。
 
-        读不出来就当没有：这份文件丢了或者坏了，不该让整个程序起不来。
+        优先恢复最近有效副本；无法恢复时保留原件并标明临时状态，识别继续运行。
         """
-        try:
-            data = json.loads(self._general_settings_path().read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return
-        if not isinstance(data, dict):
-            return
+        data = self._settings_store.document
         # 摄像头来源和第几个摄像头也存在这份文件里，但它们不属于内核——存它们
         # 的是 LocalControlRuntime 和 NativeCameraService。原样留着，别的地方
         # 通过 remember_general_setting 存的东西才不会被下一次写盘抹掉。
@@ -913,21 +910,27 @@ class ControlKernel:
             self._save_general_settings()
 
     def _save_general_settings(self) -> None:
-        """写盘。失败不抛：存不下设置也不该打断正在进行的游戏。"""
+        """保持实时识别运行；失败的最新快照交给统一保存与恢复入口。"""
         if not self._persist:
             return
-        path = self._general_settings_path()
-        payload = self.general_settings_payload()
-        temp = path.with_suffix(path.suffix + ".tmp")
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            os.replace(temp, path)
-        except OSError:
-            try:
-                temp.unlink(missing_ok=True)
-            except OSError:
-                pass
+        self._settings_store.save(self.general_settings_payload())
+
+    def settings_persistence_status(self):
+        with self._lock:
+            return self._settings_store.status() if self._settings_store else {"state": "disabled"}
+
+    def begin_settings_request(self):
+        if self._settings_store:
+            self._settings_store.begin_request()
+
+    def settings_write_receipt(self):
+        return self._settings_store.receipt() if self._settings_store else None
+
+    def retry_settings_save(self, *, force=False, repair=False):
+        with self._lock:
+            if not self._settings_store:
+                return {"state": "disabled"}
+            return self._settings_store.retry(force=force, repair_payload=self.general_settings_payload() if repair else None)
 
     def general_settings_payload(self) -> dict:
         """A detached document for atomic settings transactions, without I/O."""

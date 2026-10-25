@@ -476,6 +476,91 @@ def test_delayed_background_read_cannot_undo_a_finished_game_selection(desktop):
     assert page.locator("#currentGameName").text_content() == "用户刚选的游戏"
 
 
+def pending_settings(**changes):
+    return {"state": "pending", "instance": "settings-a", "generation": 1, "version": 2,
+            "revision": 1, "saved_revision": 0, "attempts": 1, "retry_limit": 4,
+            "automatic_retry": True, "error": "配置文件被占用，尚未保存", **changes}
+
+
+def edit_head_speed(page, value=82):
+    page.evaluate("value=>{speedX.value=String(value);speedX.dispatchEvent(new Event('input',{bubbles:true}))}", value)
+
+
+def test_pending_settings_show_truthful_status_and_background_save_clears_draft(desktop):
+    page, api = desktop.page, desktop.api
+    calls = []
+    state = pending_settings()
+
+    def save(route):
+        calls.append(route)
+        api.runtime["kernel"]["head"]["sensitivity_x"] = route.request.post_data_json["sensitivity_x"]
+        api.runtime["settings_persistence"] = state
+        api.fulfill(route, {"error": state["error"], "applied": True, "settings_persistence": state}, 503)
+
+    page.route(ORIGIN + "/api/head/config", save)
+    edit_head_speed(page)
+    page.wait_for_function("headSaveStatus.textContent.includes('等待自动保存')")
+    assert page.locator("#settingsSaveWarning").is_visible()
+    assert page.evaluate("async()=>{const m=await import('/js/shell.js');return m.headSaver.pending()}")
+    api.runtime["settings_persistence"] = pending_settings(state="ready", version=3, saved_revision=1, error="", automatic_retry=False)
+    page.wait_for_function("settingsSaveWarning.hidden && headSaveStatus.textContent==='已保存'")
+    assert not page.evaluate("async()=>{const m=await import('/js/shell.js');return m.headSaver.pending()}")
+    assert len(calls) == 1
+
+
+def test_late_save_error_cannot_restore_an_error_already_recovered(desktop):
+    page, api, held = desktop.page, desktop.api, []
+    page.route(ORIGIN + "/api/head/config", lambda route: held.append(route))
+    edit_head_speed(page)
+    page.wait_for_timeout(700)
+    assert len(held) == 1
+    ready = pending_settings(state="ready", version=3, saved_revision=1, error="", automatic_retry=False)
+    page.evaluate("async state=>(await import('/js/core.js')).updateSettingsPersistence(state)", ready)
+    api.fulfill(held[0], {"applied": True, "error": "旧的保存失败", "settings_persistence": pending_settings()}, 503)
+    page.wait_for_function("headSaveStatus.textContent==='已保存'")
+    assert page.locator("#settingsSaveWarning").is_hidden()
+    assert not page.evaluate("async()=>{const m=await import('/js/shell.js');return m.headSaver.pending()}")
+
+
+def test_manual_retry_saves_pending_settings_without_repeating_the_setting_change(desktop):
+    page, api, saves, retries = desktop.page, desktop.api, [], []
+    error = pending_settings(state="error", attempts=4, automatic_retry=False)
+
+    def save(route):
+        saves.append(route)
+        api.fulfill(route, {"applied": True, "error": error["error"], "settings_persistence": error}, 503)
+
+    def retry(route):
+        retries.append(route.request.post_data_json)
+        api.fulfill(route, {"settings_persistence": pending_settings(state="ready", version=3, saved_revision=1, error="")})
+
+    page.route(ORIGIN + "/api/head/config", save)
+    page.route(ORIGIN + "/api/settings/retry", retry)
+    edit_head_speed(page)
+    page.wait_for_function("!settingsSaveWarning.hidden && headSaveStatus.textContent==='已应用，尚未保存'")
+    page.click("#retrySettingsSaveBtn")
+    page.wait_for_function("settingsSaveWarning.hidden && headSaveStatus.textContent==='已保存'")
+    assert retries == [{"repair": False}] and len(saves) == 1
+
+
+def test_new_process_cannot_claim_an_old_unsaved_draft_has_been_saved(desktop):
+    page, api = desktop.page, desktop.api
+    state = pending_settings()
+    page.route(ORIGIN + "/api/head/config", lambda route: api.fulfill(route, {"applied": True, "error": state["error"], "settings_persistence": state}, 503))
+    edit_head_speed(page)
+    page.wait_for_function("headSaveStatus.textContent.includes('等待自动保存')")
+    ready = pending_settings(state="ready", instance="new-process", generation=2, version=1, saved_revision=100, error="")
+    page.evaluate("async state=>(await import('/js/core.js')).updateSettingsPersistence(state)", ready)
+    page.evaluate("async state=>(await import('/js/core.js')).updateSettingsPersistence(state)", pending_settings(version=99))
+    assert page.locator("#settingsSaveWarning").is_hidden()
+    assert page.evaluate("async()=>{const m=await import('/js/shell.js');return m.headSaver.pending()}")
+    assert "服务已重启" in page.locator("#headSaveStatus").text_content()
+    page.route(ORIGIN + "/api/head/config", lambda route: api.fulfill(route, {**api.runtime, "settings_persistence": {**ready, "version": 2}}))
+    page.evaluate("retryHeadBtn.click()")
+    page.wait_for_function("headSaveStatus.textContent==='已保存'")
+    assert not page.evaluate("async()=>{const m=await import('/js/shell.js');return m.headSaver.pending()}")
+
+
 def test_exit_waits_for_mapping_save_and_then_stops_page_controls(desktop):
     page, api = desktop.page, desktop.api
     page.click('[data-view="games"]')

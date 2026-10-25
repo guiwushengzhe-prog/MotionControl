@@ -3,6 +3,31 @@
 export const $ = s => document.querySelector(s);
 let serviceClosing=false;
 document.addEventListener('motioncontrol:shutdown-state',()=>{serviceClosing=true});
+let settingsPersistence=null,settingsSignature='';
+
+export function updateSettingsPersistence(state){
+  if(!state?.state)return;
+  if(settingsPersistence&&((state.generation??0)<(settingsPersistence.generation??0)
+    ||(state.instance===settingsPersistence.instance&&(state.version??0)<(settingsPersistence.version??0))))return;
+  const signature=JSON.stringify([state.instance,state.version,state.state,state.revision,state.saved_revision,state.attempts,state.error,state.message]);
+  if(signature===settingsSignature)return;
+  settingsSignature=signature;settingsPersistence=state;
+  const banner=$('#settingsSaveWarning'),button=$('#retrySettingsSaveBtn');
+  if(banner){
+    banner.hidden=['ready','disabled'].includes(state.state);
+    if(!banner.hidden){
+      banner.querySelector('span').textContent=state.state==='blocked'
+        ?`${state.error}。可恢复备份，或保存当前设置；原件会另外保留。`
+        :`${state.error}。${state.automatic_retry?`正在自动重试（${state.attempts}/${state.retry_limit}）`:'自动重试已停止，可重新保存。'}`;
+      button.textContent=state.state==='blocked'?'保存当前设置':'重新保存';
+    }
+  }
+  document.dispatchEvent(new CustomEvent('motioncontrol:settings-persistence',{detail:state}));
+}
+
+export function retrySettingsSave({allowRepair=false}={}){
+  return post('/api/settings/retry',{repair:allowRepair&&settingsPersistence?.state==='blocked'});
+}
 
 export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -105,8 +130,10 @@ export async function api(path,opt={}){
     catch{error=new Error('本地服务无响应，请检查连接后重试')}
     if(response){
       try{data=await response.json()}catch{error=new Error('服务响应无法读取')}
+      if(data?.settings_persistence)updateSettingsPersistence(data.settings_persistence);
       if(!error&&(!response.ok||data.ok===false)){
         error=new Error(data.error||`服务请求失败（${response.status}）`);error.status=response.status;
+        error.applied=data.applied===true;error.persistence=data.settings_persistence;
       }
     }
     if(!error)return data;
@@ -130,21 +157,46 @@ export function flashStatus(el,text){
 export function escapeHtml(text){return String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 export function autosaver(save,statusId,retryId,onDirty=()=>{}){
-  let revision=0,saved=0,flight=null,timer;
+  let revision=0,saved=0,flight=null,timer,pendingWrite=null;
   const status=$('#'+statusId),retry=$('#'+retryId);
+  function acknowledgePending(state){
+    if(state&&pendingWrite&&state.instance!==pendingWrite.instance){
+      status.textContent='服务已重启，修改尚未保存';retry.hidden=false;return false;
+    }
+    if(!state||!pendingWrite||state.instance!==pendingWrite.instance||state.state!=='ready'||state.saved_revision<pendingWrite.revision)return false;
+    saved=Math.max(saved,pendingWrite.localVersion);pendingWrite=null;
+    if(saved===revision){retry.hidden=true;onDirty(false);flashStatus(status,'已保存')}
+    return true;
+  }
   async function flush(){
     clearTimeout(timer);
     if(flight){await flight;return flush()}
     if(saved===revision)return;
+    if(pendingWrite&&pendingWrite.localVersion===revision)throw pendingWrite.error;
     const version=revision;status.textContent='正在保存…';retry.hidden=true;
     flight=save();
-    try{await flight;saved=version}
-    catch(error){status.textContent='没保存上：'+error.message;retry.hidden=false;throw error}
+    try{await flight;saved=version;pendingWrite=null}
+    catch(error){
+      pendingWrite=error.applied&&error.persistence?.instance
+        ?{localVersion:version,instance:error.persistence.instance,revision:error.persistence.revision,error}:null;
+      if(!acknowledgePending(settingsPersistence)){
+        status.textContent=pendingWrite?(error.persistence.automatic_retry?'已应用，等待自动保存…':'已应用，尚未保存'):'没保存上：'+error.message;
+        retry.hidden=false;throw error;
+      }
+    }
     finally{flight=null}
     if(saved!==revision)return flush();
     onDirty(false);flashStatus(status,'已保存');
   }
-  retry.addEventListener('click',()=>flush().catch(()=>{}));
+  document.addEventListener('motioncontrol:settings-persistence',event=>{
+    acknowledgePending(event.detail);
+  });
+  retry.addEventListener('click',()=>{
+    const retryPending=pendingWrite&&pendingWrite.localVersion===revision&&pendingWrite.instance===settingsPersistence?.instance;
+    if(pendingWrite&&pendingWrite.instance!==settingsPersistence?.instance)pendingWrite=null;
+    const task=retryPending?retrySettingsSave():flush();
+    task.catch(error=>{status.textContent='没保存上：'+error.message});
+  });
   registerDraftFlusher(flush);
   return {
     dirty(){revision++;onDirty(true);status.textContent='正在保存…';clearTimeout(timer);timer=setTimeout(()=>flush().catch(()=>{}),500)},
