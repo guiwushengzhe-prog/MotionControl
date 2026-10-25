@@ -1,4 +1,4 @@
-"""通用设置的有效副本、待保存状态和限次重试；由内核配置锁保护。"""
+"""配置文档的有效副本、待保存状态和限次重试；调用方持有共享配置锁。"""
 from __future__ import annotations
 
 import copy
@@ -13,13 +13,26 @@ import uuid
 from .config_transaction import atomic_bytes, recover, replace_documents
 
 
+def write_failure_reason(error):
+    if isinstance(error, ValueError):
+        return str(error)
+    code = getattr(error, "winerror", None)
+    if getattr(error, "errno", None) == errno.ENOSPC or code == 112:
+        return "磁盘空间不足"
+    if getattr(error, "errno", None) in {errno.EACCES, errno.EPERM} or code in {5, 32, 33}:
+        return "配置文件被占用或目录不可写"
+    return "暂时无法写入配置文件"
+
+
 class SettingsPersistence:
     RETRY_DELAYS = (2., 5., 15., 30.)
 
-    def __init__(self, path, *, clock=time.monotonic):
+    def __init__(self, path, *, clock=time.monotonic, label="通用设置", validate=None):
         self.path = Path(path)
+        self.label = label
+        self.validate = validate
         self.backup_path = self.path.with_name(self.path.name + ".last-good")
-        self.journal_path = self.path.parent / ".general-settings.journal"
+        self.journal_path = self.path.with_name("." + self.path.stem.replace("_", "-") + ".journal")
         self.clock = clock
         self.instance = uuid.uuid4().hex
         self.generation = time.monotonic_ns() // 1000
@@ -34,12 +47,11 @@ class SettingsPersistence:
         recover(self.journal_path)
         self.document = self._load()
 
-    @staticmethod
-    def decode(raw):
+    def decode(self, raw):
         data = json.loads(raw.decode("utf-8-sig"))
         if not isinstance(data, dict):
-            raise ValueError("通用设置必须是完整文档")
-        return data
+            raise ValueError(f"{self.label}必须是完整文档")
+        return self.validate(data) if self.validate else data
 
     def _archive(self, raw, source=None):
         source = self.path if source is None else Path(source)
@@ -52,25 +64,27 @@ class SettingsPersistence:
         try:
             raw = self.path.read_bytes()
             data = self.decode(raw)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as original_error:
             try:
                 backup = self.backup_path.read_bytes()
                 data = self.decode(backup)
-            except (OSError, ValueError):
+            except (OSError, ValueError) as backup_error:
                 if not self.path.exists() and not self.backup_path.exists():
                     return {}
                 self.blocked = True
-                self.error = "通用设置无法读取，原文件已保留；当前设置尚未保存"
+                error = backup_error if isinstance(original_error, FileNotFoundError) else original_error
+                reason = str(error) if isinstance(error, ValueError) and not isinstance(error, (json.JSONDecodeError, UnicodeError)) else ""
+                self.error = f"{self.label}读取失败，原文件已保留；当前设置尚未保存" + ("：" + reason if reason else "")
                 return {}
             if raw is None and self.path.exists():
                 self.blocked = True
-                self.error = "通用设置暂时不可读，原文件已保留，已临时使用最近有效设置"
+                self.error = f"{self.label}暂时不可读，原文件已保留，已临时使用最近有效设置"
                 return data
             try:
                 if raw is not None:
                     self._archive(raw)
                 atomic_bytes(self.path, backup)
-                self.message = "已从最近有效副本恢复通用设置"
+                self.message = f"已从最近有效副本恢复{self.label}"
             except OSError as error:
                 self.pending = copy.deepcopy(data)
                 self._failed(error)
@@ -90,7 +104,7 @@ class SettingsPersistence:
         return getattr(self._receipt, "status", None)
 
     def status(self):
-        return {"state": "blocked" if self.blocked else "ready" if self.pending is None else
+        return {"name": self.label, "state": "blocked" if self.blocked else "ready" if self.pending is None else
                           "pending" if self.attempts < len(self.RETRY_DELAYS) else "error",
                 "error": self.error, "message": self.message, "instance": self.instance,
                 "generation": self.generation, "version": self.version,
@@ -101,13 +115,7 @@ class SettingsPersistence:
 
     def _failed(self, error):
         self.version += 1
-        code = getattr(error, "winerror", None)
-        if getattr(error, "errno", None) == errno.ENOSPC or code == 112:
-            self.error = "磁盘空间不足，设置已在本次生效，尚未保存"
-        elif getattr(error, "errno", None) in {errno.EACCES, errno.EPERM} or code in {5, 32, 33}:
-            self.error = "配置文件被占用或目录不可写，设置已在本次生效，尚未保存"
-        else:
-            self.error = "暂时无法写入配置文件，设置已在本次生效，尚未保存"
+        self.error = self.label + "：" + write_failure_reason(error) + "，设置已在本次生效，尚未保存"
         self.attempts += 1
         self.retry_at = self.clock() + self.RETRY_DELAYS[min(self.attempts - 1, len(self.RETRY_DELAYS) - 1)]
 

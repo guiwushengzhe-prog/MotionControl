@@ -17,11 +17,12 @@ estimator (pnp/ratio) or the independent HFHPE model needs its own neutral captu
 from __future__ import annotations
 
 import bisect
+import copy
 import json
 import math
-import os
 import statistics
 import time
+from .settings_persistence import SettingsPersistence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -2352,6 +2353,7 @@ class HeadController:
     def __init__(self, profile_path: Path | None = None) -> None:
         self.estimator = HeadPoseEstimator()
         self.profile_path = profile_path
+        self._profile_store = None
         self.config = dict(DEFAULT_CONFIG)
         self._tilt_control = RollTiltControl()
         self._responsive_head = ResponsiveHeadControl()
@@ -4578,11 +4580,38 @@ class HeadController:
             **(self._hfhpe_status(now) if policy_name in HFHPE_ALGORITHMS else {}),
         }
 
+    def __deepcopy__(self, memo):
+        # 草稿复制控制参数，文件状态共用；草稿的 profile_path=None 禁止写盘。
+        made = type(self).__new__(type(self))
+        memo[id(self)] = made
+        for name, value in self.__dict__.items():
+            setattr(made, name, value if name == "_profile_store" else copy.deepcopy(value, memo))
+        return made
+
+    @staticmethod
+    def _validate_profile_document(payload):
+        params = payload.get("params") or {}
+        if payload.get("signal_version") not in HEAD_PROFILE_COMPATIBLE_VERSIONS or not isinstance(params, dict):
+            raise ValueError("头部设置版本或参数无法读取")
+        if str(params.get("algorithm", "pnp")) not in HEAD_ALGORITHMS:
+            raise ValueError("头部识别方式无法读取")
+        for name, label in {"deadzone": "中心稳定区", "sensitivity_x": "左右速度", "sensitivity_y": "上下速度", "horizontal_curve_gamma": "转向曲线"}.items():
+            if name in params and (isinstance(params[name], bool) or not isinstance(params[name], (int, float)) or not math.isfinite(params[name])):
+                raise ValueError("头部设置数值无效：" + label)
+        return payload
+
+    def _profile_persistence(self):
+        if not self.profile_path:
+            return None
+        if self._profile_store is None or self._profile_store.path != Path(self.profile_path):
+            self._profile_store = SettingsPersistence(self.profile_path, label="头部设置", validate=self._validate_profile_document)
+        return self._profile_store
+
     def _load_profile(self) -> None:
         if not self.profile_path:
             return
         try:
-            payload = json.loads(Path(self.profile_path).read_text(encoding="utf-8"))
+            payload = self._profile_persistence().document
             # Accept earlier tuning parameters, but always capture a fresh
             # center for the current camera and active v5 signal route.
             if payload.get("signal_version") not in HEAD_PROFILE_COMPATIBLE_VERSIONS:
@@ -4730,15 +4759,4 @@ class HeadController:
     def _save_profile(self) -> None:
         if not self.profile_path:
             return
-        path = Path(self.profile_path)
-        payload = self.profile_document()
-        temp = path.with_suffix(path.suffix + ".tmp")
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            os.replace(temp, path)
-        except OSError:
-            try:
-                temp.unlink(missing_ok=True)
-            except OSError:
-                pass
+        self._profile_persistence().save(self.profile_document())

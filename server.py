@@ -939,6 +939,7 @@ if provider is not None:
     provider(_phone_control_payload)
 # 用户自己录的姿势。内核不碰文件，所以 store 在这里建、装进去。
 CUSTOM_POSES = CustomPoseStore(user_path("custom_poses"))
+KERNEL.register_settings_document(CUSTOM_POSES._persistence, CUSTOM_POSES.configuration_document)
 KERNEL.configure_custom_poses(CUSTOM_POSES)
 if CUSTOM_POSES.last_error:
     print(CUSTOM_POSES.last_error)
@@ -949,6 +950,7 @@ LEARNER = ZoneLearner(KERNEL)
 KERNEL.configure_intent_listener(LEARNER.poke)
 # 用户自己建的键盘宏。全局一份，不跟游戏走——建一次，哪个游戏、哪个动作都能直接选。
 MACROS = MacroStore(user_path("key_macros"))
+KERNEL.register_settings_document(MACROS._persistence, MACROS.configuration_document)
 KERNEL.configure_macros(MACROS)
 if MACROS.last_error:
     print(MACROS.last_error)
@@ -975,7 +977,7 @@ _apply_pose_actions()
 
 def _capture_custom_pose(purpose: str, pose_id: str, name: str) -> dict:
     """倒计时到点时真正拍的那一步。计时本身在 motioncontrol.pose_capture 里。"""
-    with PROFILE_UPDATE_LOCK:
+    with PROFILE_UPDATE_LOCK, KERNEL._lock:
         # 取一小段时间的中位数而不是单帧：单帧的关键点会抖，抖出来的模板会让之后
         # 每一次比对都偏一点。和按钮那条路用的是同一个取样。
         snapshot = KERNEL.stable_pose_snapshot(window_s=0.40, min_samples=3)
@@ -1642,7 +1644,8 @@ def performance_logger(stop_event: threading.Event) -> None:
     quiet_ticks = 0
     while not stop_event.wait(5.0):
         _reconcile_profile_configuration()
-        KERNEL.retry_settings_save()
+        with PROFILE_UPDATE_LOCK:
+            KERNEL.retry_settings_save()
         data = performance_snapshot()
         active = bool(data.get("running")) or bool(data.get("preview_ready")) or data.get("recent_humans", 0)
         if not active:
@@ -1728,12 +1731,13 @@ class _BaseHandler(SimpleHTTPRequestHandler):
 
     def _send_json(self, data: dict, status: int = 200):
         if getattr(self, "command", "") == "POST":
-            receipt = KERNEL.settings_write_receipt()
-            if receipt:
-                data = {**data, "settings_persistence": receipt}
-                if 200 <= status < 300 and receipt["state"] not in {"ready", "disabled"}:
-                    data.update(ok=False, applied=True, error=receipt["error"])
-                    status = 503
+            with PROFILE_UPDATE_LOCK:
+                receipt = KERNEL.settings_write_receipt()
+                if receipt:
+                    data = {**data, "settings_persistence": KERNEL.settings_persistence_status(), "settings_write": receipt}
+                    if 200 <= status < 300 and receipt["state"] not in {"ready", "disabled"}:
+                        data.update(ok=False, applied=True, error=receipt["error"])
+                        status = 503
         raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         try:
             self.send_response(status)
@@ -2356,7 +2360,7 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": "macros are loopback-only"}, 403)
                 return
             try:
-                with PROFILE_UPDATE_LOCK:
+                with PROFILE_UPDATE_LOCK, KERNEL._lock:
                     macro = None
                     if route == "/api/macros/create":
                         macro = MACROS.create(name=body.get("name", ""),
@@ -2404,7 +2408,7 @@ class AdminHandler(_BaseHandler):
                 if route == "/api/pose/custom/cancel":
                     self._send_json({"ok": True, "pose_capture": POSE_TIMER.cancel()})
                     return
-                with PROFILE_UPDATE_LOCK:
+                with PROFILE_UPDATE_LOCK, KERNEL._lock:
                     if route == "/api/pose/custom/capture":
                         # 取一小段时间的中位数而不是单帧：单帧的关键点会抖，
                         # 抖出来的模板会让之后每一次比对都偏一点。

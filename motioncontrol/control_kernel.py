@@ -915,22 +915,70 @@ class ControlKernel:
             return
         self._settings_store.save(self.general_settings_payload())
 
+    def _settings_stores(self):
+        if self._settings_store is None:
+            return []
+        return [store for store in (self._settings_store, self.head_controller._profile_store,
+                                    *getattr(self, "_extra_settings_stores", {})) if store is not None]
+
+    def register_settings_document(self, store, document):
+        with self._lock:
+            if not hasattr(self, "_extra_settings_stores"):
+                self._extra_settings_stores = {}
+            self._extra_settings_stores[store] = document
+
     def settings_persistence_status(self):
         with self._lock:
-            return self._settings_store.status() if self._settings_store else {"state": "disabled"}
+            states = [store.status() for store in self._settings_stores()]
+            if not states:
+                return {"state": "disabled"}
+            versions = tuple((s["instance"], s["version"]) for s in states)
+            documents = tuple((s["instance"], s["revision"]) for s in states)
+            if versions != getattr(self, "_settings_versions", None):
+                self._settings_versions = versions
+                self._settings_status_version = getattr(self, "_settings_status_version", 0) + 1
+            if documents != getattr(self, "_settings_documents", None):
+                self._settings_documents = documents
+                self._settings_document_revision = getattr(self, "_settings_document_revision", 0) + 1
+            priority = {"ready": 0, "pending": 1, "error": 2, "blocked": 3}
+            current = max(states, key=lambda s: priority[s["state"]])
+            if current["state"] == "ready":
+                self._settings_saved_revision = self._settings_document_revision
+            return {**current, "instance": self._settings_store.instance,
+                    "generation": self._settings_store.generation, "version": self._settings_status_version,
+                    "revision": self._settings_document_revision,
+                    "saved_revision": getattr(self, "_settings_saved_revision", 0),
+                    "message": "；".join(s["message"] for s in states if s["message"]),
+                    "components": [{key: s[key] for key in ("instance", "name", "state", "error", "revision", "saved_revision")} for s in states]}
 
     def begin_settings_request(self):
-        if self._settings_store:
-            self._settings_store.begin_request()
+        with self._lock:
+            for store in self._settings_stores():
+                store.begin_request()
 
     def settings_write_receipt(self):
-        return self._settings_store.receipt() if self._settings_store else None
+        with self._lock:
+            changed = [(store, store.receipt()) for store in self._settings_stores() if store.receipt()]
+            if not changed:
+                return None
+            current = self.settings_persistence_status()
+            states = [receipt["state"] for _, receipt in changed]
+            return {**current, "state": "ready" if all(state == "ready" for state in states) else "pending",
+                    "error": "；".join(receipt["error"] for _, receipt in changed if receipt["error"]),
+                    "automatic_retry": any(receipt["automatic_retry"] for _, receipt in changed),
+                    "targets": [{"instance": store.instance, "revision": receipt["revision"]} for store, receipt in changed]}
 
     def retry_settings_save(self, *, force=False, repair=False):
         with self._lock:
             if not self._settings_store:
                 return {"state": "disabled"}
-            return self._settings_store.retry(force=force, repair_payload=self.general_settings_payload() if repair else None)
+            self._settings_store.retry(force=force, repair_payload=self.general_settings_payload() if repair else None)
+            head_store = self.head_controller._profile_store
+            if head_store:
+                head_store.retry(force=force, repair_payload=self.head_controller.profile_document() if repair else None)
+            for store, document in getattr(self, "_extra_settings_stores", {}).items():
+                store.retry(force=force, repair_payload=document() if repair and store.blocked else None)
+            return self.settings_persistence_status()
 
     def general_settings_payload(self) -> dict:
         """A detached document for atomic settings transactions, without I/O."""

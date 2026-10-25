@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 import time
 
 from .config_transaction import replace_documents
@@ -35,7 +34,8 @@ def configure_view_control(kernel, horizontal: str, vertical: str) -> dict:
             payload["vertical_look"]["enabled"] = look["enabled"]
             documents = kernel._settings_store.documents(payload)
             if profile_path:
-                documents[Path(profile_path)] = head.profile_document()
+                head_payload = head.profile_document()
+                documents.update(head._profile_store.documents(head_payload))
             replace_documents(documents, kernel._general_settings_path().parent / ".view-control.journal")
         head.profile_path = profile_path
         kernel.head_controller = head
@@ -43,6 +43,8 @@ def configure_view_control(kernel, horizontal: str, vertical: str) -> dict:
         kernel.vertical_look = look
         if kernel._persist:
             kernel._settings_store.committed(payload)
+            if profile_path:
+                head._profile_store.committed(head_payload)
         kernel.vertical_gate_active = False
         kernel._reset_vertical_head_locked()
         kernel._safe_output(kernel.output.apply, 0.0, 0.0)

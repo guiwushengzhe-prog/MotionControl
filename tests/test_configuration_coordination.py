@@ -39,18 +39,21 @@ def test_view_axes_commit_together_and_survive_restart(kernel):
         restored.close()
 
 
-def test_failed_second_view_file_restores_files_and_live_controllers(kernel, monkeypatch):
+@pytest.mark.parametrize("failed", ["head", "head-backup"])
+def test_failed_second_view_file_restores_files_and_live_controllers(kernel, monkeypatch, failed):
     configure_view_control(kernel, "left", "head")
     general = kernel._general_settings_path()
     head = Path(kernel.head_controller.profile_path)
-    previous_files = {p: p.read_bytes() for p in (general, head)}
+    head_backup = kernel.head_controller._profile_store.backup_path
+    general_backup = kernel._settings_store.backup_path
+    previous_files = {p: p.read_bytes() for p in (general, head, general_backup, head_backup)}
     previous_head = kernel.head_controller
     previous_hand = kernel.hand_mouse_controller
     previous_look = copy.deepcopy(kernel.vertical_look)
     original = config_transaction.atomic_bytes
 
     def fail_second(path, content):
-        if Path(path) == head:
+        if Path(path) == (head if failed == "head" else head_backup):
             raise OSError("disk full")
         original(path, content)
 

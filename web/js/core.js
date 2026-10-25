@@ -133,7 +133,7 @@ export async function api(path,opt={}){
       if(data?.settings_persistence)updateSettingsPersistence(data.settings_persistence);
       if(!error&&(!response.ok||data.ok===false)){
         error=new Error(data.error||`服务请求失败（${response.status}）`);error.status=response.status;
-        error.applied=data.applied===true;error.persistence=data.settings_persistence;
+        error.applied=data.applied===true;error.persistence=data.settings_write||data.settings_persistence;
       }
     }
     if(!error)return data;
@@ -163,7 +163,11 @@ export function autosaver(save,statusId,retryId,onDirty=()=>{}){
     if(state&&pendingWrite&&state.instance!==pendingWrite.instance){
       status.textContent='服务已重启，修改尚未保存';retry.hidden=false;return false;
     }
-    if(!state||!pendingWrite||state.instance!==pendingWrite.instance||state.state!=='ready'||state.saved_revision<pendingWrite.revision)return false;
+    if(!state||!pendingWrite||state.instance!==pendingWrite.instance)return false;
+    const committed=pendingWrite.targets?.length
+      ?pendingWrite.targets.every(target=>state.components?.some(part=>part.instance===target.instance&&part.saved_revision>=target.revision))
+      :state.state==='ready'&&state.saved_revision>=pendingWrite.revision;
+    if(!committed)return false;
     saved=Math.max(saved,pendingWrite.localVersion);pendingWrite=null;
     if(saved===revision){retry.hidden=true;onDirty(false);flashStatus(status,'已保存')}
     return true;
@@ -178,7 +182,7 @@ export function autosaver(save,statusId,retryId,onDirty=()=>{}){
     try{await flight;saved=version;pendingWrite=null}
     catch(error){
       pendingWrite=error.applied&&error.persistence?.instance
-        ?{localVersion:version,instance:error.persistence.instance,revision:error.persistence.revision,error}:null;
+        ?{localVersion:version,instance:error.persistence.instance,revision:error.persistence.revision,targets:error.persistence.targets,error}:null;
       if(!acknowledgePending(settingsPersistence)){
         status.textContent=pendingWrite?(error.persistence.automatic_retry?'已应用，等待自动保存…':'已应用，尚未保存'):'没保存上：'+error.message;
         retry.hidden=false;throw error;

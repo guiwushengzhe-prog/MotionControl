@@ -29,12 +29,13 @@
 
 from __future__ import annotations
 
-import json
-import os
+import copy
 import time
 from pathlib import Path
 
 from motioncontrol_shared.pose_template import build_preview, build_template, compare
+from .config_transaction import replace_documents
+from .settings_persistence import SettingsPersistence, write_failure_reason
 
 SCHEMA = "motioncontrol.custom_poses.v1"
 
@@ -78,36 +79,48 @@ class CustomPoseStore:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.poses: list[dict] = []
-        self.last_error = ""
         # 每个动作走到第几步了。纯运行时状态，不落盘——程序重启时人已经不在那个
         # 姿势上了，恢复一个半截的动作只会造成一次莫名其妙的触发。
         self._progress: dict[str, dict] = {}
         self._load()
 
+    @property
+    def last_error(self):
+        return self._persistence.error
+
+    def configuration_document(self):
+        return {"schema": SCHEMA, "poses": self.poses}
+
     # --- 读写 ---------------------------------------------------------------
 
     def _load(self) -> None:
-        if not self.path.is_file():
-            return
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001 - 坏文件不该让程序起不来
-            self.last_error = f"自定义动作读取失败：{exc}"
-            return
-        if not isinstance(data, dict) or data.get("schema") != SCHEMA:
-            self.last_error = "自定义动作文件版本不认识，已忽略"
-            return
-        self.poses = [entry for entry in map(_migrate, data.get("poses", [])) if entry]
+        self._persistence = SettingsPersistence(self.path, label="自定义动作", validate=self._validate_document)
+        self.poses = self._persistence.document.get("poses", [])
 
-    def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({"schema": SCHEMA, "poses": self.poses},
-                             ensure_ascii=False, indent=2)
-        # 原子写：崩溃或断电时不会留下半个文件，而半个 JSON 会让下次启动直接丢掉
-        # 所有已录的动作。
-        temp = self.path.with_suffix(self.path.suffix + ".tmp")
-        temp.write_text(payload, encoding="utf-8")
-        os.replace(temp, self.path)
+    @staticmethod
+    def _validate_document(data):
+        if data.get("schema") != SCHEMA or not isinstance(data.get("poses"), list):
+            raise ValueError("自定义动作文件格式无法读取")
+        poses = [_migrate(item) for item in data["poses"] if isinstance(item, dict)]
+        if len(poses) != len(data["poses"]) or any(item is None for item in poses):
+            raise ValueError("自定义动作文件含无效动作，原文已保留")
+        if len({item["id"] for item in poses}) != len(poses):
+            raise ValueError("自定义动作编号重复，原文已保留")
+        return {"schema": SCHEMA, "poses": poses}
+
+    def _save(self, poses=None) -> None:
+        payload = {"schema": SCHEMA, "poses": self.poses if poses is None else poses}
+        try:
+            replace_documents(self._persistence.documents(payload), self._persistence.journal_path)
+        except (OSError, ValueError) as error:
+            raise CustomPoseError("自定义动作未能保存，原配置已保留：" + write_failure_reason(error)) from error
+        self._persistence.committed(payload)
+
+    def _commit_entry(self, entry):
+        poses = [entry if item["id"] == entry["id"] else item for item in self.poses]
+        self._save(poses)
+        self.poses = poses
+        self._reset(entry["id"])
 
     # --- 增删改 -------------------------------------------------------------
 
@@ -149,36 +162,34 @@ class CustomPoseStore:
             "enabled": True,
             "created_at": _now_iso(),
         }
+        self._save([*self.poses, entry])
         self.poses.append(entry)
-        self._save()
         return entry
 
     def append_frame(self, pose_id: str, pose_map: dict) -> dict:
         """给已有动作再加一个姿势，沿用这条动作的触发规则。"""
-        entry = self.get(pose_id)
+        entry = copy.deepcopy(self.get(pose_id))
         if len(entry["frames"]) >= MAX_FRAMES:
             raise CustomPoseError(f"一个动作最多 {MAX_FRAMES} 个姿势")
         template, preview = self._frame_from(pose_map)
         entry["frames"].append(template)
         entry["previews"].append(preview)
-        self._reset(pose_id)
-        self._save()
+        self._commit_entry(entry)
         return entry
 
     def remove_frame(self, pose_id: str, index: int) -> dict:
-        entry = self.get(pose_id)
+        entry = copy.deepcopy(self.get(pose_id))
         if len(entry["frames"]) <= 1:
             raise CustomPoseError("至少要留一个姿势。想删掉整个动作请用删除。")
         if not 0 <= index < len(entry["frames"]):
             raise CustomPoseError("没有这个姿势")
         entry["frames"].pop(index)
         entry["previews"].pop(index)
-        self._reset(pose_id)
-        self._save()
+        self._commit_entry(entry)
         return entry
 
     def update(self, pose_id: str, **changes) -> dict:
-        entry = self.get(pose_id)
+        entry = copy.deepcopy(self.get(pose_id))
         if "match_mode" in changes:
             if changes["match_mode"] not in ("sequence", "any"):
                 raise CustomPoseError("触发规则要选择按顺序完成或任意一个即可")
@@ -198,16 +209,15 @@ class CustomPoseStore:
             entry["enabled"] = bool(changes["enabled"])
         # 这些值定义的就是"什么算触发"，改了它们之后还沿用旧的进度和计数，等于新设置
         # 要等下一次做完整个动作才生效——用户会以为没保存。
-        self._reset(pose_id)
-        self._save()
+        self._commit_entry(entry)
         return entry
 
     def remove(self, pose_id: str) -> bool:
-        before = len(self.poses)
-        self.poses = [entry for entry in self.poses if entry["id"] != pose_id]
-        if len(self.poses) != before:
+        poses = [entry for entry in self.poses if entry["id"] != pose_id]
+        if len(poses) != len(self.poses):
+            self._save(poses)
+            self.poses = poses
             self._progress.pop(pose_id, None)
-            self._save()
             return True
         return False
 

@@ -561,6 +561,25 @@ def test_new_process_cannot_claim_an_old_unsaved_draft_has_been_saved(desktop):
     assert not page.evaluate("async()=>{const m=await import('/js/shell.js');return m.headSaver.pending()}")
 
 
+def test_setting_receipt_can_finish_while_an_unrelated_library_still_needs_repair(desktop):
+    page, api = desktop.page, desktop.api
+    state = pending_settings(state="blocked", error="动作库需要恢复", components=[
+        {"instance": "head-file", "state": "pending", "saved_revision": 0},
+        {"instance": "pose-file", "state": "blocked", "saved_revision": 0}])
+    receipt = {**pending_settings(), "targets": [{"instance": "head-file", "revision": 1}]}
+    page.route(ORIGIN + "/api/head/config", lambda route: api.fulfill(route, {
+        "applied": True, "error": "头部设置尚未保存", "settings_persistence": state, "settings_write": receipt}, 503))
+    edit_head_speed(page)
+    page.wait_for_function("headSaveStatus.textContent.includes('等待自动保存')")
+    state["version"] = 3
+    state["components"][0].update(state="ready", saved_revision=1)
+    page.evaluate("async state=>(await import('/js/core.js')).updateSettingsPersistence(state)", state)
+    page.wait_for_function("headSaveStatus.textContent==='已保存'")
+    assert page.locator("#settingsSaveWarning").is_visible()
+    assert "动作库需要恢复" in page.locator("#settingsSaveWarning").text_content()
+    assert not page.evaluate("async()=>{const m=await import('/js/shell.js');return m.headSaver.pending()}")
+
+
 def test_exit_waits_for_mapping_save_and_then_stops_page_controls(desktop):
     page, api = desktop.page, desktop.api
     page.click('[data-view="games"]')

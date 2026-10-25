@@ -96,9 +96,14 @@ def test_a_corrupt_file_does_not_stop_the_app(tmp_path):
     broken = CustomPoseStore(path)
     assert broken.poses == []
     assert "读取失败" in broken.last_error
-    # 还能继续用：录一个新的会把文件覆盖掉。
+    # 创建动作不能悄悄覆盖损坏原件；确认修复后可以继续录制。
+    with pytest.raises(CustomPoseError, match="原配置已保留"):
+        broken.capture(T_POSE)
+    assert path.read_text(encoding="utf-8") == "{ 这不是 json"
+    broken._persistence.retry(force=True, repair_payload=broken.configuration_document())
     broken.capture(T_POSE)
     assert json.loads(path.read_text(encoding="utf-8"))["poses"]
+    assert list(tmp_path.glob("*.invalid-*"))
 
 
 def test_status_leaves_the_template_out(store):

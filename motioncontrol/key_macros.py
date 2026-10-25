@@ -20,10 +20,10 @@
 
 from __future__ import annotations
 
-import json
-import os
 import uuid
 from pathlib import Path
+from .config_transaction import replace_documents
+from .settings_persistence import SettingsPersistence, write_failure_reason
 
 from motioncontrol_shared.macro_schema import (
     MAX_MACROS,
@@ -48,37 +48,34 @@ class MacroStore:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.macros: list[dict] = []
-        self.last_error = ""
         self._load()
+
+    @property
+    def last_error(self):
+        return self._persistence.error
+
+    def configuration_document(self):
+        return {"schema": SCHEMA, "macros": self.macros}
 
     # --- 读写 ---------------------------------------------------------------
 
     def _load(self) -> None:
-        if not self.path.is_file():
-            return
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001 - 坏文件不该让程序起不来
-            self.last_error = f"键盘宏读取失败：{exc}"
-            return
-        if not isinstance(data, dict) or data.get("schema") != SCHEMA:
-            self.last_error = "键盘宏文件版本不认识，已忽略"
-            return
-        try:
-            self.macros = normalize_macro_library(data).get("macros", [])
-        except ValueError as exc:
-            # 存盘时已经校验过，还能读出问题就是文件被手改过或损坏了。丢掉比带着
-            # 一份会转圈的宏库跑起来安全——那种宏一触发就是无限展开。
-            self.last_error = f"键盘宏文件有问题，已忽略：{exc}"
-            self.macros = []
+        self._persistence = SettingsPersistence(self.path, label="键盘宏", validate=self._validate_document)
+        self.macros = self._persistence.document.get("macros", [])
 
-    def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({"schema": SCHEMA, "macros": self.macros},
-                             ensure_ascii=False, indent=2)
-        temp = self.path.with_suffix(self.path.suffix + ".tmp")
-        temp.write_text(payload, encoding="utf-8")
-        os.replace(temp, self.path)
+    @staticmethod
+    def _validate_document(data):
+        if data.get("schema") != SCHEMA:
+            raise ValueError("键盘宏文件版本不认识")
+        return normalize_macro_library(data)
+
+    def _save(self, macros=None) -> None:
+        payload = {"schema": SCHEMA, "macros": self.macros if macros is None else macros}
+        try:
+            replace_documents(self._persistence.documents(payload), self._persistence.journal_path)
+        except (OSError, ValueError) as error:
+            raise MacroError("键盘宏未能保存，原配置已保留：" + write_failure_reason(error)) from error
+        self._persistence.committed(payload)
 
     # --- 查 -----------------------------------------------------------------
 
@@ -139,9 +136,8 @@ class MacroStore:
             normalized = normalize_macro_library({"macros": macros})
         except ValueError as exc:
             raise MacroError(str(exc)) from exc
+        self._save(normalized["macros"])
         self.macros = normalized["macros"]
-        self._save()
-        self.last_error = ""
 
     def create(self, name: str = "", steps=None, repeat: bool = False) -> dict:
         if len(self.macros) >= MAX_MACROS:
