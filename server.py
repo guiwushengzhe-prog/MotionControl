@@ -167,6 +167,7 @@ PROFILE_UPDATE_LOCK = threading.RLock()
 INPUT_SOURCE_LOCK = threading.RLock()
 INPUT_STOP_LOCK = threading.Lock()
 INPUT_STOP_GENERATION = 0
+SHUTTING_DOWN = threading.Event()
 AUDIO_SOURCE_LOCK = threading.RLock()
 # 同机跨进程的递增时钟作基数，后台重启后未刷新的网页仍能接收新状态。
 CONFIG_REVISION = time.monotonic_ns() // 1000
@@ -229,6 +230,8 @@ _profile_reconcile_at = 0.
 def _reconcile_profile_configuration(*, force=False):
     """文件恢复或外部修改后，协调重载身体、语音与页面使用的绑定。"""
     global CONFIG_REVISION, _profile_reconcile_at
+    if SHUTTING_DOWN.is_set():
+        return
     with PROFILE_UPDATE_LOCK, PROFILES._lock:
         now = time.monotonic()
         if not force and now - _profile_reconcile_at < 1:
@@ -384,6 +387,8 @@ def voice_emergency_stop() -> dict:
 
 
 def _command_allowed(action: dict) -> bool:
+    if SHUTTING_DOWN.is_set():
+        return False
     generation = action.get("_command_generation")
     if generation is not None and not SYSTEM_COMMANDS.is_current(generation):
         return False
@@ -412,7 +417,7 @@ def execute_system_target(target: str, *, command_generation=None, command_actio
         with OUTPUT._lock, guard as active:
             # Recheck under the same lock used by emergency_stop: a command
             # that waited for output must not reactivate a stopped generation.
-            if not active or (command_generation is not None and not SYSTEM_COMMANDS.is_current(command_generation)):
+            if SHUTTING_DOWN.is_set() or not active or (command_generation is not None and not SYSTEM_COMMANDS.is_current(command_generation)):
                 return {"executed": False, "reason": "操作已被停止或切换取消"}
             enabled = target == "OUTPUT.START" or (target == "OUTPUT.TOGGLE" and not OUTPUT.enabled)
             result = OUTPUT.set_config(enabled=enabled)
@@ -787,9 +792,11 @@ def _instance_id() -> str:
 
 
 def _set_output_enabled(enabled: bool) -> dict:
-    SYSTEM_COMMANDS.invalidate()
-    result = OUTPUT.set_config(enabled=enabled)
-    return result
+    with OUTPUT._lock:
+        if enabled and SHUTTING_DOWN.is_set():
+            raise ValueError("程序正在退出，请重新打开后再开始控制")
+        SYSTEM_COMMANDS.invalidate()
+        return OUTPUT.set_config(enabled=enabled)
 
 
 INPUT_BRIDGE = InputBridge(OUTPUT, KERNEL, voice=VOICE, on_output_control=_set_output_enabled)
@@ -801,6 +808,8 @@ STUDIO = StudioService(StudioPortrait(RUNTIME.camera, kernel=KERNEL,
 
 def _set_body_input(source: str, enabled: bool, *, device=None) -> dict:
     with INPUT_STOP_LOCK:
+        if enabled and SHUTTING_DOWN.is_set():
+            raise CameraUnavailable("程序正在退出，不能重新启动识别")
         generation = INPUT_STOP_GENERATION
     with INPUT_SOURCE_LOCK:
         SYSTEM_COMMANDS.invalidate()
@@ -831,7 +840,7 @@ def _restore_saved_recognition(source: str, generation: int) -> None:
     """监听已就绪后恢复识别；停止或换源优先，启动失败不关闭网页。"""
     with INPUT_SOURCE_LOCK:
         with INPUT_STOP_LOCK:
-            if generation != INPUT_STOP_GENERATION or source != RUNTIME.body_mode:
+            if SHUTTING_DOWN.is_set() or generation != INPUT_STOP_GENERATION or source != RUNTIME.body_mode:
                 return
         try:
             _set_body_input(source, True)
@@ -1639,6 +1648,65 @@ def performance_logger(stop_event: threading.Event) -> None:
         print(performance_line(), flush=True)
 
 
+def _run_exit_steps(steps):
+    """一个模块收尾失败也继续释放其余设备，错误保留在启动记录中。"""
+    errors = []
+    for name, close in steps:
+        try:
+            close()
+        except Exception as error:
+            message = f"退出时{name}未完成：{error}"
+            errors.append(message)
+            print(message, file=sys.stderr, flush=True)
+    return errors
+
+
+def _begin_shutdown():
+    global INPUT_STOP_GENERATION
+    with INPUT_STOP_LOCK:
+        if SHUTTING_DOWN.is_set():
+            return False
+        SHUTTING_DOWN.set()
+        INPUT_STOP_GENERATION += 1
+    _run_exit_steps([
+        ("释放按键", OUTPUT.emergency_stop),
+        ("取消待执行命令", SYSTEM_COMMANDS.invalidate),
+        ("取消相机启动", RUNTIME.camera.cancel_start),
+        ("停止手机身体输入", lambda: INPUT_BRIDGE.set_body_enabled(False)),
+        ("取消姿势倒计时", POSE_TIMER.cancel),
+    ])
+    return True
+
+
+def _close_application(device_server, admin_server, device_thread, perf_stop, perf_thread):
+    _begin_shutdown()
+    steps = [
+        ("停止更新", UPDATE_CANCEL.set),
+        ("停止性能记录", perf_stop.set),
+        ("释放按键", OUTPUT.emergency_stop),
+        ("停止待执行命令", SYSTEM_COMMANDS.close),
+        ("关闭麦克风", VOICE.close),
+        ("保存录制", STUDIO.close),
+        ("关闭手机输入", INPUT_BRIDGE.close),
+        ("关闭摄像头与身体识别", RUNTIME.close),
+        ("停止运动同步", FITNESS_SYNC.close),
+        ("保存运动记录", FITNESS.close),
+        ("关闭快捷键", HOTKEYS.close),
+        ("保存动作学习", LEARNER.close),
+        ("关闭游戏输出", OUTPUT.close),
+        ("关闭云端查询", lambda: CLOUD_METADATA.close(wait=False)),
+        ("结束性能记录", lambda: perf_thread.join(timeout=1.0)),
+        ("停止手机接入服务", device_server.shutdown),
+        ("结束手机接入线程", lambda: device_thread.join(timeout=2.0)),
+        ("关闭手机接入端口", device_server.server_close),
+    ]
+    if DISCOVERY is not None:
+        steps.append(("关闭设备发现", DISCOVERY.close))
+    # 最后关闭管理端口，页面才可据此确认后台收尾已完成。
+    steps.append(("关闭本机管理端口", admin_server.server_close))
+    return _run_exit_steps(steps)
+
+
 class _BaseHandler(SimpleHTTPRequestHandler):
     # The UI polls several small status resources.  Persistent HTTP/1.1
     # connections avoid a new TCP handshake/TIME_WAIT entry for every poll.
@@ -1811,10 +1879,12 @@ class AdminHandler(_BaseHandler):
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "shutdown is loopback-only"}, 403)
                 return
-            self._send_json({"ok": True, "version": VERSION, "shutting_down": True})
+            first = _begin_shutdown()
+            self._send_json({"ok": True, "version": VERSION, "pid": os.getpid(), "shutting_down": True})
             # HTTPServer.shutdown must be called from another thread so this
             # request can finish sending its acknowledgement first.
-            threading.Thread(target=self.server.shutdown, name="motion-shutdown", daemon=True).start()
+            if first:
+                threading.Thread(target=self.server.shutdown, name="motion-shutdown", daemon=True).start()
             return
         if route == "/api/health":
             if not self._is_loopback():
@@ -1822,6 +1892,7 @@ class AdminHandler(_BaseHandler):
                 return
             _reconcile_profile_configuration(force=True)
             self._send_json({"app": "MotionControl", "version": VERSION, "pid": os.getpid(),
+                             "shutting_down": SHUTTING_DOWN.is_set(),
                              "program_root": str(ROOT.resolve()), "user_data_root": str(user_data_root().resolve()),
                              "config_revision": CONFIG_REVISION, "configuration": PROFILES.persistence_status()})
             return
@@ -2054,6 +2125,24 @@ class AdminHandler(_BaseHandler):
     def do_POST(self):
         global CONFIG_REVISION
         route = urlparse(self.path).path
+        if route == "/api/shutdown":
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or (origin and origin not in {
+                    f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
+                self._send_json({"error": "请从本机控制页面退出程序"}, 403)
+                return
+            if not isinstance(self._body(), dict):
+                self._send_json({"error": "退出请求无法读取"}, 400)
+                return
+            first = _begin_shutdown()
+            self._send_json({"ok": True, "pid": os.getpid(), "shutting_down": True})
+            if first:
+                threading.Thread(target=self.server.shutdown, name="motion-shutdown", daemon=True).start()
+            return
+        if SHUTTING_DOWN.is_set():
+            self._body()
+            self._send_json({"ok": False, "error": "程序正在退出，请重新打开后再操作"}, 503)
+            return
         if route.startswith("/api/studio/") or route in {"/api/fitness/control", "/api/fitness/heart-rate",
                                                           "/api/fitness/heart-rate-input", "/api/cloud/account/login",
                                                           "/api/cloud/account/cancel", "/api/cloud/account/logout"}:
@@ -3020,16 +3109,19 @@ class AdminHandler(_BaseHandler):
                 try:
                     if "enabled" in body:
                         SYSTEM_COMMANDS.invalidate()
-                    data = OUTPUT.set_config(
-                        mode=body.get("mode"),
-                        enabled=body.get("enabled") if "enabled" in body else None,
-                        mouse_speed_x=body.get("mouse_speed_x"),
-                        mouse_speed_y=body.get("mouse_speed_y"),
-                        gamepad_gain=body.get("gamepad_gain"),
-                        xinput_merge_enabled=(body.get("xinput_merge_enabled") if "xinput_merge_enabled" in body else None),
-                        xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
-                        physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
-                    )
+                    with OUTPUT._lock:
+                        if SHUTTING_DOWN.is_set():
+                            raise ValueError("程序正在退出，已取消迟到的控制设置")
+                        data = OUTPUT.set_config(
+                            mode=body.get("mode"),
+                            enabled=body.get("enabled") if "enabled" in body else None,
+                            mouse_speed_x=body.get("mouse_speed_x"),
+                            mouse_speed_y=body.get("mouse_speed_y"),
+                            gamepad_gain=body.get("gamepad_gain"),
+                            xinput_merge_enabled=(body.get("xinput_merge_enabled") if "xinput_merge_enabled" in body else None),
+                            xinput_motion_left_enabled=body.get("xinput_motion_left_enabled"),
+                            physical_xinput_user=(body.get("physical_xinput_user") if "physical_xinput_user" in body else _UNSET),
+                        )
                 finally:
                     _remember_output_mode()
                     if any(key in body for key in _OUTPUT_SPEED_FIELDS):
@@ -3284,27 +3376,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        UPDATE_CANCEL.set()
-        CLOUD_METADATA.close(wait=False)
-        SYSTEM_COMMANDS.close()
-        perf_stop.set()
-        perf_thread.join(timeout=1.0)
-        OUTPUT.emergency_stop()
-        VOICE.close()
-        STUDIO.close()
-        FITNESS_SYNC.close()
-        FITNESS.close()
-        INPUT_BRIDGE.close()
-        RUNTIME.close()
-        HOTKEYS.close()
-        LEARNER.close()
-        OUTPUT.close()
-        device_server.shutdown()
-        device_thread.join(timeout=2.0)
-        device_server.server_close()
-        admin_server.server_close()
-        if DISCOVERY is not None:
-            DISCOVERY.close()
+        _close_application(device_server, admin_server, device_thread, perf_stop, perf_thread)
 
 
 if __name__ == "__main__":

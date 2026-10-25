@@ -43,6 +43,9 @@ function Get-MotionControlRealPath {
 
 function Assert-MotionControlInstance {
     $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/api/health' -TimeoutSec 4
+    if ($health.shutting_down) {
+        throw '现有程序正在退出，请稍候再打开。'
+    }
     $dataRoot = if ($env:MOTIONCONTROL_USER_DIR) { $env:MOTIONCONTROL_USER_DIR } else { Join-Path $env:LOCALAPPDATA 'MotionControl' }
     if ($health.app -ne 'MotionControl' -or
             $health.program_root -ne (Get-MotionControlRealPath $PSScriptRoot) -or

@@ -22,6 +22,9 @@
 <hr/>
 <a class="menu-item" href="https://motioncontrol.guiwu-aware.icu/feedback" rel="noopener" target="_blank">问题反馈</a>
 <a class="menu-item" href="https://github.com/guiwushengzhe-prog/MotionControl" rel="noopener" target="_blank">源码 · AGPL-3.0</a>
+<hr/>
+<button class="menu-item" id="exitAppBtn" role="menuitem">退出程序</button>
+<p class="menu-note">关闭网页后后台仍会运行；退出程序会释放摄像头、麦克风与游戏输出。</p>
 <div class="menu-foot"><div class="menu-update">MotionControl <span id="appVersion"></span> · <span id="updateStatus"></span><button class="btn link" hidden="" id="updateCheckBtn" type="button">检查更新</button></div>QQ 群 1101605483</div>
 </div></div>
 </div>
@@ -479,4 +482,5 @@
 <div class="tour-targets" hidden="" id="tourTargets"></div><div class="tour-hold" hidden="" id="tourHold"><i id="tourHoldFill"></i></div>
 <div class="tour-foot"><button class="tour-link" id="tourSkipBtn">这步跳过</button><button class="btn" hidden="" id="tourChoiceBtn"></button><button class="btn primary" hidden="" id="tourNextBtn">好</button></div></section></div>
 <dialog aria-labelledby="calibrationStage" class="calibration-overlay" id="calibrationOverlay"><div class="calibration-card"><div class="calibration-kicker">校准视角与身体站姿</div><div class="calibration-stage" id="calibrationStage">准备校准</div><div class="calibration-prompt" id="calibrationPrompt">请看向游戏屏幕中心，身体自然站直</div><div class="calibration-countdown" id="calibrationCountdown">3.0</div><div class="calibration-progress"><div id="calibrationProgressBar"></div></div><div class="calibration-detail" id="calibrationDetail"></div><button class="calibration-cancel" id="calibrationCancel">取消校准</button></div></dialog>
+<dialog aria-labelledby="exitTitle" aria-describedby="exitStatus" id="exitDialog"><div class="dialog-head"><h2 id="exitTitle">正在退出 MotionControl</h2></div><p id="exitStatus" role="status">正在释放设备，请稍候…</p><button class="btn" id="exitCheckBtn" type="button" hidden>重新核对</button></dialog>
 </div><script src="/app.js" type="module"></script></body></html>

@@ -6082,8 +6082,10 @@ class LocalControlRuntime:
         try:
             self.camera.stop_and_wait()
         finally:
-            self.camera.depth_comparison.lean_recording.stop()
-            self.kernel.close()
+            try:
+                self.camera.depth_comparison.lean_recording.stop()
+            finally:
+                self.kernel.close()
 
 
 # Keep the hand-anchor logic at the input/recognition boundary.  The existing

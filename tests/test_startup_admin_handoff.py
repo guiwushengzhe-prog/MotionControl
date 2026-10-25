@@ -244,3 +244,9 @@ def test_camera_failure_opens_only_if_program_still_responds(tmp_path, alive):
     assert data["code"] == (0 if alive else 1)
     assert len(data["browser"]) == int(alive)
     assert "摄像头未能自动启动" in data["messages"]
+
+
+def test_start_does_not_reuse_or_restart_an_instance_while_it_is_exiting(tmp_path):
+    data = run_start(tmp_path, [], health={"shutting_down": True})
+    assert data["code"] == 1 and not data["browser"]
+    assert "正在退出" in data["messages"]

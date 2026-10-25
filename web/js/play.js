@@ -183,6 +183,13 @@ function renderCalibrationOverlay(hs={}){
 export function renderMainStatus(){
   serviceReady=kernelConnected&&outputConnected;
   const main=$('#mainActionBtn');
+  if(S.shutdown){
+    setProperty(main,'disabled',true);
+    setText($('#mainActionLabel'),S.shutdown==='stopping'?'正在退出…':'程序已退出');
+    setText($('#serviceStatus'),S.shutdown==='stopping'?'正在释放设备并退出…':S.shutdown==='replaced'?'检测到新程序，请刷新连接':'本地服务已关闭');
+    setClass($('#serviceStatus'),'online',false);setClass($('#serviceStatus'),'offline',false);
+    return;
+  }
   const phase=recognitionState(),busy=['starting','stopping'].includes(phase);
   setProperty(main,'disabled',!output.enabled&&(!serviceReady||actionBusy||zoneEditMode||busy||phase==='stop_failed'));
   setText($('#mainActionLabel'),output.enabled?'暂停控制':'开始控制');
@@ -206,6 +213,7 @@ function renderRecognitionActions(){
 }
 
 document.addEventListener('motioncontrol:voice-state',renderMainStatus);
+document.addEventListener('motioncontrol:shutdown-state',renderMainStatus);
 
 // 画面中间那句话只在没人、没画面时出现；有人站进来就让开。
 function renderViewerMessage(){

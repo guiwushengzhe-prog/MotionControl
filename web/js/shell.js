@@ -18,6 +18,8 @@ import {ensureViewControlReady,handMouseConfig,initViewControl,pushHeadConfig,re
 import {addVoiceRow,refreshVoice,refreshVoiceCommands,renderVoiceRows,saveVoiceMappings,voice,voiceInputReady,voiceRowsFromStatus} from './voice.js';
 import {initViewTuning,openViewTuning} from './view-tuning.js';
 import {renderSpeedSummary} from './view-speed.js';
+import {exitApplication} from './lifecycle.js';
+import {studioBusy} from './studio.js';
 
 let modelAvailable=false;
 export let actionBusy=false;
@@ -143,16 +145,16 @@ export function showView(view){
 function poll(task,delay,enabled=()=>true){
   let timer=0,busy=false,failures=0;
   async function next(){
-    if(busy)return;
+    if(busy||S.shutdown)return;
     busy=true;
     try{if(enabled()){const success=await task();failures=success===false?failures+1:0}}catch{failures++}
     finally{
       busy=false;
       const interval=Math.min(10000,delay*2**Math.min(failures,5));
-      timer=setTimeout(next,document.hidden?Math.max(interval,1500):interval);
+      if(!S.shutdown)timer=setTimeout(next,document.hidden?Math.max(interval,1500):interval);
     }
   }
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!busy){clearTimeout(timer);failures=0;void next()}});
+  document.addEventListener('visibilitychange',()=>{if(!S.shutdown&&!document.hidden&&!busy){clearTimeout(timer);failures=0;void next()}});
   void next();
 }
 
@@ -291,6 +293,13 @@ $('#zoneFitGripBtn').addEventListener('click',e=>tutorial.openLesson('fit',e.cur
 bind('zoneFitResetBtn',()=>zoneFit('reset'));
 
 $('#tutorialBtn').addEventListener('click',()=>{closeMenus();tutorial.open($('#helpBtn'))});
+
+bind('exitAppBtn',()=>exitApplication(()=>{
+  if(zoneEditMode)throw new Error('请先保存或取消区域调整，再退出程序');
+  if(studioBusy()||['waiting','recording','saving'].includes($('#homePoseRecorder').dataset.state)){
+    throw new Error('请先结束录制并等待保存完成，再退出程序');
+  }
+}));
 
 bind('poseRecordBtn',async()=>{if(await startPoseRecord())showView('play')});
 

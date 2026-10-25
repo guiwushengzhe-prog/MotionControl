@@ -12,8 +12,12 @@ let screenStream=null,micStream=null,canvasStream=null,audioContext=null,audioSo
 let screenVideo=null,recorder=null,recordingId=null,uploadTail=Promise.resolve(),pendingBytes=0,uploadError='',startedAt=0,drawTimer=0;
 let saveTail=Promise.resolve(),liveState={},configSaveError='';
 let panDrag=null;
+let pageClosing=false;
+
+export function studioBusy(){return starting||recording||saving}
 
 async function request(path,body,options={}){
+  if(pageClosing)throw new Error('程序正在退出');
   const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:body===undefined?undefined:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(10000),...options});
   let data;
   try{data=await response.json()}catch{data={}}
@@ -104,7 +108,7 @@ async function togglePreview(){
 }
 
 async function getFrame(){
-  if(frameBusy||frameBlocked||(!preview&&!recording))return;
+  if(pageClosing||frameBusy||frameBlocked||(!preview&&!recording))return;
   frameBusy=true;const epoch=frameEpoch;
   try{
     const bitmap=await readStudioFrame();
@@ -364,7 +368,7 @@ async function refreshState(){
       if(Date.now()-renewAt>10000)await demand(true);
     }else $('studioPortraitStatus').textContent='';
   }catch(error){if(!loaded)status('录制设置暂未读取：'+errorText(error))}
-  finally{stateTimer=setTimeout(refreshState,1200)}
+  finally{if(!pageClosing)stateTimer=setTimeout(refreshState,1200)}
 }
 
 async function mount(){
@@ -411,5 +415,11 @@ async function mount(){
     });
   }catch(error){root.textContent=errorText(error)}
 }
+
+document.addEventListener('motioncontrol:shutdown-state',()=>{
+  pageClosing=true;preview=false;
+  clearTimeout(stateTimer);clearInterval(frameTimer);clearInterval(drawTimer);
+  releaseRecordingSources();forgetFrame();
+});
 
 void mount();

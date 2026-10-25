@@ -8,6 +8,7 @@ export const S = {
   inputEpoch: 0,
   recognitionOperation: null,
   recognitionStopError: '',
+  shutdown: '',
   headDirty: false,
   desiredSource: null,
   customPoseScores: {},

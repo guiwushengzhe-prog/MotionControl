@@ -59,6 +59,7 @@ class LocalApi:
         self.voice = {"available": True, "model_ready": True, "connected": True,
                       "audio_ready": True, "wake_word": "体感", "mappings": []}
         self.commands = []
+        self.shutting_down = False
 
     @staticmethod
     def fulfill(route, data, status=200):
@@ -74,6 +75,16 @@ class LocalApi:
             return
         body = route.request.post_data_json if route.request.method == "POST" else None
         self.requests.append((path, body))
+        if path == "/api/shutdown":
+            self.shutting_down = True
+            self.fulfill(route, {"shutting_down": True, "pid": 123})
+            return
+        if path == "/api/health":
+            if self.shutting_down:
+                route.abort("connectionrefused")
+            else:
+                self.fulfill(route, {"app": "MotionControl", "pid": 123})
+            return
         if path == "/api/game-profiles/catalog":
             query = parse_qs(url.query).get("q", [""])[0]
             if self.hold_catalog and query:
@@ -463,6 +474,83 @@ def test_delayed_background_read_cannot_undo_a_finished_game_selection(desktop):
     api.fulfill(held[0], {"profile": old})
     page.wait_for_timeout(150)
     assert page.locator("#currentGameName").text_content() == "用户刚选的游戏"
+
+
+def test_exit_waits_for_mapping_save_and_then_stops_page_controls(desktop):
+    page, api = desktop.page, desktop.api
+    page.click('[data-view="games"]')
+    api.hold_overrides = True
+    page.locator('.binding-row[data-trigger="zone.leftHand"] .binding-target-box select').select_option("Y")
+    page.click("#helpBtn")
+    page.click("#exitAppBtn")
+    page.wait_for_function("mappingFields.disabled")
+    page.wait_for_timeout(50)
+    assert api.held_overrides is not None
+    assert not any(path == "/api/shutdown" for path, _ in api.requests)
+    api.fulfill(api.held_overrides, {"profile": api.profile})
+    page.wait_for_function("exitTitle.textContent === 'MotionControl 已退出'")
+    assert api.profile["bindings"]["zones"]["leftHand"]["action"]["target"] == "Y"
+    assert sum(path == "/api/shutdown" for path, _ in api.requests) == 1
+    assert page.evaluate("document.querySelector('main').inert && mainActionBtn.disabled")
+    assert page.locator("#serviceStatus").inner_text() == "本地服务已关闭"
+    before = len(api.requests)
+    message = page.evaluate("async () => {const c=await import('/js/core.js');try{await c.api('/api/kernel/status')}catch(e){return e.message}}")
+    assert "退出流程" in message and len(api.requests) == before
+
+
+def test_unsaved_failure_keeps_original_page_open_and_does_not_exit(desktop):
+    page, api = desktop.page, desktop.api
+    api.fail_overrides = True
+    page.click('[data-view="games"]')
+    page.locator('.binding-row[data-trigger="zone.leftHand"] .binding-target-box select').select_option("Y")
+    page.click("#helpBtn")
+    page.click("#exitAppBtn")
+    page.wait_for_function("!notice.hidden && notice.textContent.includes('draft could not be saved')")
+    assert not any(path == "/api/shutdown" for path, _ in api.requests)
+    assert not page.evaluate("exitDialog.open || document.querySelector('main').inert")
+
+
+def test_repeated_exit_is_one_request_and_new_instance_is_not_reported_as_closed(desktop):
+    page, api = desktop.page, desktop.api
+    page.route(ORIGIN + "/api/health", lambda route: api.fulfill(route, {"app": "MotionControl", "pid": 456}))
+    page.evaluate("async () => {const m=await import('/js/lifecycle.js');await Promise.all([m.exitApplication(()=>{}),m.exitApplication(()=>{})])}")
+    page.wait_for_function("exitTitle.textContent === '原程序已退出'")
+    assert sum(path == "/api/shutdown" for path, _ in api.requests) == 1
+    assert page.locator("#exitCheckBtn").inner_text() == "连接新程序"
+    assert "检测到新程序" in page.locator("#serviceStatus").inner_text()
+
+
+def test_recording_must_finish_before_exit(desktop):
+    page, api = desktop.page, desktop.api
+    api.recording.update(state="recording", remaining_s=20)
+    page.evaluate("async () => {const d=await import('/js/diagnostics.js');await d.refreshPoseRecord()}")
+    page.click("#helpBtn")
+    page.click("#exitAppBtn")
+    page.wait_for_function("!notice.hidden && notice.textContent.includes('先结束录制')")
+    assert not any(path == "/api/shutdown" for path, _ in api.requests)
+
+
+@pytest.mark.parametrize("response", ["busy", "unreadable"])
+def test_shutdown_does_not_mistake_busy_or_invalid_health_for_finished(desktop, response):
+    page, api = desktop.page, desktop.api
+    closed = False
+
+    def health(route):
+        if closed:
+            route.abort("connectionrefused")
+        else:
+            route.fulfill(status=503 if response == "busy" else 200,
+                          content_type="application/json", body='{}' if response == "busy" else '{partial')
+
+    page.route(ORIGIN + "/api/health", health)
+    page.click("#helpBtn")
+    page.click("#exitAppBtn")
+    page.wait_for_function("exitDialog.open")
+    page.wait_for_timeout(650)
+    assert page.locator("#exitTitle").inner_text() == "正在退出 MotionControl"
+    closed = True
+    page.wait_for_function("exitTitle.textContent === 'MotionControl 已退出'")
+    assert sum(path == "/api/shutdown" for path, _ in api.requests) == 1
 
 
 def test_touch_narrow_windows_and_all_settings_panes_stay_within_width(mock_browser):

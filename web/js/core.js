@@ -1,6 +1,8 @@
 // 不依赖任何别的模块的小工具：取元素、调接口、底部提示。
 
 export const $ = s => document.querySelector(s);
+let serviceClosing=false;
+document.addEventListener('motioncontrol:shutdown-state',()=>{serviceClosing=true});
 
 export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -91,6 +93,7 @@ export function notice(text){
 $('#notice').addEventListener('click',()=>notice(''));
 
 export async function api(path,opt={}){
+  if(serviceClosing)throw new Error('程序已进入退出流程，请重新打开后再操作');
   // 8s suits local calls. A cloud call is a download plus an apply on the far
   // side of the internet, so callers may ask for longer rather than being told
   // the local service is unresponsive when it is the network that is slow.

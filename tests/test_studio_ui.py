@@ -139,6 +139,26 @@ def test_cancel_never_creates_recording(browser, studio_server):
     page.close()
 
 
+def test_application_exit_releases_preview_tracks_and_stops_studio_requests(browser, studio_server):
+    base, state = studio_server
+    page = browser.new_page()
+    page.add_init_script(FAKE_CAPTURE)
+    requests, errors = [], []
+    page.on("request", lambda request: requests.append(request.url) if "/api/studio/" in request.url else None)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    ready(page, base)
+    page.click("#studioScreenBtn")
+    page.wait_for_function("syntheticTracks.length > 0 && syntheticTracks.some(track=>track.readyState==='live')")
+    page.evaluate("document.dispatchEvent(new Event('motioncontrol:shutdown-state'))")
+    page.wait_for_function("syntheticTracks.every(track=>track.readyState==='ended')")
+    page.wait_for_timeout(250)
+    before = len(requests)
+    page.wait_for_timeout(1500)
+    assert len(requests) == before and errors == []
+    assert not any(path == "/api/studio/recording/start" for path, _ in state["posts"])
+    page.close()
+
+
 def test_composite_preview_crop_cancel_and_recording_reuse_selected_screen(browser, studio_server):
     base, state = studio_server
     page = browser.new_page()
