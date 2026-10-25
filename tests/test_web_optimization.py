@@ -237,6 +237,22 @@ def test_search_keeps_newest_results_when_old_request_arrives_last(desktop):
     assert "Elden Ring" in page.locator("#profileResults").inner_text()
 
 
+def test_empty_search_removes_stale_game_choices_and_can_search_again(desktop):
+    page, api = desktop.page, desktop.api
+    assert page.locator("#profileResults .game-result").count() == 1
+    api.hold_catalog = True
+    page.evaluate("async()=>{const m=await import('/js/mapping.js');profileSearch.value='未收录';window.emptySearch=m.searchProfiles();}")
+    page.wait_for_timeout(50)
+    api.fulfill(api.held_catalog["未收录"], {"games": [], "count": 0})
+    page.evaluate("window.emptySearch")
+    assert page.locator("#profileResults .game-result").count() == 0
+    assert "没搜到" in page.locator("#profileResultsInfo").text_content()
+    api.hold_catalog = False
+    page.evaluate("async()=>{const m=await import('/js/mapping.js');profileSearch.value='';await m.searchProfiles();}")
+    assert page.locator("#profileResults .game-result").count() == 1
+    assert not any(path == "/api/game-profiles/select" for path, _ in api.requests)
+
+
 @pytest.mark.parametrize("rejected", [False, True])
 def test_view_control_uses_one_complete_request_and_truthful_failure(desktop, rejected):
     page, api = desktop.page, desktop.api

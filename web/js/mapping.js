@@ -185,8 +185,8 @@ export async function toggleGameLaunchMode(){
 
 function renderProfileCatalog(games){
   gameProfile.catalog=Array.isArray(games)?games:[];
-  const select=$('#profileSelect'),selectedId=gameProfile.selected?.selected_id||gameProfile.selected?.id||'';
-  select.replaceChildren();
+  const select=$('#profileSelect'),results=$('#profileResults'),selectedId=gameProfile.selected?.selected_id||gameProfile.selected?.id||'';
+  select.replaceChildren();results.replaceChildren();
   if(!gameProfile.catalog.length){const o=document.createElement('option');o.value='';o.textContent='没有匹配的游戏';select.appendChild(o);return}
   // Hand-verified profiles come first: of ~200 shipped profiles only a
   // handful have actually been played, and a flat alphabetical list makes
@@ -196,7 +196,6 @@ function renderProfileCatalog(games){
   // verified 重排一遍，等于把它推回两百条里去。
   const rank=g=>g.source==='custom'?2:(g.verified?1:0);
   const ordered=[...gameProfile.catalog].sort((a,b)=>rank(b)-rank(a)||String(a.name).localeCompare(String(b.name),'zh'));
-  const results=$('#profileResults');results.replaceChildren();
   for(const g of ordered){
     const o=document.createElement('option');o.value=g.id;
     // 「实验」说的是没人试过的自动生成配置。自己加的不属于那一类，标错了会让人
