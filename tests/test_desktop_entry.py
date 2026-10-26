@@ -124,3 +124,54 @@ function Assert-MotionControlInstance {
     checked = subprocess.run([str(legacy), "-NoProfile", "-File", str(script)], capture_output=True, encoding="utf-8", timeout=15)
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert "尚未就绪" not in checked.stdout
+
+
+def test_native_entry_finishes_while_a_background_process_keeps_output_open(tmp_path):
+    import ctypes
+    from ctypes import wintypes
+    destination, desktop, programs = (tmp_path / name for name in ("入口", "桌面", "开始菜单"))
+    root, data = tmp_path / "程序", tmp_path / "数据"
+    root.mkdir(); data.mkdir()
+    (root / "server.py").write_text("# isolated program")
+    (root / "START.ps1").write_text("""param([switch]$Desktop,[switch]$NoBrowser)
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$start = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'powershell.exe'))
+$start.Arguments = '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30'
+$start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+$worker = [Diagnostics.Process]::Start($start)
+$worker.Id | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'worker.pid')
+Write-Host '启动脚本已完成，后台继续运行'
+exit 0
+""", encoding="utf-8-sig")
+    installed = subprocess.run([PWSH, "-NoProfile", "-File", str(ROOT / "安装桌面入口.ps1"),
+        "-ProgramRoot", str(root), "-UserDataRoot", str(data), "-Destination", str(destination),
+        "-DesktopDirectory", str(desktop), "-ProgramsDirectory", str(programs), "-DoNotRegister"],
+        capture_output=True, text=True, encoding="utf-8", timeout=20)
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    for _ in range(2):  # 首次返回后释放启动锁，第二次仍能打开。
+        process = subprocess.Popen([str(destination / "MotionControl.exe"), "--no-browser"])
+        try:
+            assert process.wait(timeout=10) == 0
+            worker = int((root / "worker.pid").read_text().strip())
+            handle = kernel.OpenProcess(0x100001, False, worker)
+            assert handle and kernel.WaitForSingleObject(handle, 0) == 258, "后台应仍在运行"
+            kernel.TerminateProcess(handle, 0)
+            kernel.WaitForSingleObject(handle, 5000)
+            kernel.CloseHandle(handle)
+            (root / "worker.pid").unlink()
+            assert "启动脚本已完成" in (destination / "last-start.log").read_text(encoding="utf-8-sig")
+        finally:
+            if process.poll() is None:
+                process.kill(); process.wait(timeout=5)
+            marker = root / "worker.pid"
+            if marker.is_file():
+                handle = kernel.OpenProcess(0x100001, False, int(marker.read_text().strip()))
+                if handle:
+                    kernel.TerminateProcess(handle, 0); kernel.CloseHandle(handle)

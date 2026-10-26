@@ -169,9 +169,14 @@ internal static class MotionControlDesktop
                     using (Process child = Process.Start(start))
                     {
                         StringBuilder messages = new StringBuilder();
+                        ManualResetEventSlim outputFinished = new ManualResetEventSlim(false);
+                        int endedStreams = 0;
                         DataReceivedEventHandler collect = delegate(object sender, DataReceivedEventArgs line)
                         {
-                            if (line.Data == null) return;
+                            if (line.Data == null) {
+                                if (Interlocked.Increment(ref endedStreams) == 2) outputFinished.Set();
+                                return;
+                            }
                             lock (messages) {
                                 const int limit = 65536;
                                 string text = line.Data.Length > limit ? line.Data.Substring(line.Data.Length - limit) : line.Data;
@@ -184,7 +189,13 @@ internal static class MotionControlDesktop
                         child.BeginOutputReadLine();
                         child.BeginErrorReadLine();
                         // 等待文件夹选择和 Windows 权限确认；服务就绪等待由启动脚本限时。
-                        child.WaitForExit();
+                        // 不使用无参等待：后台可能继承输出管道，等其关闭会一直占着启动锁。
+                        while (!child.WaitForExit(1000)) { }
+                        outputFinished.Wait(500);
+                        try { child.CancelOutputRead(); } catch (InvalidOperationException) { }
+                        try { child.CancelErrorRead(); } catch (InvalidOperationException) { }
+                        string startupMessages;
+                        lock (messages) startupMessages = messages.ToString();
                         string log = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "last-start.log");
                         try {
                             for (int i = 2; i >= 0; i--) {
@@ -199,7 +210,7 @@ internal static class MotionControlDesktop
                                     File.Delete(from);
                                 }
                             }
-                            File.WriteAllText(log, messages.ToString(), Encoding.UTF8);
+                            File.WriteAllText(log, startupMessages, Encoding.UTF8);
                         } catch (IOException) { } // 记录不可写不改变后台实际启动结果。
                           catch (UnauthorizedAccessException) { }
                         if (child.ExitCode != 0) throw new IOException("启动未完成，原配置已保留。请查看启动记录：" + log);
