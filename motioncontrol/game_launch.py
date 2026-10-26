@@ -5,8 +5,10 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import os
+import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -44,6 +46,60 @@ def launch_as_administrator(root: Path, arguments=(), *, wait_for_pid: int = 0,
         raise RuntimeError("管理员重启只支持 Windows")
     executable, parameters, directory = elevated_command(
         root, arguments, wait_for_pid=wait_for_pid, no_browser=no_browser)
+    from .owned_process import lifetime_job_active
+    if lifetime_job_active():
+        # 管理员后台不能继承旧后台的退出清理组，否则旧后台一退出就把它一起结束。
+        _launch_outside_lifetime_job(executable, parameters, directory)
+    else:
+        _launch_elevated_process(executable, parameters, directory)
+
+
+def _launch_outside_lifetime_job(executable, parameters, directory):
+    from .user_paths import user_data_root
+    with tempfile.TemporaryDirectory(prefix=".administrator-start-", dir=user_data_root()) as folder:
+        request = Path(folder) / "request.json"
+        request.write_text(json.dumps({"schema": 1, "executable": executable, "parameters": parameters,
+                                       "directory": directory}, ensure_ascii=False), encoding="utf-8")
+        command = ([sys.executable] if getattr(sys, "frozen", False) else
+                   [sys.executable, "-X", "utf8", "-m", "motioncontrol.game_launch"])
+        try:
+            # 此帮助进程负责跨实例交接，必须显式脱离旧组；普通设备进程不使用此标志。
+            result = subprocess.run([*command, "--elevation-request", str(request)], cwd=directory,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_BREAKAWAY_FROM_JOB | subprocess.CREATE_NO_WINDOW, timeout=150)
+            receipt = json.loads((Path(folder) / "result.json").read_bytes())
+        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError("管理员交接未完成，原程序继续运行") from error
+        if result.returncode or not isinstance(receipt, dict) or receipt.get("accepted") is not True:
+            reason = receipt.get("error") if isinstance(receipt, dict) else ""
+            raise RuntimeError(reason or "管理员交接未确认，原程序继续运行")
+
+
+def complete_elevation_request(path):
+    """内部帮助入口，只能启动同一解释器和程序目录，不加载设备或绑定端口。"""
+    path = Path(path)
+    try:
+        raw = path.read_bytes()
+        if len(raw) > 64 * 1024:
+            raise ValueError("管理员交接请求无效")
+        request = json.loads(raw)
+        if (not isinstance(request, dict) or request.get("schema") != 1 or
+                not isinstance(request.get("executable"), str) or
+                Path(request["executable"]).resolve() != Path(sys.executable).resolve() or
+                not isinstance(request.get("directory"), str) or
+                Path(request["directory"]).resolve() != Path(__file__).resolve().parents[1] or
+                not isinstance(request.get("parameters"), str) or not request["parameters"] or
+                len(request["parameters"]) > 32767):
+            raise ValueError("管理员交接请求与当前程序不相符")
+        _launch_elevated_process(request["executable"], request["parameters"], request["directory"])
+        receipt = {"accepted": True}
+    except (OSError, RuntimeError, ValueError) as error:
+        receipt = {"accepted": False, "error": str(error)}
+    (path.parent / "result.json").write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+    return 0 if receipt["accepted"] else 1
+
+
+def _launch_elevated_process(executable, parameters, directory):
     # The operating system presents its normal consent prompt. SW_HIDE only
     # hides the Python console after approval; the consent prompt stays visible.
     class ShellExecuteInfo(ctypes.Structure):
@@ -100,3 +156,10 @@ def wait_for_previous_process(pid: int, timeout_ms: int = 30000) -> bool:
         return kernel32.WaitForSingleObject(handle, timeout_ms) == 0
     finally:
         kernel32.CloseHandle(handle)
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--elevation-request", type=Path, required=True)
+    raise SystemExit(complete_elevation_request(parser.parse_args().elevation_request))

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import threading
+import subprocess
+import sys
 import pytest
 import urllib.error
 import urllib.request
@@ -60,6 +62,8 @@ def test_driver_status_query_uses_native_handles_without_starting_a_process(monk
 
 @pytest.mark.parametrize("wait_result", [0, 0x102])
 def test_elevated_launch_detects_early_exit_and_closes_handle(monkeypatch, wait_result):
+    from motioncontrol import owned_process
+    monkeypatch.setattr(owned_process, "lifetime_job_active", lambda: False)
     closed = []
     def launched(info):
         info._obj.hProcess = 42
@@ -81,6 +85,58 @@ def test_elevated_launch_detects_early_exit_and_closes_handle(monkeypatch, wait_
     else:
         game_launch.launch_as_administrator(ROOT)
     assert closed == [42]
+
+
+@pytest.mark.parametrize("outcome", ["accepted", "cancelled", "timeout", "invalid"])
+def test_running_backend_uses_an_independent_elevation_helper(monkeypatch, isolated_user_data, outcome):
+    from motioncontrol import owned_process
+    monkeypatch.setattr(owned_process, "lifetime_job_active", lambda: True)
+    calls = []
+    def run(command, **kwargs):
+        request = Path(command[-1])
+        data = json.loads(request.read_bytes())
+        assert Path(data["directory"]) == ROOT and data["executable"] == sys.executable
+        assert "--wait-for-pid 4321" in data["parameters"]
+        assert kwargs["creationflags"] & subprocess.CREATE_BREAKAWAY_FROM_JOB
+        assert kwargs["stdout"] == kwargs["stderr"] == subprocess.DEVNULL
+        calls.append(command)
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(command, 150)
+        receipt = {"accepted": outcome == "accepted", "error": "用户未允许权限切换，原程序继续运行"}
+        (request.parent / "result.json").write_text("[]" if outcome == "invalid" else json.dumps(receipt))
+        return SimpleNamespace(returncode=0 if outcome == "accepted" else 1)
+    monkeypatch.setattr(game_launch.subprocess, "run", run)
+    if outcome == "accepted":
+        game_launch.launch_as_administrator(ROOT, wait_for_pid=4321)
+    else:
+        with pytest.raises(RuntimeError, match="原程序继续运行"):
+            game_launch.launch_as_administrator(ROOT, wait_for_pid=4321)
+    assert len(calls) == 1 and not list(isolated_user_data.glob(".administrator-start-*"))
+
+
+def test_elevation_helper_rejects_another_program_and_reports_cancellation(tmp_path, monkeypatch):
+    calls = []
+    request = tmp_path / "request.json"
+    data = {"schema": 1, "executable": sys.executable, "directory": str(ROOT), "parameters": "server.py --no-browser"}
+    monkeypatch.setattr(game_launch, "_launch_elevated_process", lambda *args: calls.append(args))
+    request.write_text(json.dumps(dict(data, executable="other-program.exe")))
+    assert game_launch.complete_elevation_request(request) == 1 and calls == []
+    request.write_text(json.dumps(data))
+    assert game_launch.complete_elevation_request(request) == 0 and len(calls) == 1
+    def declined(*args):
+        raise RuntimeError("用户未允许管理员启动")
+    monkeypatch.setattr(game_launch, "_launch_elevated_process", declined)
+    assert game_launch.complete_elevation_request(request) == 1
+    assert not json.loads((tmp_path / "result.json").read_bytes())["accepted"]
+
+
+def test_elevation_helper_entry_does_not_load_camera_or_configuration(tmp_path):
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps({"schema": 1, "executable": sys.executable, "directory": str(tmp_path), "parameters": "invalid"}))
+    result = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "server.py"), "--elevation-request", str(request)],
+        capture_output=True, text=True, encoding="utf-8", timeout=10)
+    assert result.returncode == 1 and "用户数据目录" not in result.stdout
+    assert not json.loads((tmp_path / "result.json").read_bytes())["accepted"]
 
 
 def test_only_the_chosen_game_remembers_administrator(isolated_user_data):

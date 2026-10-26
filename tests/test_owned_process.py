@@ -45,6 +45,41 @@ def _pid_line(owner):
     return result[0].strip()
 
 
+def test_only_explicit_restart_helper_can_outlive_old_backend():
+    code = (
+        "import subprocess, sys\nfrom motioncontrol.owned_process import ensure_lifetime_job\n"
+        "ensure_lifetime_job()\n"
+        "normal = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "handoff = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], "
+        "creationflags=subprocess.CREATE_BREAKAWAY_FROM_JOB, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+        "print(str(normal.pid) + ' ' + str(handoff.pid), flush=True)\nsys.stdin.readline()\n"
+    )
+    owner = _owner(code)
+    handles = []
+    helper = None
+    try:
+        normal, helper = map(int, _pid_line(owner).split())
+        handles = [_open_process(normal), _open_process(helper)]
+        owner.stdin.write("exit\n"); owner.stdin.flush()
+        owner.wait(timeout=5)
+        api, handle = handles[0]
+        assert api.WaitForSingleObject(handle, 5000) == 0
+        api, handle = handles[1]
+        assert api.WaitForSingleObject(handle, 0) == 258
+    finally:
+        if owner.poll() is None: owner.kill()
+        owner.communicate(timeout=5)
+        for api, handle in handles: api.CloseHandle(handle)
+        if helper:
+            api = ctypes.WinDLL("kernel32", use_last_error=True)
+            api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            api.OpenProcess.restype = wintypes.HANDLE
+            api.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            api.CloseHandle.argtypes = [wintypes.HANDLE]
+            handle = api.OpenProcess(1, False, helper)
+            if handle: api.TerminateProcess(handle, 0); api.CloseHandle(handle)
+
+
 @pytest.mark.parametrize("exit_mode", ["normal", "forced", "crash"])
 def test_backend_exit_ends_its_children_and_grandchildren_only(exit_mode):
     # 另一个实例即使使用同一个解释器，也不属于被关闭后台的作业。

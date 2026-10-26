@@ -55,7 +55,8 @@ def ensure_lifetime_job() -> str:
         if not handle:
             raise ctypes.WinError(ctypes.get_last_error())
         limits = _ExtendedLimits()
-        limits.basic.flags = 0x2000  # 最后一个作业句柄关闭时，结束整个进程树。
+        # 普通子进程仍随后台退出；只有管理员交接显式申请脱离旧组。
+        limits.basic.flags = 0x2000 | 0x0800  # KILL_ON_JOB_CLOSE | BREAKAWAY_OK
         if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
             error = ctypes.WinError(ctypes.get_last_error())
             kernel32.CloseHandle(handle)
@@ -68,6 +69,11 @@ def ensure_lifetime_job() -> str:
         # 始终只由这个后台持有；进程退出、崩溃或被强制结束时由 Windows 关闭。
         _job_handle, _job_name = handle, name
         return name
+
+
+def lifetime_job_active():
+    with _lock:
+        return _job_handle is not None
 
 
 def popen(*args, **kwargs):

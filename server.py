@@ -23,7 +23,11 @@ if __name__ == "__main__":
     _location_parser = argparse.ArgumentParser(add_help=False)
     _location_parser.add_argument("--user-data-dir")
     _location_parser.add_argument("--desktop-logs", action="store_true")
+    _location_parser.add_argument("--elevation-request", type=Path)
     _location_args, _ = _location_parser.parse_known_args()
+    if _location_args.elevation_request:
+        from motioncontrol.game_launch import complete_elevation_request
+        raise SystemExit(complete_elevation_request(_location_args.elevation_request))
     if _location_args.user_data_dir:
         os.environ["MOTIONCONTROL_USER_DIR"] = str(Path(_location_args.user_data_dir).resolve())
 
