@@ -11,7 +11,6 @@
 <div class="brand">MotionControl</div>
 <nav aria-label="主要页面"><button aria-current="page" class="tab" data-view="play">开始</button><button class="tab" data-view="games">本游戏</button><button class="tab" data-view="devices">设置</button></nav>
 <div class="top-actions">
-<span id="serviceStatus" role="status">正在连接服务…</span>
 <button class="game-chip" data-go="games" data-open-game-picker="true" aria-controls="gamePicker" aria-expanded="false" title="换游戏"><span class="game-chip-label">游戏</span><strong id="currentGameName">正在读取…</strong></button>
 <button class="game-chip mode-chip" id="playModeBtn" type="button" title="切到下一个模式" disabled=""><span class="game-chip-label">模式</span><strong id="currentModeName">默认</strong><span aria-hidden="true">⇄</span></button>
 <button class="btn primary cta" disabled="" id="mainActionBtn" title="开始／暂停控制；F9 随时暂停控制并松开输出，保留识别"><span id="mainActionLabel">开始控制</span> <kbd>F9</kbd></button>
@@ -29,6 +28,7 @@
 </div></div>
 </div>
 </header>
+<p class="banner" id="serviceStatus" role="status">正在连接服务…</p>
 <div class="notice" hidden="" id="notice" role="status"></div>
 <p class="banner" hidden id="settingsSaveWarning" role="status"><span></span><button class="btn" id="retrySettingsSaveBtn" type="button">重新保存</button></p>
 <main>
