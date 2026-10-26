@@ -7,6 +7,7 @@ import math
 import mimetypes
 import os
 import socket
+import subprocess
 import sys
 import queue
 import threading
@@ -43,6 +44,7 @@ from motioncontrol.cloud_metadata_cache import PublicMetadataCache
 from motioncontrol.command_executor import CommandExecutor
 from motioncontrol.config_transaction import atomic_bytes, file_transaction, recover
 from motioncontrol import configuration_backup
+from motioncontrol.model_resources import choose_dependency_folder
 from motioncontrol.view_control import configure_view_control
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
 from motioncontrol.key_macros import MacroError, MacroStore
@@ -2349,6 +2351,34 @@ class AdminHandler(_BaseHandler):
         body = self._body()
         if body is None:
             self._send_json({"ok": False, "error": "invalid json"}, 400)
+            return
+        if route in {"/api/model-resources/choose", "/api/model-resources/relocate"}:
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or (origin and origin not in {
+                    f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
+                self._send_json({"error": "请从本机设置页面定位模型"}, 403)
+                return
+            try:
+                if not isinstance(body, dict):
+                    raise ValueError("模型定位请求无法读取")
+                if route == "/api/model-resources/choose":
+                    self._send_json({"ok": True, "folder": choose_dependency_folder()})
+                    return
+                with PROFILE_UPDATE_LOCK:
+                    if OUTPUT.enabled:
+                        raise ValueError("请先暂停游戏控制，再检查并更新模型位置")
+                    RUNTIME.camera.depth_comparison.resources.recover()
+                comparison = RUNTIME.camera.depth_comparison
+                candidate, revision = comparison.resources.prepare(body.get("folder", ""), ROOT)
+                with PROFILE_UPDATE_LOCK:
+                    if SHUTTING_DOWN.is_set() or OUTPUT.enabled:
+                        raise ValueError("程序已退出或游戏控制已开始，模型位置未更改")
+                    comparison.resources.commit(candidate, revision)
+                    comparison.suspend()
+                    result = comparison.status()
+                self._send_json({"ok": True, **result, "message": "已核对模型、个人读出、配套文件及处理器试加载，位置已保存"})
+            except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
+                self._send_json({"ok": False, "error": "模型定位未完成：" + str(error)}, 400)
             return
         if route in {"/api/app-update/check", "/api/app-update/seen"}:
             origin = self.headers.get("Origin")

@@ -18,6 +18,7 @@ from .depth_comparison_worker import read_packet, write_packet
 from .depth_input import crop_references, person_rect
 from .monocular_lean import MonocularLean, kinect_pitch
 from .lean_comparison_recording import LeanComparisonRecorder
+from .model_resources import ModelResources
 from .user_paths import user_data_root
 
 MODELS = {
@@ -60,9 +61,11 @@ class DepthComparison:
         if self.config["monocular_model"] not in LEAN_MODELS:
             self.config["monocular_model"] = "mocapnet_personal"
         self._runtime = user_data_root() / "depth_comparison_runtime.json"
+        self.resources = ModelResources(self._runtime)
         self._pending = None
         self._thread = None
         self._worker_model = None
+        self._worker_resource_revision = None
         self._stop = threading.Event()
         self._process = None
         self._generation = 0
@@ -86,16 +89,7 @@ class DepthComparison:
                 self.lean_recording.error = "对照记录未能开始：" + str(exc)
 
     def installed(self):
-        try:
-            registry = json.loads(self._runtime.read_text(encoding="utf-8-sig"))
-            python_ok = Path(registry["python"]).is_file()
-        except (OSError, ValueError, KeyError, TypeError):
-            registry, python_ok = {}, False
-        models = registry.get("models", {})
-        return {ident: {**info, "available": bool(python_ok and Path(models.get(ident, {}).get("source", "?")).is_dir()
-                        and Path(models.get(ident, {}).get("checkpoint", "?")).is_file()
-                        and (ident not in LEAN_MODELS or Path(models.get(ident, {}).get("readout", "?")).is_file()))}
-                for ident, info in {**MODELS, **LEAN_MODELS}.items()}
+        return self.resources.diagnose({**MODELS, **LEAN_MODELS})["models"]
 
     def _control_requested(self):
         return getattr(self.kernel, "sensitivity_experiments", {}).get("fore_aft_source") == "monocular"
@@ -131,8 +125,9 @@ class DepthComparison:
     def configure(self, changes):
         with self._lock:
             proposed = validate_config(self.config, changes)
-            if (proposed["enabled"] or self._control_requested()) and not self.installed()[self._selected_model(proposed)]["available"]:
-                raise ValueError("该模型尚未准备好，请先运行深度对比准备工具")
+            installed = self.installed()[self._selected_model(proposed)]
+            if (proposed["enabled"] or self._control_requested()) and not installed["available"]:
+                raise ValueError("模型资源未就绪：" + "；".join(item["name"] + "（" + item["reason"] + "）" for item in installed["issues"][:3]))
             remember = getattr(self.kernel, "remember_general_setting", None)
             if remember:
                 remember("depth_comparison", proposed)
@@ -170,7 +165,9 @@ class DepthComparison:
             return
         with self._lock:
             changed_model = self._worker_model is not None and self._worker_model != self._selected_model()
-        if changed_model:
+            changed_resources = (self._worker_resource_revision is not None and
+                                 self._worker_resource_revision != self.resources.revision)
+        if changed_model or changed_resources:
             self.suspend()
         now = time.monotonic()
         with self._condition:
@@ -237,6 +234,7 @@ class DepthComparison:
             self._preview_demand_until = self._last_preview_at = 0.
             self._process = self._thread = None
             self._worker_model = None
+            self._worker_resource_revision = None
             self._calibrate = self._reset = False
             self._rect = self._source_signature = self._tracking_id = None
             self._state, self._error = "waiting" if self._requested() else "off", ""
@@ -272,7 +270,14 @@ class DepthComparison:
         process = None
         reader = None
         try:
-            registry = json.loads(self._runtime.read_text(encoding="utf-8-sig"))
+            registry, error, revision = self.resources.snapshot()
+            with self._lock:
+                if generation != self._generation or stop.is_set():
+                    return
+                self._worker_resource_revision = revision
+            available = self.resources.diagnose({**MODELS, **LEAN_MODELS}, force=True)["models"][config["model"]]
+            if error or not available["available"]:
+                raise ValueError(error or "；".join(item["name"] + "：" + item["path"] for item in available["issues"]))
             root = Path(__file__).resolve().parents[1]
             logs = user_data_root() / "logs"
             logs.mkdir(parents=True, exist_ok=True)
@@ -428,6 +433,7 @@ class DepthComparison:
 
     def status(self):
         now = time.monotonic()
+        resources = self.resources.diagnose({**MODELS, **LEAN_MODELS})
         with self._lock:
             results = copy.deepcopy(self._results)
             for row in results.values():
@@ -439,7 +445,9 @@ class DepthComparison:
             return {"config": dict(self.config), "revision": self._revision, "state": state, "error": self._error,
                     "active": bool(self._requested()), "control_requested": self._control_requested(),
                     "active_model": self._selected_model(),
-                    "models": self.installed(), "results": results, "skipped_frames": self._skipped,
+                    "models": resources["models"], "resource_root": resources["root"],
+                    "resource_warning": resources["warning"],
+                    "resources_verified_at": resources["verified_at"], "results": results, "skipped_frames": self._skipped,
                     "sequence": current.get("sequence"), "preview_ready": self._preview is not None,
                     "lean_recording": self.lean_recording.status(),
                     "reference": "Kinect 原始深度的关节附近表面采样，非关节中心"}

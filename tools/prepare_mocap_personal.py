@@ -6,6 +6,10 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from motioncontrol.model_resources import ACTIVE_MODEL, ModelResources, validate_registry
 
 
 def digest(path):
@@ -29,7 +33,10 @@ def main():
     head = json.loads(args.readout.read_text(encoding="utf-8"))
     if head.get("model") != "mocapnet" or len(head.get("keys", [])) != 42 or len(head.get("weights", [])) != 42:
         p.error("需要已训练的42维MocapNET个人读出")
-    registry = json.loads(args.registry.read_text(encoding="utf-8-sig"))
+    resources = ModelResources(args.registry)
+    original = args.registry.read_bytes()
+    registry = validate_registry(json.loads(original.decode("utf-8-sig")))
+    expected = hashlib.sha256(original).hexdigest()
     if not Path(registry["python"]).is_file():
         p.error("独立推理解释器不存在")
     # 仅创建一个新的个人模型目录，避免覆盖已有版本或其他环境。
@@ -51,10 +58,9 @@ def main():
             "sha256": digest(model), "readout": str(readout_path.resolve()), "readout_sha256": digest(readout_path),
             "packages": [str(path.resolve()) for path in args.packages], "personal_research": True,
             "license": str((args.destination / "license.txt").resolve())}
-    registry.setdefault("models", {})["mocapnet_personal"] = spec
-    temporary = args.registry.with_suffix(args.registry.suffix + ".partial")
-    temporary.write_text(json.dumps(registry, ensure_ascii=False, allow_nan=False, indent=2), encoding="utf-8")
-    temporary.replace(args.registry)
+    registry.setdefault("models", {})[ACTIVE_MODEL] = spec
+    registry.pop("relocation", None)
+    resources.commit(registry, expected)
     print(json.dumps({"model": "mocapnet_personal", "destination": str(args.destination),
                       "registry": str(args.registry), "enabled": False}, ensure_ascii=False))
 

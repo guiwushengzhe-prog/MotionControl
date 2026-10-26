@@ -32,7 +32,7 @@ FILES = frozenset(USER_DATA_FILES[key] for key in (*PORTABLE_KEYS, *LOCAL_KEYS))
     "body_angle_learning.json", "monocular_lean_learning.json", "depth_comparison_runtime.json", "stereo_calibration.json"}
 PORTABLE = frozenset(USER_DATA_FILES[key] for key in PORTABLE_KEYS)
 WITH_BACKUP = frozenset(USER_DATA_FILES[key] for key in
-                        ("profile_selection", "general_settings", "head_profile", "key_macros", "custom_poses"))
+                        ("profile_selection", "general_settings", "head_profile", "key_macros", "custom_poses")) | {"depth_comparison_runtime.json"}
 PORTABLE_PREFERENCES = frozenset({"output_speed", "output_mode", "pose_model", "march_algorithm",
     "pose_capture_delay_s", "hand_mouse", "vertical_look", "action_chain", "sensitivity_experiments",
     "zone_trigger_mode", "zone_following_layout", "depth_comparison"})
@@ -139,6 +139,9 @@ def _validate(name, raw):
             raise ValueError("自建游戏目录格式无法读取")
         GameProfileStore.validate_selection({"schema": SELECTION_SCHEMA, "selected_id": "generic-xbox",
             "overrides_by_profile": {}, "custom_games": data.get("games")})
+    elif name == "depth_comparison_runtime.json":
+        from .model_resources import validate_registry
+        validate_registry(data)
     elif name == USER_DATA_FILES["pose_actions"]:
         from .pose_downloads import SCHEMA as action_schema, verify
         if data.get("schema") != action_schema or not isinstance(data.get("actions", []), list):
@@ -368,7 +371,7 @@ def apply_pending_configuration(root):
     # 恢复替换了这些文档，不能让旧的中断写入记录在各对象初始化时覆盖新内容。
     for journal in (".general-settings.journal", ".head-profile.journal", ".key-macros.journal",
                     ".custom-poses.journal", ".profile-store.journal", ".profile-install.journal",
-                    ".view-control.journal", ".voice-config-transaction.json"):
+                    ".view-control.journal", ".voice-config-transaction.json", ".depth-comparison-runtime.journal"):
         documents[root / journal] = None
     with transaction.file_transaction(documents, root / JOURNAL):
         for path, raw in documents.items():
