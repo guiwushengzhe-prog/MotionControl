@@ -1781,6 +1781,13 @@ class _BaseHandler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # 长连接等待下一次请求时浏览器也可能离开；与响应写入共用断开语义。
+            self.close_connection = True
+
     def _send_json(self, data: dict, status: int = 200):
         if getattr(self, "command", "") == "POST":
             with PROFILE_UPDATE_LOCK:
@@ -2007,7 +2014,9 @@ class AdminHandler(_BaseHandler):
         if route == "/api/camera/preview.jpg":
             preview = RUNTIME.latest_preview()
             if not preview:
-                self.send_error(404, "camera preview unavailable")
+                self.send_response(204)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
                 return
             self.send_response(200)
             self.send_header("Content-Type", "image/jpeg")

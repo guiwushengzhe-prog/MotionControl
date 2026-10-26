@@ -458,7 +458,7 @@ export async function refreshPreview(){
   perfUi.previewBusy=true;
   try{
     const response=await fetch(`/api/camera/preview.jpg?t=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(3000)});
-    if(!response.ok)return;
+    if(!response.ok||response.status===204)return;
     const blob=await response.blob(),url=URL.createObjectURL(blob),old=cameraPreview.src;
     cameraPreview.onload=()=>{cameraPreview.hidden=!sourceHasFreshFrame();if(old?.startsWith('blob:'))URL.revokeObjectURL(old)};
     cameraPreview.onerror=()=>{cameraPreview.hidden=true;URL.revokeObjectURL(url);if(old?.startsWith('blob:'))URL.revokeObjectURL(old)};

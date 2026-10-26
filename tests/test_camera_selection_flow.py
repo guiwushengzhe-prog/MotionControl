@@ -228,6 +228,36 @@ def test_disconnected_response_does_not_attempt_a_second_response(application, s
     request._send_json({"ok": True})
     assert request.close_connection
 
+
+@pytest.mark.parametrize("error", [BrokenPipeError, ConnectionResetError, ConnectionAbortedError, RuntimeError])
+def test_idle_persistent_connection_only_tolerates_client_disconnect(application, monkeypatch, error):
+    from http.server import SimpleHTTPRequestHandler
+    request = object.__new__(application.AdminHandler)
+    request.close_connection = False
+    def disconnected(*args):
+        raise error("idle client disconnected")
+    monkeypatch.setattr(SimpleHTTPRequestHandler, "handle", disconnected)
+    if error is RuntimeError:
+        with pytest.raises(RuntimeError):
+            request.handle()
+    else:
+        request.handle()
+        assert request.close_connection
+
+
+def test_first_preview_before_encoding_is_empty_success(application, monkeypatch):
+    monkeypatch.setattr(application.RUNTIME, "latest_preview", lambda: None)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), application.AdminHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://127.0.0.1:{server.server_port}/api/camera/preview.jpg", timeout=5) as response:
+            assert response.status == 204 and response.read() == b""
+            assert response.headers["Cache-Control"] == "no-store"
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=2)
+
 def test_switch_waits_for_capture_release_before_allowing_restart(monkeypatch):
     from test_control_coordination import FakeCapture, FakeDetector, _camera, _shorten_worker_joins
     capture, detector = FakeCapture(), FakeDetector()
