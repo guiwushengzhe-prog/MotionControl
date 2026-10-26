@@ -241,10 +241,11 @@ if ($running -and $running.StatusCode -eq 200) {
 if ($Desktop) {
     $logs = Join-Path $env:MOTIONCONTROL_USER_DIR 'logs'
     New-Item -ItemType Directory -Path $logs -Force | Out-Null
+    & $python -X utf8 -m motioncontrol.startup_logs --prepare $logs
     $service = Start-Process -FilePath $python -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru `
-        -ArgumentList @('-X', 'utf8', 'server.py', '--no-browser') `
-        -RedirectStandardOutput (Join-Path $logs 'startup.stdout.log') `
-        -RedirectStandardError (Join-Path $logs 'startup.stderr.log')
+        -ArgumentList @('-X', 'utf8', 'server.py', '--no-browser', '--desktop-logs') `
+        -RedirectStandardOutput (Join-Path $logs 'bootstrap.stdout.log') `
+        -RedirectStandardError (Join-Path $logs 'bootstrap.stderr.log')
     $deadline = (Get-Date).AddSeconds(75)
     $ready = $false
     while ((Get-Date) -lt $deadline) {

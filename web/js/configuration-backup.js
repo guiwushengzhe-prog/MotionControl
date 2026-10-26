@@ -1,6 +1,7 @@
 // 本地备份与恢复复用配置操作队列、错误提示及完整退出确认。
 import {$,api,configurationOperation,post} from './core.js';
 import {followApplicationExit} from './lifecycle.js';
+import {downloadFile} from './download.js';
 
 let preview=null,busy=false;
 const controls=()=>['backupExportBtn','backupImportBtn','backupRestoreBtn','backupPreviewClose','backupRestoreMode'].map(id=>$('#'+id));
@@ -14,11 +15,7 @@ async function action(task,status=$('#backupStatus')){
 
 $('#backupExportBtn').addEventListener('click',()=>void action(async status=>{
   await configurationOperation(async()=>{
-    const response=await fetch('/api/data-backup/export',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(30000)});
-    if(!response.ok){const data=await response.json();throw new Error(data.error||'未能导出备份')}
-    const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement('a');
-    link.href=url;link.download=response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1]||'MotionControl-配置备份.zip';
-    document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    await downloadFile('/api/data-backup/export',{fallbackName:'MotionControl-配置备份.zip'});
     status.textContent='备份已生成，请在浏览器下载列表中查看。';
   });
 }));

@@ -110,6 +110,7 @@ $ErrorActionPreference='Stop'
 $Desktop=$true
 $NoBrowser=$true
 $python='not-launched'
+function not-launched { }
 $script:checks=0
 function Start-Process { return [pscustomobject]@{HasExited=$true;ExitCode=$null} }
 function Start-Sleep {}

@@ -15,6 +15,7 @@ import './js/cloud.js';
 import './js/studio.js';
 import './js/fitness.js';
 import './js/configuration-backup.js';
+import './js/diagnostic-export.js';
 import {init} from './js/shell.js';
 
 init();

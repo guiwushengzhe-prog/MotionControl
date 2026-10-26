@@ -22,9 +22,14 @@ from urllib.parse import parse_qs, unquote, urlparse
 if __name__ == "__main__":
     _location_parser = argparse.ArgumentParser(add_help=False)
     _location_parser.add_argument("--user-data-dir")
+    _location_parser.add_argument("--desktop-logs", action="store_true")
     _location_args, _ = _location_parser.parse_known_args()
     if _location_args.user_data_dir:
         os.environ["MOTIONCONTROL_USER_DIR"] = str(Path(_location_args.user_data_dir).resolve())
+    if _location_args.desktop_logs:
+        from motioncontrol.startup_logs import install as _install_startup_logs
+        from motioncontrol.user_paths import user_data_root as _startup_user_root
+        _install_startup_logs(_startup_user_root() / "logs")
 
 # 换包不在这里做。server.py 就住在要被换掉的那个目录里，而启动时的工作目录也是
 # 它——Windows 不允许删除或改名自己所在的目录，退回时会删到一半然后失败，把安装
@@ -44,6 +49,7 @@ from motioncontrol.cloud_metadata_cache import PublicMetadataCache
 from motioncontrol.command_executor import CommandExecutor
 from motioncontrol.config_transaction import atomic_bytes, file_transaction, recover
 from motioncontrol import configuration_backup
+from motioncontrol.diagnostic_summary import encode_summary
 from motioncontrol.model_resources import choose_dependency_folder
 from motioncontrol.view_control import configure_view_control
 from motioncontrol.custom_poses import CustomPoseError, CustomPoseStore
@@ -1566,24 +1572,37 @@ def resolve_full_model(root: Path | None) -> Path | None:
 
 
 _PROCESS_CPU = None
+_PROCESS_RESOURCE_AT = None
+_PROCESS_RESOURCE_VALUE = {"process_cpu_percent": None, "process_memory_mb": None}
+_PROCESS_RESOURCE_LOCK = threading.Lock()
 
 
-def process_cpu_percent() -> float | None:
-    """本进程自上次调用以来占整机 CPU 的百分比（所有线程合计，已按核数折算）。
+def process_resources() -> dict:
+    """共用一秒采样，所有线程合计按整机核数折算；首次占用保持未知。
 
     包含后台的所有线程，不能当作单个模型的占用；不包含独立采集子进程。
-    第一次调用只是起算点，返回 None。
+    页面与日志不能相互清空采样区间，也不包含独立采集子进程。
     """
-    global _PROCESS_CPU
+    global _PROCESS_CPU, _PROCESS_RESOURCE_AT
     try:
         import psutil
     except ImportError:
-        return None
-    if _PROCESS_CPU is None:
-        _PROCESS_CPU = psutil.Process()
-        _PROCESS_CPU.cpu_percent(None)
-        return None
-    return round(_PROCESS_CPU.cpu_percent(None) / (psutil.cpu_count() or 1), 1)
+        return dict(_PROCESS_RESOURCE_VALUE)
+    with _PROCESS_RESOURCE_LOCK:
+        now = time.monotonic()
+        if _PROCESS_RESOURCE_AT is not None and now - _PROCESS_RESOURCE_AT < 1:
+            return dict(_PROCESS_RESOURCE_VALUE)
+        try:
+            first = _PROCESS_CPU is None
+            if first:
+                _PROCESS_CPU = psutil.Process()
+            cpu = _PROCESS_CPU.cpu_percent(None)
+            _PROCESS_RESOURCE_VALUE.update(process_cpu_percent=None if first else round(cpu / (psutil.cpu_count() or 1), 1),
+                process_memory_mb=round(_PROCESS_CPU.memory_info().rss / 1024 ** 2, 1))
+        except (psutil.Error, OSError):
+            _PROCESS_RESOURCE_VALUE.update(process_cpu_percent=None, process_memory_mb=None)
+        _PROCESS_RESOURCE_AT = now
+        return dict(_PROCESS_RESOURCE_VALUE)
 
 
 def stereo_payload() -> dict:
@@ -1609,7 +1628,7 @@ def performance_snapshot() -> dict:
         data.setdefault("actual_capture_fps", None)
     else:
         data = RUNTIME.performance()
-    data["process_cpu_percent"] = process_cpu_percent()
+    data.update(process_resources())
     data["cpu_logical_processors"] = os.cpu_count()
     if "depth_comparison" not in data:
         data["depth_comparison"] = RUNTIME.camera.depth_comparison.status()
@@ -1622,8 +1641,8 @@ def _format_perf(value, suffix: str = "") -> str:
     return f"{value}{suffix}"
 
 
-def performance_line() -> str:
-    data = performance_snapshot()
+def performance_line(data=None) -> str:
+    data = performance_snapshot() if data is None else data
     resolution = data.get("camera_resolution") or {}
     if isinstance(resolution, dict):
         resolution_text = f"{resolution.get('width', 0)}x{resolution.get('height', 0)}"
@@ -1661,7 +1680,7 @@ def performance_logger(stop_event: threading.Event) -> None:
                 continue
         else:
             quiet_ticks = 0
-        print(performance_line(), flush=True)
+        print(performance_line(data), flush=True)
 
 
 def _run_exit_steps(steps):
@@ -2201,6 +2220,31 @@ class AdminHandler(_BaseHandler):
         if SHUTTING_DOWN.is_set():
             self._body()
             self._send_json({"ok": False, "error": "程序正在退出，请重新打开后再操作"}, 503)
+            return
+        if route == "/api/diagnostics/export":
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or (origin and origin not in {
+                    f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}):
+                self.close_connection = True
+                self._send_json({"error": "请从本机设置页面导出诊断摘要"}, 403)
+                return
+            try:
+                self._body()
+                studio = STUDIO.state()
+                raw = encode_summary(version=VERSION, source_revision=STARTUP_SOURCE_REVISION,
+                    program_root=ROOT, data_root=user_data_root(), performance=performance_snapshot(),
+                    camera=RUNTIME.camera.status(), settings=KERNEL.settings_persistence_status(),
+                    profiles=PROFILES.persistence_status(), output_enabled=OUTPUT.enabled, voice=VOICE.status(),
+                    studio={"recording": any(not item.get("finished") for item in studio["recordings"])})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="MotionControl-diagnostics-' + time.strftime("%Y%m%d-%H%M%S") + '.json"')
+                self.send_header("Content-Length", str(len(raw)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(raw)
+            except (OSError, ValueError) as error:
+                self._send_json({"error": "诊断摘要未能生成，请稍后重试"}, 400)
             return
         if route.startswith("/api/data-backup/"):
             origin = self.headers.get("Origin")
@@ -3412,6 +3456,7 @@ def main():
                     help="本机管理面端口；只监听 127.0.0.1，局域网无法访问")
     ap.add_argument("--model-root", default=None)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--desktop-logs", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-start-recognition", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--wait-for-pid", type=int, default=0, help=argparse.SUPPRESS)
     ap.add_argument("--user-data-dir", help=argparse.SUPPRESS)

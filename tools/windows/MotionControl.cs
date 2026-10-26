@@ -170,7 +170,15 @@ internal static class MotionControlDesktop
                     {
                         StringBuilder messages = new StringBuilder();
                         DataReceivedEventHandler collect = delegate(object sender, DataReceivedEventArgs line)
-                        { if (line.Data != null) lock (messages) messages.AppendLine(line.Data); };
+                        {
+                            if (line.Data == null) return;
+                            lock (messages) {
+                                const int limit = 65536;
+                                string text = line.Data.Length > limit ? line.Data.Substring(line.Data.Length - limit) : line.Data;
+                                messages.AppendLine(text);
+                                if (messages.Length > limit) messages.Remove(0, messages.Length - limit);
+                            }
+                        };
                         child.OutputDataReceived += collect;
                         child.ErrorDataReceived += collect;
                         child.BeginOutputReadLine();
@@ -178,7 +186,22 @@ internal static class MotionControlDesktop
                         // 等待文件夹选择和 Windows 权限确认；服务就绪等待由启动脚本限时。
                         child.WaitForExit();
                         string log = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "last-start.log");
-                        File.WriteAllText(log, messages.ToString(), Encoding.UTF8);
+                        try {
+                            for (int i = 2; i >= 0; i--) {
+                                string from = i == 0 ? log : log + "." + i;
+                                string to = log + "." + (i + 1);
+                                if (File.Exists(from)) {
+                                    if (File.Exists(to)) File.Delete(to);
+                                    using (FileStream previous = File.OpenRead(from)) {
+                                        previous.Seek(Math.Max(0, previous.Length - 196608), SeekOrigin.Begin);
+                                        using (FileStream saved = File.Create(to)) previous.CopyTo(saved);
+                                    }
+                                    File.Delete(from);
+                                }
+                            }
+                            File.WriteAllText(log, messages.ToString(), Encoding.UTF8);
+                        } catch (IOException) { } // 记录不可写不改变后台实际启动结果。
+                          catch (UnauthorizedAccessException) { }
                         if (child.ExitCode != 0) throw new IOException("启动未完成，原配置已保留。请查看启动记录：" + log);
                     }
                     return 0;
