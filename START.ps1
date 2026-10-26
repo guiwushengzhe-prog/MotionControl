@@ -250,7 +250,7 @@ if ($Desktop) {
     while ((Get-Date) -lt $deadline) {
         try { Assert-MotionControlInstance; $ready = $true; break } catch {}
         # 普通进程可能已成功交接给管理员进程，不能把正常退出当作启动失败。
-        if ($service.HasExited -and $service.ExitCode -ne 0) { break }
+        if ($service.HasExited -and $null -ne $service.ExitCode -and $service.ExitCode -ne 0) { break }
         Start-Sleep -Milliseconds 500
     }
     if (-not $ready) {

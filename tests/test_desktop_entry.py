@@ -98,3 +98,28 @@ def test_optional_phone_tunnel_native_stderr_does_not_abort_windows_startup(tmp_
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert "后续启动继续" in checked.stdout
     assert "电脑识别继续启动" in checked.stdout
+
+
+def test_unknown_exit_code_waits_for_admin_handoff_instead_of_reporting_failure(tmp_path):
+    legacy = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    source = (ROOT / "START.ps1").read_text(encoding="utf-8-sig")
+    begin = source.rindex('if ($Desktop) {')
+    end = source.index('if (Test-Path -LiteralPath $multicorePython)', begin)
+    header = """[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$ErrorActionPreference='Stop'
+$Desktop=$true
+$NoBrowser=$true
+$python='not-launched'
+$script:checks=0
+function Start-Process { return [pscustomobject]@{HasExited=$true;ExitCode=$null} }
+function Start-Sleep {}
+function Assert-MotionControlInstance {
+    $script:checks++
+    if ($script:checks -eq 1) { throw '管理员后台尚在交接' }
+}
+"""
+    script = tmp_path / "管理员交接状态检查.ps1"
+    script.write_text(header + source[begin:end], encoding="utf-8-sig")
+    checked = subprocess.run([str(legacy), "-NoProfile", "-File", str(script)], capture_output=True, encoding="utf-8", timeout=15)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert "尚未就绪" not in checked.stdout
