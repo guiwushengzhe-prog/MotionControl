@@ -82,3 +82,19 @@ def test_windows_builtin_shell_can_read_utf8_and_normalize_a_moved_data_alias(tm
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert "中文与目录迁移正常" in checked.stdout
     assert (ROOT / "START.ps1").read_bytes().startswith(b'\xef\xbb\xbf')
+
+
+def test_optional_phone_tunnel_native_stderr_does_not_abort_windows_startup(tmp_path):
+    legacy = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    source = (ROOT / "START.ps1").read_text(encoding="utf-8-sig")
+    begin = source.index('if ($adb) {')
+    end = source.index('# Reuse a healthy existing instance', begin)
+    script = tmp_path / "手机通道提示检查.ps1"
+    # Windows 自带运行程序把不存在的子命令写到错误流，复现原生提示被提升为异常。
+    script.write_text("[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n$ErrorActionPreference='Stop'\n" +
+        "$adb='" + str(legacy).replace("'", "''") + "'\n" + source[begin:end] +
+        "\n[Console]::Write('后续启动继续')\nexit 0\n", encoding="utf-8-sig")
+    checked = subprocess.run([str(legacy), "-NoProfile", "-File", str(script)], capture_output=True, encoding="utf-8", timeout=15)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert "后续启动继续" in checked.stdout
+    assert "电脑识别继续启动" in checked.stdout

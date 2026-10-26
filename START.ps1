@@ -111,6 +111,7 @@ $adbCandidates = @(
 )
 $adb = $adbCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if ($adb) {
+    try {
     # Split on the tab that "adb devices" puts between serial and state rather
     # than on whitespace: a wireless serial is an mDNS name that can itself
     # contain a space, e.g. "adb-XXXX-yyyy (2)._adb-tls-connect._tcp".
@@ -121,6 +122,9 @@ if ($adb) {
         $serial = ($authorizedDevice -split "`t")[0]
         & $adb -s $serial reverse tcp:8765 tcp:8765 | Out-Null
         Write-Host "手机通道已连接：127.0.0.1:8765（$serial）"
+    }
+    } catch {
+        Write-Host '手机有线通道暂未建立，电脑识别继续启动。'
     }
 }
 
