@@ -26,10 +26,6 @@ if __name__ == "__main__":
     _location_args, _ = _location_parser.parse_known_args()
     if _location_args.user_data_dir:
         os.environ["MOTIONCONTROL_USER_DIR"] = str(Path(_location_args.user_data_dir).resolve())
-    if _location_args.desktop_logs:
-        from motioncontrol.startup_logs import install as _install_startup_logs
-        from motioncontrol.user_paths import user_data_root as _startup_user_root
-        _install_startup_logs(_startup_user_root() / "logs")
 
 # 换包不在这里做。server.py 就住在要被换掉的那个目录里，而启动时的工作目录也是
 # 它——Windows 不允许删除或改名自己所在的目录，退回时会删到一半然后失败，把安装
@@ -3480,6 +3476,10 @@ def main():
             return
 
     # 管理员交接完成后才绑定当前后台；新后台不属于即将退出的旧实例。
+    if args.desktop_logs:
+        # 普通入口只负责交接，不能持有将由管理员后台归档的文件句柄。
+        from motioncontrol.startup_logs import install as install_startup_logs
+        install_startup_logs(user_data_root() / "logs")
     ensure_lifetime_job()
 
     MODEL_ROOT = choose_model_root(args.model_root)

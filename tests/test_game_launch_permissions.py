@@ -22,9 +22,12 @@ from test_configuration_coordination import application
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_cold_admin_handoff_does_not_bind_new_backend_to_old_job(application, monkeypatch):
+@pytest.mark.parametrize("desktop_logs", [False, True])
+def test_cold_admin_handoff_does_not_bind_new_backend_to_old_job(application, monkeypatch, desktop_logs):
+    from motioncontrol import startup_logs
     app, events = application, []
-    monkeypatch.setattr(app.sys, "argv", ["server.py", "--no-browser"])
+    monkeypatch.setattr(app.sys, "argv", ["server.py", "--no-browser"] + (["--desktop-logs"] if desktop_logs else []))
+    monkeypatch.setattr(startup_logs, "install", lambda *_: events.append("log-file-handle"))
     monkeypatch.setattr(app, "is_administrator", lambda: False)
     monkeypatch.setattr(app.PROFILES, "requires_admin", lambda _game: True)
     monkeypatch.setattr(app, "ensure_lifetime_job", lambda: events.append("job"))
