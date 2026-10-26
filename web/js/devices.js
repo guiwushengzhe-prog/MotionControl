@@ -180,7 +180,7 @@ function renderPerformance(data){
   renderDiagnosticMetrics($('#perfMetrics'),[
     ['采集帧率',formatPerf(data.capture_fps,' 帧/秒')],['识别帧率',formatPerf(data.inference_fps??data.network_fps,' 帧/秒')],
     ['画面到结果',formatPerf(data.total_latency_ms,' 毫秒')],['单帧处理',formatPerf(data.inference_avg_ms,' 毫秒')],
-    ['后台占整机处理器',formatPerf(data.process_cpu_percent,'%')],['后台内存',formatPerf(data.process_memory_mb,'兆')],['预览',data.preview_ready?'已就绪':'未就绪'],
+    ['后台占整机处理器',formatPerf(data.process_cpu_percent,'%')],['后台内存',formatPerf(data.process_memory_mb,'兆')],['预览',data.preview_active===false?'按需待机':data.preview_ready?'已就绪':'未就绪'],
   ]);
   renderDiagnosticLines($('#perfDetails'),[
     `跳过旧帧：${data.dropped_frames??0} · 手机传来：${formatPerf(data.network_fps,' 帧/秒')}`,

@@ -500,7 +500,8 @@ def test_runtime_close_clears_output_even_when_camera_stop_fails():
     runtime = object.__new__(LocalControlRuntime)
     closed = []
     runtime.camera = SimpleNamespace(stop_and_wait=lambda:
-                                    (_ for _ in ()).throw(CameraUnavailable("测试停止超时")))
+                                    (_ for _ in ()).throw(CameraUnavailable("测试停止超时")),
+                                    depth_comparison=SimpleNamespace(lean_recording=SimpleNamespace(stop=lambda: None)))
     runtime.kernel = SimpleNamespace(close=lambda: closed.append(True))
     with pytest.raises(CameraUnavailable, match="测试停止超时"):
         runtime.close()

@@ -5818,6 +5818,8 @@ class NativeCameraService:
         with self._lock:
             now = time.monotonic()
             resolution = {"width": self.capture_width, "height": self.capture_height}
+            preview_active = bool(self.running and self._preview_times and
+                                  now - self._preview_times[-1] < self.PREVIEW_DEMAND_SECONDS)
             return {
                 "source": "computer",
                 "model": "MediaPipe Pose " + self.actual_model.title(),
@@ -5893,7 +5895,9 @@ class NativeCameraService:
                 "recent_humans": int(self.last_pose_count),
                 "picture_black": self.picture_black,
                 "preview_ready": bool(self._preview_jpeg),
-                "preview_fps": self._round_or_none(self._rate(self._preview_times), 2),
+                "preview_active": preview_active,
+                "preview_fps": (self._round_or_none(self._rate(self._preview_times), 2) if preview_active
+                                else 0. if self._preview_times else None),
                 "preview_encode_avg_ms": self._round_or_none(
                     sum(self._preview_durations_ms) / len(self._preview_durations_ms)
                     if self._preview_durations_ms else None,

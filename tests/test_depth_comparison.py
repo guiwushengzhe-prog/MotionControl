@@ -153,13 +153,34 @@ def test_latest_frame_queue_replaces_old_frame_and_shutdown_clears_it(monkeypatc
     frame = np.zeros((10, 10, 3), dtype=np.uint8)
     monkeypatch.setattr("motioncontrol.depth_comparison.time.monotonic", lambda: 10)
     comparison.submit(frame, None, None, None, "none", 1, "source")
-    comparison._last_submit = 0
+    monkeypatch.setattr("motioncontrol.depth_comparison.time.monotonic", lambda: 11)
     comparison.submit(frame + 1, None, None, None, "none", 2, "source")
     assert comparison._skipped == 1
     assert comparison._pending[0]["sample_at"] == 2
     assert comparison._pending[1][0, 0, 0] == 1
     comparison.suspend()
     assert comparison._pending is None and comparison.preview() is None
+
+
+@pytest.mark.parametrize("limit", [15, 30])
+def test_monocular_rate_limit_keeps_requested_cadence_with_camera_jitter(limit, monkeypatch):
+    comparison = DepthComparison(SimpleNamespace(sensitivity_experiments={"fore_aft_source": "monocular"}))
+    comparison.config["max_fps"] = limit
+    comparison._thread = SimpleNamespace(is_alive=lambda: True, join=lambda **_: None)
+    frame = np.zeros((10, 10, 3), dtype=np.uint8)
+    clock = [100.]
+    monkeypatch.setattr("motioncontrol.depth_comparison.time.monotonic", lambda: clock[0])
+    for index in range(301):
+        clock[0] = 100 + index / 30 + (.0003 if index % 2 else 0.)
+        comparison.submit(frame, None, None, None, "none", clock[0], "source")
+    assert limit * 10 - 2 <= comparison._sequence <= limit * 10 + 1
+    assert comparison._pending[0]["sample_at"] == pytest.approx(clock[0], abs=1/limit)
+    # 延迟超过多个周期只提交当前画面，不允许随后立即补跑旧额度。
+    clock[0] += 5
+    before = comparison._sequence
+    comparison.submit(frame, None, None, None, "none", clock[0], "source")
+    comparison.submit(frame, None, None, None, "none", clock[0] + .001, "source")
+    assert comparison._sequence == before + 1
 
 
 def test_comparison_api_does_not_touch_output_or_camera(application, monkeypatch):

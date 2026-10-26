@@ -71,7 +71,8 @@ class DepthComparison:
         self._generation = 0
         self._revision = int(time.monotonic() * 1_000_000)
         self._state, self._error = "waiting" if self.config["enabled"] else "off", ""
-        self._last_submit = 0.
+        self._next_submit = 0.
+        self._submit_limit = None
         self._sequence = self._skipped = 0
         self._calibrate = self._reset = False
         self._results = {}
@@ -174,9 +175,15 @@ class DepthComparison:
             mono = self._control_requested() or self.lean_recording.enabled
             pose_only = self._selected_model() in LEAN_MODELS
             limit = max(15 if pose_only else 10, self.config["max_fps"]) if mono else self.config["max_fps"]
-            if not self._requested() or self._state == "error" or now - self._last_submit < 1 / limit:
+            if limit != self._submit_limit:
+                self._next_submit, self._submit_limit = 0., limit
+            if not self._requested() or self._state == "error" or now < self._next_submit:
                 return
-            self._last_submit = now
+            period = 1 / limit
+            # 按目标时刻推进，避免30帧供给的微小抖动把15帧限速降到约10帧。
+            # 长时间停顿不累积额度，不补跑过期画面，待处理队列仍只留最新一帧。
+            self._next_submit = (self._next_submit + period if self._next_submit and
+                                 now - self._next_submit < period else now + period)
             if signature != self._source_signature:
                 self._source_signature = copy.deepcopy(signature)
                 self._rect = self._tracking_id = None
@@ -238,7 +245,7 @@ class DepthComparison:
             self._calibrate = self._reset = False
             self._rect = self._source_signature = self._tracking_id = None
             self._state, self._error = "waiting" if self._requested() else "off", ""
-            self._last_submit = 0
+            self._next_submit, self._submit_limit = 0., None
             self._latencies.clear()
             self._inference.clear()
             self._times.clear()

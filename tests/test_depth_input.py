@@ -40,9 +40,10 @@ def test_person_window_stays_fixed_through_motion_and_brief_native_tracking_loss
     comparison.config.update(enabled=True, input_scope="person")
     comparison._thread = SimpleNamespace(is_alive=lambda: True, join=lambda **_: None)
     frame = np.arange(360 * 640 * 3, dtype=np.int32).reshape(360, 640, 3)
-    monkeypatch.setattr("motioncontrol.depth_comparison.time.monotonic", lambda: 10)
+    clock = [10.]
+    monkeypatch.setattr("motioncontrol.depth_comparison.time.monotonic", lambda: clock[0])
     def submit(points, body):
-        comparison._last_submit = 0
+        clock[0] += .2
         comparison.submit(frame, points, body, {}, "none", 1, "camera")
         return comparison._pending
     assert submit(None, None) is None
