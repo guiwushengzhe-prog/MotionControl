@@ -1,7 +1,8 @@
-param([switch]$Desktop, [switch]$NoBrowser)
+﻿param([switch]$Desktop, [switch]$NoBrowser)
 
 $ErrorActionPreference = 'Stop'
 $env:PYTHONUTF8 = '1'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location $PSScriptRoot
 
 $multicorePython = Join-Path $PSScriptRoot '.venv-multicore\Scripts\python.exe'
@@ -36,7 +37,10 @@ function Get-MotionControlRealPath {
     $suffix = ''
     while ($null -ne $directory -and $null -ne $directory.Parent) {
         if ([System.IO.Directory]::Exists($directory.FullName)) {
-            $target = $directory.ResolveLinkTarget($true)
+            $target = if ($directory.PSObject.Methods['ResolveLinkTarget']) { $directory.ResolveLinkTarget($true) } else {
+                $linked = @(Get-Item -LiteralPath $directory.FullName -Force).Target | Select-Object -First 1
+                if ($linked) { [System.IO.DirectoryInfo]::new($linked) }
+            }
             if ($null -ne $target) {
                 return ([System.IO.Path]::Combine($target.FullName, $suffix)).TrimEnd('\', '/')
             }
@@ -123,7 +127,7 @@ if ($adb) {
 # Reuse a healthy existing instance instead of starting a second process that
 # would fail while binding 8765/8766.
 try {
-    $running = Invoke-WebRequest -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2
+    $running = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2
 } catch {
     $running = $null
 }
@@ -145,7 +149,7 @@ if ($running -and $running.StatusCode -eq 200) {
                 if ((Get-Date) -ge $stopDeadline) { throw '旧后台仍在释放设备，请稍候再打开；没有强行结束进程。' }
                 Start-Sleep -Milliseconds 250
             }
-            try { $running = Invoke-WebRequest -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2 } catch { $running = $null }
+            try { $running = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2 } catch { $running = $null }
         }
     } catch {
         Write-Host "现有程序未能通过运行核对：$($_.Exception.Message)"

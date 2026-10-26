@@ -47,3 +47,38 @@ $s = $shell.CreateShortcut((Join-Path $Directory 'MotionControl.lnk'))
         checked = subprocess.run([str(executable), "--verify", str(path), str(report)], timeout=10)
         assert checked.returncode == (0 if expected == "ready" else 2)
         assert report.read_text() == expected
+    # 位置记录随入口保存，既不依赖启动者的注册表，也不依赖开发工具缓存。
+    settings = destination / "installation.json"
+    saved_settings = settings.read_bytes()
+    for damaged in (None, b'{broken', b'{}', b'null'):
+        if damaged is None:
+            settings.unlink(missing_ok=True)
+        else:
+            settings.write_bytes(damaged)
+        checked = subprocess.run([str(executable), "--diagnose", str(report)], timeout=10)
+        assert checked.returncode == 0, report.read_text(encoding="utf-8")
+        resolved = json.loads(report.read_text(encoding="utf-8"))
+        assert Path(resolved["program_root"]) == ROOT and resolved["program_ready"]
+        assert "codex-runtimes" not in resolved["shell"].lower()
+        assert Path(resolved["data_root"]).is_dir()
+    settings.write_bytes(saved_settings)
+    import ctypes
+    count = ctypes.windll.shell32.ExtractIconExW(str(executable), -1, None, None, 0)
+    assert count > 0, "桌面程序必须包含原生图标资源"
+
+
+def test_windows_builtin_shell_can_read_utf8_and_normalize_a_moved_data_alias(tmp_path):
+    legacy = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    source = (ROOT / "START.ps1").read_text(encoding="utf-8-sig")
+    begin = source.index("function Get-MotionControlRealPath")
+    end = source.index("function Read-MotionControlInstance", begin)
+    script = tmp_path / "原生启动环境检查.ps1"
+    script.write_text("[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n" + source[begin:end] +
+        "\n$target = Join-Path $PSScriptRoot '实际 数据'\nNew-Item -ItemType Directory -Path $target | Out-Null\n" +
+        "$alias = Join-Path $PSScriptRoot '旧位置'\nNew-Item -ItemType Junction -Path $alias -Target $target | Out-Null\n" +
+        "$resolved = Get-MotionControlRealPath $alias\nif ($resolved -ne $target) { throw '没有识别到真实设置位置' }\n" +
+        "[Console]::Write('中文与目录迁移正常')\n", encoding="utf-8-sig")
+    checked = subprocess.run([str(legacy), "-NoProfile", "-File", str(script)], capture_output=True, encoding="utf-8", timeout=15)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert "中文与目录迁移正常" in checked.stdout
+    assert (ROOT / "START.ps1").read_bytes().startswith(b'\xef\xbb\xbf')
