@@ -1,7 +1,8 @@
-param([switch]$Desktop, [switch]$NoBrowser)
+﻿param([switch]$Desktop, [switch]$NoBrowser)
 
 $ErrorActionPreference = 'Stop'
 $env:PYTHONUTF8 = '1'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location $PSScriptRoot
 
 $multicorePython = Join-Path $PSScriptRoot '.venv-multicore\Scripts\python.exe'
@@ -36,7 +37,10 @@ function Get-MotionControlRealPath {
     $suffix = ''
     while ($null -ne $directory -and $null -ne $directory.Parent) {
         if ([System.IO.Directory]::Exists($directory.FullName)) {
-            $target = $directory.ResolveLinkTarget($true)
+            $target = if ($directory.PSObject.Methods['ResolveLinkTarget']) { $directory.ResolveLinkTarget($true) } else {
+                $linked = @(Get-Item -LiteralPath $directory.FullName -Force).Target | Select-Object -First 1
+                if ($linked) { [System.IO.DirectoryInfo]::new($linked) }
+            }
             if ($null -ne $target) {
                 return ([System.IO.Path]::Combine($target.FullName, $suffix)).TrimEnd('\', '/')
             }
@@ -107,6 +111,7 @@ $adbCandidates = @(
 )
 $adb = $adbCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if ($adb) {
+    try {
     # Split on the tab that "adb devices" puts between serial and state rather
     # than on whitespace: a wireless serial is an mDNS name that can itself
     # contain a space, e.g. "adb-XXXX-yyyy (2)._adb-tls-connect._tcp".
@@ -118,12 +123,15 @@ if ($adb) {
         & $adb -s $serial reverse tcp:8765 tcp:8765 | Out-Null
         Write-Host "手机通道已连接：127.0.0.1:8765（$serial）"
     }
+    } catch {
+        Write-Host '手机有线通道暂未建立，电脑识别继续启动。'
+    }
 }
 
 # Reuse a healthy existing instance instead of starting a second process that
 # would fail while binding 8765/8766.
 try {
-    $running = Invoke-WebRequest -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2
+    $running = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2
 } catch {
     $running = $null
 }
@@ -145,7 +153,7 @@ if ($running -and $running.StatusCode -eq 200) {
                 if ((Get-Date) -ge $stopDeadline) { throw '旧后台仍在释放设备，请稍候再打开；没有强行结束进程。' }
                 Start-Sleep -Milliseconds 250
             }
-            try { $running = Invoke-WebRequest -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2 } catch { $running = $null }
+            try { $running = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8766/' -TimeoutSec 2 } catch { $running = $null }
         }
     } catch {
         Write-Host "现有程序未能通过运行核对：$($_.Exception.Message)"
@@ -242,7 +250,7 @@ if ($Desktop) {
     while ((Get-Date) -lt $deadline) {
         try { Assert-MotionControlInstance; $ready = $true; break } catch {}
         # 普通进程可能已成功交接给管理员进程，不能把正常退出当作启动失败。
-        if ($service.HasExited -and $service.ExitCode -ne 0) { break }
+        if ($service.HasExited -and $null -ne $service.ExitCode -and $service.ExitCode -ne 0) { break }
         Start-Sleep -Milliseconds 500
     }
     if (-not $ready) {
