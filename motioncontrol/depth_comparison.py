@@ -19,7 +19,7 @@ from .depth_input import crop_references, person_rect
 from .monocular_lean import MonocularLean, kinect_pitch
 from .lean_comparison_recording import LeanComparisonRecorder
 from .model_resources import ModelResources
-from .user_paths import user_data_root
+from .user_paths import user_data_root, user_path
 
 MODELS = {
     "dav2_metric_s": {"name": "V2-S · 室内米制", "kind": "metric", "temporal": False},
@@ -60,7 +60,7 @@ class DepthComparison:
         self.config["enabled"] = False
         if self.config["monocular_model"] not in LEAN_MODELS:
             self.config["monocular_model"] = "mocapnet_personal"
-        self._runtime = user_data_root() / "depth_comparison_runtime.json"
+        self._runtime = user_path("depth_comparison_runtime")
         self.resources = ModelResources(self._runtime)
         self._pending = None
         self._thread = None

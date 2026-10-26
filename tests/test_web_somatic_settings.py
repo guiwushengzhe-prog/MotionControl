@@ -22,9 +22,10 @@ def test_model_names_match_choices_actual_status_and_diagnostics(ui):
         ("heavy", "full", False, "下次识别使用：高精度"),
         ("auto", "full", False, "下次识别时自动选择"),
     ]:
-        page.evaluate("data=>import('/js/recognition-models.js').then(m=>m.renderRecognitionPerformance(data))",
-                      {"model_preference": preference, "actual_model": actual, "running": running})
-        sync_api.expect(page.locator("#poseModelStatus")).to_have_text(expected)
+        observed = page.evaluate("data=>import('/js/recognition-models.js').then(m=>{m.renderRecognitionPerformance(data);return document.getElementById('poseModelStatus').textContent})",
+                                {"model_preference": preference, "actual_model": actual, "running": running})
+        # 此处核对四种渲染文案，不与后台的真实“未启动”轮询争用测试输入。
+        assert observed == expected
     page.route("**/api/performance", lambda route: route.fulfill(json={
         "actual_model": "heavy", "inference_stages_ms": {"pose": 12}}))
     page.evaluate("import('/js/devices.js').then(m=>m.refreshPerformance())")

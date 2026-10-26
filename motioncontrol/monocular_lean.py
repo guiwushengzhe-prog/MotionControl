@@ -12,6 +12,7 @@ import numpy as np
 
 from .config_transaction import atomic_bytes
 from .user_paths import user_data_root
+from motioncontrol_shared.user_layout import user_data_path
 
 
 def kinect_pitch(body):
@@ -103,7 +104,7 @@ class MonocularLean:
         if (not self.feature_indices or len(set(self.feature_indices)) != len(self.feature_indices)
                 or any(type(i) is not int or not 0 <= i < feature_dim for i in self.feature_indices)):
             raise ValueError("单目前后倾学习范围无效")
-        self.path = Path(root if root is not None else user_data_root()) / "monocular_lean_learning.json"
+        self.path = user_data_path(root if root is not None else user_data_root(), "monocular_lean_learning")
         self.persist = persist
         self.context = ""
         self.profiles = {}

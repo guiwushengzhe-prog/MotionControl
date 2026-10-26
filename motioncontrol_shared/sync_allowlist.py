@@ -54,6 +54,10 @@ CLASSIFICATION = {
     # Registered, deliberately not synced -- see the module docstring.
     "head_profile": DEVICE_CONFIGURATION,
     "camera_backend": DEVICE_CONFIGURATION,
+    "depth_comparison_runtime": DEVICE_CONFIGURATION,
+    "body_angle_learning": DEVICE_CONFIGURATION,
+    "monocular_lean_learning": DEVICE_CONFIGURATION,
+    "stereo_calibration": SPATIAL_CALIBRATION,
     "paired_devices": DEVICE_CONFIGURATION,
     "require_paired_devices": DEVICE_CONFIGURATION,
     # Someone self-hosting points their own install at their own server;

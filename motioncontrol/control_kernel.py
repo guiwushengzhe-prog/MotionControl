@@ -135,9 +135,9 @@ def _user_recordings_dir():
 
 def _stereo_calibration_path():
     """双目标定属于这台电脑 + 这台手机的摆放，和其他用户数据放在一起。"""
-    from motioncontrol.user_paths import user_data_root
+    from motioncontrol.user_paths import user_path
 
-    return user_data_root() / "stereo_calibration.json"
+    return user_path("stereo_calibration")
 from motioncontrol.stereo_depth import StereoDepth
 
 

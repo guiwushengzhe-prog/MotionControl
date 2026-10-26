@@ -27,12 +27,12 @@ JOURNAL = ".configuration-restore.journal"
 # 账户、配对、发现标识及缓存属于当前安装，不进包，也不会被恢复覆盖。
 PORTABLE_KEYS = ("profile_selection", "custom_games", "motion_mappings", "voice_mappings",
                  "personal_voice", "key_macros", "custom_poses", "pose_actions", "fitness", "studio")
-LOCAL_KEYS = ("general_settings", "head_profile", "body_reference", "scene_layout", "scene_reference")
-FILES = frozenset(USER_DATA_FILES[key] for key in (*PORTABLE_KEYS, *LOCAL_KEYS)) | {
-    "body_angle_learning.json", "monocular_lean_learning.json", "depth_comparison_runtime.json", "stereo_calibration.json"}
+LOCAL_KEYS = ("general_settings", "head_profile", "body_reference", "scene_layout", "scene_reference",
+              "depth_comparison_runtime", "body_angle_learning", "monocular_lean_learning", "stereo_calibration")
+FILES = frozenset(USER_DATA_FILES[key] for key in (*PORTABLE_KEYS, *LOCAL_KEYS))
 PORTABLE = frozenset(USER_DATA_FILES[key] for key in PORTABLE_KEYS)
 WITH_BACKUP = frozenset(USER_DATA_FILES[key] for key in
-                        ("profile_selection", "general_settings", "head_profile", "key_macros", "custom_poses")) | {"depth_comparison_runtime.json"}
+                        ("profile_selection", "general_settings", "head_profile", "key_macros", "custom_poses", "depth_comparison_runtime"))
 PORTABLE_PREFERENCES = frozenset({"output_speed", "output_mode", "pose_model", "march_algorithm",
     "pose_capture_delay_s", "hand_mouse", "vertical_look", "action_chain", "sensitivity_experiments",
     "zone_trigger_mode", "zone_following_layout", "depth_comparison"})
@@ -139,7 +139,7 @@ def _validate(name, raw):
             raise ValueError("自建游戏目录格式无法读取")
         GameProfileStore.validate_selection({"schema": SELECTION_SCHEMA, "selected_id": "generic-xbox",
             "overrides_by_profile": {}, "custom_games": data.get("games")})
-    elif name == "depth_comparison_runtime.json":
+    elif name == USER_DATA_FILES["depth_comparison_runtime"]:
         from .model_resources import validate_registry
         validate_registry(data)
     elif name == USER_DATA_FILES["pose_actions"]:

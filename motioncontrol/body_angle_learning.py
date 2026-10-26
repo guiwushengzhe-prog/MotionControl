@@ -12,6 +12,7 @@ import time
 
 from .config_transaction import atomic_bytes
 from .user_paths import user_data_root
+from motioncontrol_shared.user_layout import user_data_path
 
 
 SAMPLE_INTERVAL_S = .25
@@ -156,7 +157,7 @@ class BodyAngleLearning:
     """最多每秒采四对角度；候选冻结后，等待未来独立样本留验再应用。"""
 
     def __init__(self, root=None, *, persist=True):
-        self.path = Path(root if root is not None else user_data_root()) / "body_angle_learning.json"
+        self.path = user_data_path(root if root is not None else user_data_root(), "body_angle_learning")
         self._persist = bool(persist)
         self._lock = threading.RLock()
         self._save_lock = threading.Lock()
