@@ -41,7 +41,13 @@ export function renderGunMouse(status){
   if(!connected)lastAutoRead=null;
   setText($('#gunmouseConnectionStatus'),connected?'已连接设备管理':status.error||states[status.state]||'等待连接');
   const punch=!status.config?.enabled?'甩拳关闭':status.state==='ready'?'甩拳就绪':status.state==='calibrating'?'甩拳校准中':'甩拳准备中';
-  renderPeripheralState('gunmouse',connected?`已连接 · ${punch}`:status.config?.address?'已添加 · 未连接':'未添加');
+  renderPeripheralState('gunmouse',connected?'已连接':status.error?'连接异常':status.state==='connecting'?'正在连接':status.config?.address?'未连接':'未添加',{
+    device:status.config?.address?$('#gunmouseDevice').selectedOptions[0]?.textContent||'枪型飞鼠':'未选择设备',
+    punch:punch.replace(/^甩拳/,''),count:`${status.received||0} 次`,
+    strength:status.last_strength_mg?`${(status.last_strength_mg/1000).toFixed(2)} 倍重力`:'—',
+  });
+  $('#gunmouseConnectBtn').hidden=connected;
+  $('#gunmouseDisconnectBtn').hidden=!connected;
   $('#gunmouseConnectBtn').disabled=connected||managementBusy;
   $('#gunmouseDisconnectBtn').disabled=!connected||managementBusy;
   $('#gunmouseRefreshBtn').disabled=!connected||managementBusy;
@@ -81,8 +87,11 @@ async function management(action,value,fields=[]){
 }
 async function connection(enabled){
   if(managementBusy)return;
-  if(enabled&&!$('#gunmouseDevice').value){setText($('#gunmouseConnectionStatus'),'请先选择飞鼠');return;}
+  if(enabled&&!$('#gunmouseDevice').value){
+    setText($('#gunmouseOperationStatus'),'请先选择飞鼠');$('#gunmouseSettings').open=true;$('#gunmouseDevice').focus();return;
+  }
   managementBusy=true;
+  setText($('#gunmouseOperationStatus'),'');
   try{
     await save.flush();
     const data=await post('/api/gunmouse/config',enabled?{connection_enabled:true,address:$('#gunmouseDevice').value}:{connection_enabled:false,enabled:false});

@@ -4,9 +4,13 @@ import {showSettingsPane,showView} from './shell.js';
 
 let types=[],loading=false;
 const states=new Map();
-export function renderPeripheralState(id,text){
-  states.set(id,text);
-  const node=document.querySelector(`[data-peripheral-status="${id}"]`);if(node)setText(node,text);
+export function renderPeripheralState(id,text,values={}){
+  states.set(id,{text,values});
+  const card=document.querySelector(`[data-peripheral="${id}"]`);if(!card)return;
+  const status=card.querySelector('[data-peripheral-status]');if(status)setText(status,text);
+  for(const [key,value] of Object.entries(values)){
+    const node=card.querySelector(`[data-peripheral-value="${key}"]`);if(node)setText(node,value);
+  }
 }
 export function openPeripheral(id){
   const item=types.find(type=>type.id===id);if(!item)return;
@@ -14,7 +18,7 @@ export function openPeripheral(id){
   const target=document.getElementById(item.target);if(!target)return;
   target.hidden=false;
   if(target.tagName==='DETAILS')target.open=true;
-  target.scrollIntoView({block:'start',behavior:'instant'});
+  (target.closest('.peripheral-card')||target).scrollIntoView({block:'start',behavior:'instant'});
   const focus=target.querySelector('select,input,button')||target;
   if(!focus.hasAttribute('tabindex')&&!focus.matches('select,input,button'))focus.tabIndex=-1;
   focus.focus({preventScroll:true});
@@ -38,10 +42,11 @@ export async function refreshPeripheralCatalog(){
     for(const type of types){
       const target=document.getElementById(type.target);
       if(target){
-        target.dataset.peripheral=type.id;
-        const status=target.querySelector('[data-peripheral-status]');
-        if(status)setText(status,states.get(type.id)||type.description);
-        if(list.children[index]!==target)list.insertBefore(target,list.children[index]||null);
+        const card=target.closest('.peripheral-card')||target;
+        card.dataset.peripheral=type.id;
+        const state=states.get(type.id);
+        renderPeripheralState(type.id,state?.text||type.description,state?.values);
+        if(list.children[index]!==card)list.insertBefore(card,list.children[index]||null);
         index++;
       }
       select.add(new Option(type.name,type.id));
@@ -56,6 +61,10 @@ $('#addPeripheralBtn').addEventListener('click',async()=>{
   if(!types.length){$('#addPeripheralContinue').disabled=true;await refreshPeripheralCatalog()}
   selection();
 });
+$('#microphoneVoiceBtn').addEventListener('click',()=>{showView('devices');showSettingsPane('voice')});
+for(const [button,target] of [['cameraScanBtn','cameraSettings'],['audioScanBtn','microphoneSettings']]){
+  $('#'+button).addEventListener('click',()=>{$('#'+target).open=true});
+}
 $('#addPeripheralClose').addEventListener('click',()=>$('#addPeripheralDialog').close());
 $('#addPeripheralType').addEventListener('change',selection);
 $('#addPeripheralContinue').addEventListener('click',()=>{

@@ -356,8 +356,15 @@ export function renderKernelState(runtime,force=false){
   cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
   const cameraName=camera.camera_name||$('#cameraDevice')?.selectedOptions?.[0]?.textContent||'电脑摄像头';
   const cameraState=!cameraRunning?(camera.last_error?'连接异常':'未开始采集'):camera.picture_black?'画面全黑':camera.last_frame_age_ms>2000||camera.captured_frames===0?'等待画面':'采集中';
-  const fps=cameraState==='采集中'&&Number.isFinite(camera.actual_capture_fps)&&camera.actual_capture_fps>0?` · ${camera.actual_capture_fps.toFixed(1)} 帧/秒`:'';
-  renderPeripheralState('camera',sourceMode==='phone'?'正在使用手机摄像头':`${cameraName} · ${cameraState}${fps}`);
+  const cameraLive=cameraState==='采集中',phoneCamera=sourceMode==='phone';
+  const resolution=cameraLive&&!phoneCamera?camera.resolution:null;
+  renderPeripheralState('camera',phoneCamera?'使用手机摄像头':cameraState,{
+    device:phoneCamera?'手机摄像头':cameraName,
+    fps:!phoneCamera&&cameraLive&&Number.isFinite(camera.actual_capture_fps)&&camera.actual_capture_fps>0?`${camera.actual_capture_fps.toFixed(1)} 帧/秒`:'—',
+    resolution:resolution?.width>0&&resolution?.height>0?`${resolution.width} × ${resolution.height}`:'—',
+    depth:phoneCamera||!cameraRunning?'—':camera.depth_active?'已启用':camera.depth_error?'异常':camera.depth_supported===false?'无深度':camera.depth_enabled===false?'已关闭':'等待深度',
+    message:phoneCamera?'':camera.last_error||camera.depth_error||'',
+  });
   renderCurrentMode(k.game_mode);
   syncGameProfile(runtime?.profile_sync);
   currentPoseMap=sourceHasFreshFrame()&&(k.pose_age_ms==null||Number(k.pose_age_ms)<3000)?k.pose||null:null;

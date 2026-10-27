@@ -743,19 +743,29 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .pane-title { font-size: 1.375rem; font-weight: 700; letter-spacing: -.01em; }
 .pane-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
 .peripheral-list { display:grid; gap:1rem; }
-.peripheral-card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius-lg); padding:1.75rem 1.25rem; min-width:0; }
-.peripheral-card > summary { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem 1rem; cursor:pointer; list-style:none; font-size:.9375rem; font-weight:650; }
-.peripheral-card:not([open]) > summary { margin:-1.75rem -1.25rem; padding:1.75rem 1.25rem; }
-.peripheral-card > summary::-webkit-details-marker { display:none; }
-.peripheral-card > summary > span+span { color:var(--text-2); font-size:.8125rem; font-weight:400; min-width:0; overflow-wrap:anywhere; }
-.peripheral-card > summary::after { content:'⌄'; margin-left:auto; color:var(--text-2); }
-.peripheral-card[open] > summary::after { transform:rotate(180deg); }
-.peripheral-card[open] > summary { border-bottom:1px solid var(--line); padding-bottom:1rem; margin-bottom:.25rem; }
-.peripheral-card > summary:focus-visible { outline:2px solid var(--text-2); outline-offset:.375rem; border-radius:.25rem; }
-.peripheral-card > .list { border:0; border-radius:0; background:transparent; }
-.peripheral-card > .list > .row { padding-inline:0; }
-.peripheral-card > .group-foot { padding-inline:0; }
-@media(max-width:640px){.peripheral-card{padding:1.5rem 1rem}.peripheral-card:not([open])>summary{margin:-1.5rem -1rem;padding:1.5rem 1rem}.peripheral-card>summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.35rem .75rem}.peripheral-card>summary>span+span{grid-column:1;grid-row:2}.peripheral-card>summary::after{grid-column:2;grid-row:1 / span 2;align-self:center}}
+.peripheral-card { display:flex; flex-direction:column; gap:1.125rem; min-height:15rem; min-width:0; padding:1.5rem; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-lg); scroll-margin-top:7rem; }
+.peripheral-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem 1rem; }
+.peripheral-heading h3 { margin:0; font-size:1.0625rem; font-weight:650; }
+.peripheral-heading > span { color:var(--text-2); font-size:.8125rem; }
+.peripheral-device { margin:0; font-size:1rem; overflow-wrap:anywhere; }
+.peripheral-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1.25rem; margin:0; }
+.peripheral-metrics > div { min-width:0; }
+.peripheral-metrics dt { color:var(--text-2); font-size:.8125rem; margin-bottom:.375rem; }
+.peripheral-metrics dd { margin:0; font-size:1.0625rem; font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.peripheral-actions { display:flex; align-items:center; flex-wrap:wrap; gap:.625rem; }
+.peripheral-message { margin:0; color:var(--text-2); font-size:.8125rem; line-height:1.6; overflow-wrap:anywhere; }
+.peripheral-message:empty { display:none; }
+.peripheral-settings { min-width:0; margin-top:auto; border-top:1px solid var(--line); }
+.peripheral-settings > summary { display:flex; align-items:center; gap:1rem; padding-top:1rem; cursor:pointer; list-style:none; font-size:.875rem; font-weight:600; }
+.peripheral-settings > summary::-webkit-details-marker { display:none; }
+.peripheral-settings > summary::after { content:'⌄'; margin-left:auto; color:var(--text-2); }
+.peripheral-settings[open] > summary::after { transform:rotate(180deg); }
+.peripheral-settings[open] > summary { margin-bottom:.75rem; }
+.peripheral-settings > summary:focus-visible { outline:2px solid var(--text-2); outline-offset:.375rem; border-radius:.25rem; }
+.peripheral-settings > .list { border:0; border-radius:0; background:transparent; box-shadow:none; }
+.peripheral-settings > .list > .row { padding-inline:0; }
+.peripheral-settings > .group-foot { padding-inline:0; }
+@media(max-width:640px){.peripheral-card{padding:1.25rem;gap:1rem}.peripheral-metrics{gap:.75rem}.peripheral-metrics dd{font-size:.9375rem}}
 #gunmouseHardwareControls { border:0; margin:0; padding:0; min-width:0; }
 .device-edit { display:flex; align-items:center; gap:.5rem; flex:0 1 var(--setting-control-width); min-width:0; }
 .device-edit input { width:100%; min-width:0; }

@@ -206,11 +206,22 @@
 <section class="settings-pane" data-pane="devices">
 <div class="pane-heading"><h1 class="pane-title">设备与外设</h1><button class="btn" id="addPeripheralBtn" type="button">添加设备</button></div>
 <div class="group"><h2 class="group-title">设备连接</h2><div class="peripheral-list" id="peripheralList">
-<details class="peripheral-card" id="gunmouseSettings">
-<summary><span>枪型飞鼠</span><span data-peripheral-status="gunmouse">未连接</span></summary>
+<article class="peripheral-card" data-peripheral="gunmouse" aria-labelledby="gunmouseCardTitle">
+<header class="peripheral-heading"><h3 id="gunmouseCardTitle">枪型飞鼠</h3><span data-peripheral-status="gunmouse">未连接</span></header>
+<p class="peripheral-device" data-peripheral-value="device">未选择设备</p>
+<dl class="peripheral-metrics">
+<div><dt>拳击模式</dt><dd data-peripheral-value="punch">已关闭</dd></div>
+<div><dt>本次识别</dt><dd data-peripheral-value="count">0 次</dd></div>
+<div><dt>最近强度</dt><dd data-peripheral-value="strength">—</dd></div>
+</dl>
+<div class="peripheral-actions"><button class="btn" id="gunmouseConnectBtn" type="button">连接管理</button><button class="btn" id="gunmouseDisconnectBtn" type="button" disabled hidden>断开</button><button class="btn" id="gunmouseBindingBtn" type="button">设置按键</button></div>
+<p class="peripheral-message" id="gunmouseStatus" role="status">拳击模式未开启</p>
+<p class="peripheral-message" id="gunmouseOperationStatus" role="status"></p>
+<details class="peripheral-settings" id="gunmouseSettings">
+<summary>飞鼠设置</summary>
 <div class="list">
 <div class="row"><label class="row-main" for="gunmouseDevice">使用的飞鼠</label><span class="sel"><select id="gunmouseDevice"><option value="">选择已配对设备</option></select></span><button class="btn" id="gunmouseScanBtn" type="button">查找</button></div>
-<div class="row"><div class="row-main"><span class="name">设备管理连接</span><span class="sub" id="gunmouseConnectionStatus">选择设备后连接</span></div><button class="btn" id="gunmouseConnectBtn" type="button">连接管理</button><button class="btn" id="gunmouseDisconnectBtn" type="button" disabled>断开</button></div>
+<div class="row"><div class="row-main"><span class="name">设备管理连接</span><span class="sub" id="gunmouseConnectionStatus">选择设备后连接</span></div></div>
 <div class="row"><div class="row-main"><span class="name">设备状态</span><span class="sub" id="gunmouseDeviceSummary">等待设备回报</span></div><button class="btn" id="gunmouseRefreshBtn" type="button" disabled>刷新状态</button></div>
 <details class="row-details" id="gunmouseHardware"><summary>鼠标、触摸与摇杆</summary>
 <fieldset id="gunmouseHardwareControls" disabled>
@@ -227,35 +238,54 @@
 <div class="row"><div class="row-main"><span class="name">陀螺仪校准</span><span class="sub">放稳飞鼠，保持静止约3秒</span></div><button class="btn" id="gunmouseGyroCalBtn" type="button">校准</button></div>
 <div class="row"><div class="row-main"><span class="name">触摸基线</span><span class="sub">正常握持，手指离开触摸片约半秒</span></div><button class="btn" id="gunmouseTouchCalBtn" type="button">重取基线</button></div>
 </fieldset>
-<p class="statusline" id="gunmouseOperationStatus" role="status"></p>
 </details>
 <div class="row"><label class="row-main" for="gunmouseEnabled"><span class="name">拳击模式</span><span class="sub">用力甩动触发一次；遵守游戏控制总开关</span></label><input class="switch" id="gunmouseEnabled" type="checkbox"/></div>
 <div class="row"><label class="row-main" for="gunmouseStrength"><span class="name">触发强度</span><span class="sub">调高更难触发，调低更灵敏</span></label><div class="range-in"><input id="gunmouseStrength" type="range" min="1300" max="3000" step="50" value="1800"/><output id="gunmouseStrengthValue">1.80 倍重力</output></div></div>
 <div class="row"><label class="row-main" for="gunmouseCooldown"><span class="name">冷却时间</span><span class="sub">回弹不会重复触发；回稳后才能再次甩动</span></label><div class="range-in"><input id="gunmouseCooldown" type="range" min="250" max="2000" step="50" value="500"/><output id="gunmouseCooldownValue">500 毫秒</output></div></div>
-<div class="row"><div class="row-main"><span class="name">甩拳按键</span><span class="sub">在本游戏映射中选择键盘、鼠标或摇杆；未绑定不输出</span></div><button class="btn" id="gunmouseBindingBtn" type="button">设置按键</button></div>
-<div class="row stack"><span class="sub" id="gunmouseStatus" role="status">拳击模式未开启</span><span class="sub" id="gunmouseCounts"></span></div>
+<div class="row stack"><span class="sub" id="gunmouseCounts"></span></div>
 </div>
 <p class="group-foot"><span id="gunmouseSaveStatus" role="status"></span><button class="btn" id="gunmouseSaveRetry" type="button" hidden>重新保存</button></p>
 </details>
-<details class="peripheral-card" id="cameraSettings">
-<summary><span>摄像头</span><span data-peripheral-status="camera">未开始采集</span></summary>
+</article>
+<article class="peripheral-card" data-peripheral="camera" aria-labelledby="cameraCardTitle">
+<header class="peripheral-heading"><h3 id="cameraCardTitle">摄像头</h3><span data-peripheral-status="camera">未开始采集</span></header>
+<p class="peripheral-device" data-peripheral-value="device">正在读取设备</p>
+<dl class="peripheral-metrics">
+<div><dt>采集帧率</dt><dd data-peripheral-value="fps">—</dd></div>
+<div><dt>画面尺寸</dt><dd data-peripheral-value="resolution">—</dd></div>
+<div><dt>深度</dt><dd data-peripheral-value="depth">—</dd></div>
+</dl>
+<div class="peripheral-actions"><button class="btn" id="recognitionHomeBtn" type="button">到首页操作</button><button class="btn" id="cameraScanBtn" type="button">查找摄像头</button></div>
+<p class="peripheral-message" data-peripheral-value="message" role="status"></p>
+<details class="peripheral-settings" id="cameraSettings">
+<summary>摄像头设置</summary>
 <div class="list">
 <div class="row"><label class="row-main" for="poseSource">来源</label><span class="sel"><select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
-<div class="row" id="cameraDeviceRow"><label class="row-main" for="cameraDevice">使用的摄像头</label><span class="sel"><select id="cameraDevice"></select></span><button class="btn" id="cameraScanBtn" title="有外接、采集卡、虚拟摄像头时，扫一遍列出来">扫描</button></div>
+<div class="row" id="cameraDeviceRow"><label class="row-main" for="cameraDevice">使用的摄像头</label><span class="sel"><select id="cameraDevice"></select></span></div>
 <div class="row" hidden="" id="cameraDepthRow"><label class="row-main" for="cameraDepth"><span class="name">使用深度</span><span class="sub">辅助判断抬脚高度</span></label><input class="switch" id="cameraDepth" type="checkbox" checked=""/></div>
 <div class="row-note" id="cameraScanRow"><span class="fineprint" id="cameraScanStatus"></span></div>
 <div class="row" hidden="" id="cameraBoostRow"><label class="row-main" for="cameraBoost"><span class="name">提高采集优先级</span><span class="sub" id="cameraBoostStatus">游戏占满显卡时让 Kinect 仍能出帧，需要管理员确认</span></label><input class="switch" id="cameraBoost" type="checkbox"/></div>
 <div class="row" hidden="" id="cameraDecoderRow"><label class="row-main" for="cameraDecoder"><span class="name">画面解码</span><span class="sub" id="cameraDecoderStatus">处理器解码不占显卡，游戏时推荐</span></label><span class="sel"><select id="cameraDecoder"><option value="cpu">处理器</option><option value="gpu">显卡加速</option></select></span></div>
 <div class="row" id="cameraRotationRow"><label class="row-main" for="cameraRotation">画面方向</label><span class="sel"><select id="cameraRotation"><option value="auto">自动转正</option><option value="none">不旋转</option><option value="cw">顺时针 90°</option><option value="ccw">逆时针 90°</option><option value="180">180°</option></select></span></div>
 <div class="row"><label class="row-main" for="cameraMirror"><span class="name">镜像画面</span><span class="sub">开始页、录制与直播人物画面保持一致</span></label><input class="switch" id="cameraMirror" type="checkbox" checked/></div>
-<div class="row"><div class="row-main"><span class="name">识别</span><span class="sub" id="recognitionStatus">未开始</span></div><button class="btn link" id="recognitionHomeBtn">到首页操作</button></div>
+<div class="row"><div class="row-main"><span class="name">识别</span><span class="sub" id="recognitionStatus">未开始</span></div></div>
 </div>
 <p class="group-foot warn" id="modelStatus"></p>
 </details>
-<details class="peripheral-card" id="phoneGroup">
-<summary><span>手机</span><span data-peripheral-status="phone">等待手机连接</span></summary>
+</article>
+<article class="peripheral-card" data-peripheral="phone" aria-labelledby="phoneCardTitle">
+<header class="peripheral-heading"><h3 id="phoneCardTitle">手机</h3><span data-peripheral-status="phone">等待手机连接</span></header>
+<p class="peripheral-device" data-peripheral-value="device">等待手机连接</p>
+<dl class="peripheral-metrics">
+<div><dt>摄像头</dt><dd data-peripheral-value="camera">未连接</dd></div>
+<div><dt>麦克风</dt><dd data-peripheral-value="audio">未连接</dd></div>
+<div><dt>手持输入</dt><dd data-peripheral-value="handheld">未连接</dd></div>
+</dl>
+<div class="peripheral-actions"><button class="btn" id="phoneConnectBtn" type="button">扫码连接</button></div>
+<details class="peripheral-settings" id="phoneGroup">
+<summary>手机设置</summary>
 <div class="list">
-<div class="row"><div class="row-main"><span class="name">连接</span><span class="sub warn" id="phonePerf"></span></div><span class="tag" id="mobileStatus">手机未连接</span><button class="btn" id="phoneConnectBtn" type="button">扫码连接</button></div>
+<div class="row"><div class="row-main"><span class="name">连接</span><span class="sub warn" id="phonePerf"></span></div><span class="tag" id="mobileStatus">手机未连接</span></div>
 <div class="phone-code" id="phoneConnectPanel" tabindex="-1" hidden>
 <div class="phone-code-heading"><span>手机上点「扫码连接电脑」</span><button class="btn" id="closePhoneConnectBtn" type="button">关闭</button></div>
 <img id="phoneConnectImage" alt="连接这台电脑的二维码" width="288" height="288">
@@ -273,15 +303,25 @@
 </details>
 </div>
 </details>
-<details class="peripheral-card" id="microphoneSettings">
-<summary><span>麦克风</span><span data-peripheral-status="microphone">未开启</span></summary>
-<div class="group-actions"><button class="btn" id="audioScanBtn" type="button">查找麦克风</button></div>
+</article>
+<article class="peripheral-card" data-peripheral="microphone" aria-labelledby="microphoneCardTitle">
+<header class="peripheral-heading"><h3 id="microphoneCardTitle">麦克风</h3><span data-peripheral-status="microphone">未开启</span></header>
+<p class="peripheral-device" data-peripheral-value="device">正在读取设备</p>
+<dl class="peripheral-metrics">
+<div><dt>音频输入</dt><dd data-peripheral-value="audio">—</dd></div>
+<div><dt>语音模型</dt><dd data-peripheral-value="model">—</dd></div>
+<div><dt>可用口令</dt><dd data-peripheral-value="commands">—</dd></div>
+</dl>
+<div class="peripheral-actions"><button class="btn" id="audioScanBtn" type="button">查找麦克风</button><button class="btn" id="microphoneVoiceBtn" type="button">语音设置</button></div>
+<details class="peripheral-settings" id="microphoneSettings">
+<summary>麦克风设置</summary>
 <div class="list">
 <div class="row"><label class="row-main" for="audioSource">来源</label><span class="sel"><select id="audioSource"><option value="computer">电脑麦克风</option><option value="phone">手机麦克风</option></select></span></div>
 <div class="row" hidden="" id="audioDeviceRow"><label class="row-main" for="audioDevice">输入设备</label><span class="sel"><select id="audioDevice"><option value="">系统默认设备</option></select></span></div>
 </div>
 <p class="group-foot warn" id="audioStatus"></p>
 </details>
+</article>
 </div><p class="group-foot" id="peripheralCatalogStatus" role="status"></p></div>
 </section>
 

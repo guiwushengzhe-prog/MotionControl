@@ -53,20 +53,30 @@ export function renderInputStatus(status){
     const ok=S.audioMode===S.audioSource&&voice.connected;
     audioStatus.textContent=ok?'':(S.audioSource==='phone'?'等手机连上，用手机的麦克风':'电脑麦克风还没打开');
   }
-  const connected=!!(status.mobile_pose_connected||status.handheld_connected);
-  renderPeripheralState('phone',connected?(status.mobile_pose_connected?'手机摄像头已连接':'手持端已连接'):'等待手机连接');
-  const microphone=($('#audioDevice')?.selectedOptions?.[0]?.textContent||'系统默认麦克风').replace(/^\d+\s*·\s*/, '');
-  renderPeripheralState('microphone',S.audioSource==='phone'?'使用手机麦克风':`${microphone} · ${status.voice?.connected?'已连接':'未开启'}`);
+  const connected=!!(status.mobile_pose_connected||status.handheld_connected||status.mobile_voice_connected);
+  const phone=(status.mobile_pose_sources||[]).find(item=>item.active)||(status.mobile_pose_sources||[])[0];
+  renderPeripheralState('phone',connected?'已连接':'等待手机连接',{
+    device:connected?(phone?.device_name||'手机 MotionControl'):'扫码连接手机上的 MotionControl',
+    camera:status.mobile_pose_connected?'已连接':'未连接',
+    audio:status.mobile_voice_connected?'已连接':'未连接',
+    handheld:status.handheld_connected?'已连接':'未连接',
+  });
+  const voice=status.voice||{},microphone=voice.audio_device_name||($('#audioDevice')?.selectedOptions?.[0]?.textContent||'系统默认麦克风').replace(/^\d+\s*·\s*/, '');
+  renderPeripheralState('microphone',voice.connected?'已连接':'未开启',{
+    device:S.audioSource==='phone'?'手机麦克风':microphone,
+    audio:!voice.connected?'未开启':voice.audio_alive||voice.stream_alive?'接收中':'等待音频',
+    model:voice.model_ready===true?'已就绪':voice.model_ready===false?'未就绪':'—',
+    commands:Number.isFinite(voice.supported_count)?`${voice.supported_count} 条`:'—',
+  });
   renderPhoneModelState(status);
   const mobile=$('#mobileStatus');
-  mobile.textContent=connected?(status.mobile_pose_connected?'已连接':'手持端已连接'):'没连上';
+  mobile.textContent=connected?(status.mobile_pose_connected?'已连接':status.handheld_connected?'手持端已连接':'手机麦克风已连接'):'没连上';
   mobile.className='tag '+(connected?'ok':'warn');
   // 保留一个轻量入口，未选择手机时也能连接新设备。
   const phoneGroup=$('#phoneGroup');
   if(phoneGroup)phoneGroup.hidden=false;
   syncPhoneCode(status,($('#poseSource')?.value||sourceMode)==='phone'||S.audioSource==='phone');
   // 手机慢下来只有两种可能：模型退回了 CPU，或者这台机器就这么快。退回 CPU 才值得说。
-  const phone=(status.mobile_pose_sources||[]).find(item=>item.active)||(status.mobile_pose_sources||[])[0];
   const perf=$('#phonePerf');
   if(perf)perf.textContent=phone?.delegate==='CPU'?'手机在用 CPU 识别，比 GPU 慢一倍':'';
   // 数据线插没插、网络共享开没开，服务端本来就知道，以前只是没说出来。而这正是
