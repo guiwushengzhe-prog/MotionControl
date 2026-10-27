@@ -97,7 +97,7 @@ def test_config_uses_existing_persistence_and_rejects_partial_edits(monkeypatch)
         assert bridge.status()['config'] == previous
         reloaded = ControlKernel(Output())
         try:
-            assert GunMouseBridge(reloaded).status()['config'] == config
+            assert GunMouseBridge(reloaded).status()['config'] == normalize_config(config)
         finally:
             reloaded.close()
         assert kernel.settings_persistence_status()['state'] == 'ready'

@@ -33,6 +33,22 @@ def test_portal_reads_only_gunmouse_state_and_writes_shared_config(application, 
     assert not app.OUTPUT.enabled
 
 
+def test_management_stays_in_local_settings_and_does_not_open_new_portal_commands(application, monkeypatch):
+    app, replies = application, []
+    calls = []
+    monkeypatch.setattr(app.GUNMOUSE, 'manage', lambda action, value: calls.append((action, value)))
+    request = make_request(app, '/api/peripherals/gunmouse/operation', replies)
+    request._body = lambda: {'action': 'sensitivity', 'value': 96}
+    request.do_POST()
+    assert replies[-1][0] == 403 and not calls
+    request = make_request(app, '/api/peripherals/gunmouse/operation', replies, origin='http://127.0.0.1:8766')
+    request._body = lambda: {'action': 'sensitivity', 'value': 96}
+    request.do_POST()
+    assert replies[-1][0] == 200 and calls == [('sensitivity', 96)]
+    assert 'kernel' not in replies[-1][1]
+    assert not app.OUTPUT.enabled
+
+
 @pytest.mark.parametrize('path', ['/api/gunmouse/status', '/api/gunmouse/config', '/api/gunmouse/devices'])
 def test_unrelated_site_cannot_read_or_change_gunmouse(application, path):
     app, replies = application, []

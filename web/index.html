@@ -194,7 +194,7 @@
 <section class="page settings" data-panel="devices" hidden="" id="devicesPanel">
 <nav aria-label="设置分类" class="settings-nav" id="settingsNav">
 <h2 class="settings-nav-heading">设置</h2>
-<button aria-current="true" data-pane="devices"><span class="side-ico" style="--ico:#0a84ff"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="3"></rect><circle cx="12" cy="13.5" r="3.5"></circle><path d="M9 7l1.5-3h3L15 7"></path></svg></span>设备</button>
+<button aria-current="true" data-pane="devices"><span class="side-ico" style="--ico:#0a84ff"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="3"></rect><circle cx="12" cy="13.5" r="3.5"></circle><path d="M9 7l1.5-3h3L15 7"></path></svg></span>设备与外设</button>
 <button data-pane="view"><span class="side-ico" style="--ico:#28b04e"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.8" r="2"></circle><path d="M5 9h14M12 9v6M12 15l-4 6M12 15l4 6"></path></svg></span>体感</button>
 <button data-pane="voice"><span class="side-ico" style="--ico:#ff375f"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></span>语音和宏</button>
 <button data-pane="fitness"><span class="side-ico" style="--ico:#ff375f"><svg viewBox="0 0 24 24"><path d="M20.8 4.8a5.5 5.5 0 0 0-7.8 0L12 5.9l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.4a5.5 5.5 0 0 0 0-7.8z"></path></svg></span>运动记录</button>
@@ -204,20 +204,40 @@
 
 <div class="settings-panes">
 <section class="settings-pane" data-pane="devices">
-<h1 class="pane-title">设备</h1>
-<div class="group" id="gunmouseSettings">
-<h2 class="group-title">枪型飞鼠</h2>
+<div class="pane-heading"><h1 class="pane-title">设备与外设</h1><button class="btn" id="addPeripheralBtn" type="button">添加设备</button></div>
+<div class="group"><h2 class="group-title">设备连接</h2><div class="list" id="peripheralList"></div><p class="group-foot" id="peripheralCatalogStatus" role="status"></p></div>
+<details class="group device-settings" id="gunmouseSettings">
+<summary class="group-title">枪型飞鼠 <span id="gunmouseLinkSummary">未连接</span></summary>
 <div class="list">
-<div class="row"><label class="row-main" for="gunmouseEnabled"><span class="name">拳击模式</span><span class="sub">用力甩动触发一次；遵守游戏控制总开关</span></label><input class="switch" id="gunmouseEnabled" type="checkbox"/></div>
 <div class="row"><label class="row-main" for="gunmouseDevice">使用的飞鼠</label><span class="sel"><select id="gunmouseDevice"><option value="">选择已配对设备</option></select></span><button class="btn" id="gunmouseScanBtn" type="button">查找</button></div>
+<div class="row"><div class="row-main"><span class="name">设备管理连接</span><span class="sub" id="gunmouseConnectionStatus">选择设备后连接</span></div><button class="btn" id="gunmouseConnectBtn" type="button">连接管理</button><button class="btn" id="gunmouseDisconnectBtn" type="button" disabled>断开</button></div>
+<div class="row"><div class="row-main"><span class="name">设备状态</span><span class="sub" id="gunmouseDeviceSummary">等待设备回报</span></div><button class="btn" id="gunmouseRefreshBtn" type="button" disabled>刷新状态</button></div>
+<details class="row-details" id="gunmouseHardware"><summary>鼠标、触摸与摇杆</summary>
+<fieldset id="gunmouseHardwareControls" disabled>
+<div class="row"><label class="row-main" for="gunmouseAlways"><span class="name">体感常开</span><span class="sub">开启后无需触摸片也能移动鼠标</span></label><input class="switch" id="gunmouseAlways" type="checkbox"/></div>
+<div class="row"><label class="row-main" for="gunmouseInvertX">左右反向</label><input class="switch" id="gunmouseInvertX" type="checkbox"/></div>
+<div class="row"><label class="row-main" for="gunmouseInvertY">上下反向</label><input class="switch" id="gunmouseInvertY" type="checkbox"/></div>
+<div class="row"><label class="row-main" for="gunmouseSensitivity">体感灵敏度 · 每度计数</label><div class="device-edit"><input class="inp" id="gunmouseSensitivity" type="number" min="1" max="999" step="1"/><button class="btn" id="gunmouseSensitivitySave" type="button">应用</button></div></div>
+<div class="row"><label class="row-main" for="gunmouseTouchPress">触摸开启比例 · %</label><input class="inp" id="gunmouseTouchPress" type="number" min="0.11" max="49.99" step="0.01"/></div>
+<div class="row"><label class="row-main" for="gunmouseTouchRelease">触摸关闭比例 · %</label><input class="inp" id="gunmouseTouchRelease" type="number" min="0.06" max="49.98" step="0.01"/></div>
+<div class="row"><div class="row-main"><span class="name">触摸门限</span><span class="sub" id="gunmouseTouchStatus"></span></div><button class="btn" id="gunmouseTouchSave" type="button">应用门限</button></div>
+<div class="row"><label class="row-main" for="gunmouseJoystick"><span class="name">飞鼠摇杆</span><span class="sub" id="gunmouseJoystickStatus"></span></label><input class="switch" id="gunmouseJoystick" type="checkbox"/></div>
+<div class="row"><label class="row-main" for="gunmouseJoystickSpeed">摇杆速度 · 每秒计数</label><div class="device-edit"><input class="inp" id="gunmouseJoystickSpeed" type="number" min="1" max="19999" step="1"/><button class="btn" id="gunmouseJoystickSpeedSave" type="button">应用</button></div></div>
+<div class="row"><div class="row-main">摇杆回中</div><button class="btn" id="gunmouseCenterBtn" type="button">重取中心</button></div>
+<div class="row"><div class="row-main"><span class="name">陀螺仪校准</span><span class="sub">放稳飞鼠，保持静止约3秒</span></div><button class="btn" id="gunmouseGyroCalBtn" type="button">校准</button></div>
+<div class="row"><div class="row-main"><span class="name">触摸基线</span><span class="sub">正常握持，手指离开触摸片约半秒</span></div><button class="btn" id="gunmouseTouchCalBtn" type="button">重取基线</button></div>
+</fieldset>
+<p class="statusline" id="gunmouseOperationStatus" role="status"></p>
+</details>
+<div class="row"><label class="row-main" for="gunmouseEnabled"><span class="name">拳击模式</span><span class="sub">用力甩动触发一次；遵守游戏控制总开关</span></label><input class="switch" id="gunmouseEnabled" type="checkbox"/></div>
 <div class="row"><label class="row-main" for="gunmouseStrength"><span class="name">触发强度</span><span class="sub">调高更难触发，调低更灵敏</span></label><div class="range-in"><input id="gunmouseStrength" type="range" min="1300" max="3000" step="50" value="1800"/><output id="gunmouseStrengthValue">1.80 倍重力</output></div></div>
 <div class="row"><label class="row-main" for="gunmouseCooldown"><span class="name">冷却时间</span><span class="sub">回弹不会重复触发；回稳后才能再次甩动</span></label><div class="range-in"><input id="gunmouseCooldown" type="range" min="250" max="2000" step="50" value="500"/><output id="gunmouseCooldownValue">500 毫秒</output></div></div>
 <div class="row"><div class="row-main"><span class="name">甩拳按键</span><span class="sub">在本游戏映射中选择键盘、鼠标或摇杆；未绑定不输出</span></div><button class="btn" id="gunmouseBindingBtn" type="button">设置按键</button></div>
 <div class="row stack"><span class="sub" id="gunmouseStatus" role="status">拳击模式未开启</span><span class="sub" id="gunmouseCounts"></span></div>
 </div>
 <p class="group-foot"><span id="gunmouseSaveStatus" role="status"></span><button class="btn" id="gunmouseSaveRetry" type="button" hidden>重新保存</button></p>
-</div>
-<div class="group">
+</details>
+<div class="group" id="cameraSettings">
 <h2 class="group-title">摄像头</h2>
 <div class="list">
 <div class="row"><label class="row-main" for="poseSource">来源</label><span class="sel"><select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
@@ -254,7 +274,7 @@
 </div>
 </div>
 <div class="group">
-<h2 class="group-title">麦克风</h2>
+<div class="group-actions" id="microphoneSettings"><h2 class="group-title">麦克风</h2><button class="btn" id="audioScanBtn" type="button">查找</button></div>
 <div class="list">
 <div class="row"><label class="row-main" for="audioSource">来源</label><span class="sel"><select id="audioSource"><option value="computer">电脑麦克风</option><option value="phone">手机麦克风</option></select></span></div>
 <div class="row" hidden="" id="audioDeviceRow"><label class="row-main" for="audioDevice">输入设备</label><span class="sel"><select id="audioDevice"><option value="">系统默认设备</option></select></span></div>
@@ -507,4 +527,5 @@
 <dialog aria-labelledby="calibrationStage" class="calibration-overlay" id="calibrationOverlay"><div class="calibration-card"><div class="calibration-kicker">校准视角与身体站姿</div><div class="calibration-stage" id="calibrationStage">准备校准</div><div class="calibration-prompt" id="calibrationPrompt">请看向游戏屏幕中心，身体自然站直</div><div class="calibration-countdown" id="calibrationCountdown">3.0</div><div class="calibration-progress"><div id="calibrationProgressBar"></div></div><div class="calibration-detail" id="calibrationDetail"></div><button class="calibration-cancel" id="calibrationCancel">取消校准</button></div></dialog>
 <dialog aria-labelledby="exitTitle" aria-describedby="exitStatus" id="exitDialog"><div class="dialog-head"><h2 id="exitTitle">正在退出 MotionControl</h2></div><p id="exitStatus" role="status">正在释放设备，请稍候…</p><button class="btn" id="exitCheckBtn" type="button" hidden>重新核对</button></dialog>
 <dialog aria-labelledby="backupPreviewTitle" id="backupPreviewDialog"><div class="dialog-head"><h2 id="backupPreviewTitle">恢复配置备份</h2><button class="btn" id="backupPreviewClose" type="button">取消</button></div><p id="backupPreviewSummary"></p><p class="sub" id="backupPreviewDate"></p><div class="row"><label class="row-main" for="backupRestoreMode">恢复方式</label><select class="sel" id="backupRestoreMode"><option value="full">本机恢复 · 包含校准与模型登记</option><option value="portable">跨电脑恢复 · 保留目标设备与校准</option></select></div><details class="diag-detail"><summary>查看包含的文件</summary><ul id="backupPreviewFiles"></ul></details><p class="sub">确认后程序退出；再次打开时恢复备份。恢复前配置会保存在用户目录的 backups 文件夹。账户与手机配对保持当前电脑的状态。</p><p class="statusline" id="backupPreviewStatus" role="status"></p><button class="btn" id="backupRestoreBtn" type="button">保留当前副本并恢复</button></dialog>
+<dialog aria-labelledby="addPeripheralTitle" id="addPeripheralDialog"><div class="dialog-head"><h2 id="addPeripheralTitle">添加设备</h2><button class="btn" id="addPeripheralClose" type="button">取消</button></div><div class="row"><label class="row-main" for="addPeripheralType">设备类型</label><span class="sel"><select id="addPeripheralType"></select></span></div><p class="statusline" id="addPeripheralGuide"></p><p class="statusline" id="addPeripheralStatus" role="status"></p><div class="dialog-actions"><a class="btn" id="addPeripheralBluetooth" href="ms-settings:bluetooth" hidden>打开蓝牙设置</a><button class="btn" id="addPeripheralContinue" type="button">继续</button></div></dialog>
 </div><script src="/app.js" type="module"></script></body></html>

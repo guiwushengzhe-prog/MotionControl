@@ -14,6 +14,7 @@ def test_punch_binding_uses_existing_picker_and_settings_save(desktop):
     page.route('**/api/gunmouse/devices', lambda route: api.fulfill(route, {'devices': [
         {'address': '12:34:56:78:90:AB', 'name': 'GunMouse SuperMini'}]}))
     page.evaluate("async status=>{(await import('/js/gunmouse.js')).renderGunMouse(status);(await import('/js/shell.js')).showView('devices')}", status)
+    page.locator('#gunmouseSettings > summary').click()
     page.click('#gunmouseScanBtn')
     page.wait_for_function("gunmouseDevice.value === '12:34:56:78:90:AB'")
     page.check('#gunmouseEnabled')

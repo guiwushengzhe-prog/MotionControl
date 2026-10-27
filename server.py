@@ -58,6 +58,7 @@ from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
 from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import CameraUnavailable, ControlKernel, LocalControlRuntime, NativeCameraService, RUNTIME_BODY_ZONES
 from motioncontrol.gunmouse import GunMouseBridge, PORTAL_ORIGIN, PORTAL_ROUTES, request_origin_allowed
+from motioncontrol.peripherals import device_catalog
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.fitness import FitnessStore
 from motioncontrol.cloud_account import CloudAccount, CloudAccountError
@@ -2088,6 +2089,9 @@ class AdminHandler(_BaseHandler):
         if route == "/api/audio/devices":
             self._send_json({"version": VERSION, "ok": True, **_list_audio_devices()})
             return
+        if route == "/api/peripherals/catalog":
+            self._send_json({"ok": True, **device_catalog()})
+            return
         if route == "/api/gunmouse/status":
             if not self._gunmouse_request_allowed():
                 self._send_json({"ok": False, "error": "此页面不能读取本机飞鼠设置"}, 403)
@@ -3300,6 +3304,19 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": True, "hand_mouse": status})
             except (ValueError, TypeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
+        if route == "/api/peripherals/gunmouse/operation":
+            origin = self.headers.get("Origin")
+            if not self._is_loopback() or origin == PORTAL_ORIGIN or not request_origin_allowed(origin, self.server.server_port):
+                self._send_json({"ok": False, "error": "请在本机设备管理中操作"}, 403)
+                return
+            try:
+                if not isinstance(body, dict) or set(body) - {"action", "value"}:
+                    raise ValueError("设备操作包含不认识的项目")
+                GUNMOUSE.manage(body.get("action"), body.get("value"))
+                self._send_json({"ok": True, "gunmouse": GUNMOUSE.status()})
+            except (ValueError, TypeError) as exc:
+                self._send_json({"ok": False, "error": str(exc), "gunmouse": GUNMOUSE.status()}, 400)
             return
         if route == "/api/gunmouse/config":
             if not self._gunmouse_request_allowed():

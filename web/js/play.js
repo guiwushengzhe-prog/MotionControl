@@ -13,6 +13,7 @@ import {renderHeadCurve} from './head-curve.js';
 import {voiceInputIssue,voiceInputReady,voiceInputTarget} from './voice.js';
 import {renderSensitivityExperiments} from './sensitivity-experiments.js';
 import {renderGunMouse} from './gunmouse.js';
+import {renderPeripheralState} from './peripherals.js';
 
 export let currentPoseMap=null;
 export let kernelState=null;
@@ -353,6 +354,8 @@ export function renderKernelState(runtime,force=false){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
+  const cameraName=$('#cameraDevice')?.selectedOptions?.[0]?.textContent||'电脑摄像头';
+  renderPeripheralState('camera',sourceMode==='phone'?'正在使用手机摄像头':`${cameraName} · ${cameraRunning?'采集中':'未开始采集'}`);
   renderCurrentMode(k.game_mode);
   syncGameProfile(runtime?.profile_sync);
   currentPoseMap=sourceHasFreshFrame()&&(k.pose_age_ms==null||Number(k.pose_age_ms)<3000)?k.pose||null:null;

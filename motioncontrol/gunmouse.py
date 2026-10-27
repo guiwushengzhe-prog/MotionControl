@@ -3,18 +3,22 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from concurrent.futures import Future, TimeoutError as FutureTimeout
+import json
 import logging
+import queue
 import re
 import secrets
 import struct
 import threading
 import time
+from .gunmouse_management import CONTROL, DETAILS, command_plan, matches, validate_operation, validate_snapshot
 
 SERVICE = "a38b0001-62da-4c13-9f07-908d8b921571"
 STATUS = "a38b0004-62da-4c13-9f07-908d8b921571"
 EVENT = "a38b0006-62da-4c13-9f07-908d8b921571"
 CONFIG = "a38b0007-62da-4c13-9f07-908d8b921571"
-DEFAULTS = {"enabled": False, "address": "", "strength_mg": 1800, "cooldown_ms": 500}
+DEFAULTS = {"enabled": False, "connection_enabled": False, "address": "", "strength_mg": 1800, "cooldown_ms": 500}
 PACKET = struct.Struct("<BBHIIIHH")
 PORTAL_ORIGIN = "https://guiwu-aware.icu"
 PORTAL_ROUTES = frozenset({"/api/gunmouse/status", "/api/gunmouse/config", "/api/gunmouse/devices"})
@@ -33,7 +37,7 @@ def normalize_config(raw):
     if not isinstance(raw, dict) or set(raw) - set(DEFAULTS):
         raise ValueError("飞鼠设置包含不认识的项目")
     result = {**DEFAULTS, **raw}
-    if type(result["enabled"]) is not bool:
+    if type(result["enabled"]) is not bool or type(result["connection_enabled"]) is not bool:
         raise ValueError("拳击开关必须是开或关")
     address = str(result["address"]).strip().upper()
     if address and not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", address):
@@ -100,6 +104,8 @@ class GunMouseBridge:
         self._last_strength = 0
         self._last_packet_at = None
         self._session_event = None
+        self._requests = queue.Queue(maxsize=4)
+        self._device_snapshot = None
         try:
             self._config = normalize_config(kernel.general_setting("gunmouse", {}))
         except ValueError as exc:
@@ -113,7 +119,8 @@ class GunMouseBridge:
                     "received": self._received, "executed": self._executed,
                     "dropped": self._dropped, "last_strength_mg": self._last_strength,
                     "heartbeat_age_ms": round((time.monotonic() - self._last_packet_at) * 1000)
-                    if self._connected and self._last_packet_at is not None else None}
+                    if self._connected and self._last_packet_at is not None else None,
+                    "device": copy.deepcopy(self._device_snapshot)}
 
     def configure(self, updates):
         if not isinstance(updates, dict):
@@ -127,12 +134,17 @@ class GunMouseBridge:
             config = normalize_config({**self._config, **updates})
             if config["address"] != self._config["address"]:
                 self._connected = False
+                self._device_snapshot = None
+                self._session_event = None
+                self._fail_requests()
             self._config = config
             self._revision += 1
             self._error = ""
-            if not config["enabled"] or not config["address"]:
+            if not (config["enabled"] or config["connection_enabled"]) or not config["address"]:
                 self._connected = False
-                self._state = "off" if not config["enabled"] else "select_device"
+                self._session_event = None
+                self._fail_requests()
+                self._state = "select_device" if not config["address"] and (config["enabled"] or config["connection_enabled"]) else "off"
             else:
                 self._state = "applying" if self._connected else "connecting"
         self.kernel.release_gunmouse_punch()
@@ -148,6 +160,7 @@ class GunMouseBridge:
 
     def close(self):
         self._stop.set()
+        self._fail_requests()
         self.kernel.release_gunmouse_punch()
         if self._thread is not None:
             self._thread.join(timeout=3)
@@ -155,14 +168,100 @@ class GunMouseBridge:
     def _run(self):
         asyncio.run(self._worker())
 
+    def manage(self, action, value=None, *, timeout=7):
+        validate_operation(action, value)
+        future = Future()
+        with self._lock:
+            if not self._connected or self._stop.is_set():
+                raise ValueError("请先连接设备管理")
+            request = (future, action, value, self._session_event, time.monotonic() + timeout)
+            try:
+                self._requests.put_nowait(request)
+            except queue.Full:
+                raise ValueError("设备正在处理操作，请稍后再试") from None
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeout:
+            future.cancel()
+            raise ValueError("未收到设备确认，请刷新核对；本次操作不会自动重发") from None
+
+    def _fail_requests(self):
+        while True:
+            try:
+                future, *_ = self._requests.get_nowait()
+            except queue.Empty:
+                break
+            if future.set_running_or_notify_cancel():
+                future.set_exception(ValueError("设备连接已改变，未完成的操作已取消"))
+
+    async def _read_device(self, client):
+        snapshot = json.loads(bytes(await client.read_gatt_char(STATUS)))
+        if snapshot.get("project") != "gunmouse" or not isinstance(snapshot.get("diag"), dict):
+            raise ValueError("未读到完整的设备状态，请刷新重试")
+        if client.services.get_characteristic(DETAILS):
+            details = json.loads(bytes(await client.read_gatt_char(DETAILS)))
+            if details.get("project") != "gunmouse" or details.get("schema") != 1:
+                raise ValueError("设备扩展状态不完整，请刷新重试")
+            snapshot["details"] = details
+        validate_snapshot(snapshot)
+        snapshot["read_at_ms"] = round(time.time() * 1000)
+        return snapshot
+
+    async def _service_request(self, client, session):
+        try:
+            future, action, value, requested_session, deadline = self._requests.get_nowait()
+        except queue.Empty:
+            return
+        if not future.set_running_or_notify_cancel():
+            return
+        try:
+            if (session is not requested_session or self._session_event is not session or session.is_set() or self._stop.is_set()
+                    or time.monotonic() >= deadline):
+                raise ValueError("设备连接已改变，操作已取消")
+            async def perform():
+                snapshot = await self._read_device(client)
+                plans = command_plan(action, value, snapshot)
+                for command, expected in plans:
+                    if (future.cancelled() or session.is_set() or self._stop.is_set()
+                            or self._session_event is not session):
+                        raise ValueError("操作已取消，未继续发送")
+                    await client.write_gatt_char(CONTROL, ("CMD " + command).encode(), response=True)
+                    for _ in range(8):
+                        await asyncio.sleep(.15)
+                        snapshot = await self._read_device(client)
+                        if matches(snapshot, expected):
+                            break
+                    else:
+                        raise ValueError("命令已送达，但未收到一致回报；请刷新核对，不会自动重发")
+                with self._lock:
+                    if self._session_event is not session or session.is_set():
+                        raise ValueError("设备已断开，请重新连接后刷新")
+                    self._device_snapshot = snapshot
+                return snapshot
+            snapshot = await asyncio.wait_for(perform(), timeout=max(.01, deadline - time.monotonic()))
+            if not future.done():
+                future.set_result(snapshot)
+        except Exception as exc:
+            if not future.done():
+                message = str(exc) if isinstance(exc, ValueError) else "设备操作中断，请刷新核对；不会自动重发"
+                future.set_exception(ValueError(message))
+
+    async def _management_only(self, client, config, revision, gone, *, old_firmware=False):
+        with self._lock:
+            self._connected = True
+            self._state = "firmware_required" if old_firmware and config["enabled"] else "off"
+        while not self._stop.is_set() and not gone.is_set() and revision == self._revision:
+            await self._service_request(client, gone)
+            await asyncio.sleep(.1)
+
     async def _worker(self):
         use_cached_services = False
         while not self._stop.is_set():
             with self._lock:
                 config, revision = dict(self._config), self._revision
-            if not config["enabled"] or not config["address"]:
+            if not (config["enabled"] or config["connection_enabled"]) or not config["address"]:
                 with self._lock:
-                    self._state = "off" if not config["enabled"] else "select_device"
+                    self._state = "select_device" if not config["address"] else "off"
                 await asyncio.sleep(.25)
                 continue
             try:
@@ -186,9 +285,11 @@ class GunMouseBridge:
                     self._state, self._error = "disconnected", "飞鼠蓝牙连接未完成，正在自动重新连接；请保持设备开机"
             finally:
                 self.kernel.release_gunmouse_punch()
+                self._fail_requests()
                 with self._lock:
                     self._connected = False
                     self._last_packet_at = None
+                    self._device_snapshot = None
                     if self._state in {"ready", "waiting", "calibrating", "applying"}:
                         self._state, self._error = "disconnected", "飞鼠已断开，正在自动重新连接"
             # 断线低频重试，无扫描、无动作队列。
@@ -198,7 +299,6 @@ class GunMouseBridge:
                 await asyncio.sleep(.25)
 
     async def _session(self, config, revision, *, use_cached_services=False):
-        import json
         from bleak import BleakClient
         from bleak.backends.device import BLEDevice
         epoch = secrets.randbelow(65535) + 1
@@ -212,6 +312,8 @@ class GunMouseBridge:
                     if self._session_event is not gone:
                         return
                     self._connected, self._last_packet_at = False, None
+                    self._device_snapshot = None
+                    self._fail_requests()
                     if revision == self._revision and not self._stop.is_set():
                         self._state, self._error = "disconnected", "飞鼠已断开，正在自动重新连接"
                     self.kernel.release_gunmouse_punch()
@@ -231,14 +333,18 @@ class GunMouseBridge:
             identity = json.loads(bytes(await client.read_gatt_char(STATUS)))
             if identity.get("project") != "gunmouse":
                 raise ValueError("设备身份不匹配")
+            with self._lock:
+                self._device_snapshot = {**identity, "read_at_ms": round(time.time() * 1000)}
+            if not config["enabled"]:
+                await self._management_only(client, config, revision, gone)
+                return
             if not client.services.get_characteristic(EVENT) or not client.services.get_characteristic(CONFIG):
                 build = re.search(r"\b(\d+)\.(\d+)\.(\d+)", str(identity.get("diag", {}).get("build", "")))
                 if use_cached_services or build is None or tuple(map(int, build.groups())) >= (3, 3, 0):
                     raise IncompleteServices("飞鼠甩拳接口尚未完整就绪，正在自动重新连接；请保持设备开机")
                 with self._lock:
                     self._state, self._error = "firmware_required", "当前固件尚无甩拳接口，需更新到3.3版；原鼠标仍可使用"
-                while not self._stop.is_set() and revision == self._revision and not gone.is_set():
-                    await asyncio.sleep(.25)
+                await self._management_only(client, config, revision, gone, old_firmware=True)
                 return
 
             def notified(_, data):
@@ -294,6 +400,7 @@ class GunMouseBridge:
                     if now - renewed >= 5:
                         await client.write_gatt_char(CONFIG, command, response=True)
                         renewed = now
+                    await self._service_request(client, gone)
                     await asyncio.sleep(.1)
             finally:
                 # 不依赖设备接受停用，电脑端先释放；断线后不尝试写入。

@@ -3,8 +3,10 @@ import {$,api,autosaver,post,setText} from './core.js';
 import {revealBindingRow} from './mapping.js';
 import {showView} from './shell.js';
 import {renderKernelState} from './play.js';
+import {renderPeripheralState} from './peripherals.js';
 
-let current=null,scanning=false;
+let current=null,scanning=false,managementBusy=false,lastAutoRead=null,lastAddress=null;
+const hardwareDirty=new Set();
 const fields=()=>({enabled:$('#gunmouseEnabled').checked,address:$('#gunmouseDevice').value,
   strength_mg:Number($('#gunmouseStrength').value),cooldown_ms:Number($('#gunmouseCooldown').value)});
 const save=autosaver(async()=>{const data=await post('/api/gunmouse/config',fields());if(data.config_revision!=null)renderKernelState(data);else current=data.gunmouse},'gunmouseSaveStatus','gunmouseSaveRetry');
@@ -20,6 +22,7 @@ function labels(){
 export function renderGunMouse(status){
   if(!status)return;
   current=status;
+  if(lastAddress!==status.config?.address){lastAddress=status.config?.address;hardwareDirty.clear();lastAutoRead=null;}
   if(!save.pending()){
     const config=status.config||{};
     $('#gunmouseEnabled').checked=config.enabled===true;
@@ -34,7 +37,72 @@ export function renderGunMouse(status){
   }
   setText($('#gunmouseStatus'),status.error||states[status.state]||'等待飞鼠连接');
   setText($('#gunmouseCounts'),`识别 ${status.received||0} 次 · 已执行 ${status.executed||0} 次${status.last_strength_mg?` · 最近强度 ${(status.last_strength_mg/1000).toFixed(2)} 倍重力`:''}`);
+  const connected=status.connected===true,snapshot=status.device,d=snapshot?.diag,details=snapshot?.details;
+  if(!connected)lastAutoRead=null;
+  setText($('#gunmouseLinkSummary'),connected?'已连接':status.config?.address?'未连接':'未添加');
+  setText($('#gunmouseConnectionStatus'),connected?'已连接设备管理':status.error||states[status.state]||'等待连接');
+  renderPeripheralState('gunmouse',connected?`已连接 · ${status.config.address}`:status.config?.address?'已添加 · 未连接':'选择设备后连接');
+  $('#gunmouseConnectBtn').disabled=connected||managementBusy;
+  $('#gunmouseDisconnectBtn').disabled=!connected||managementBusy;
+  $('#gunmouseRefreshBtn').disabled=!connected||managementBusy;
+  $('#gunmouseHardwareControls').disabled=!connected||!details||managementBusy;
+  const summary=connected&&d?[`固件 ${d.build||d.fw||'—'}`,details?`陀螺仪${details.imu_ready?'就绪':'校准中'}`:'',details?.power?.mv>0?`采样电压 ${(details.power.mv/1000).toFixed(2)} 伏`:''].filter(Boolean).join(' · '):'等待设备回报';
+  setText($('#gunmouseDeviceSummary'),summary);
+  if(connected&&d&&details){
+    const values={gunmouseAlways:!!details.always,gunmouseInvertX:!!d.invx,gunmouseInvertY:!!d.invy,
+      gunmouseSensitivity:details.sens,gunmouseTouchPress:(d.tp*100).toFixed(2),gunmouseTouchRelease:(d.tr*100).toFixed(2),
+      gunmouseJoystick:!!details.joy?.enabled,gunmouseJoystickSpeed:details.joy?.speed};
+    for(const [id,value] of Object.entries(values)){
+      const node=$('#'+id);if(hardwareDirty.has(id)||document.activeElement===node)continue;
+      if(node.type==='checkbox')node.checked=value;else node.value=value??'';
+    }
+    const offset=Math.max(d.base*d.tp,d.noise*8);
+    setText($('#gunmouseTouchStatus'),`实际开启 ${Math.round(d.base+offset)} · 关闭 ${Math.round(d.base+offset*d.tr/d.tp)} · ${d.ready?(d.touch?'已触摸':'未触摸'):'基线准备中'}`);
+    const joy=details.joy||{};
+    setText($('#gunmouseJoystickStatus'),joy.enabled?(joy.ready?`已启用 · 中心 ${(joy.center||[]).join(' / ')}`:'已启用，中心异常，暂停输出'):'已停用');
+    $('#gunmouseCenterBtn').disabled=!joy.enabled||managementBusy;
+  }
+  if(connected&&!details&&snapshot&&$('#gunmouseSettings').open&&!lastAutoRead&&!managementBusy){
+    lastAutoRead=true;void management('refresh');
+  }
 }
+
+async function management(action,value,fields=[]){
+  if(managementBusy)return;
+  managementBusy=true;renderGunMouse(current);setText($('#gunmouseOperationStatus'),'正在读取设备…');
+  try{
+    const data=await post('/api/peripherals/gunmouse/operation',{action,...(value===undefined?{}:{value})});
+    for(const id of fields)hardwareDirty.delete(id);
+    renderGunMouse(data.gunmouse);
+    const text=action==='refresh'?'设备状态已刷新':action==='calibrate_gyro'?'设备已确认校准命令，请保持静止约3秒':action==='calibrate_touch'?'设备已确认重取基线，请保持未触摸约半秒':'设备已确认设置';
+    setText($('#gunmouseOperationStatus'),text);
+  }catch(error){setText($('#gunmouseOperationStatus'),error.message)}
+  finally{managementBusy=false;renderGunMouse(current)}
+}
+async function connection(enabled){
+  if(managementBusy)return;
+  if(enabled&&!$('#gunmouseDevice').value){setText($('#gunmouseConnectionStatus'),'请先选择飞鼠');return;}
+  managementBusy=true;
+  try{
+    await save.flush();
+    const data=await post('/api/gunmouse/config',enabled?{connection_enabled:true,address:$('#gunmouseDevice').value}:{connection_enabled:false,enabled:false});
+    renderKernelState(data);
+  }catch(error){setText($('#gunmouseOperationStatus'),error.message)}
+  finally{managementBusy=false;renderGunMouse(current)}
+}
+$('#gunmouseConnectBtn').addEventListener('click',()=>connection(true));
+$('#gunmouseDisconnectBtn').addEventListener('click',()=>connection(false));
+$('#gunmouseRefreshBtn').addEventListener('click',()=>management('refresh'));
+$('#gunmouseHardware').addEventListener('toggle',()=>{if($('#gunmouseHardware').open&&current?.connected)void management('refresh')});
+const hardwareActions={gunmouseAlways:'always',gunmouseInvertX:'invert_x',gunmouseInvertY:'invert_y',gunmouseJoystick:'joystick'};
+for(const [id,action] of Object.entries(hardwareActions))$('#'+id).addEventListener('change',()=>{
+  hardwareDirty.add(id);void management(action,$('#'+id).checked,[id]);
+});
+for(const id of ['gunmouseSensitivity','gunmouseTouchPress','gunmouseTouchRelease','gunmouseJoystickSpeed'])$('#'+id).addEventListener('input',()=>hardwareDirty.add(id));
+$('#gunmouseSensitivitySave').addEventListener('click',()=>management('sensitivity',Number($('#gunmouseSensitivity').value),['gunmouseSensitivity']));
+$('#gunmouseJoystickSpeedSave').addEventListener('click',()=>management('joystick_speed',Number($('#gunmouseJoystickSpeed').value),['gunmouseJoystickSpeed']));
+$('#gunmouseTouchSave').addEventListener('click',()=>management('touch',{press:Number($('#gunmouseTouchPress').value),release:Number($('#gunmouseTouchRelease').value)},['gunmouseTouchPress','gunmouseTouchRelease']));
+for(const [id,action] of [['gunmouseCenterBtn','joystick_center'],['gunmouseGyroCalBtn','calibrate_gyro'],['gunmouseTouchCalBtn','calibrate_touch']])$('#'+id).addEventListener('click',()=>management(action));
 for(const id of ['gunmouseEnabled','gunmouseDevice','gunmouseStrength','gunmouseCooldown']){
   $('#'+id).addEventListener('change',()=>{labels();save.dirty()});
 }

@@ -11,8 +11,14 @@ import {renderSpeedSummary} from './view-speed.js';
 import {renderDepthComparison} from './depth-comparison.js';
 import {renderRuntimeDiagnostics} from './runtime-diagnostics.js';
 import {renderDiagnosticLines,renderDiagnosticMetrics} from './diagnostic-view.js';
+import {renderPeripheralState} from './peripherals.js';
 
 let audioDevice='';
+$('#audioScanBtn').addEventListener('click',async()=>{
+  const button=$('#audioScanBtn');button.disabled=true;
+  try{if(!await refreshAudioDevices())throw new Error('未读到麦克风列表，请重试')}
+  catch(error){notice(error.message)}finally{button.disabled=false}
+});
 $('#cameraMirror')?.addEventListener('change',async event=>{
   const field=event.target,selected=field.checked;field.disabled=true;
   try{
@@ -48,6 +54,9 @@ export function renderInputStatus(status){
     audioStatus.textContent=ok?'':(S.audioSource==='phone'?'等手机连上，用手机的麦克风':'电脑麦克风还没打开');
   }
   const connected=!!(status.mobile_pose_connected||status.handheld_connected);
+  renderPeripheralState('phone',connected?(status.mobile_pose_connected?'手机摄像头已连接':'手持端已连接'):'等待手机连接');
+  const microphone=$('#audioDevice')?.selectedOptions?.[0]?.textContent||'系统默认麦克风';
+  renderPeripheralState('microphone',S.audioSource==='phone'?'使用手机麦克风':`${microphone} · ${status.voice?.connected?'已连接':'未开启'}`);
   renderPhoneModelState(status);
   const mobile=$('#mobileStatus');
   mobile.textContent=connected?(status.mobile_pose_connected?'已连接':'手持端已连接'):'没连上';

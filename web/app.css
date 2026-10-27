@@ -741,6 +741,18 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .settings-section + .settings-section { border-top: 1px solid var(--line); padding-top: 1.75rem; margin-top: .375rem; }
 .settings-section-title { font-size: 1.0625rem; font-weight: 650; }
 .pane-title { font-size: 1.375rem; font-weight: 700; letter-spacing: -.01em; }
+.pane-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.device-settings > summary { display:flex; align-items:center; gap:.75rem; cursor:pointer; padding:.75rem .25rem; }
+.device-settings > summary::before { content:'›'; font-size:1.125rem; }
+.device-settings[open] > summary::before { transform:rotate(90deg); }
+.device-settings > summary span { margin-left:auto; font-size:.8125rem; font-weight:400; }
+.device-settings > .list { margin-top:.5rem; }
+#gunmouseHardwareControls { border:0; margin:0; padding:0; min-width:0; }
+.device-edit { display:flex; align-items:center; gap:.5rem; flex:0 1 var(--setting-control-width); min-width:0; }
+.device-edit input { width:100%; min-width:0; }
+.device-edit .btn { flex-shrink:0; }
+.dialog-actions { display:flex; justify-content:flex-end; gap:.75rem; flex-wrap:wrap; margin-top:1rem; }
+@media(max-width:640px){.device-edit{flex:1 1 100%;width:100%}}
 .pane-sub { margin-top: -14px; color: var(--text-2); font-size: .8125rem; }
 .group { display: grid; gap: .4375rem; }
 .group-title { padding: 0 .25rem; color: var(--text-2); font-size: .875rem; font-weight: 600; }

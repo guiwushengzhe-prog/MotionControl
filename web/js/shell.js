@@ -10,6 +10,7 @@ import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
 import {openPhoneCode} from './phone-connect.js';
+import {refreshPeripheralCatalog} from './peripherals.js';
 import {addCustomGame,addGameVoiceRow,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
 import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,nudgeRect,openLiveZoneEditor,overlay,recognitionState,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,selectEditorRegion,sessionStarted,setEditorRegionMode,sourceHasFreshFrame,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
 import {S,cameraScan,gameProfile,head,output,profileDirty} from './state.js';
@@ -184,7 +185,7 @@ export async function init(){
   };
   poll(warmLibraries,2500,()=>!profileLibrariesReady);
   initUpdates();
-  const initialTasks=[refreshRecognitionModels,refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshPoseRecord,refreshTriggerRecord,refreshUpdates,()=>api('/api/models').then(data=>{
+  const initialTasks=[refreshPeripheralCatalog,refreshRecognitionModels,refreshAudioDevices,refreshCameraConfig,refreshPoseLibrary,refreshPoseRecord,refreshTriggerRecord,refreshUpdates,()=>api('/api/models').then(data=>{
       modelAvailable=!!data.models?.[0]?.available;
       if(data.version)$('#appVersion').textContent=data.version;
       $('#modelStatus').textContent=modelAvailable?'':'这台电脑的人体识别模型用不了，只能用手机摄像头';
