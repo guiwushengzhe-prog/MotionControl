@@ -12,6 +12,7 @@ import {handMouseConfig,renderHfhpeStatus,renderViewControl,syncControlLabels} f
 import {renderHeadCurve} from './head-curve.js';
 import {voiceInputIssue,voiceInputReady,voiceInputTarget} from './voice.js';
 import {renderSensitivityExperiments} from './sensitivity-experiments.js';
+import {renderGunMouse} from './gunmouse.js';
 
 export let currentPoseMap=null;
 export let kernelState=null;
@@ -346,6 +347,7 @@ export function renderKernelState(runtime,force=false){
     }
   }
   latestRuntime=runtime;
+  renderGunMouse(runtime?.gunmouse);
   if(runtime?.settings_persistence)updateSettingsPersistence(runtime.settings_persistence);
   if(typeof runtime?.preview_mirror==='boolean')setPreviewMirror(runtime.preview_mirror);
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;

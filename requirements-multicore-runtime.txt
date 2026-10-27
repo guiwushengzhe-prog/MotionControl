@@ -12,3 +12,4 @@ sounddevice>=0.4.6
 vosk>=0.3.45
 qrcode==8.2
 psutil>=6
+bleak==3.0.2

@@ -47,11 +47,12 @@ def test_which_actions_sweep_which_zones():
 
 # --- 内置和下载 ---------------------------------------------------------------
 
-def test_only_march_calf_back_and_jump_come_with_the_program(no_downloaded_actions):
+def test_builtin_catalog_includes_body_and_gunmouse_actions(no_downloaded_actions):
     payload = library_payload()
-    assert [item["id"] for item in payload] == ["march", "calf_back", "jump"]
+    expected = ["march", "calf_back", "jump", "lean_left", "lean_right", "lean_back", "lean_forward", "gunmouse_punch"]
+    assert [item["id"] for item in payload] == expected
     assert all(item["source"] == "builtin" for item in payload)
-    assert set(describe.MOTION_NAMES) == {"march", "calf_back", "jump"}
+    assert set(describe.MOTION_NAMES) == set(expected)
     assert not describe.POSE_NAMES
     assert zone_crossers("leftHand") == ()
 

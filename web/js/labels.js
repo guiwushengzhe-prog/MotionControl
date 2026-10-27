@@ -100,6 +100,7 @@ export const BASE_PROFILE_TRIGGERS=[
   {key:'motion.lean_right',group:'motions',id:'lean_right',name:'身体右倾'},
   {key:'motion.lean_back',group:'motions',id:'lean_back',name:'身体后倾'},
   {key:'motion.lean_forward',group:'motions',id:'lean_forward',name:'身体前倾'},
+  {key:'motion.gunmouse_punch',group:'motions',id:'gunmouse_punch',name:'飞鼠甩拳',tapOnly:true,outputTypes:['keyboard','mouse_button','mouse_wheel','gamepad','gamepad_axis','gamepad_trigger']},
 ];
 
 // 本机的动作库：自带的原地踏步、小腿向后抬起、跳跃，加上从官方动作库下载的。下载的那些

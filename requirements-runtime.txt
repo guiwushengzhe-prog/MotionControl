@@ -35,3 +35,4 @@ onnxruntime>=1.22,<2
 sounddevice>=0.4.6
 vosk>=0.3.45
 qrcode==8.2
+bleak==3.0.2

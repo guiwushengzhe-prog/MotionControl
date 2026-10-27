@@ -1179,6 +1179,7 @@ class ControlKernel:
                 self._safe_output(setter, [], source_group="controls")
 
     def _install_bindings_locked(self, bindings: dict | None, mode: dict | None) -> None:
+        self.release_gunmouse_punch()
         previous_points = {name: self._zone_point_groups_locked(name) for name in self.runtime_body_zones}
         self.control_bindings = self._apply_macro_behavior_locked(flatten_bindings(bindings))
         self._profile_bindings_active = True
@@ -1457,7 +1458,7 @@ class ControlKernel:
         for entry in (*pose_library.BUILTIN, *pose_library.registered().values()):
             names.setdefault(entry["id"], entry["name"])
         out = []
-        for ident in (*BUILTIN_MOTIONS, *sensitivity_experiments.LEAN_MOTIONS, *self._motion_rules):
+        for ident in (*BUILTIN_MOTIONS, *sensitivity_experiments.LEAN_MOTIONS, "gunmouse_punch", *self._motion_rules):
             if ident in self.disabled_builtin_actions:
                 continue
             out.append((f"motion.{ident}", names.get(ident, ident)))
@@ -2588,6 +2589,33 @@ class ControlKernel:
         if action["type"] == "macro":
             return self.macro_store is not None and self.macro_store.get(action["target"]) is not None
         return True
+
+    def release_gunmouse_punch(self) -> None:
+        """仅松开飞鼠贡献的输出，不影响身体、语音或物理鼠标。"""
+        with self._lock:
+            for source in getattr(self, "_gunmouse_sources", {}):
+                self._safe_output(self.output.clear_source, source)
+            self._gunmouse_sources = {}
+
+    def fire_gunmouse_punch(self) -> dict:
+        """一个新鲜硬件动作只点按一次，绑定仍由当前游戏/模式决定。"""
+        trigger = "motion.gunmouse_punch"
+        with self._lock:
+            if not getattr(self.output, "enabled", False) or not self._trigger_mapped_locked(trigger):
+                return {"executed": False}
+            action = copy.deepcopy(self._effective_binding_locked(trigger)["action"])
+            if action.get("type") not in {"keyboard", "mouse_button", "mouse_wheel", "gamepad", "gamepad_axis", "gamepad_trigger"}:
+                return {"executed": False}
+            now = time.monotonic()
+            sources = {source: at for source, at in getattr(self, "_gunmouse_sources", {}).items() if now-at < 1}
+            source = f"gunmouse:{time.monotonic_ns()}"
+            action.update(source=source, behavior="tap", nonblocking=True, duration=.08)
+            result = self.output.execute_action(action)
+            if result.get("executed"):
+                sources[source] = now
+                self._gunmouse_sources = sources
+                self.note_trigger(trigger, action)
+            return result
 
     def _update_zones_locked(self, pose_map: dict[str, dict], now: float) -> None:
         previous_gate = bool(self.vertical_gate_active)

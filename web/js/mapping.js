@@ -559,10 +559,10 @@ async function profileOperation(operation,{recoverConflict=false,skipDrafts=[]}=
   },{skipDrafts:recoverConflict?[saveProfileBindings]:skipDrafts});
 }
 
-export function makeTypeSelect(binding,{allowNone=true}={}){
+export function makeTypeSelect(binding,{allowNone=true,outputTypes=null}={}){
   const sel=document.createElement('select');sel.className='binding-type';
   if(allowNone){const none=document.createElement('option');none.value='';none.textContent='不绑';sel.appendChild(none)}
-  const available=type=>!Object.keys(gameProfile.actions||{}).length||gameProfile.actions?.[type];
+  const available=type=>(!outputTypes||outputTypes.includes(type))&&(!Object.keys(gameProfile.actions||{}).length||gameProfile.actions?.[type]);
   const option=type=>{const o=document.createElement('option');o.value=type;o.textContent=ACTION_TYPE_LABELS[type];return o};
   for(const [label,types] of ACTION_TYPE_GROUPS){
     const group=document.createElement('optgroup');group.label=label;
@@ -1193,7 +1193,7 @@ function buildBindingRow(trigger){
       name.append(button);
     }
   }
-  const type=makeTypeSelect(action?{action}:binding);
+  const type=makeTypeSelect(action?{action}:binding,{outputTypes:trigger.outputTypes});
   const target=document.createElement('div');target.className='binding-target-box';target.dataset.trigger=trigger.key;fillTargetControl(target,type.value,action?.target??'',action?.combo_stick_lead_ms??80,action?.combo_stick_lead_ms!=null);
   const pickedMacro=()=>target.querySelector('.binding-target')?.value||'';
   const behavior=document.createElement('div');behavior.className='binding-behavior-box';fillBehaviorControl(behavior,trigger,type.value,action?.behavior||(trigger.group==='voice'?'tap':'hold'),action?.target||'');
@@ -1221,7 +1221,7 @@ function buildBindingRow(trigger){
     const note=document.createElement('div');note.className='zone-conflict-note';note.hidden=true;item.append(note);
     adv.append(item);hasAdv=true;
   }
-  if(isBodyTrigger(trigger)){
+  if(isBodyTrigger(trigger)&&!trigger.tapOnly){
     const add=document.createElement('button');add.type='button';add.className='binding-alternate-add';
     add.textContent='＋ 条件换键：配合另一个动作，或按次数换键';add.disabled=!type.value;
     const show=ruleBinding=>{

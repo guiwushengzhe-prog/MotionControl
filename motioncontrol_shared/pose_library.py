@@ -168,6 +168,11 @@ BUILTIN += tuple({
     ("lean_forward", "身体前倾", "在实验与诊断开启前倾前进；轻微向前倾，回正停止",
      {"nose": (.50, .065), "left_shoulder": (.585, .19), "right_shoulder": (.415, .19)}),
 ))
+BUILTIN += ({"id": "gunmouse_punch", "group": "motion", "name": "飞鼠甩拳",
+             "how": "在设备设置开启拳击模式，握稳后用力甩动一次；回稳后可再次触发",
+             "ratings": {"intensity": 2, "recognition": 3, "difficulty": 1},
+             "body_parts": {"arms": 2}, "passes_zones": (), "frame_s": .5,
+             "frames": (FRONT, _figure(FRONT, right_wrist=(.20, .25)), FRONT)},)
 BUILTIN_IDS = frozenset(entry["id"] for entry in BUILTIN)
 
 # 下架的动作。已经下载过的不再加载（文件不删），配置里绑了它的也不提示去下载；

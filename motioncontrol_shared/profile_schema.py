@@ -339,6 +339,14 @@ def _normalize_body_rule_trigger(value, label: str) -> str:
 
 
 def _validate_body_rule(group: str, ident: str, binding: dict) -> None:
+    if group == "motions" and ident == "gunmouse_punch":
+        action = binding.get("action")
+        if action:
+            if action.get("type") not in {"keyboard", "mouse_button", "mouse_wheel", "gamepad", "gamepad_axis", "gamepad_trigger"}:
+                raise ValueError("飞鼠甩拳请选择键盘、鼠标或手柄按键")
+            action["behavior"] = "tap"
+        if "alternate_mode" in binding:
+            raise ValueError("飞鼠甩拳是独立点按动作，不使用身体条件换键")
     if group == "voice" and ident.startswith(GAME_VOICE_SLOT_PREFIX):
         number = ident[len(GAME_VOICE_SLOT_PREFIX):]
         if (not number.isascii() or not number.isdigit() or

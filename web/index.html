@@ -205,6 +205,18 @@
 <div class="settings-panes">
 <section class="settings-pane" data-pane="devices">
 <h1 class="pane-title">设备</h1>
+<div class="group" id="gunmouseSettings">
+<h2 class="group-title">枪型飞鼠</h2>
+<div class="list">
+<div class="row"><label class="row-main" for="gunmouseEnabled"><span class="name">拳击模式</span><span class="sub">用力甩动触发一次；遵守游戏控制总开关</span></label><input class="switch" id="gunmouseEnabled" type="checkbox"/></div>
+<div class="row"><label class="row-main" for="gunmouseDevice">使用的飞鼠</label><span class="sel"><select id="gunmouseDevice"><option value="">选择已配对设备</option></select></span><button class="btn" id="gunmouseScanBtn" type="button">查找</button></div>
+<div class="row"><label class="row-main" for="gunmouseStrength"><span class="name">触发强度</span><span class="sub">调高更难触发，调低更灵敏</span></label><div class="range-in"><input id="gunmouseStrength" type="range" min="1300" max="3000" step="50" value="1800"/><output id="gunmouseStrengthValue">1.80 倍重力</output></div></div>
+<div class="row"><label class="row-main" for="gunmouseCooldown"><span class="name">冷却时间</span><span class="sub">回弹不会重复触发；回稳后才能再次甩动</span></label><div class="range-in"><input id="gunmouseCooldown" type="range" min="250" max="2000" step="50" value="500"/><output id="gunmouseCooldownValue">500 毫秒</output></div></div>
+<div class="row"><div class="row-main"><span class="name">甩拳按键</span><span class="sub">在本游戏映射中选择键盘、鼠标或摇杆；未绑定不输出</span></div><button class="btn" id="gunmouseBindingBtn" type="button">设置按键</button></div>
+<div class="row stack"><span class="sub" id="gunmouseStatus" role="status">拳击模式未开启</span><span class="sub" id="gunmouseCounts"></span></div>
+</div>
+<p class="group-foot"><span id="gunmouseSaveStatus" role="status"></span><button class="btn" id="gunmouseSaveRetry" type="button" hidden>重新保存</button></p>
+</div>
 <div class="group">
 <h2 class="group-title">摄像头</h2>
 <div class="list">

@@ -57,6 +57,7 @@ from motioncontrol.key_macros import MacroError, MacroStore
 from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
 from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import CameraUnavailable, ControlKernel, LocalControlRuntime, NativeCameraService, RUNTIME_BODY_ZONES
+from motioncontrol.gunmouse import GunMouseBridge
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.fitness import FitnessStore
 from motioncontrol.cloud_account import CloudAccount, CloudAccountError
@@ -135,6 +136,7 @@ print("用户数据目录：", user_data_root())
 
 OUTPUT = OutputManager(ROOT)
 KERNEL = ControlKernel(OUTPUT)
+GUNMOUSE = GunMouseBridge(KERNEL)
 _OUTPUT_SPEED_FIELDS = ("mouse_speed_x", "mouse_speed_y", "gamepad_gain")
 _saved_output_speed = KERNEL.general_setting("output_speed", {})
 if isinstance(_saved_output_speed, dict):
@@ -195,7 +197,7 @@ def runtime_status() -> dict:
                 "settings_persistence": KERNEL.settings_persistence_status(),
                 "profile_sync": {"selected_id": PROFILES.selected_id(), "revision": PROFILES.revision(),
                                  "error": PROFILES.last_error},
-                "preview_mirror": STUDIO.config["mirror"]}
+                "preview_mirror": STUDIO.config["mirror"], "gunmouse": GUNMOUSE.status()}
 PROFILES = GameProfileStore(ROOT)
 # Kinect 是否被拖慢按游戏记住，下次开这个游戏时先申请提高原厂服务优先级。
 RUNTIME.camera.current_game = PROFILES.selected_id
@@ -1705,6 +1707,7 @@ def _begin_shutdown():
         INPUT_STOP_GENERATION += 1
     _run_exit_steps([
         ("释放按键", OUTPUT.emergency_stop),
+        ("关闭飞鼠甩拳", GUNMOUSE.close),
         ("取消待执行命令", SYSTEM_COMMANDS.invalidate),
         ("取消相机启动", RUNTIME.camera.cancel_start),
         ("停止手机身体输入", lambda: INPUT_BRIDGE.set_body_enabled(False)),
@@ -2060,6 +2063,15 @@ class AdminHandler(_BaseHandler):
             return
         if route == "/api/audio/devices":
             self._send_json({"version": VERSION, "ok": True, **_list_audio_devices()})
+            return
+        if route == "/api/gunmouse/devices":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "只能在这台电脑选择飞鼠"}, 403)
+                return
+            try:
+                self._send_json({"ok": True, "devices": GUNMOUSE.paired_devices()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": f"无法读取已配对飞鼠：{exc}"}, 400)
             return
         if route == "/api/kernel/status":
             # 录姿势的倒计时挂在这里，因为这是 250ms 轮询的那一份——人站在几米外
@@ -3256,6 +3268,19 @@ class AdminHandler(_BaseHandler):
             except (ValueError, TypeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
+        if route == "/api/gunmouse/config":
+            if not self._is_loopback():
+                self._send_json({"ok": False, "error": "只能在这台电脑设置飞鼠"}, 403)
+                return
+            try:
+                with PROFILE_UPDATE_LOCK:
+                    GUNMOUSE.configure(body)
+                    CONFIG_REVISION += 1
+                    payload = {"ok": True, **runtime_status()}
+                self._send_json(payload)
+            except (ValueError, TypeError) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 400)
+            return
         if route == "/api/head/config":
             if not self._is_loopback():
                 self._send_json({"ok": False, "error": "head config is loopback-only"}, 403)
@@ -3553,6 +3578,7 @@ def main():
         print(f"手机自动发现未启用：{DISCOVERY.last_error}；手机仍可用地址连接。")
 
     HOTKEYS.start()
+    GUNMOUSE.start()
     LEARNER.start()
     url = f"http://127.0.0.1:{args.admin_port}/"
     print("Open:", url)
