@@ -17,6 +17,7 @@ async function loadPhoneCode(){
   }catch(error){if(token===request)$('#phoneConnectHint').textContent=error.message||'连接码暂时不可用，请重试'}
 }
 export function openPhoneCode(){
+  $('#phoneGroup').open=true;
   remember(offeredKey);baseline=devices(lastStatus);
   $('#phoneConnectPanel').hidden=false;addressKey=JSON.stringify(lastStatus.phone_ws_urls||[]);
   void loadPhoneCode();
@@ -39,8 +40,8 @@ export function syncPhoneCode(status,phoneSelected){
     if([...connected].some(id=>!baseline.has(id)))closePhoneCode();
     else{const key=JSON.stringify(status.phone_ws_urls||[]);if(key!==addressKey){addressKey=key;void loadPhoneCode()}
       else if($('#phoneConnectImage').getAttribute('src'))setText($('#phoneConnectHint'),unpaired?unpairedHint:defaultHint)}
-  }else if(unpaired&&!unpairedOffered&&$('#phoneConnectBtn').getClientRects().length){unpairedOffered=true;openPhoneCode()}
-  else if(phoneSelected&&!connected.size&&!remembered(knownKey)&&!remembered(offeredKey)&&$('#phoneConnectBtn').getClientRects().length){openPhoneCode()}
+  }else if(unpaired&&!unpairedOffered&&$('#phoneGroup').getClientRects().length){unpairedOffered=true;openPhoneCode()}
+  else if(phoneSelected&&!connected.size&&!remembered(knownKey)&&!remembered(offeredKey)&&$('#phoneGroup').getClientRects().length){openPhoneCode()}
   const firewall=status.firewall||{},retry=['missing','error'].includes(firewall.state);
   setProperty($('#phoneFirewallRow'),'hidden',!firewall.message||['ready','unsupported','unchecked'].includes(firewall.state));
   setText($('#phoneFirewallStatus'),firewall.message||'');

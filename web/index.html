@@ -205,9 +205,9 @@
 <div class="settings-panes">
 <section class="settings-pane" data-pane="devices">
 <div class="pane-heading"><h1 class="pane-title">设备与外设</h1><button class="btn" id="addPeripheralBtn" type="button">添加设备</button></div>
-<div class="group"><h2 class="group-title">设备连接</h2><div class="list" id="peripheralList"></div><p class="group-foot" id="peripheralCatalogStatus" role="status"></p></div>
-<details class="group device-settings" id="gunmouseSettings">
-<summary class="group-title">枪型飞鼠 <span id="gunmouseLinkSummary">未连接</span></summary>
+<div class="group"><h2 class="group-title">设备连接</h2><div class="peripheral-list" id="peripheralList">
+<details class="peripheral-card" id="gunmouseSettings">
+<summary><span>枪型飞鼠</span><span data-peripheral-status="gunmouse">未连接</span></summary>
 <div class="list">
 <div class="row"><label class="row-main" for="gunmouseDevice">使用的飞鼠</label><span class="sel"><select id="gunmouseDevice"><option value="">选择已配对设备</option></select></span><button class="btn" id="gunmouseScanBtn" type="button">查找</button></div>
 <div class="row"><div class="row-main"><span class="name">设备管理连接</span><span class="sub" id="gunmouseConnectionStatus">选择设备后连接</span></div><button class="btn" id="gunmouseConnectBtn" type="button">连接管理</button><button class="btn" id="gunmouseDisconnectBtn" type="button" disabled>断开</button></div>
@@ -237,8 +237,8 @@
 </div>
 <p class="group-foot"><span id="gunmouseSaveStatus" role="status"></span><button class="btn" id="gunmouseSaveRetry" type="button" hidden>重新保存</button></p>
 </details>
-<div class="group" id="cameraSettings">
-<h2 class="group-title">摄像头</h2>
+<details class="peripheral-card" id="cameraSettings">
+<summary><span>摄像头</span><span data-peripheral-status="camera">未开始采集</span></summary>
 <div class="list">
 <div class="row"><label class="row-main" for="poseSource">来源</label><span class="sel"><select id="poseSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
 <div class="row" id="cameraDeviceRow"><label class="row-main" for="cameraDevice">使用的摄像头</label><span class="sel"><select id="cameraDevice"></select></span><button class="btn" id="cameraScanBtn" title="有外接、采集卡、虚拟摄像头时，扫一遍列出来">扫描</button></div>
@@ -251,9 +251,9 @@
 <div class="row"><div class="row-main"><span class="name">识别</span><span class="sub" id="recognitionStatus">未开始</span></div><button class="btn link" id="recognitionHomeBtn">到首页操作</button></div>
 </div>
 <p class="group-foot warn" id="modelStatus"></p>
-</div>
-<div class="group" hidden="" id="phoneGroup">
-<h2 class="group-title">手机</h2>
+</details>
+<details class="peripheral-card" id="phoneGroup">
+<summary><span>手机</span><span data-peripheral-status="phone">等待手机连接</span></summary>
 <div class="list">
 <div class="row"><div class="row-main"><span class="name">连接</span><span class="sub warn" id="phonePerf"></span></div><span class="tag" id="mobileStatus">手机未连接</span><button class="btn" id="phoneConnectBtn" type="button">扫码连接</button></div>
 <div class="phone-code" id="phoneConnectPanel" tabindex="-1" hidden>
@@ -272,15 +272,17 @@
 <div class="inline-form"><span class="sel grow"><select aria-label="可用连接地址" id="phoneWsUrl"></select></span><button class="btn" id="copyPhoneUrlBtn">复制地址</button></div>
 </details>
 </div>
-</div>
-<div class="group">
-<div class="group-actions" id="microphoneSettings"><h2 class="group-title">麦克风</h2><button class="btn" id="audioScanBtn" type="button">查找</button></div>
+</details>
+<details class="peripheral-card" id="microphoneSettings">
+<summary><span>麦克风</span><span data-peripheral-status="microphone">未开启</span></summary>
+<div class="group-actions"><button class="btn" id="audioScanBtn" type="button">查找麦克风</button></div>
 <div class="list">
 <div class="row"><label class="row-main" for="audioSource">来源</label><span class="sel"><select id="audioSource"><option value="computer">电脑麦克风</option><option value="phone">手机麦克风</option></select></span></div>
 <div class="row" hidden="" id="audioDeviceRow"><label class="row-main" for="audioDevice">输入设备</label><span class="sel"><select id="audioDevice"><option value="">系统默认设备</option></select></span></div>
 </div>
 <p class="group-foot warn" id="audioStatus"></p>
-</div>
+</details>
+</div><p class="group-foot" id="peripheralCatalogStatus" role="status"></p></div>
 </section>
 
 <section class="settings-pane" data-pane="view" hidden="" id="somaticSettings">

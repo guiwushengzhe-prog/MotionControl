@@ -25,6 +25,7 @@ def test_kinect_select_depth_toggle_and_regular_camera_ui(desktop):
     page.route("**/api/camera/config", camera)
     page.goto("http://motioncontrol.test")
     page.click('nav [data-view="devices"]')
+    page.locator('#cameraSettings > summary').click()
     page.click('#settingsNav [data-pane="devices"]')
     expect(page.locator('#cameraDepthRow')).to_be_hidden()
     page.evaluate("""async()=>{const d=await import('/js/devices.js');
@@ -193,6 +194,7 @@ def test_regular_camera_decoder_choice_follows_runtime_support(desktop):
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="devices"]')
     page.evaluate("async()=>{await (await import('/js/devices.js')).refreshCameraConfig()}")
+    page.locator('#cameraSettings > summary').click()
     expect(page.locator("#cameraDecoderRow")).to_be_visible()
     expect(page.locator("#cameraDecoder")).to_have_value("cpu")
     expect(page.locator('#cameraDecoder option[value="gpu"]')).to_be_disabled()
@@ -226,6 +228,7 @@ def test_kinect_capture_boost_switch(desktop):
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="devices"]')
     page.evaluate("async()=>{await (await import('/js/devices.js')).refreshCameraConfig()}")
+    page.locator('#cameraSettings > summary').click()
     expect(page.locator("#cameraBoostRow")).to_be_visible()
     expect(page.locator("#cameraDecoderRow")).to_be_hidden()
     expect(page.locator("#cameraBoost")).not_to_be_checked()

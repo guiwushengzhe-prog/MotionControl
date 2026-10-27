@@ -240,6 +240,7 @@ function resolveDeviceIssue(button){
   // 模型问题到现有语音诊断查看准确错误和模型路径；设备问题定位来源与输入设备。
   showSettingsPane(issue==='voice'?'lab':'devices');
   if(issue==='camera')openPhoneCode();
+  if(issue==='audio')$('#microphoneSettings').open=true;
   const target=issue==='voice'?$('#voiceDiagnostic'):issue==='audio'?($('#audioDeviceRow').hidden?$('#audioSource'):$('#audioDevice')):$('#phoneConnectPanel');
   if(!target.matches('input,select,button,a[href]')&&!target.hasAttribute('tabindex'))target.setAttribute('tabindex','-1');
   target.focus({preventScroll:true});target.scrollIntoView({block:'center',behavior:'instant'});

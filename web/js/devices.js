@@ -55,7 +55,7 @@ export function renderInputStatus(status){
   }
   const connected=!!(status.mobile_pose_connected||status.handheld_connected);
   renderPeripheralState('phone',connected?(status.mobile_pose_connected?'手机摄像头已连接':'手持端已连接'):'等待手机连接');
-  const microphone=$('#audioDevice')?.selectedOptions?.[0]?.textContent||'系统默认麦克风';
+  const microphone=($('#audioDevice')?.selectedOptions?.[0]?.textContent||'系统默认麦克风').replace(/^\d+\s*·\s*/, '');
   renderPeripheralState('microphone',S.audioSource==='phone'?'使用手机麦克风':`${microphone} · ${status.voice?.connected?'已连接':'未开启'}`);
   renderPhoneModelState(status);
   const mobile=$('#mobileStatus');

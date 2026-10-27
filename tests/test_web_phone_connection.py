@@ -9,6 +9,7 @@ def test_real_connection_code_renders_and_closes_when_new_phone_connects(ui):
     _go(page, "devices")
     page.click('#settingsNav [data-pane="devices"]')
     assert page.locator("#phoneConnectPanel").is_hidden()
+    page.locator('#phoneGroup > summary').click()
     page.click("#phoneConnectBtn")
     page.wait_for_function("phoneConnectImage.complete && phoneConnectImage.naturalWidth > 0")
     assert page.locator("#phoneConnectPanel").is_visible()
@@ -31,6 +32,7 @@ def test_first_phone_selection_offers_once_and_manual_close_stays_closed(ui):
     page = ui.page
     _go(page, "devices")
     page.click('#settingsNav [data-pane="devices"]')
+    page.locator('#cameraSettings > summary').click()
     page.select_option("#poseSource", "phone")
     page.wait_for_selector("#phoneConnectPanel:not([hidden])")
     page.click("#closePhoneConnectBtn")

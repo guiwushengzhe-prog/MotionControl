@@ -21,7 +21,15 @@ def test_fitness_summary_history_and_profile_remain_readable_and_editable(deskto
         {"started_at_ms": 1792713600000, "active_seconds": 600, "steps": 1234, "estimated_kcal": 49.3}]}))
     page.click('[data-view="devices"]')
     page.click('#settingsNav [data-pane="fitness"]')
+    assert page.locator('#pane-fitness .fitness-section > .group-title').all_text_contents() == ['运动', '身体与设备', '数据同步']
+    assert page.locator('#pane-fitness .fitness-list').count() == 3
+    assert page.locator('#pane-fitness details[open]').count() == 0
     expect(page.locator('#fitnessSteps')).to_have_text('1,234')
+    expect(page.locator('#fitnessStatus')).to_contain_text('1,234 步')
+    expect(page.locator('#fitnessGoalSummary')).to_contain_text('33%')
+    page.locator('#fitnessSessionSection > summary').click()
+    expect(page.locator('#fitnessSteps')).to_be_visible()
+    page.locator('#fitnessSessionSection > summary').click()
     assert page.locator('#fitnessHistorySection').get_attribute('open') is None
     expect(page.locator('#fitnessHistory')).to_be_hidden()
     page.locator('#fitnessHistorySection>summary').click()

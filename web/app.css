@@ -742,11 +742,19 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .settings-section-title { font-size: 1.0625rem; font-weight: 650; }
 .pane-title { font-size: 1.375rem; font-weight: 700; letter-spacing: -.01em; }
 .pane-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
-.device-settings > summary { display:flex; align-items:center; gap:.75rem; cursor:pointer; padding:.75rem .25rem; }
-.device-settings > summary::before { content:'›'; font-size:1.125rem; }
-.device-settings[open] > summary::before { transform:rotate(90deg); }
-.device-settings > summary span { margin-left:auto; font-size:.8125rem; font-weight:400; }
-.device-settings > .list { margin-top:.5rem; }
+.peripheral-list { display:grid; gap:1rem; }
+.peripheral-card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius-lg); padding:1.25rem; min-width:0; }
+.peripheral-card > summary { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem 1rem; cursor:pointer; list-style:none; font-size:.9375rem; font-weight:650; }
+.peripheral-card > summary::-webkit-details-marker { display:none; }
+.peripheral-card > summary > span+span { color:var(--text-2); font-size:.8125rem; font-weight:400; min-width:0; overflow-wrap:anywhere; }
+.peripheral-card > summary::after { content:'⌄'; margin-left:auto; color:var(--text-2); }
+.peripheral-card[open] > summary::after { transform:rotate(180deg); }
+.peripheral-card[open] > summary { border-bottom:1px solid var(--line); padding-bottom:1rem; margin-bottom:.25rem; }
+.peripheral-card > summary:focus-visible { outline:2px solid var(--text-2); outline-offset:.375rem; border-radius:.25rem; }
+.peripheral-card > .list { border:0; border-radius:0; background:transparent; }
+.peripheral-card > .list > .row { padding-inline:0; }
+.peripheral-card > .group-foot { padding-inline:0; }
+@media(max-width:640px){.peripheral-card{padding:1rem}.peripheral-card>summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.35rem .75rem}.peripheral-card>summary>span+span{grid-column:1;grid-row:2}.peripheral-card>summary::after{grid-column:2;grid-row:1 / span 2;align-self:center}}
 #gunmouseHardwareControls { border:0; margin:0; padding:0; min-width:0; }
 .device-edit { display:flex; align-items:center; gap:.5rem; flex:0 1 var(--setting-control-width); min-width:0; }
 .device-edit input { width:100%; min-width:0; }
@@ -937,6 +945,10 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 /* 运动记录复用设置的字体、控件和灰色卡片，主要数值在首屏。 */
 #pane-fitness { gap: 1.125rem; }
 .fitness-card { min-width: 0; padding: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); }
+.fitness-card.fitness-list { padding:0; overflow:hidden; }
+.fitness-list > .fitness-details { padding:1.125rem 1.25rem; }
+.fitness-list > .fitness-details + .fitness-details { border-top:1px solid var(--line); }
+.fitness-list > .fitness-details > summary:focus-visible { outline:2px solid var(--text-2); outline-offset:.3rem; border-radius:.25rem; }
 .fitness-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; }
 .fitness-heading h3 { font-size: .9375rem; font-weight: 650; }
 .fitness-heading>span, .fitness-details summary>span+span { color: var(--text-2); font-size: .8125rem; font-weight: 400; }

@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from motioncontrol.version import VERSION
+from motioncontrol.peripherals import device_catalog
 
 playwright = pytest.importorskip("playwright.sync_api")
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,6 +69,9 @@ class LocalApi:
     def handle(self, route):
         url = urlparse(route.request.url)
         path = url.path
+        if path == "/api/peripherals/catalog":
+            self.fulfill(route, device_catalog())
+            return
         if not path.startswith("/api/"):
             file = ROOT / "web" / ("index.html" if path == "/" else path.lstrip("/"))
             content_type = "text/css" if file.suffix == ".css" else "text/javascript" if file.suffix == ".js" else "text/html"

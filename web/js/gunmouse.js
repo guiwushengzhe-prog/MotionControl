@@ -39,9 +39,9 @@ export function renderGunMouse(status){
   setText($('#gunmouseCounts'),`识别 ${status.received||0} 次 · 已执行 ${status.executed||0} 次${status.last_strength_mg?` · 最近强度 ${(status.last_strength_mg/1000).toFixed(2)} 倍重力`:''}`);
   const connected=status.connected===true,snapshot=status.device,d=snapshot?.diag,details=snapshot?.details;
   if(!connected)lastAutoRead=null;
-  setText($('#gunmouseLinkSummary'),connected?'已连接':status.config?.address?'未连接':'未添加');
   setText($('#gunmouseConnectionStatus'),connected?'已连接设备管理':status.error||states[status.state]||'等待连接');
-  renderPeripheralState('gunmouse',connected?`已连接 · ${status.config.address}`:status.config?.address?'已添加 · 未连接':'选择设备后连接');
+  const punch=!status.config?.enabled?'甩拳关闭':status.state==='ready'?'甩拳就绪':status.state==='calibrating'?'甩拳校准中':'甩拳准备中';
+  renderPeripheralState('gunmouse',connected?`已连接 · ${punch}`:status.config?.address?'已添加 · 未连接':'未添加');
   $('#gunmouseConnectBtn').disabled=connected||managementBusy;
   $('#gunmouseDisconnectBtn').disabled=!connected||managementBusy;
   $('#gunmouseRefreshBtn').disabled=!connected||managementBusy;

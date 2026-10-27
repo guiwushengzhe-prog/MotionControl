@@ -33,17 +33,18 @@ export async function refreshPeripheralCatalog(){
     if(!Array.isArray(data.types))throw new Error('未读到设备目录');
     types=data.types;
     const list=$('#peripheralList'),select=$('#addPeripheralType'),selected=select.value;
-    list.replaceChildren();select.replaceChildren();
+    select.replaceChildren();
+    let index=0;
     for(const type of types){
-      const row=document.createElement('div');row.className='row';
-      const main=document.createElement('div');main.className='row-main';
-      const name=document.createElement('span');name.className='name';name.textContent=type.name;
-      const status=document.createElement('span');status.className='sub';status.dataset.peripheralStatus=type.id;
-      status.textContent=states.get(type.id)||type.description;
-      main.append(name,status);
-      const button=document.createElement('button');button.className='btn';button.type='button';button.textContent='管理';
-      button.dataset.peripheral=type.id;button.addEventListener('click',()=>openPeripheral(type.id));
-      row.append(main,button);list.append(row);select.add(new Option(type.name,type.id));
+      const target=document.getElementById(type.target);
+      if(target){
+        target.dataset.peripheral=type.id;
+        const status=target.querySelector('[data-peripheral-status]');
+        if(status)setText(status,states.get(type.id)||type.description);
+        if(list.children[index]!==target)list.insertBefore(target,list.children[index]||null);
+        index++;
+      }
+      select.add(new Option(type.name,type.id));
     }
     if(types.some(type=>type.id===selected))select.value=selected;
     selection();setText($('#peripheralCatalogStatus'),'');return true;

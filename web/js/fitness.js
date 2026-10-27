@@ -6,22 +6,25 @@ const pane=document.getElementById('pane-fitness');
 if(pane){
   pane.innerHTML=`<h1 class="pane-title">运动记录</h1>
     <p class="pane-sub">查看体感游戏中的活动积累。热量按体重和动作估算。</p>
-    <div class="fitness-card"><div class="fitness-heading"><h3>这次运动</h3><span id="fitnessStatus">未开始</span></div>
+    <section class="group fitness-section"><h2 class="group-title">运动</h2><div class="fitness-card fitness-list">
+    <details class="fitness-details" id="fitnessSessionSection"><summary><span>这次运动</span><span id="fitnessStatus">未开始</span></summary>
       <div class="fitness-metrics"><div><strong id="fitnessMinutes">0.0</strong><span>活动分钟</span></div><div><strong id="fitnessSteps">0</strong><span>步数</span></div><div><strong id="fitnessKcal">0.0</strong><span>估算活动千卡</span></div></div>
       <p class="muted">开始控制时自动记录，暂停控制或停止识别时自动保存本次。有效活动满 3 分钟才计入历史记录和每日累计。</p>
       <p id="fitnessError" class="muted" role="status"></p>
-    </div>
-    <div class="fitness-card"><div class="fitness-heading"><h3>今日目标</h3><span id="fitnessLevel">等级 1</span></div>
+    </details>
+    <details class="fitness-details" id="fitnessGoalSection"><summary><span>今日目标</span><span id="fitnessGoalSummary">完成 0%</span></summary><p id="fitnessLevel" class="muted">等级 1</p>
       <p id="fitnessToday"></p><progress id="fitnessProgress" max="1" value="0" aria-label="每日目标进度"></progress><p id="fitnessCheckins" class="muted"></p>
-    </div>
-    <details class="fitness-card fitness-details" id="fitnessHistorySection"><summary><span>最近运动</span><span>最近12次</span></summary><div id="fitnessHistory" class="fitness-history">还没有运动记录</div></details>
-    <details class="fitness-card fitness-details"><summary><span>手环心率</span><span id="fitnessHeartStatus">未收到心率</span></summary>
+    </details>
+    <details class="fitness-details" id="fitnessHistorySection"><summary><span>最近运动</span><span>最近12次</span></summary><div id="fitnessHistory" class="fitness-history">还没有运动记录</div></details>
+    </div></section>
+    <section class="group fitness-section"><h2 class="group-title">身体与设备</h2><div class="fitness-card fitness-list">
+    <details class="fitness-details" id="fitnessHeartSection"><summary><span>手环心率</span><span id="fitnessHeartStatus">未收到心率</span></summary>
       <div class="fitness-metrics"><div><strong id="fitnessHeartNow">—</strong><span>当前 · 次/分</span></div><div><strong id="fitnessHeartAvg">—</strong><span>本次平均 · 次/分</span></div><div><strong id="fitnessHeartMax">—</strong><span>本次最高 · 次/分</span></div></div>
       <p class="muted">在手环上打开心率广播，再用电脑蓝牙连接，也可以通过手机读取。连接后可预览心率，开始控制后计入本次运动。</p>
       <div class="fitness-actions"><button class="btn" id="fitnessHeartConnect" type="button">连接手环</button><button class="btn" id="fitnessHeartDisconnect" type="button" hidden>断开</button><button class="btn" id="fitnessPhoneConnect" type="button">通过手机读取</button></div>
       <p id="fitnessHeartConnection" class="muted" role="status"></p>
     </details>
-    <details class="fitness-card fitness-details"><summary><span>身体数据与目标</span><span>体重、每日目标</span></summary>
+    <details class="fitness-details" id="fitnessProfileSection"><summary><span>身体数据与目标</span><span>体重、每日目标</span></summary>
       <form id="fitnessProfile"><div class="fitness-fields">
         <div class="row"><label class="row-main" for="fitnessWeight"><span class="name">体重</span><span class="sub">用于估算活动热量，单位千克</span></label><input id="fitnessWeight" name="weight_kg" type="number" min="20" max="300" step="0.1" required></div>
         <div class="row"><label class="row-main" for="fitnessAge"><span class="name">年龄</span><span class="sub">可选，结合心率估算热量</span></label><input id="fitnessAge" name="age" type="number" min="10" max="100" step="1" placeholder="不填"></div>
@@ -33,10 +36,12 @@ if(pane){
       </div><div class="fitness-actions"><button class="btn" type="submit">保存身体数据与目标</button></div></form>
       <p class="muted">默认体重为70千克，请按实际体重修改。年龄、性别可以不填，读到手环心率时用来估热量。达到主目标自动打卡；已完成的打卡会保留。</p>
     </details>
-    <div class="fitness-card"><div class="fitness-heading"><h3>云端同步</h3><span id="fitnessCloudState"></span></div>
+    </div></section>
+    <section class="group fitness-section"><h2 class="group-title">数据同步</h2><div class="fitness-card fitness-list">
+    <details class="fitness-details" id="fitnessCloudSection"><summary><span>云端同步</span><span id="fitnessCloudState"></span></summary>
       <p id="fitnessCloudText" class="muted"></p>
       <div class="fitness-actions"><button class="btn" id="fitnessCloudLogin">登录账号</button><button class="btn" id="fitnessCloudCancel" hidden>取消</button><button class="btn" id="fitnessCloudLogout" hidden>退出登录</button></div>
-    </div>`;
+    </details></div></section>`;
   const el=id=>document.getElementById(id),form=el('fitnessProfile');
   let state={},editing=false,busy=false,lastHistory='',lastHistoryAt=0;
   const heart=new ComputerHeartRate(renderHeartConnection);
@@ -56,17 +61,20 @@ if(pane){
     if(state.session_id!==data.session_id||state.status!==data.status)lastHistoryAt=0;
     state=data;
     const running=data.status==='active',paused=data.status==='paused';
-    setText(el('fitnessStatus'),running?'记录中':paused?'已暂停':data.status==='finished'?(data.session_counted?'已保存':'不足 3 分钟，未计入'):'未开始');
+    const status=running?'记录中':paused?'已暂停':data.status==='finished'?(data.session_counted?'已保存':'不足 3 分钟，未计入'):'未开始';
+    const sessionSummary=number(data.active_seconds)>0||number(data.steps)>0?` · ${minutes(data.active_seconds)} 分钟 · ${number(data.steps).toLocaleString()} 步`:'';
+    setText(el('fitnessStatus'),status+sessionSummary);
     setText(el('fitnessMinutes'),minutes(data.active_seconds));setText(el('fitnessSteps'),number(data.steps).toLocaleString());setText(el('fitnessKcal'),number(data.estimated_kcal).toFixed(1));
     const profile=data.profile||{},today=data.today||{},goal=profile.primary_goal||'minutes';
     const actual=goal==='steps'?number(today.steps):goal==='kcal'?number(today.estimated_kcal):number(today.active_seconds)/60;
     const target=number(profile[{minutes:'goal_active_minutes',steps:'goal_steps',kcal:'goal_kcal'}[goal]])||1;
     el('fitnessProgress').value=Math.min(1,actual/target);
+    setText(el('fitnessGoalSummary'),`完成 ${Math.min(100,Math.floor(actual/target*100))}% · 连续 ${number(data.streak)} 天`);
     setText(el('fitnessToday'),`今天活动 ${minutes(today.active_seconds)} 分钟 · ${number(today.steps)} 步 · 估算 ${number(today.estimated_kcal).toFixed(1)} 千卡`);
     setText(el('fitnessLevel'),`等级 ${number(data.level)||1} · ${number(data.experience)} 经验`);
     setText(el('fitnessCheckins'),`目标进度 ${Math.min(100,Math.floor(actual/target*100))}% · 连续打卡 ${number(data.streak)} 天 · 累计 ${(data.checkins||[]).length} 天`);
     const bpm=data.heart_rate,hasHeart=Number.isFinite(bpm)&&bpm>0;
-    setText(el('fitnessHeartStatus'),hasHeart?`正在接收 · ${data.heart_rate_source==='computer'?'电脑蓝牙':'手机'}`:'未收到心率');
+    setText(el('fitnessHeartStatus'),hasHeart?`${Math.round(bpm)} 次/分`:'未收到心率');
     for(const [id,value]of [['fitnessHeartNow',bpm],['fitnessHeartAvg',data.hr_avg],['fitnessHeartMax',data.hr_max]])
       setText(el(id),Number.isFinite(value)&&value>0?Math.round(value):'—');
     renderHeartConnection();

@@ -354,8 +354,10 @@ export function renderKernelState(runtime,force=false){
   kernelState=runtime?.kernel||runtime||{};sourceMode=runtime?.body_mode||sourceMode;const k=kernelState;
   const camera=runtime?.camera||{running:cameraRunning};
   cameraRunning=!!camera.running;if(runtime?.camera){cameraInfo=runtime.camera;renderCameraDepth(camera)}
-  const cameraName=$('#cameraDevice')?.selectedOptions?.[0]?.textContent||'电脑摄像头';
-  renderPeripheralState('camera',sourceMode==='phone'?'正在使用手机摄像头':`${cameraName} · ${cameraRunning?'采集中':'未开始采集'}`);
+  const cameraName=camera.camera_name||$('#cameraDevice')?.selectedOptions?.[0]?.textContent||'电脑摄像头';
+  const cameraState=!cameraRunning?(camera.last_error?'连接异常':'未开始采集'):camera.picture_black?'画面全黑':camera.last_frame_age_ms>2000||camera.captured_frames===0?'等待画面':'采集中';
+  const fps=cameraState==='采集中'&&Number.isFinite(camera.actual_capture_fps)&&camera.actual_capture_fps>0?` · ${camera.actual_capture_fps.toFixed(1)} 帧/秒`:'';
+  renderPeripheralState('camera',sourceMode==='phone'?'正在使用手机摄像头':`${cameraName} · ${cameraState}${fps}`);
   renderCurrentMode(k.game_mode);
   syncGameProfile(runtime?.profile_sync);
   currentPoseMap=sourceHasFreshFrame()&&(k.pose_age_ms==null||Number(k.pose_age_ms)<3000)?k.pose||null:null;

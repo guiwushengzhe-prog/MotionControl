@@ -9,6 +9,7 @@ def devices_page(desktop):
     page = desktop.page
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="devices"]')
+    page.locator('#cameraSettings > summary').click()
     page.evaluate("""async()=>{
       const d=await import('/js/devices.js');
       d.renderCameraDevices([{index:0},{index:1}],0,{camera_device:'0'});
@@ -91,6 +92,7 @@ def test_first_control_click_connects_and_enables_and_source_choice_applies(desk
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="devices"]')
     with page.expect_response(lambda r: "/api/input/source" in r.url and r.request.method == "POST"):
+        page.locator('#cameraSettings > summary').click()
         page.select_option("#poseSource", "phone")
     page.wait_for_function("!poseSource.disabled")
     assert api.runtime["body_mode"] == "phone"
