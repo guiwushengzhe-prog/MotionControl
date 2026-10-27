@@ -1,5 +1,5 @@
 import {recognitionModelName,renderRecognitionPerformance,renderPhoneModelState} from './recognition-models.js';
-// 设置 → 设备：摄像头、手机、麦克风；体感里的游戏输出复用这里的接口。
+// 设置 → 设备与外设：摄像头、手机、麦克风；体感里的游戏输出复用这里的接口。
 import {$,api,formatPerf,notice,post,setProperty} from './core.js';
 import {EDGES,voiceLatchText} from './labels.js';
 import {cameraInfo,cameraRunning,kernelState,recognitionState,renderKernelState,renderMainStatus,setPreviewMirror,sourceHasFreshFrame,sourceWaitingForFirstFrame,sourceMode,zoneEditMode} from './play.js';

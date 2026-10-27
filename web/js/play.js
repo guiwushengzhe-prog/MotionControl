@@ -226,8 +226,8 @@ function renderViewerMessage(){
     :phase==='starting'?['正在准备识别','相机启动可能需要几十秒，请稍候']
     :phase==='stopped'?['识别已停止','点下方「开始识别」继续']
     :sourceWaitingForFirstFrame()?['正在等待摄像头画面','首次启动需要稍候；点下方「释放设备」可取消']
-    :sourceMode==='computer'&&cameraRunning&&cameraInfo?.picture_black?['摄像头画面全黑',cameraInfo.camera_virtual?'请启动虚拟摄像头的画面来源，或换一个摄像头':'请检查镜头遮挡，或在「设置 → 设备」更换摄像头']
-    :!live?[sourceMode==='phone'?'等手机连上':cameraRunning?'摄像头没有新画面':error?'摄像头启动失败':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':`${error?error+'。':''}点下方「${cameraRunning||error?'重试识别':'开始识别'}」；更换摄像头在「设置 → 设备」`]
+    :sourceMode==='computer'&&cameraRunning&&cameraInfo?.picture_black?['摄像头画面全黑',cameraInfo.camera_virtual?'请启动虚拟摄像头的画面来源，或换一个摄像头':'请检查镜头遮挡，或在「设置 → 设备与外设」更换摄像头']
+    :!live?[sourceMode==='phone'?'等手机连上':cameraRunning?'摄像头没有新画面':error?'摄像头启动失败':'摄像头没连',sourceMode==='phone'?'在手机上打开 MotionControl，点「连接并开始」':`${error?error+'。':''}点下方「${cameraRunning||error?'重试识别':'开始识别'}」；更换摄像头在「设置 → 设备与外设」`]
     :!currentPoseMap?['站到镜头前','头和双肩入镜就能开始']:['',''];
   setProperty(hint,'hidden',!title);
   // 状态提示出现就让实时框让开；完整参考编辑位于另一层，不受影响。
