@@ -15,6 +15,12 @@ EVENT = "a38b0006-62da-4c13-9f07-908d8b921571"
 CONFIG = "a38b0007-62da-4c13-9f07-908d8b921571"
 DEFAULTS = {"enabled": False, "address": "", "strength_mg": 1800, "cooldown_ms": 500}
 PACKET = struct.Struct("<BBHIIIHH")
+PORTAL_ORIGIN = "https://guiwu-aware.icu"
+PORTAL_ROUTES = frozenset({"/api/gunmouse/status", "/api/gunmouse/config", "/api/gunmouse/devices"})
+
+
+def request_origin_allowed(origin, port):
+    return origin is None or origin in {PORTAL_ORIGIN, f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
 
 
 def normalize_config(raw):

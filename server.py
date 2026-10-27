@@ -57,7 +57,7 @@ from motioncontrol.key_macros import MacroError, MacroStore
 from motioncontrol.pose_downloads import PoseActionStore, PoseDownloadError
 from motioncontrol.pose_capture import DEFAULT_POSE_DELAY_S, PoseCaptureTimer
 from motioncontrol.control_kernel import CameraUnavailable, ControlKernel, LocalControlRuntime, NativeCameraService, RUNTIME_BODY_ZONES
-from motioncontrol.gunmouse import GunMouseBridge
+from motioncontrol.gunmouse import GunMouseBridge, PORTAL_ORIGIN, PORTAL_ROUTES, request_origin_allowed
 from motioncontrol.input_bridge import InputBridge
 from motioncontrol.fitness import FitnessStore
 from motioncontrol.cloud_account import CloudAccount, CloudAccountError
@@ -1824,6 +1824,11 @@ class _BaseHandler(SimpleHTTPRequestHandler):
             return None
 
     def end_headers(self):
+        if (urlparse(self.path).path in PORTAL_ROUTES and self._is_loopback()
+                and self.headers.get("Origin") == PORTAL_ORIGIN):
+            self.send_header("Access-Control-Allow-Origin", PORTAL_ORIGIN)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
         if urlparse(self.path).path == "/api/models" or urlparse(self.path).path.startswith("/api/model/"):
             self.send_header("Access-Control-Allow-Origin", "*")
         # Assets under WEB_DIR are served by the base handler, which sends only
@@ -1914,6 +1919,25 @@ class AdminHandler(_BaseHandler):
     as defence in depth -- the listening address is the first boundary, this
     class is the second, and those checks are the third.
     """
+
+    def do_OPTIONS(self):
+        route = urlparse(self.path).path
+        method = "POST" if route == "/api/gunmouse/config" else "GET"
+        headers = {value.strip().lower() for value in self.headers.get("Access-Control-Request-Headers", "").split(",") if value.strip()}
+        if (route not in PORTAL_ROUTES or not self._is_loopback()
+                or self.headers.get("Origin") != PORTAL_ORIGIN
+                or self.headers.get("Access-Control-Request-Method") != method
+                or headers - {"content-type"}):
+            self._send_json({"ok": False, "error": "此页面不能访问本机飞鼠设置"}, 403)
+            return
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.send_header("Access-Control-Allow-Methods", method)
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def _gunmouse_request_allowed(self):
+        return self._is_loopback() and request_origin_allowed(self.headers.get("Origin"), self.server.server_port)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -2064,8 +2088,17 @@ class AdminHandler(_BaseHandler):
         if route == "/api/audio/devices":
             self._send_json({"version": VERSION, "ok": True, **_list_audio_devices()})
             return
+        if route == "/api/gunmouse/status":
+            if not self._gunmouse_request_allowed():
+                self._send_json({"ok": False, "error": "此页面不能读取本机飞鼠设置"}, 403)
+                return
+            with PROFILE_UPDATE_LOCK:
+                payload = {"ok": True, "gunmouse": GUNMOUSE.status(), "config_revision": CONFIG_REVISION,
+                           "settings_persistence": KERNEL.settings_persistence_status()}
+            self._send_json(payload)
+            return
         if route == "/api/gunmouse/devices":
-            if not self._is_loopback():
+            if not self._gunmouse_request_allowed():
                 self._send_json({"ok": False, "error": "只能在这台电脑选择飞鼠"}, 403)
                 return
             try:
@@ -3269,14 +3302,18 @@ class AdminHandler(_BaseHandler):
                 self._send_json({"ok": False, "error": str(exc)}, 400)
             return
         if route == "/api/gunmouse/config":
-            if not self._is_loopback():
+            if not self._gunmouse_request_allowed():
                 self._send_json({"ok": False, "error": "只能在这台电脑设置飞鼠"}, 403)
                 return
             try:
                 with PROFILE_UPDATE_LOCK:
                     GUNMOUSE.configure(body)
                     CONFIG_REVISION += 1
-                    payload = {"ok": True, **runtime_status()}
+                    if self.headers.get("Origin") == PORTAL_ORIGIN:
+                        payload = {"ok": True, "gunmouse": GUNMOUSE.status(), "config_revision": CONFIG_REVISION,
+                                   "settings_persistence": KERNEL.settings_persistence_status()}
+                    else:
+                        payload = {"ok": True, **runtime_status()}
                 self._send_json(payload)
             except (ValueError, TypeError) as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 400)
