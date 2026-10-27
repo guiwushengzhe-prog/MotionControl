@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import re
 import secrets
 import struct
@@ -17,6 +18,11 @@ DEFAULTS = {"enabled": False, "address": "", "strength_mg": 1800, "cooldown_ms":
 PACKET = struct.Struct("<BBHIIIHH")
 PORTAL_ORIGIN = "https://guiwu-aware.icu"
 PORTAL_ROUTES = frozenset({"/api/gunmouse/status", "/api/gunmouse/config", "/api/gunmouse/devices"})
+logger = logging.getLogger(__name__)
+
+
+class IncompleteServices(ConnectionError):
+    """Windows 本次交给应用的接口表不完整，需要换方式重新发现。"""
 
 
 def request_origin_allowed(origin, port):
@@ -92,6 +98,8 @@ class GunMouseBridge:
         self._connected = False
         self._received = self._executed = self._dropped = 0
         self._last_strength = 0
+        self._last_packet_at = None
+        self._session_event = None
         try:
             self._config = normalize_config(kernel.general_setting("gunmouse", {}))
         except ValueError as exc:
@@ -103,7 +111,9 @@ class GunMouseBridge:
             return {"config": dict(self._config), "state": self._state,
                     "connected": self._connected, "error": self._error,
                     "received": self._received, "executed": self._executed,
-                    "dropped": self._dropped, "last_strength_mg": self._last_strength}
+                    "dropped": self._dropped, "last_strength_mg": self._last_strength,
+                    "heartbeat_age_ms": round((time.monotonic() - self._last_packet_at) * 1000)
+                    if self._connected and self._last_packet_at is not None else None}
 
     def configure(self, updates):
         if not isinstance(updates, dict):
@@ -115,10 +125,16 @@ class GunMouseBridge:
         # 与其它实时偏好一致：先应用，保存失败由统一提示/限次补存处理。
         with self._lock:
             config = normalize_config({**self._config, **updates})
+            if config["address"] != self._config["address"]:
+                self._connected = False
             self._config = config
             self._revision += 1
             self._error = ""
-            self._state = "applying" if config["enabled"] and self._connected else self._state
+            if not config["enabled"] or not config["address"]:
+                self._connected = False
+                self._state = "off" if not config["enabled"] else "select_device"
+            else:
+                self._state = "applying" if self._connected else "connecting"
         self.kernel.release_gunmouse_punch()
         self.kernel.remember_general_setting("gunmouse", copy.deepcopy(config))
         self.start()
@@ -140,6 +156,7 @@ class GunMouseBridge:
         asyncio.run(self._worker())
 
     async def _worker(self):
+        use_cached_services = False
         while not self._stop.is_set():
             with self._lock:
                 config, revision = dict(self._config), self._revision
@@ -149,27 +166,38 @@ class GunMouseBridge:
                 await asyncio.sleep(.25)
                 continue
             try:
-                await self._session(config, revision)
+                await self._session(config, revision, use_cached_services=use_cached_services)
+                use_cached_services = False
             except ImportError:
                 with self._lock:
                     self._state, self._error = "unavailable", "未安装飞鼠蓝牙组件，请修复运行环境"
             except TimeoutError:
                 with self._lock:
-                    self._state, self._error = "disconnected", "飞鼠连接或心跳超时，请确认设备已开机并在电脑附近"
-            except Exception as exc:
+                    self._state, self._error = "disconnected", "飞鼠连接或心跳超时，正在自动重新连接；请确认设备已开机并在电脑附近"
+            except IncompleteServices as exc:
+                # 某些 Windows 会话本次直接发现不完整，但系统已保存的接口表可用。
+                # 断开本次管理会话后低频重试，不清除配对、不轮询惯性数据。
+                use_cached_services = not use_cached_services
                 with self._lock:
-                    self._state, self._error = "disconnected", f"飞鼠连接未完成：{exc}"
+                    self._state, self._error = "disconnected", str(exc)
+            except Exception as exc:
+                logger.warning("飞鼠蓝牙连接失败：%s", exc)
+                with self._lock:
+                    self._state, self._error = "disconnected", "飞鼠蓝牙连接未完成，正在自动重新连接；请保持设备开机"
             finally:
                 self.kernel.release_gunmouse_punch()
                 with self._lock:
                     self._connected = False
+                    self._last_packet_at = None
+                    if self._state in {"ready", "waiting", "calibrating", "applying"}:
+                        self._state, self._error = "disconnected", "飞鼠已断开，正在自动重新连接"
             # 断线低频重试，无扫描、无动作队列。
             for _ in range(20):
                 if self._stop.is_set() or revision != self._revision:
                     break
                 await asyncio.sleep(.25)
 
-    async def _session(self, config, revision):
+    async def _session(self, config, revision, *, use_cached_services=False):
         import json
         from bleak import BleakClient
         from bleak.backends.device import BLEDevice
@@ -177,18 +205,36 @@ class GunMouseBridge:
         gate = EventGate(epoch)
         gone = asyncio.Event()
         loop = asyncio.get_running_loop()
+        def disconnected(_):
+            def mark():
+                gone.set()
+                with self._lock:
+                    if self._session_event is not gone:
+                        return
+                    self._connected, self._last_packet_at = False, None
+                    if revision == self._revision and not self._stop.is_set():
+                        self._state, self._error = "disconnected", "飞鼠已断开，正在自动重新连接"
+                    self.kernel.release_gunmouse_punch()
+            loop.call_soon_threadsafe(mark)
         device = BLEDevice(config["address"], "GunMouse SuperMini", None)
         with self._lock:
-            self._state = "connecting"
+            self._state, self._error = "connecting", ""
+            self._last_packet_at = None
+            self._session_event = gone
         async with BleakClient(device, pair=True, timeout=20,
-                               disconnected_callback=lambda _: loop.call_soon_threadsafe(gone.set),
-                               winrt={"use_cached_services": False}) as client:
+                               disconnected_callback=disconnected,
+                               winrt={"use_cached_services": use_cached_services}) as client:
             if self._stop.is_set() or revision != self._revision:
                 return
+            if not client.services.get_characteristic(STATUS):
+                raise IncompleteServices("飞鼠蓝牙接口尚未完整就绪，正在自动重新连接；请保持设备开机")
             identity = json.loads(bytes(await client.read_gatt_char(STATUS)))
             if identity.get("project") != "gunmouse":
                 raise ValueError("设备身份不匹配")
             if not client.services.get_characteristic(EVENT) or not client.services.get_characteristic(CONFIG):
+                build = re.search(r"\b(\d+)\.(\d+)\.(\d+)", str(identity.get("diag", {}).get("build", "")))
+                if use_cached_services or build is None or tuple(map(int, build.groups())) >= (3, 3, 0):
+                    raise IncompleteServices("飞鼠甩拳接口尚未完整就绪，正在自动重新连接；请保持设备开机")
                 with self._lock:
                     self._state, self._error = "firmware_required", "当前固件尚无甩拳接口，需更新到3.3版；原鼠标仍可使用"
                 while not self._stop.is_set() and revision == self._revision and not gone.is_set():
@@ -198,12 +244,14 @@ class GunMouseBridge:
             def notified(_, data):
                 now = time.monotonic()
                 with self._lock:
-                    if self._stop.is_set() or revision != self._revision or gone.is_set():
+                    if (self._stop.is_set() or revision != self._revision or gone.is_set()
+                            or self._session_event is not gone):
                         return
                     packet = gate.accept(data, now)
                     if packet is None:
                         self._dropped += 1
                         return
+                    self._last_packet_at = now
                     self._state = "ready" if packet["ready"] else "calibrating"
                     if not packet["ready"]:
                         self.kernel.release_gunmouse_punch()
@@ -219,7 +267,10 @@ class GunMouseBridge:
             if bytes(await client.read_gatt_char(CONFIG)) != command:
                 raise ValueError("飞鼠未确认本次参数")
             with self._lock:
-                self._connected, self._error, self._state = True, "", "waiting"
+                if revision == self._revision and not gone.is_set():
+                    self._connected, self._error = True, ""
+                    if gate.seen_at is None:
+                        self._state = "waiting"
             started = renewed = time.monotonic()
             try:
                 while not self._stop.is_set() and not gone.is_set():
@@ -247,7 +298,7 @@ class GunMouseBridge:
             finally:
                 # 不依赖设备接受停用，电脑端先释放；断线后不尝试写入。
                 self.kernel.release_gunmouse_punch()
-                if client.is_connected:
+                if client.is_connected and not gone.is_set():
                     await client.write_gatt_char(CONFIG, bytes([1, 0]) + command[2:], response=True)
                     await client.stop_notify(EVENT)
 

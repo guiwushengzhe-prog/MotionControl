@@ -157,7 +157,9 @@ def test_notification_session_is_event_driven_and_always_releases(monkeypatch, h
         is_connected = True
         services = SimpleNamespace(get_characteristic=lambda _: object())
         reads = 0
-        def __init__(self, *args, **kwargs): operations.append(('open',))
+        def __init__(self, *args, **kwargs):
+            assert kwargs['winrt']['use_cached_services'] is False
+            operations.append(('open',))
         async def __aenter__(self): return self
         async def __aexit__(self, *args): self.is_connected = False
         async def read_gatt_char(self, char):
@@ -192,6 +194,69 @@ def test_notification_session_is_event_driven_and_always_releases(monkeypatch, h
         assert sum(op[0] == 'open' for op in operations) == 1
         assert operations[-2][2][1] == 0
         assert operations[-1] == ('unsubscribe', EVENT)
+    finally:
+        bridge.close()
+        kernel.close()
+
+
+@pytest.mark.parametrize('missing', ['status', 'event', 'config', 'disconnect'])
+def test_partial_windows_discovery_retries_and_disconnect_never_stays_ready(monkeypatch, missing):
+    from motioncontrol.gunmouse import CONFIG, EVENT, STATUS
+    kernel = ControlKernel(Output(), persist=False)
+    bridge = GunMouseBridge(kernel)
+    config = normalize_config({'enabled': True, 'address': '12:34:56:78:90:AB'})
+    bridge._config = config
+    connections, reads = [], []
+    class Client:
+        is_connected = True
+        def __init__(self, *args, **kwargs):
+            self.number = len(connections)
+            assert kwargs['winrt']['use_cached_services'] == (self.number == 1 and missing != 'disconnect')
+            connections.append(self)
+            self.disconnected = kwargs['disconnected_callback']
+            absent = {'status': STATUS, 'event': EVENT, 'config': CONFIG}.get(missing)
+            self.services = SimpleNamespace(get_characteristic=lambda char: None
+                if self.number == 0 and char == absent else object())
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): self.is_connected = False
+        async def read_gatt_char(self, char):
+            reads.append((self.number, char))
+            if char == STATUS:
+                return json.dumps({'project': 'gunmouse', 'diag': {'build': '3.3.0'}}).encode()
+            epoch = int.from_bytes(self.command[6:], 'little')
+            self.callback(None, packet(epoch=epoch))
+            if self.number == 0 and missing == 'disconnect':
+                self.disconnected(self)
+            else:
+                bridge._stop.set()
+            return self.command
+        async def write_gatt_char(self, char, data, response): self.command = bytes(data)
+        async def start_notify(self, char, callback): self.callback = callback
+        async def stop_notify(self, char): pass
+    sleep = asyncio.sleep
+    observed = []
+    async def quick_sleep(delay):
+        if delay == .25:
+            observed.append(bridge.status())
+            assert not observed[-1]['connected']
+            assert observed[-1]['state'] == 'disconnected'
+            assert '重新连接' in observed[-1]['error']
+        await sleep(0)
+    monkeypatch.setattr(asyncio, 'sleep', quick_sleep)
+    monkeypatch.setitem(sys.modules, 'bleak', SimpleNamespace(BleakClient=Client))
+    monkeypatch.setitem(sys.modules, 'bleak.backends', SimpleNamespace())
+    monkeypatch.setitem(sys.modules, 'bleak.backends.device', SimpleNamespace(BLEDevice=lambda *a: object()))
+    try:
+        asyncio.run(bridge._worker())
+        assert len(connections) == 2
+        assert observed
+        if missing == 'status':
+            assert (0, STATUS) not in reads  # 缺失接口时不再调用导致截图异常的读取。
+        assert (1, CONFIG) in reads
+        assert not bridge.status()['connected']
+        assert bridge.status()['state'] != 'ready'
+        assert bridge.status()['heartbeat_age_ms'] is None
+        assert kernel.output.executed == []
     finally:
         bridge.close()
         kernel.close()
