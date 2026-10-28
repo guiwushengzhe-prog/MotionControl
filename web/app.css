@@ -725,8 +725,12 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .btn.pose-add { min-height: 1.875rem; padding: 0 .625rem; font-size: .7812rem; }
 
 /* --- 设置：左边分类，右边一组一组的列表 --------------------------------------- */
-.page.settings { grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.75rem; align-items: start; }
-.settings-nav { position: sticky; top: 5rem; display: grid; gap: .25rem; padding: .5rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--card) 55%, var(--bg)); }
+body:has(#devicesPanel:not([hidden])) { --settings-page-gutter:clamp(1rem,2.5vw,4rem); }
+main:has(> #devicesPanel:not([hidden])) { max-width:none; padding-inline:var(--settings-page-gutter); }
+.wrap:has(#devicesPanel:not([hidden])) > .command-dock { padding-inline:var(--settings-page-gutter); }
+.wrap:has(#devicesPanel:not([hidden])) > :is(#serviceStatus,#settingsSaveWarning) { max-width:none; width:calc(100% - 2 * var(--settings-page-gutter)); }
+.page.settings { max-width:none; margin-inline:0; grid-template-columns:12.5rem minmax(0,1fr); gap:1.75rem; align-items:start; }
+.settings-nav { position:sticky; top:5rem; display:grid; gap:.25rem; padding:.5rem; border:0; border-radius:0; background:transparent; box-shadow:none; }
 .settings-nav-heading { padding: .625rem .625rem .875rem; font-size: 1.125rem; font-weight: 650; }
 .settings-nav button { display: flex; align-items: center; gap: .625rem; min-height: 2.25rem; padding: 0 .625rem; border: 0; border-radius: .5rem;
   background: transparent; color: var(--text); font-size: .875rem; text-align: left; white-space: nowrap; }
