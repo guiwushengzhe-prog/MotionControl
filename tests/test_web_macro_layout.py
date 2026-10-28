@@ -13,11 +13,14 @@ def test_macro_heading_description_and_create_field_do_not_overlap(desktop, widt
     page.click('#settingsNav [data-pane="voice"]')
     boxes = page.evaluate("""size=>{
       document.documentElement.style.fontSize=size+'px';
-      const box=selector=>{const r=document.querySelector(selector).getBoundingClientRect();return {top:r.top,bottom:r.bottom}};
-      return {title:box('#macroPanel>.group-title'),description:box('#macroPanel>.pane-sub'),form:box('#macroPanel>.inline-form')};
+      const box=selector=>{const r=document.querySelector(selector).getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right}};
+      return {title:box('#macroPanel>.group-title'),description:box('.macro-create-row .sub'),form:box('.macro-create-row>.inline-form')};
     }""", font_size)
     assert boxes["title"]["bottom"] <= boxes["description"]["top"]
-    assert boxes["description"]["bottom"] <= boxes["form"]["top"]
+    assert boxes["title"]["bottom"] <= boxes["form"]["top"]
+    assert (boxes["description"]["bottom"] <= boxes["form"]["top"]
+            or boxes["description"]["right"] <= boxes["form"]["left"])
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 
 
 def test_ime_enter_does_not_create_macro(desktop):

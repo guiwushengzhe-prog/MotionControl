@@ -433,31 +433,26 @@
 <h1 class="pane-title">语音和宏</h1>
 <div id="personalVoicePanel" class="voice-settings">
 <h2 class="group-title">语音口令</h2>
-<div class="group">
-<div class="list">
+<div class="list commands-settings-card">
 <div class="row voice-wake-row"><label class="row-main" for="wakeWord"><span class="name">唤醒词 <small class="row-value">可选</small></span><span class="sub" id="voiceWakeDescription">留空直接说通用口令和系统口令，例如「地图」「紧急停止」</span><span class="sub" id="voiceSystemWakeDescription">本游戏口令始终直接说，不受唤醒词影响。</span></label><input class="field voice-wake-field" id="wakeWord" maxlength="12" placeholder="不需要就留空" aria-describedby="voiceWakeDescription voiceSystemWakeDescription" title="最多 12 个字。只属于你，不分享，换游戏不会改变" type="text"/></div>
-</div>
 <p class="group-foot" id="personalVoiceStatus" role="status"></p>
-</div>
-<div class="group voice-shared-group">
-<div class="voice-section-heading"><div><h2 class="group-title">通用口令</h2><p class="sub">所有游戏共用</p></div><button class="btn link" id="addVoiceBtn" type="button">＋ 添加口令</button></div>
+<div class="row voice-built-in-row"><div class="row-main"><span class="name"><span class="voice-prefix" data-scope="builtin" hidden></span>紧急停止</span><span class="sub" id="voiceEmergencyDescription">说「紧急停止」会停止所有输出，并松开按键</span></div><span class="tag plain" title="程序自带，可直接使用，不能修改或删除">内置</span></div>
+<div class="row voice-section-heading"><div class="row-main"><h3 class="name">通用口令</h3><p class="sub">所有游戏共用</p></div><button class="btn link" id="addVoiceBtn" type="button">＋ 添加口令</button></div>
 <p class="group-foot warn" hidden="" id="voiceConflicts"></p>
 <p class="group-foot warn" hidden="" id="voiceUnheard"></p>
-<div class="list">
-<div class="row voice-built-in-row"><div class="row-main"><span class="name"><span class="voice-prefix" data-scope="builtin" hidden></span>紧急停止</span><span class="sub" id="voiceEmergencyDescription">说「紧急停止」会停止所有输出，并松开按键</span></div><span class="tag plain" title="程序自带，可直接使用，不能修改或删除">内置</span></div>
-</div>
-<div class="list voice-editor" id="voiceRows"></div>
+<div class="voice-editor" id="voiceRows"></div>
 <div class="group-actions"><span class="statusline" id="voiceSaveStatus" role="status"></span><button class="btn link" hidden="" id="retryVoiceBtn">重试保存</button></div>
 </div>
 </div>
 
 <div id="macroPanel">
 <h2 class="group-title">宏 · 连续操作</h2>
-<p class="pane-sub">一串按键存成一条，所有游戏的按键映射里都能选它。</p>
-<div class="inline-form"><input class="field" id="macroName" maxlength="20" placeholder="给这条宏起个名字" type="text"/><button class="btn primary" id="macroAddBtn">新建宏</button></div>
+<div class="list commands-settings-card">
+<div class="row macro-create-row"><div class="row-main"><label class="name" for="macroName">新建宏</label><p class="sub">一串按键存成一条，所有游戏的按键映射里都能选它。</p></div><div class="inline-form"><input class="field" id="macroName" maxlength="20" placeholder="给这条宏起个名字" type="text"/><button class="btn primary" id="macroAddBtn">新建宏</button></div></div>
 <p class="statusline" id="macroStatus"></p>
 <div id="macroList"></div>
 <p class="fineprint" hidden="" id="macroHint">「按住」是这一步按多久，「然后等」是松开后等多久。最多 12 步、总长 10 秒。</p>
+</div>
 </div>
 </section>
 

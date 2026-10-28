@@ -834,18 +834,24 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .settings-pane .tag { color: var(--text-2); background: var(--fill); }
 #gamesPanel .library-sub .btn.link { color: var(--text-2); }
 .voice-prefix { margin-right: .25rem; color: var(--text-3); }
-.voice-settings { display:grid; gap:1.75rem; min-width:0; }
-.voice-settings > .group-title { margin-bottom:-1.25rem; }
-.voice-section-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:0 .25rem .5rem; }
-.voice-section-heading .group-title { padding:0; color:var(--text); font-size:.9375rem; }
-.voice-section-heading .sub { margin-top:.25rem; }
+.voice-settings, #macroPanel { display:grid; gap:1rem; min-width:0; }
+.voice-settings > .group-title, #macroPanel > .group-title { padding:0 .25rem; color:var(--text); font-size:1rem; font-weight:600; }
+#commandsPanel { gap:2rem; }
+#commandsPanel .commands-settings-card { padding:.375rem 0; }
+#commandsPanel .commands-settings-card > .row { min-height:6rem; padding:1.5rem 1.75rem; }
+#commandsPanel .commands-settings-card .name { margin:0; font-size:.9375rem; font-weight:500; }
+#commandsPanel .commands-settings-card .sub { font-size:.875rem; line-height:1.65; }
+#commandsPanel .commands-settings-card > :not([hidden]) ~ *::before { left:1.75rem; right:1.75rem; }
+#commandsPanel .commands-settings-card > p, #commandsPanel .commands-settings-card > .group-actions { margin:0; padding:.5rem 1.75rem 1rem; }
+#commandsPanel .commands-settings-card > :empty, #commandsPanel .commands-settings-card > .group-actions:not(:has(> :not([hidden]):not(:empty))) { display:none; }
+.voice-section-heading { justify-content:space-between; }
 .voice-section-heading .btn { flex-shrink:0; }
-.voice-shared-group { gap:.75rem; }
-.voice-wake-row { flex-wrap:wrap; gap:1rem 1.5rem; padding:1.25rem; }
+.voice-wake-row { flex-wrap:wrap; gap:1rem 1.5rem; }
 /* 宽度只靠 flex-basis 给：再写死 width 会把最小内容宽撑到 20rem，320px 窄屏横向溢出。 */
 .voice-wake-field { flex: 0 1 20rem; max-width: 100%; min-width: 0; }
 .voice-built-in-row .name, .voice-built-in-row .voice-prefix { color: var(--text); overflow-wrap: anywhere; }
-.voice-built-in-row { padding:1rem 1.25rem; }
+.macro-create-row > .inline-form { flex:0 1 var(--setting-control-width); min-width:0; margin:0; }
+.macro-create-row > .inline-form .field { width:100%; min-width:0; }
 
 /* 通用口令：一行一条。 */
 .home-fitness-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: .875rem 0; }
@@ -903,8 +909,8 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 @media (max-width: 1100px) { .studio-workspace { grid-template-columns: minmax(0, 1fr); } .studio-preview-column { max-width: 48rem; } }
 
 .voice-editor { container:voice-commands / inline-size; }
-.voice-row { position:relative; display:grid; grid-template-columns:minmax(0,1.2fr) 7.375rem minmax(0,1fr) 6.5rem auto; align-items:start; gap:.75rem; padding:1.125rem 1.25rem; }
-.voice-row + .voice-row::before { left:1.25rem; right:1.25rem; }
+.voice-row { position:relative; display:grid; grid-template-columns:minmax(0,1.2fr) 7.375rem minmax(0,1fr) 6.5rem auto; align-items:start; gap:.75rem; padding:1.25rem 1.75rem; }
+.voice-row + .voice-row { border-top:1px solid var(--line); }
 .voice-field { display:grid; gap:.4375rem; min-width:0; }
 .voice-field-label { color:var(--text-2); font-size:.75rem; }
 .voice-row input, .voice-row select { width: 100%; min-width: 0; }
@@ -922,13 +928,10 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .row.locked .name { color: var(--text-2); }
 
 /* 键盘宏：一条一个块。 */
-#macroList { display: grid; gap: .625rem; }
-#macroPanel { display: grid; gap: .625rem; min-width: 0; }
-#macroPanel > .group-title { padding: 0; }
-#macroPanel > .pane-sub { margin-top: 0; line-height: 1.5; }
-#commandsPanel #macroPanel { border-top: 1px solid var(--line); padding-top: 1.5rem; margin-top: 2rem; }
+#macroList { display:grid; gap:0; }
 #macroStatus { margin: 0; }
-.macro { padding: .75rem .875rem; border-radius: var(--radius-lg); background: var(--card); box-shadow: var(--shadow); }
+.macro { padding:1.5rem 1.75rem; min-width:0; }
+.macro + .macro { border-top:1px solid var(--line); }
 .macro-head { display: flex; flex-wrap: wrap; align-items: center; gap: .875rem; }
 .macro-name { flex: 0 0 10rem; font-weight: 600; }
 .macro-repeat { display: flex; align-items: center; gap: .375rem; font-size: .8125rem; white-space: nowrap; }
@@ -947,6 +950,7 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .macro-step-with { display: flex; align-items: center; gap: .3125rem; color: var(--text-3); font-size: .75rem; white-space: nowrap; }
 .macro-step.with-prev { margin-top: -4px; border-top-left-radius: 0; border-top-right-radius: 0; box-shadow: inset .1875rem 0 0 var(--accent); }
 .macro-tools { display: flex; gap: .5rem; }
+@media(max-width:720px){#commandsPanel .commands-settings-card>.row{padding:1.25rem}#commandsPanel .commands-settings-card>:not([hidden])~*::before{left:1.25rem;right:1.25rem}#commandsPanel .commands-settings-card>p,#commandsPanel .commands-settings-card>.group-actions{padding-inline:1.25rem}.voice-row,.macro{padding:1.25rem}.macro-create-row>.inline-form{flex:1 1 100%;width:100%}.macro-name{flex:1 1 100%;min-width:0}}
 
 .stereo-views { display: flex; flex-wrap: wrap; gap: .75rem; padding: .25rem 1rem .75rem; }
 .stereo-views figure { margin: 0; max-width: 100%; min-width: 0; }
