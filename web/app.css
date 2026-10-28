@@ -134,7 +134,7 @@ dialog.view-tuning{box-sizing:border-box;width:min(1200px,96vw);max-width:none;m
 [hidden] { display: none !important; }
 /* 所有尺寸都按 rem 写（细线除外）。大屏幕（2K、4K 最大化）把根字号调大，整页跟着等比放大，
    不会缩在中间一小块。 */
-html { font-size: 16px; scroll-padding-top: 5rem; background: var(--bg); }
+html { font-size: 16px; scroll-padding-top: 5rem; scrollbar-gutter: stable; background: var(--bg); }
 @media (min-width: 1700px) { html { font-size: 17px; } }
 @media (min-width: 2100px) { html { font-size: 18px; } }
 @media (min-width: 2500px) { html { font-size: 20px; } }
@@ -739,9 +739,8 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 /* --- 设置：左边分类，右边一组一组的列表 --------------------------------------- */
 body:has(#devicesPanel:not([hidden])) { --settings-page-gutter:clamp(1rem,2.5vw,4rem); }
 main:has(> #devicesPanel:not([hidden])) { max-width:none; padding-inline:var(--settings-page-gutter); }
-.wrap:has(#devicesPanel:not([hidden])) > .command-dock { padding-inline:var(--settings-page-gutter); }
 .wrap:has(#devicesPanel:not([hidden])) > :is(#serviceStatus,#settingsSaveWarning) { max-width:none; width:calc(100% - 2 * var(--settings-page-gutter)); }
-.page.settings { max-width:none; margin-inline:0; grid-template-columns:12.5rem minmax(0,1fr); gap:1.75rem; align-items:start; }
+.page.settings { max-width:none; margin-inline:0; padding-inline-start:1.25rem; grid-template-columns:12.5rem minmax(0,1fr); gap:1.75rem; align-items:start; }
 .settings-nav { position:sticky; top:5rem; display:grid; gap:.25rem; padding:.5rem; border:0; border-radius:0; background:transparent; box-shadow:none; }
 .settings-nav-heading { padding: .625rem .625rem .875rem; font-size: var(--type-section); font-weight: var(--weight-heading); }
 .settings-nav button { display: flex; align-items: center; gap: .625rem; min-height: 2.25rem; padding: 0 .625rem; border: 0; border-radius: .5rem;
@@ -1174,7 +1173,7 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
 @media (max-width: 960px) {
   .layout { grid-template-columns: 1fr; }
   .side { position: static; }
-  .page.settings { grid-template-columns: 1fr; gap: 1rem; }
+  .page.settings { grid-template-columns: 1fr; gap: 1rem; padding-inline-start:0; }
   .settings-nav { position: static; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; padding-bottom: .125rem; }
   .settings-nav-heading { display: none; }
   .binding-main { grid-template-columns: minmax(0, 1fr) 2.125rem; }
