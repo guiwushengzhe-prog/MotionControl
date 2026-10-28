@@ -128,6 +128,23 @@ def ready(page, base):
     page.wait_for_function("!document.getElementById('studioFace').disabled")
 
 
+@pytest.mark.parametrize("layout", ["landscape", "portrait"])
+def test_primary_settings_fit_first_screen_without_opening_capture(browser, studio_server, layout):
+    base, state = studio_server
+    state["config"]["layout"] = layout
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    ready(page, base)
+    for control in ("studioStartBtn", "studioCopyOverlayBtn", "studioLayout", "studioCapture",
+                    "studioSource", "studioFace", "studioBackground", "studioPosition",
+                    "studioSize", "studioSystemAudio", "studioMicrophone"):
+        assert page.locator("#" + control).evaluate("node=>{const r=node.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight}")
+    assert page.locator("#studioAppearanceSettings").get_attribute("open") is None
+    assert page.locator("#studioLiveSettings").get_attribute("open") is None
+    assert page.evaluate("document.documentElement.scrollWidth<=innerWidth+1")
+    assert not state["posts"]
+    page.close()
+
+
 def test_cancel_never_creates_recording(browser, studio_server):
     base, state = studio_server
     page = browser.new_page()

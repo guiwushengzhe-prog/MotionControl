@@ -101,7 +101,7 @@ async function togglePreview(){
   try{
     await saveTail;if(configSaveError)throw new Error('请先重新保存人物设置：'+configSaveError);await demand(!preview);preview=!preview;
     if(!preview)forgetFrame();
-    status(preview?'人物预览已开启；选择画面后才会录制':'人物预览已关闭');
+    status(preview?'人物预览中':'人物预览已关闭');
     if(preview)void getFrame();
   }catch(error){status(errorText(error))}
   finally{renderButtons()}
@@ -147,7 +147,7 @@ function renderTransformTools(){
   $('studioZoomIn').disabled=!loaded||starting||saving||!hasScreen||config.size>=65;
   $('studioZoomOut').disabled=!loaded||starting||saving||!hasScreen||config.size<=15;
   $('studioSize').disabled=!loaded||starting||saving||!hasScreen;
-  $('studioFrameHint').textContent=hasScreen?'＋／－调整人物框；框内放大后可拖动画面':'仅人物预览已使用完整画面；选择游戏画面后可调整人物框';
+  $('studioFrameHint').textContent=hasScreen?'＋／－调整人物框，放大后可拖动画面':'选择游戏画面后可调整人物框';
   $('studioFit').disabled=!loaded||starting||saving;
   $('studioFill').disabled=!geometry;
   $('studioCenter').disabled=!loaded||starting||saving||!(config.portrait_pan.x||config.portrait_pan.y);
@@ -231,7 +231,7 @@ async function selectScreenPreview(){
     await acquireScreen();
     await saveTail;if(configSaveError)throw new Error('请先重新保存人物设置：'+configSaveError);
     await demand(true);preview=true;void getFrame();
-    status('正在预览实际合成画面，尚未录制；可先裁切和调整人物位置');
+    status('合成预览中');
   }catch(error){if(screenStream!==previous)releaseRecordingSources();status(errorText(error))}
   finally{starting=false;renderButtons();renderAudioStatus()}
 }
@@ -359,7 +359,7 @@ async function choosePreset(name){
 async function refreshState(){
   try{
     liveState=await request('/api/studio/state');
-    if(!loaded){config={...defaults,...(liveState.config||{})};loaded=true;renderControls();status('未开启；不会自动录制')}
+    if(!loaded){config={...defaults,...(liveState.config||{})};loaded=true;renderControls();status('未开始录制')}
     else if(!frameBlocked&&config.mirror!==liveState.config?.mirror&&typeof liveState.config?.mirror==='boolean'){
       config.mirror=liveState.config.mirror;forgetFrame();
     }
@@ -378,7 +378,6 @@ async function mount(){
     if(!response.ok)throw new Error('录制页面未能加载');
     root.innerHTML=await response.text();
     const supported=screenCaptureSupported();$('studioBrowserHint').hidden=supported;
-    $('studioBrowserAltBtn').hidden=location.pathname==='/studio.html';
     const overlayUrl=new URL('/studio-overlay.html',location.href).href;
     $('studioOverlayUrl').value=overlayUrl;$('studioOverlayLink').href=overlayUrl;
     $('studioPreviewBtn').addEventListener('click',()=>void togglePreview());
@@ -388,7 +387,10 @@ async function mount(){
     $('studioStopBtn').addEventListener('click',stopRecording);
     bindTransformTools();
     for(const [id,key] of Object.entries({studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size',studioZoom:'portrait_zoom'})){
-      $(id).addEventListener('change',event=>void persist({[key]:['size','portrait_zoom'].includes(key)?Number(event.target.value):event.target.value}).catch(()=>{}));
+      $(id).addEventListener('change',event=>{
+        if(id==='studioFace'&&event.target.value==='avatar')$('studioAppearanceSettings').open=true;
+        void persist({[key]:['size','portrait_zoom'].includes(key)?Number(event.target.value):event.target.value}).catch(()=>{});
+      });
     }
     $('studioSize').addEventListener('input',event=>{$('studioSizeValue').textContent=event.target.value+'%';config.size=Number(event.target.value);draw()});
     $('studioZoom').addEventListener('input',event=>{$('studioZoomValue').textContent=event.target.value+'%';config.portrait_zoom=Number(event.target.value);draw()});
@@ -397,7 +399,6 @@ async function mount(){
     for(const button of root.querySelectorAll('[data-avatar-preset]'))button.addEventListener('click',()=>void choosePreset(button.dataset.avatarPreset));
     cropEditor({source:kind=>kind==='screen'?(screenVideo?.readyState>=2?screenVideo:null):frame,config:()=>config,persist,status});
     $('studioOpenBrowserBtn').addEventListener('click',()=>void request('/api/studio/open-browser',{}).catch(error=>status(errorText(error))));
-    $('studioBrowserAltBtn').addEventListener('click',()=>void request('/api/studio/open-browser',{}).catch(error=>status(errorText(error))));
     $('studioOpenFolderBtn').addEventListener('click',()=>void request('/api/studio/recording/open-folder',{}).catch(error=>status(errorText(error))));
     $('studioCopyOverlayBtn').addEventListener('click',async()=>{
       try{await navigator.clipboard.writeText(overlayUrl);status('直播人物画面地址已复制')}

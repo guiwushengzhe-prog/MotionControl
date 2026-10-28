@@ -13,9 +13,12 @@ def test_model_names_match_choices_actual_status_and_diagnostics(ui):
         "model_preference": "auto", "actual_model": "full", "running": True,
         "auto_model_reason": "标准模型更适合当前摄像头帧率", "models": [
             {"id": "mp-full", "available": True}, {"id": "mp-heavy", "available": True}]}))
-    page.evaluate("import('/js/recognition-models.js').then(m=>m.refreshRecognitionModels())")
+    observed = page.evaluate("""async()=>{
+      await (await import('/js/recognition-models.js')).refreshRecognitionModels();
+      return document.getElementById('poseModelStatus').textContent;
+    }""")
     sync_api.expect(select).to_have_value("auto")
-    sync_api.expect(page.locator("#poseModelStatus")).to_have_text("当前：标准 · 标准模型更适合当前摄像头帧率")
+    assert observed == "当前：标准 · 标准模型更适合当前摄像头帧率"
     for preference, actual, running, expected in [
         ("auto", "heavy", True, "当前：高精度"),
         ("full", "full", True, "当前：标准"),

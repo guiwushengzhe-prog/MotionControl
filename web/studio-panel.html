@@ -1,9 +1,22 @@
-<p class="pane-sub">把游戏画面和体感摄像头一起保存，也可把处理后的人物叠到直播画面。</p>
+<div class="studio-toolbar">
+  <p class="statusline" id="studioStatus" role="status" aria-live="polite">未开始录制</p>
+  <div class="studio-actions">
+    <button class="btn" id="studioCopyOverlayBtn">复制直播地址</button>
+    <button class="btn" id="studioOpenFolderBtn">打开输出文件夹</button>
+    <button class="btn primary" id="studioStartBtn">选择画面并录制</button>
+    <button class="btn stop" id="studioStopBtn" hidden>停止并保存</button>
+  </div>
+</div>
+<p class="sub" id="studioSavedFile"></p>
+<div class="studio-browser-hint" id="studioBrowserHint" hidden>
+  <p>当前窗口无法选取屏幕，请在浏览器中录制。</p>
+  <button class="btn" id="studioOpenBrowserBtn">在浏览器中打开录制页</button>
+</div>
 <div class="studio-workspace">
   <div class="studio-preview-column">
     <div class="studio-preview" id="studioPreviewBox">
       <canvas id="studioCanvas" width="1280" height="720" aria-label="录制合成预览"></canvas>
-      <div class="studio-placeholder" id="studioPlaceholder">选择画面预览游戏与人物的合成效果；也可只开启人物预览</div>
+      <div class="studio-placeholder" id="studioPlaceholder">选择画面或开启人物预览</div>
       <span class="studio-recording-badge" id="studioRecordingBadge" hidden>● 录制中 <b id="studioElapsed">00:00</b></span>
       <span class="studio-view-label" id="studioViewLabel">合成预览</span>
     </div>
@@ -13,57 +26,49 @@
       <button class="btn" id="studioFit">完整显示</button>
       <button class="btn" id="studioFill" title="填满显示区域" aria-label="填满显示区域"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M9 9h6v6H9z"/></svg></button>
       <button class="btn" id="studioCenter" title="居中" aria-label="摄像头画面居中"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/><circle cx="12" cy="12" r="4"/></svg></button>
-      <span class="sub" id="studioFrameHint">＋／－调整人物框；框内放大后可拖动画面</span>
+      <button class="btn" id="studioCropBtn" disabled>裁切</button>
     </div>
     <div class="studio-actions">
       <button class="btn" id="studioPreviewBtn">开启人物预览</button>
       <button class="btn" id="studioScreenBtn">选择画面预览</button>
-      <button class="btn" id="studioCropBtn" disabled>裁切</button>
-      <button class="btn primary" id="studioStartBtn">选择画面并录制</button>
-      <button class="btn stop" id="studioStopBtn" hidden>停止并保存</button>
-      <button class="btn link" id="studioBrowserAltBtn">在浏览器中录制</button>
       <button class="btn link" id="studioReleaseScreenBtn" hidden>结束画面预览</button>
     </div>
-    <p class="statusline" id="studioStatus" role="status" aria-live="polite">未开启；不会自动录制</p>
+    <p class="sub" id="studioFrameHint"></p>
     <p class="sub" id="studioAudioStatus"></p>
     <p class="sub" id="studioPortraitStatus"></p>
-    <p class="sub" id="studioSavedFile"></p>
-    <div class="studio-browser-hint" id="studioBrowserHint" hidden>
-      <p>当前桌面窗口不支持选取屏幕。请在浏览器中打开这个录制页，体感控制仍由原程序运行。</p>
-      <button class="btn" id="studioOpenBrowserBtn">在浏览器中打开录制页</button>
-    </div>
   </div>
   <div class="studio-controls">
-    <div class="group"><h2 class="group-title">画面与人物</h2><div class="list">
+    <h2 class="group-title">常用设置</h2>
+    <div class="list">
       <div class="row"><label class="row-main" for="studioLayout">画面比例</label><span class="sel"><select id="studioLayout"><option value="landscape">横屏 · 1280 × 720</option><option value="portrait">竖屏 · 720 × 1280</option></select></span></div>
-      <div class="row"><label class="row-main" for="studioCapture"><span class="name">选取画面</span><span class="sub">打开选屏窗口时的偏好，最终由你选择</span></label><span class="sel"><select id="studioCapture"><option value="window">窗口</option><option value="monitor">整个屏幕</option></select></span></div>
-      <div class="row"><label class="row-main" for="studioSource">体感摄像头</label><span class="sel"><select id="studioSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
-      <div class="row"><label class="row-main" for="studioPosition">人物位置</label><span class="sel"><select id="studioPosition"><option value="bottom-right">右下角</option><option value="bottom-left">左下角</option><option value="top-right">右上角</option><option value="top-left">左上角</option></select></span></div>
-      <div class="row"><label class="row-main" for="studioSize">人物框大小</label><span class="range-in"><input id="studioSize" type="range" min="15" max="65" step="1" value="30"/><b id="studioSizeValue">30%</b></span></div>
-      <div class="row"><label class="row-main" for="studioZoom"><span class="name">框内放大</span><span class="sub">只放大框内内容，超出部分会裁切；完整显示可恢复</span></label><span class="range-in"><input id="studioZoom" type="range" min="100" max="400" step="5" value="100"/><b id="studioZoomValue">100%</b></span></div>
-      <div class="row"><label class="row-main" for="studioFace">人脸</label><span class="sel"><select id="studioFace"><option value="original">原样</option><option value="mask">跟脸遮盖</option><option value="avatar">跟脸面具</option></select></span></div>
-      <div class="row studio-avatar-row" id="studioAvatarRow" hidden>
-        <span class="row-main">面具形象</span>
-        <div class="studio-avatar-presets" aria-label="内置跟脸面具">
-          <button type="button" data-avatar-preset="cat" aria-pressed="false"><img src="/assets/studio-cat.svg" alt="奶油猫"/><span>奶油猫</span></button>
-          <button type="button" data-avatar-preset="fox" aria-pressed="false"><img src="/assets/studio-fox.svg" alt="小狐狸"/><span>小狐狸</span></button>
-          <button type="button" data-avatar-preset="robot" aria-pressed="false"><img src="/assets/studio-robot.svg" alt="蓝莓机器人"/><span>机器人</span></button>
-        </div>
-        <label class="btn" for="studioAvatar">选自己的脸型图片</label><input id="studioAvatar" type="file" accept="image/png,image/jpeg,image/webp" class="visually-hidden" aria-label="选择透明底脸型图片"/><span class="sub" id="studioAvatarStatus"></span>
-      </div>
+      <div class="row"><label class="row-main" for="studioCapture">选取画面</label><span class="sel"><select id="studioCapture"><option value="window">窗口</option><option value="monitor">整个屏幕</option></select></span></div>
+      <div class="row"><label class="row-main" for="studioSource">人物来源</label><span class="sel"><select id="studioSource"><option value="computer">电脑摄像头</option><option value="phone">手机摄像头</option></select></span></div>
+      <div class="row"><label class="row-main" for="studioFace">人脸处理</label><span class="sel"><select id="studioFace"><option value="original">原样</option><option value="mask">跟脸遮盖</option><option value="avatar">跟脸面具</option></select></span></div>
       <div class="row"><label class="row-main" for="studioBackground">人物背景</label><span class="sel"><select id="studioBackground"><option value="original">原样</option><option value="green">绿幕</option><option value="transparent">去掉背景</option></select></span></div>
-    </div><p class="group-foot">镜像沿用「设备 → 摄像头」的设置。裁切和放大仅影响录像和直播，不影响体感识别。遮脸时无法定位人脸会隐藏人物。</p></div>
-    <div class="group"><h2 class="group-title">录制声音</h2><div class="list">
-      <div class="row"><label class="row-main" for="studioSystemAudio">电脑声音</label><input class="switch" id="studioSystemAudio" type="checkbox" checked/></div>
-      <div class="row"><label class="row-main" for="studioMicrophone">麦克风</label><input class="switch" id="studioMicrophone" type="checkbox"/></div>
-    </div><p class="group-foot">电脑声音需在选取画面时允许共享；麦克风在开始录制时申请采集。预览下方显示实际连接状态。更改电脑声音需先结束画面预览，再重新选择。</p></div>
+      <div class="row"><label class="row-main" for="studioPosition">人物位置</label><span class="sel"><select id="studioPosition"><option value="bottom-right">右下角</option><option value="bottom-left">左下角</option><option value="top-right">右上角</option><option value="top-left">左上角</option></select></span></div>
+      <div class="row"><label class="row-main" for="studioSize">人物框大小</label><span class="range-in"><input id="studioSize" aria-label="人物框大小" type="range" min="15" max="65" step="1" value="30"/><b id="studioSizeValue">30%</b></span></div>
+      <div class="row"><span class="row-main">录制声音</span><div class="studio-audio-switches"><label><input class="switch" id="studioSystemAudio" type="checkbox" checked/>电脑声音</label><label><input class="switch" id="studioMicrophone" type="checkbox"/>麦克风</label></div></div>
+    </div>
   </div>
 </div>
-<div class="group"><h2 class="group-title">保存与直播</h2><div class="list">
-  <div class="row"><div class="row-main"><span class="name">录制文件</span><span class="sub">录制时分段写入本机，不把整段视频留在内存</span></div><button class="btn" id="studioOpenFolderBtn">打开输出文件夹</button></div>
-  <div class="row studio-overlay-row"><div class="row-main"><span class="name">直播人物画面</span><span class="sub">给 OBS 等直播软件叠加人物：开启人物预览，把地址添加为「浏览器来源」。镜像、头像、抠图和人物裁切都跟随这里的设置；游戏画面在直播软件里添加。</span></div><button class="btn" id="studioCopyOverlayBtn">复制地址</button><a class="btn" id="studioOverlayLink" target="_blank" rel="noopener">预览人物画面</a></div>
-  <div class="row stack"><label class="visually-hidden" for="studioOverlayUrl">直播人物网页地址</label><input class="field" id="studioOverlayUrl" readonly/></div>
-</div></div>
+<div class="studio-secondary">
+  <details class="list studio-details" id="studioAppearanceSettings"><summary>人物细节</summary>
+    <div class="row"><label class="row-main" for="studioZoom">框内放大</label><span class="range-in"><input id="studioZoom" aria-label="框内放大" type="range" min="100" max="400" step="5" value="100"/><b id="studioZoomValue">100%</b></span></div>
+    <div class="row studio-avatar-row" id="studioAvatarRow" hidden>
+      <span class="row-main">面具形象</span>
+      <div class="studio-avatar-presets" aria-label="内置跟脸面具">
+        <button type="button" data-avatar-preset="cat" aria-pressed="false"><img src="/assets/studio-cat.svg" alt="奶油猫"/><span>奶油猫</span></button>
+        <button type="button" data-avatar-preset="fox" aria-pressed="false"><img src="/assets/studio-fox.svg" alt="小狐狸"/><span>小狐狸</span></button>
+        <button type="button" data-avatar-preset="robot" aria-pressed="false"><img src="/assets/studio-robot.svg" alt="蓝莓机器人"/><span>机器人</span></button>
+      </div>
+      <label class="btn" for="studioAvatar">选择脸型图片</label><input id="studioAvatar" type="file" accept="image/png,image/jpeg,image/webp" class="visually-hidden" aria-label="选择透明底脸型图片"/><span class="sub" id="studioAvatarStatus"></span>
+    </div>
+  </details>
+  <details class="list studio-details" id="studioLiveSettings"><summary>直播接入</summary>
+    <div class="row stack"><p class="sub">开启人物预览，将地址添加为直播软件的「浏览器来源」。</p><label class="visually-hidden" for="studioOverlayUrl">直播人物网页地址</label><input class="field" id="studioOverlayUrl" readonly/><a class="btn" id="studioOverlayLink" target="_blank" rel="noopener">预览直播人物</a></div>
+  </details>
+</div>
+
 <dialog class="studio-crop-dialog" id="studioCropDialog" aria-labelledby="studioCropTitle">
   <h2 id="studioCropTitle">裁切画面</h2>
   <div class="seg small" aria-label="裁切来源"><button type="button" data-crop-source="screen" aria-pressed="false">游戏画面</button><button type="button" data-crop-source="portrait" aria-pressed="true">摄像头</button></div>
