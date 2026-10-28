@@ -475,7 +475,7 @@ for(const id of ['verticalExclusive','bodyMotionGuard','deadzone','speedX','spee
   $('#'+id).addEventListener('change',()=>{headSaver.dirty();syncControlLabels();renderSpeedSummary()});
 }
 
-$('#addVoiceBtn').addEventListener('click',()=>addVoiceRow());
+$('#addVoiceBtn').addEventListener('click',()=>addVoiceRow().querySelector('.voice-phrase').focus());
 
 $('#voiceRows').addEventListener('input',()=>voiceSaver.dirty());
 

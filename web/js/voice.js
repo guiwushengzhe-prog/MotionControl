@@ -155,6 +155,7 @@ export function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){
   row.dataset.trigger='voice.'+(voiceCatalog.find(item=>item.scope==='shared'&&item.phrase===currentVoiceWakeWord()+mapping.phrase)?.id||'shared.draft');
   const trigger={key:row.dataset.trigger,group:'voice',name:mapping.phrase||'通用口令'};
   const phrase=document.createElement('input');phrase.className='voice-phrase';phrase.placeholder='例：地图';phrase.title='填写要说的口令，唤醒词可留空';phrase.value=mapping.phrase||'';
+  phrase.setAttribute('aria-label','说什么');
   const phraseBox=document.createElement('div');phraseBox.className='voice-phrase-wrap';
   const prefix=document.createElement('span');prefix.className='voice-prefix';prefix.textContent=currentVoiceWakeWord();prefix.hidden=!currentVoiceWakeWord();phraseBox.append(prefix,phrase);
   const type=makeTypeSelect({action:mapping},{allowNone:false});type.classList.add('voice-type');
@@ -174,7 +175,12 @@ export function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){
   type.addEventListener('change',()=>{fillVoiceTarget();syncBehavior('tap');syncVoiceReleaseChoices()});
   target.addEventListener('change',()=>{if(type.value==='macro')syncBehavior();syncVoiceReleaseChoices()});
   const remove=document.createElement('button');remove.type='button';remove.className='btn voice-remove';remove.textContent='删除';remove.addEventListener('click',()=>{row.remove();if(!$('#voiceRows').children.length)addVoiceRow()});
-  row.append(phraseBox,type,target,behavior,remove);$('#voiceRows').appendChild(row);watchVoicePhrase(phrase);
+  for(const [caption,control,name] of [['说什么',phraseBox,'phrase'],['输出类型',type,'type'],['按键或动作',target,'target'],['触发方式',behavior,'behavior']]){
+    const field=document.createElement('div');field.className=`voice-field voice-${name}-field`;field.setAttribute('role','group');field.setAttribute('aria-label',caption);
+    const label=document.createElement('span');label.className='voice-field-label';label.textContent=caption;label.setAttribute('aria-hidden','true');
+    field.append(label,control);row.append(field);
+  }
+  row.append(remove);$('#voiceRows').appendChild(row);watchVoicePhrase(phrase);return row;
 }
 
 function readVoiceMappings(){

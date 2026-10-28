@@ -784,7 +784,7 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .list > * { position: relative; }
 .list > *:first-child { border-top-left-radius: inherit; border-top-right-radius: inherit; }
 .list > *:last-child { border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
-.list > :not([hidden]) ~ *::before, #voiceRows > .voice-row::before { content: ""; position: absolute; top: 0; left: 1rem; right: 0; height: 1px; background: var(--line); }
+.list > :not([hidden]) ~ *::before { content: ""; position: absolute; top: 0; left: 1rem; right: 0; height: 1px; background: var(--line); }
 .row { display: flex; align-items: center; gap: .625rem; min-height: 3.125rem; padding: .5625rem .875rem .5625rem 1rem; }
 .row.compact { min-height: 2.5rem; padding-block: .25rem; }
 .row.stack { flex-direction: column; align-items: stretch; gap: .5rem; }
@@ -834,10 +834,18 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 .settings-pane .tag { color: var(--text-2); background: var(--fill); }
 #gamesPanel .library-sub .btn.link { color: var(--text-2); }
 .voice-prefix { margin-right: .25rem; color: var(--text-3); }
-.voice-wake-row { flex-wrap: wrap; gap: .5rem 1rem; }
+.voice-settings { display:grid; gap:1.75rem; min-width:0; }
+.voice-settings > .group-title { margin-bottom:-1.25rem; }
+.voice-section-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:0 .25rem .5rem; }
+.voice-section-heading .group-title { padding:0; color:var(--text); font-size:.9375rem; }
+.voice-section-heading .sub { margin-top:.25rem; }
+.voice-section-heading .btn { flex-shrink:0; }
+.voice-shared-group { gap:.75rem; }
+.voice-wake-row { flex-wrap:wrap; gap:1rem 1.5rem; padding:1.25rem; }
 /* 宽度只靠 flex-basis 给：再写死 width 会把最小内容宽撑到 20rem，320px 窄屏横向溢出。 */
 .voice-wake-field { flex: 0 1 20rem; max-width: 100%; min-width: 0; }
 .voice-built-in-row .name, .voice-built-in-row .voice-prefix { color: var(--text); overflow-wrap: anywhere; }
+.voice-built-in-row { padding:1rem 1.25rem; }
 
 /* 通用口令：一行一条。 */
 .home-fitness-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: .875rem 0; }
@@ -894,18 +902,23 @@ span.binding-behavior { color: var(--text-2); font-size: .7812rem; }
 #studioRoot { display: grid; gap: 1.375rem; }
 @media (max-width: 1100px) { .studio-workspace { grid-template-columns: minmax(0, 1fr); } .studio-preview-column { max-width: 48rem; } }
 
-.voice-row { position: relative; display: grid; grid-template-columns: minmax(0, 1.3fr) 7.375rem minmax(0, 1fr) 6rem auto; align-items: center; gap: .5rem; padding: .5rem .75rem .5rem 1rem; }
+.voice-editor { container:voice-commands / inline-size; }
+.voice-row { position:relative; display:grid; grid-template-columns:minmax(0,1.2fr) 7.375rem minmax(0,1fr) 6.5rem auto; align-items:start; gap:.75rem; padding:1.125rem 1.25rem; }
+.voice-row + .voice-row::before { left:1.25rem; right:1.25rem; }
+.voice-field { display:grid; gap:.4375rem; min-width:0; }
+.voice-field-label { color:var(--text-2); font-size:.75rem; }
 .voice-row input, .voice-row select { width: 100%; min-width: 0; }
 .voice-phrase-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem; min-width: 0; }
 .voice-phrase-wrap .voice-prefix { max-width: 100%; overflow-wrap: anywhere; }
 .voice-phrase-wrap .voice-phrase { flex: 1 1 10rem; min-width: 0; }
 .voice-system-behavior { color: var(--text-2); font-size: .8125rem; }
-.voice-behavior-box { min-width: 0; }
+.voice-behavior-box { display:grid; align-items:center; min-width:0; min-height:2.25rem; }
 .voice-command-card > div { overflow-wrap: anywhere; }
 .voice-target-cell { display: grid; gap: .375rem; min-width: 0; align-content: start; }
-.btn.voice-remove { min-height: 1.875rem; padding: 0 .5rem; background: transparent; color: var(--danger); font-size: .8125rem; }
-.btn.voice-remove:hover:not(:disabled) { background: var(--danger-tint); }
+.btn.voice-remove { align-self:start; margin-top:1.5625rem; min-height:2.25rem; padding:0 .5rem; border-color:transparent; background:transparent; color:var(--text-2); font-size:.8125rem; }
+.btn.voice-remove:hover:not(:disabled) { color:var(--danger); background:var(--fill); }
 .voice-row .voice-phrase-tip { grid-column: 1 / -1; }
+@container voice-commands (max-width:46rem){.voice-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.voice-phrase-field{grid-column:1 / -1}.voice-row .voice-remove{justify-self:end}}
 .row.locked .name { color: var(--text-2); }
 
 /* 键盘宏：一条一个块。 */
@@ -1126,8 +1139,7 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
   .command-dock nav { grid-row: 3; }
   #serviceStatus { width: calc(100% - 2rem); }
   .game-chip-label { display: none; }
-  .voice-command-grid, .voice-row { grid-template-columns: 1fr 1fr; }
-  .voice-row .voice-phrase-wrap { grid-column: 1 / -1; }
+  .voice-command-grid { grid-template-columns: 1fr 1fr; }
   .binding-rule-controls, .binding-sequence-action { grid-template-columns: 1fr; }
   .range-in { width: 100%; }
   .row { flex-wrap: wrap; }
