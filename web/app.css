@@ -239,7 +239,7 @@ input.switch:disabled { opacity: .4; cursor: default; }
 
 /* --- 顶栏 ------------------------------------------------------------------ */
 .command-dock { position: sticky; top: 0; z-index: 30; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 1rem;
-  min-height: 3.5rem; padding: .5rem max(1.5rem, calc(50% - 38.5rem));
+  min-height: 3.5rem; padding: .5rem max(1.5rem, calc(50% - 34.5rem));
   background: var(--bar); -webkit-backdrop-filter: saturate(180%) blur(1.25rem); backdrop-filter: saturate(180%) blur(1.25rem); border-bottom: 1px solid var(--line); }
 .brand { justify-self: start; font-size: 1rem; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
 nav { display: flex; gap: .125rem; padding: .125rem; border-radius: .5625rem; background: var(--seg-bg); }
@@ -249,7 +249,7 @@ nav { display: flex; gap: .125rem; padding: .125rem; border-radius: .5625rem; ba
 .tab[aria-current] { background: var(--seg-on); color: var(--text); box-shadow: var(--seg-shadow); }
 .top-actions { justify-self: end; display: flex; justify-content: flex-end; align-items: center; gap: .5rem; min-width: 0; width: 100%; }
 .top-actions > .cta, .top-actions > .menu-wrap { flex: none; white-space: nowrap; }
-#serviceStatus { width: calc(100% - 3rem); max-width: 77rem; margin: 1rem auto 0; border: 1px solid var(--line);
+#serviceStatus { width: calc(100% - 3rem); max-width: 69rem; margin: 1rem auto 0; border: 1px solid var(--line);
   background: var(--card); color: var(--text-2); line-height: 1.5; overflow-wrap: anywhere; }
 #serviceStatus.online { display: none; }
 .game-chip { display: inline-flex; align-items: center; gap: .375rem; min-width: 0; max-width: 13.75rem; height: 2rem; padding: 0 .75rem; white-space: nowrap;
@@ -304,7 +304,7 @@ nav { display: flex; gap: .125rem; padding: .125rem; border-radius: .5625rem; ba
 .notice.show { animation: toast .22s ease-out; }
 @keyframes toast { from { opacity: 0; transform: translate(-50%, .5rem) } to { opacity: 1; transform: translate(-50%, 0) } }
 
-main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
+main { max-width: 72rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 
 /* --- 卡片 ------------------------------------------------------------------ */
 .card { padding: 1rem 1.125rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); box-shadow: var(--shadow); }
@@ -315,7 +315,7 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .banner { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .625rem; padding: .625rem .75rem .625rem .875rem; border-radius: .75rem; font-size: .8125rem; }
 .banner > span { flex: 1; min-width: 12.5rem; }
 .banner.warn { background: var(--warn-tint); color: var(--warn); }
-#settingsSaveWarning { width: calc(100% - 3rem); max-width: 77rem; margin: 1rem auto 0; border: 1px solid var(--line); background: var(--card); color: var(--text-2); }
+#settingsSaveWarning { width: calc(100% - 3rem); max-width: 69rem; margin: 1rem auto 0; border: 1px solid var(--line); background: var(--card); color: var(--text-2); }
 
 /* --- 开始页 ---------------------------------------------------------------- */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 1.25rem; align-items: start; }
@@ -459,7 +459,7 @@ main { max-width: 80rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
 .range-log-item:hover { background: var(--fill); }
 
 /* --- 本游戏 ---------------------------------------------------------------- */
-.page { display: grid; gap: .875rem; max-width: 80rem; margin: 0 auto; }
+.page { display: grid; gap: .875rem; max-width: 72rem; margin: 0 auto; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: .75rem 1rem; margin-bottom: .25rem; }
 .page-titles { min-width: 0; }
 .page-titles h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -.015em; line-height: 1.2; }
@@ -738,7 +738,7 @@ main:has(> #devicesPanel:not([hidden])) { max-width:none; padding-inline:var(--s
 .settings-nav button[aria-current="true"] { background: var(--fill-2); color: var(--text); font-weight: 650; }
 .side-ico { display: grid; place-items: center; flex: none; width: 1.375rem; height: 1.375rem; color: var(--text-2); }
 .side-ico svg { width: 1.125rem; height: 1.125rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.settings-panes { min-width: 0; }
+.settings-panes { width:100%; max-width:58rem; min-width:0; }
 .settings-pane { display: grid; gap: 1.75rem; --setting-control-width: 17.5rem;
   --on-tint: var(--text); --tint: var(--fill-2); --warn: var(--text-2); --warn-tint: var(--fill); }
 .settings-section { display: grid; gap: 1.375rem; min-width: 0; scroll-margin-top: 7rem; }
