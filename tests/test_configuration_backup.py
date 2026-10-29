@@ -95,7 +95,7 @@ def test_backup_and_restore_preserve_every_game_identity_binding_mode_and_librar
 
 def test_export_excludes_credentials_recordings_models_and_source_data_identity_file(original):
     for name in ("cloud_account.json", "paired_devices.json", "pairing_key.txt", "camera_backend.json", "discovery_instance.txt"):
-        (original / name).write_text("秘密")
+        (original / name).write_text("秘密", encoding="utf-8")
     (original / "recordings").mkdir()
     (original / "recordings/private.mp4").write_bytes(b"private video")
     (original / "weights.pth").write_bytes(b"private weights")

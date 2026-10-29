@@ -117,7 +117,7 @@ def test_real_studio_http_writes_playable_synthetic_video(browser, app_http):
     page.on("response", lambda response: missing.append(response.url) if response.status == 404 else None)
     page.add_init_script(FAKE_CAPTURE)
     page.goto(base + "/studio.html")
-    page.wait_for_function("!document.getElementById('studioFace').disabled")
+    page.wait_for_function("document.getElementById('studioFace')?.disabled===false")
     page.click("#studioStartBtn")
     page.wait_for_selector("#studioRecordingBadge:not([hidden])")
     # 等片段真正落盘，不假定慢机器能在固定毫秒数内完成编码和上传。
@@ -229,7 +229,9 @@ def test_main_page_excludes_short_workouts_and_counts_at_three_minutes(browser, 
     page.add_init_script("localStorage.setItem('motioncontrol_tutorial_v2',JSON.stringify({seen:1,offered:true}));")
     page.goto(base + "/")
     page.wait_for_function("!mainActionBtn.disabled")
-    page.click("#mainActionBtn")
+    with page.expect_response(lambda response: response.url.endswith('/api/output/config') and response.request.method == 'POST'):
+        page.click("#mainActionBtn")
+    assert app.FITNESS.state()['status'] == 'active'
     march_for(app.FITNESS, clock, 179.5)
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="fitness"]')

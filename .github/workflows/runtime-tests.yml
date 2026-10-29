@@ -36,7 +36,7 @@ jobs:
           cache: pip
           cache-dependency-path: cloud/requirements.txt
       - name: Install logic test dependencies
-        run: python -m pip install pytest pytest-asyncio numpy opencv-python-headless cryptography qrcode==8.2 vosk==0.3.45 -r cloud/requirements.txt
+        run: python -m pip install pytest pytest-asyncio numpy opencv-python-headless cryptography qrcode==8.2 vosk==0.3.45 'onnxruntime>=1.22,<2' -r cloud/requirements.txt
       - uses: actions/cache@v4
         with:
           path: .model_cache/ci-vosk/vosk-model-small-cn-0.22

@@ -39,6 +39,7 @@ def test_cold_admin_handoff_does_not_bind_new_backend_to_old_job(application, mo
 
 
 @pytest.mark.parametrize("service_state,available", [(4, True), (1, True), (4, False)])
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 原生服务句柄")
 def test_driver_status_query_uses_native_handles_without_starting_a_process(monkeypatch, service_state, available):
     from motioncontrol import owned_process
     closed = []
@@ -61,6 +62,7 @@ def test_driver_status_query_uses_native_handles_without_starting_a_process(monk
 
 
 @pytest.mark.parametrize("wait_result", [0, 0x102])
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 管理员启动句柄")
 def test_elevated_launch_detects_early_exit_and_closes_handle(monkeypatch, wait_result):
     from motioncontrol import owned_process
     monkeypatch.setattr(owned_process, "lifetime_job_active", lambda: False)
@@ -88,6 +90,7 @@ def test_elevated_launch_detects_early_exit_and_closes_handle(monkeypatch, wait_
 
 
 @pytest.mark.parametrize("outcome", ["accepted", "cancelled", "timeout", "invalid"])
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 管理员启动交接")
 def test_running_backend_uses_an_independent_elevation_helper(monkeypatch, isolated_user_data, outcome):
     from motioncontrol import owned_process
     monkeypatch.setattr(owned_process, "lifetime_job_active", lambda: True)

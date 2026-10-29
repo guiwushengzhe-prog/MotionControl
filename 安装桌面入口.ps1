@@ -57,15 +57,10 @@ if (-not $DoNotRegister) {
         $key.SetValue('PowerShellPath', $shellPath)
     } finally { $key.Dispose() }
 }
-$shell = New-Object -ComObject WScript.Shell
+Add-Type -Path (Join-Path $PSScriptRoot 'tools\windows\MotionControlShortcut.cs')
 foreach ($directory in @($DesktopDirectory, $ProgramsDirectory)) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
-    $shortcut = $shell.CreateShortcut((Join-Path $directory 'MotionControl.lnk'))
-    $shortcut.TargetPath = $executable
-    $shortcut.WorkingDirectory = $Destination
-    $shortcut.IconLocation = "$executable,0"
-    $shortcut.Description = 'MotionControl · 体感控制'
-    $shortcut.Save()
+    [MotionControlShortcut]::Save((Join-Path $directory 'MotionControl.lnk'), $executable, $Destination)
 }
 Write-Host "已创建桌面与开始菜单入口：$executable"
 Write-Host '在开始菜单搜索 MotionControl，右键选择“固定到任务栏”。迁移程序后原入口会帮助重新定位。'

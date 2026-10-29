@@ -1,5 +1,6 @@
 """普通摄像头只用处理器解码；Kinect 原厂服务调高需管理员授权，且只在采集被拖慢时提示。"""
 from types import SimpleNamespace
+import sys
 
 import pytest
 
@@ -99,6 +100,7 @@ def test_realtime_refused_falls_back_to_high_and_failures_are_reported(monkeypat
         kinect_camera.restore_service()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 原厂服务进程标志")
 def test_administrator_boosts_without_a_second_prompt(monkeypatch, helper):
     monkeypatch.setattr("motioncontrol.game_launch.is_administrator", lambda: True)
     runs = []
