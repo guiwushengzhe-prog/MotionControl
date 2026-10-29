@@ -55,6 +55,7 @@ def test_kinect_regions_and_editing_keep_original_display_direction(desktop):
     api.runtime["kernel"].update(
         pose={"right_wrist": {"x": .25, "y": .4, "score": 1}},
         zones={"rightHand": {"rect": rect, "pressed": True}},
+        effective_bindings={'zone.rightHand': {'action': {'type': 'gamepad', 'target': 'B'}}},
     )
     for source, backend, mirrored in (
         ("computer", "kinect", True),

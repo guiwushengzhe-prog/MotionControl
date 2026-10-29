@@ -70,7 +70,8 @@ def test_removing_builtin_releases_its_hold_preserves_other_keys_and_saved_mappi
 
 def test_disabled_builtins_are_filtered_in_new_kernels_and_recording_replay():
     pose_library.register([], ["march", "jump"])
-    assert {item["id"] for item in pose_library.library_payload()} == {"calf_back"}
+    assert {item["id"] for item in pose_library.library_payload()} == {
+        'calf_back', 'lean_left', 'lean_right', 'lean_forward', 'lean_back', 'gunmouse_punch'}
     kernel = ControlKernel(Output())
     replay = None
     try:

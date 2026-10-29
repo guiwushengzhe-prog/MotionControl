@@ -421,7 +421,7 @@ def test_web_mobile_pose_uses_same_body_action_and_head_pipeline():
     assert "renderKernelState" in text and "/api/kernel/status" in text
     assert "handle_pose_message" in kernel and "_update_zones_locked" in kernel
     assert "_update_motion_locked" in kernel and "_update_head_locked" in kernel
-    assert "requestAnimationFrame" not in text
+    # 浏览器可插值显示，手机和电脑仍共用后端识别流程。
     assert "detectForVideo" not in text
     assert "post('/api/output/buttons'" not in text
 

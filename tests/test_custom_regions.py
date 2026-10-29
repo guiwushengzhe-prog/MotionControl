@@ -171,9 +171,9 @@ def test_new_region_uses_either_wrist_and_holds_only_while_inside(region_kernel,
     kernel, output, feed = region_kernel
     kernel.configure_zone_trigger_mode(trigger_mode)
     kernel.configure_regions([region()])
-    # 创建后还没有绑键也能定位这个框；不会借用内置区域的默认输出。
+    # 未绑定区域只保留配置，首页不显示，也不借用其他区域的输出。
     state = kernel.status()["zones"][REGION_ID]
-    assert state["custom"] and state["name"] == "独立区域" and state["rect"] == RECT
+    assert state["custom"] and state["name"] == "独立区域" and state["rect"] is None
     feed(pose_in(left=RECT), 6)
     assert "zone." + REGION_ID not in held(output)
     kernel.configure_bindings({"zones": {REGION_ID: {"action": W}}})
@@ -365,8 +365,10 @@ def test_api_layout_validates_all_rectangles_before_saving(application):
     code, data = post(app, "/api/game-profiles/regions", {
         "op": "layout", "profile_id": game, "rects": {first["id"]: moved}})
     assert code == 200, data
-    assert app.KERNEL.status()["zones"][first["id"]]["rect"] == moved
-    assert app.KERNEL.status()["zones"][second["id"]]["rect"] == OTHER_RECT
+    assert app.PROFILES.effective_profile()['regions'][0]['rect'] == moved
+    assert app.KERNEL.status()["zones"][first["id"]]["rect"] is None
+    assert app.PROFILES.effective_profile()['regions'][1]['rect'] == OTHER_RECT
+    assert app.KERNEL.status()["zones"][second["id"]]["rect"] is None
 
 
 def test_api_region_edit_and_delete_never_release_another_held_region(application, monkeypatch):

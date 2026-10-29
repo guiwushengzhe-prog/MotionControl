@@ -42,7 +42,7 @@ def test_removed_turn_routes_select_the_remaining_one(tmp_path):
         controller.configure(horizontal_algorithm=name)
         state = controller.status()
         assert state["horizontal_algorithm"] == "gesture_v188"
-    assert state["available_horizontal_algorithms"] == ["gesture_v188", "roll_tilt", "head_responsive"]
+    assert state["available_horizontal_algorithms"] == ["gesture_v188", "roll_tilt", "head_responsive", "hfhpe", "hfhpe_simple"]
     assert "frozen22_controls_mouse" not in state
 
 

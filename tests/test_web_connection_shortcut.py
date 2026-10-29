@@ -1,4 +1,4 @@
-"""去连接应选择设备栏目，并定位二维码；电脑摄像头则定位连接按钮。"""
+"""手机入口定位二维码，电脑入口直接开始识别；不启动真实采集。"""
 import pytest
 expect = pytest.importorskip("playwright.sync_api").expect
 
@@ -31,13 +31,16 @@ def test_phone_shortcut_reveals_qr_below_fold(desktop, previous_pane):
     expect(page.locator('#phoneConnectPanel')).to_be_visible()
 
 
-def test_computer_shortcut_reveals_camera_button_below_home_preview(desktop):
-    page = desktop.page
+def test_computer_shortcut_starts_recognition_on_home_without_enabling_output(desktop):
+    page, api = desktop.page, desktop.api
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="voice"]')
     page.click('nav [data-view="play"]')
     page.click('#cameraStepGo')
     expect(page.locator('#playPanel')).to_be_visible()
-    expect(page.locator('#sourceStartBtn')).to_be_visible()
-    assert page.evaluate("document.activeElement.id") == "sourceStartBtn"
+    expect(page.locator('#sourceStopBtn')).to_be_visible()
+    assert api.runtime['camera']['running'] is True
+    assert api.output['enabled'] is False
+    assert sum(path == '/api/input/source' and body.get('source') == 'computer'
+               for path, body in api.requests if body is not None) == 1
     assert page.locator('#viewer + .viewer-foot #sourceStartBtn').count() == 1

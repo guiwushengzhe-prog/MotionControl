@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import importlib.util
 import threading
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -31,6 +32,7 @@ def test_combined_commands_and_optional_phone_model(browser, app_http, tmp_path,
     page.add_init_script("localStorage.setItem('motioncontrol_tutorial_v2',JSON.stringify({seen:1,offered:true}));")
     page.goto(base + "/")
     page.click('nav [data-view="devices"]')
+    page.locator('#phoneGroup > summary').click()
     page.locator("#phoneModelDetails summary").click()
     page.wait_for_function("phoneModelStatus.textContent.includes('连接手机后可添加')")
     assert page.locator("#sendHeavyModelBtn").is_disabled()
@@ -118,9 +120,21 @@ def test_real_studio_http_writes_playable_synthetic_video(browser, app_http):
     page.wait_for_function("!document.getElementById('studioFace').disabled")
     page.click("#studioStartBtn")
     page.wait_for_selector("#studioRecordingBadge:not([hidden])")
-    page.wait_for_timeout(1300)
-    files = list((user_dir / "recordings" / "studio").glob("*.webm"))
-    assert len(files) == 1 and files[0].stat().st_size > 0, "真实服务在录制中已把片段写入隔离目录"
+    # 等片段真正落盘，不假定慢机器能在固定毫秒数内完成编码和上传。
+    folder = user_dir / 'recordings' / 'studio'
+    deadline = time.monotonic() + 10
+    files = []
+    while time.monotonic() < deadline:
+        files = list(folder.glob('*.webm'))
+        if len(files) == 1 and files[0].stat().st_size > 0:
+            break
+        page.wait_for_timeout(100)
+    assert len(files) == 1 and files[0].stat().st_size > 0, {
+        "status": page.locator("#studioStatus").inner_text(),
+        "errors": errors,
+        "recordings": app.STUDIO.state()["recordings"],
+        "config": app.STUDIO.config,
+    }
     page.click("#studioStopBtn")
     page.wait_for_function("document.getElementById('studioStatus').textContent.includes('录制完成')")
     assert str(files[0]) in page.locator("#studioSavedFile").inner_text()
@@ -153,6 +167,8 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     page.wait_for_function("document.getElementById('homeFitnessTitle').textContent==='这次运动'")
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="fitness"]')
+    for section in ('fitnessSessionSection', 'fitnessHeartSection', 'fitnessHistorySection'):
+        page.locator(f'#{section} > summary').click()
     page.wait_for_function("document.querySelector('#fitnessProfile [name=weight_kg]').value !== ''")
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='记录中'")
     assert page.locator("#fitnessHeartStatus").inner_text() == "未收到心率"
@@ -169,7 +185,7 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     app.FITNESS.step_event("right", 10.4)
     page.wait_for_function("document.getElementById('fitnessSteps').textContent==='2'")
     page.click("#mainActionBtn")
-    page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已保存'")
+    page.wait_for_function("document.getElementById('fitnessStatus').textContent.startsWith('已保存')")
     app.FITNESS.heart_rate({"bpm": 120})  # 暂停时可以预览，不累计平均值。
     page.wait_for_function("fitnessHeartNow.textContent==='120'")
     assert page.locator("#fitnessHeartAvg").inner_text() == "112"
@@ -177,11 +193,12 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     page.wait_for_function("document.getElementById('fitnessStatus').textContent==='记录中'")
     assert app.FITNESS.state()["session_id"] != session_id
     page.click("#mainActionBtn")
-    page.wait_for_function("document.getElementById('fitnessStatus').textContent==='已保存'")
-    page.wait_for_function("document.getElementById('fitnessHistory').textContent.includes('2 步')", timeout=8000)
-    assert "2 步" in page.locator("#fitnessHistory").inner_text()
+    page.wait_for_function("document.getElementById('fitnessStatus').textContent.startsWith('已保存')")
+    page.wait_for_function("[...document.querySelectorAll('#fitnessHistory .fitness-history-values > div:nth-child(2) strong')].some(node=>node.textContent==='2')", timeout=8000)
+    assert page.locator("#fitnessHistory .fitness-history-row").count() == len(app.FITNESS.history())
     assert app.FITNESS.history()[0]["session_id"] == session_id
     assert app.FITNESS.history()[0]["steps"] == 2
+    page.locator('#fitnessProfileSection > summary').click()
     page.locator('#fitnessProfile [name="weight_kg"]').fill("63")
     page.click('#fitnessProfile button[type="submit"]')
     page.wait_for_function("document.querySelector('#fitnessProfile [name=weight_kg]').value==='63'")
@@ -217,16 +234,19 @@ def test_main_page_excludes_short_workouts_and_counts_at_three_minutes(browser, 
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="fitness"]')
     page.wait_for_function("fitnessMinutes.textContent==='2.9'")
+    page.locator('#fitnessGoalSection > summary').click()
+    page.locator('#fitnessHistorySection > summary').click()
     assert "0.0 分钟" in page.locator("#fitnessToday").inner_text()
     page.click("#mainActionBtn")
-    page.wait_for_function("fitnessStatus.textContent==='不足 3 分钟，未计入'")
-    assert page.locator("#fitnessHistory").inner_text() == "还没有运动记录"
+    page.wait_for_function("fitnessStatus.textContent.startsWith('不足 3 分钟，未计入')")
+    assert page.locator("#fitnessHistory .fitness-history-row").count() == 0
+    assert app.FITNESS.history() == []
     page.click("#mainActionBtn")
     page.wait_for_function("fitnessStatus.textContent==='记录中'")
     march_for(app.FITNESS, clock, 180)
     page.click("#mainActionBtn")
-    page.wait_for_function("fitnessStatus.textContent==='已保存'")
-    page.wait_for_function("fitnessHistory.textContent.includes('3.0 分钟')")
+    page.wait_for_function("fitnessStatus.textContent.startsWith('已保存')")
+    page.wait_for_function("document.querySelector('#fitnessHistory .fitness-history-values strong')?.textContent==='3.0'")
     assert "3.0 分钟" in page.locator("#fitnessToday").inner_text()
     assert len(app.FITNESS.history()) == 1
     page.close()
@@ -238,6 +258,7 @@ def test_device_mirror_updates_all_view_layers_and_persists(browser, app_http):
     page.add_init_script("localStorage.setItem('motioncontrol_tutorial_v2',JSON.stringify({done:[],skipped:[],seen:1,offered:true}));")
     page.goto(base + "/")
     page.click('nav [data-view="devices"]')
+    page.locator('#cameraSettings > summary').click()
     page.wait_for_function("!document.getElementById('cameraMirror').disabled")
     page.uncheck("#cameraMirror")
     page.wait_for_function("document.getElementById('viewer').classList.contains('unmirrored')")
@@ -257,6 +278,7 @@ def test_device_mirror_updates_all_view_layers_and_persists(browser, app_http):
     assert unmirrored["x2"] == pytest.approx(.36)
     page.reload()
     page.click('nav [data-view="devices"]')
+    page.locator('#cameraSettings > summary').click()
     page.wait_for_function("!document.getElementById('cameraMirror').checked")
     page.check("#cameraMirror")
     page.wait_for_function("!document.getElementById('viewer').classList.contains('unmirrored')")

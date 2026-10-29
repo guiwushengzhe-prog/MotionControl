@@ -71,6 +71,7 @@ def open_fitness(browser, base, *, hold=False):
     page.goto(base + "/")
     page.click('nav [data-view="devices"]')
     page.click('#settingsNav [data-pane="fitness"]')
+    page.locator('#fitnessHeartSection > summary').click()
     return page
 
 

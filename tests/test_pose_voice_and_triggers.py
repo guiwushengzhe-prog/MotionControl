@@ -299,12 +299,7 @@ def test_only_the_rising_edge_is_recorded():
 
 
 def test_the_kernel_reports_what_will_actually_fire():
-    """区域和动作有一层内置兜底：配置里没有 zone.headJump 这一条时，它照样按 A。
-
-    界面直接读 config 会把它写成「未映射」，而人在游戏里明明被按了一个键。
-    这种"界面说没绑、实际有反应"最难查，因为两边都不报错。2026-09-22 就是在
-    动作测试页上看见大字写着「头顶区 → A」、旁边的靶子写着「未映射」才发现的。
-    """
+    """空绑定不产生默认按键，显示与已启用的实际绑定一致。"""
     from motioncontrol.control_kernel import ControlKernel
 
     class Output:
@@ -324,14 +319,15 @@ def test_the_kernel_reports_what_will_actually_fire():
             return {}
 
     kernel = ControlKernel(Output())
-    kernel.configure_bindings({})
-    status = kernel.status()
-    assert "effective_bindings" in status, "内核没把真正会生效的那份报出来"
-    effective = status["effective_bindings"]
-    # 配置是空的，但内置兜底让区域照样按键。
-    assert not status["control_bindings"], "前提变了：这一步应该是空配置"
-    assert effective, "空配置下也该有兜底的区域绑定"
-    assert any(key.startswith("zone.") for key in effective)
+    try:
+        kernel.configure_bindings({})
+        status = kernel.status()
+        assert status['control_bindings'] == status['effective_bindings'] == {}
+        action = {'type': 'keyboard', 'target': 'Q', 'behavior': 'hold'}
+        kernel.configure_bindings({'zones': {'headJump': {'action': action}}})
+        assert kernel.status()['effective_bindings']['zone.headJump']['action'] == action
+    finally:
+        kernel.close()
 
 
 def test_the_page_shows_the_effective_binding_not_the_config():

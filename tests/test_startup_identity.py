@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_loaded_code_revision_changes_even_when_version_does_not(tmp_path):
-    (tmp_path / 'server.py').write_text('version = "2.4.1"')
+    (tmp_path / 'server.py').write_text('version = "test-version"')
     module = tmp_path / 'motioncontrol' / 'code.py'
     module.parent.mkdir()
     module.write_text('behavior = 1')

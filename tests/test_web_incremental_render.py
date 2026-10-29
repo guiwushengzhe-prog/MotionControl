@@ -5,7 +5,7 @@ nodes and actual clicks rather than matching JavaScript implementation text.
 """
 import copy
 
-from test_web_optimization import desktop, mock_browser  # noqa: F401
+from test_web_optimization import ORIGIN, desktop, mock_browser  # noqa: F401
 
 
 MEASURE = """async task=>{
@@ -20,7 +20,9 @@ MEASURE = """async task=>{
 
 def runtime_with_pose(api):
     runtime = copy.deepcopy(api.runtime)
+    runtime['camera'].update(running=True, frames=100, last_frame_age_ms=0)
     runtime["kernel"].update(pose={"nose": {"x": .5, "y": .3, "score": .9}},
+                             effective_bindings={"zone.leftHand": {"action": {"type": "gamepad", "target": "X"}}},
                              zones={"leftHand": {"pressed": False, "phase": "idle",
                                     "rect": {"x1": .123456789, "x2": .34567891, "y1": .1, "y2": .3}}})
     return runtime
@@ -43,6 +45,12 @@ def test_pose_changes_and_zone_editor_remain_independent_of_draw_skipping(deskto
     api, page = desktop.api, desktop.page
     api.runtime = runtime_with_pose(api)
     api.runtime["kernel"]["zones_frozen"] = True
+    page.route(ORIGIN + '/api/zones/editor', lambda route: api.fulfill(route, {
+        'reference': {'ready': True, 'pose': api.runtime['kernel']['pose']},
+        'rects': {'leftHand': api.runtime['kernel']['zones']['leftHand']['rect']},
+        'modes': {'leftHand': 'fixed'}, 'profile_id': api.profile['id'],
+        'width': 640, 'height': 480,
+    }))
     result = page.evaluate("""async runtime=>{
       const play=await import('/js/play.js');play.renderKernelState(runtime);
       let draws=0;const original=CanvasRenderingContext2D.prototype.clearRect;
@@ -52,8 +60,9 @@ def test_pose_changes_and_zone_editor_remain_independent_of_draw_skipping(deskto
         runtime.kernel.pose.nose.x=.6;play.renderKernelState(runtime);const moved=draws;
         runtime.kernel.zones.leftHand.rect.x1=.15;runtime.kernel.zones.leftHand.phase='pending';play.renderKernelState(runtime);
         const zone=document.querySelector('.zone[data-zone="leftHand"]');const zoneUpdated=zone.style.left==='15%'&&zone.classList.contains('pending');
-        await play.openLiveZoneEditor();const before=zone.style.left;play.nudgeRect('leftHand','ArrowRight',false);
-        const editorUpdated=zone.style.left!==before&&zone.classList.contains('selected');
+        await play.openLiveZoneEditor();const editorZone=document.querySelector('#zoneReferenceZones .zone[data-zone="leftHand"]');
+        const before=editorZone.style.left;play.nudgeRect('leftHand','ArrowRight',false);
+        const editorUpdated=editorZone.style.left!==before&&editorZone.classList.contains('selected');
         runtime.kernel.pose.nose.score=.2;play.renderKernelState(runtime);const disappeared=draws;
         runtime.kernel.pose.nose.x=.7;play.renderKernelState(runtime);const stillInvisible=draws;
         runtime.kernel.width=1000;play.renderKernelState(runtime);const resized=draws;
@@ -71,6 +80,7 @@ def test_pose_changes_and_zone_editor_remain_independent_of_draw_skipping(deskto
 
 def test_a_recent_trigger_jumps_to_its_row(desktop):
     page, api = desktop.page, desktop.api
+    api.runtime['kernel']['effective_bindings'] = {'zone.leftHand': {'action': {'type': 'gamepad', 'target': 'X'}}}
     api.runtime["kernel"]["recent_triggers"] = [{"at": 99, "trigger": "zone.leftHand", "label": "左手区",
                                                   "action": {"type": "gamepad", "target": "X"}}]
     page.evaluate("async runtime=>(await import('/js/play.js')).renderKernelState(runtime)", api.runtime)
@@ -108,6 +118,10 @@ def test_calibration_countdown_updates_without_redrawing_the_same_pose(desktop):
 
 def test_recent_events_keep_buttons_and_focus_when_age_and_log_order_change(desktop):
     runtime = copy.deepcopy(desktop.api.runtime)
+    runtime['kernel']['effective_bindings'] = {
+        'zone.leftHand': {'action': {'type': 'gamepad', 'target': 'X'}},
+        'zone.rightHand': {'action': {'type': 'gamepad', 'target': 'Y'}},
+    }
     runtime["kernel"]["recent_triggers"] = [{"at": 99, "trigger": "zone.leftHand", "label": "左手区",
                                              "action": {"type": "gamepad", "target": "X"}}]
     result = desktop.page.evaluate("""async runtime=>{

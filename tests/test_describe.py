@@ -43,6 +43,8 @@ def test_voice_command_names_match_the_shipped_catalog():
     data = json.loads(path.read_text(encoding="utf-8"))
     catalog = data.get("commands", data)
     expected = {item["id"]: item["label"] for item in catalog}
+    # 旧配置中的编号仍能显示中文，不再出现在新建口令目录中。
+    expected['zones.move_here'] = '区域挪到我这里'
     assert VOICE_COMMAND_NAMES == expected
 
 

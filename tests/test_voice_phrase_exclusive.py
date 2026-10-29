@@ -41,7 +41,7 @@ def test_a_shared_phrase_cannot_take_a_built_in_one(tmp_path):
     voice = make_service(tmp_path)
     voice.configure([shared("地图")])
     with pytest.raises(ValueError, match="内置口令"):
-        voice.configure([shared("地图"), shared("挪动区域", "F12")])
+        voice.configure([shared("地图"), shared("开始输出", "F12")])
     assert [item["phrase"] for item in voice.mappings] == ["地图"], "被拒的那次不该留下任何改动"
 
 
@@ -105,7 +105,7 @@ def test_old_shared_phrases_that_never_worked_are_dropped(tmp_path):
     path = user_path("voice_mappings")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"mappings": [
-        {"phrase": "挪动区域", "type": "system", "target": "ZONES.MOVE_HERE", "behavior": "tap"},
+        {"phrase": "开始输出", "type": "system", "target": "OUTPUT.START", "behavior": "tap"},
         shared("地图"),
     ]}, ensure_ascii=False), encoding="utf-8")
     voice = make_service(tmp_path)

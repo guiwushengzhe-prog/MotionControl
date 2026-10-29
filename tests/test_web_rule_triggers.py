@@ -42,12 +42,15 @@ def test_all_mappable_groups_can_be_selected_saved_and_reloaded(desktop, mode):
     pick = row.locator('.binding-rule-trigger')
     values = pick.evaluate("el=>[...el.options].map(o=>o.value).filter(Boolean)")
     assert set(values) == {"zone.leftHand", "zone.rightHand", "zone.leftFoot", "zone.rightFoot", "zone.headJump",
-                           "motion.calf_back", "motion.jump", "pose.hands_cross", "pose.custom1",
+                           "motion.calf_back", "motion.jump", "motion.lean_left", "motion.lean_right",
+                           "motion.lean_back", "motion.lean_forward", "motion.gunmouse_punch",
+                           "pose.hands_cross", "pose.custom1",
                            "voice.game.profile_slot_01", f"voice.{shared_id}"}
     assert pick.locator('optgroup').evaluate_all("els=>els.map(el=>el.label)") == ["触发圈", "身体动作", "姿势", "语音"]
     assert "体感配合口令" in pick.locator(f'option[value="voice.{shared_id}"]').inner_text()
     field = "reset_trigger" if mode == "cycle" else "alternate_when"
-    for key in ("zone.leftHand", "pose.custom1", "voice.game.profile_slot_01", f"voice.{shared_id}"):
+    for key in ("zone.leftHand", "motion.lean_forward", "motion.gunmouse_punch", "pose.custom1",
+                "voice.game.profile_slot_01", f"voice.{shared_id}"):
         pick.select_option(key)
         page.wait_for_function("key=>profileSaveStatus.textContent==='已保存' && document.querySelector('.binding-rule-trigger').value===key", arg=key)
         assert api.profile["overrides"]["motion.march"][field] == key

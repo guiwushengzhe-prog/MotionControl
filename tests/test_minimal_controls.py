@@ -104,7 +104,7 @@ def test_first_start_no_longer_records_a_reference_scene():
     assert 'output.enabled?void emergencyStop():void runAction(handleMainAction)' in app
     # 麦克风或手持端就绪不代表已选摄像头在识别：开始控制总是先启动已选的身体来源。
     assert '!inputStatus.handheld_connected&&!voiceInputReady' not in app
-    assert "if(!sessionStarted){\n    await setSource($('#poseSource').value,true);" in app
+    assert "await setSource($('#poseSource').value,true)" in app
 
 
 def test_four_motion_rules_and_settings_exist():
@@ -343,7 +343,7 @@ def test_game_overlay_uses_same_body_relative_zones():
     assert 'renderOverlay' in app
     assert 'renderKernelZones' in app
     assert 'runtime?.kernel' in app
-    assert 'requestAnimationFrame' not in app
+    assert 'detectForVideo' not in app  # 动画可插值显示，识别仍由电脑内核负责。
     assert 'getUserMedia({video' not in app
 
 
@@ -848,7 +848,8 @@ def test_gamepad_combo_is_picked_not_typed_and_poses_can_hold():
     assert "picker.className='combo-picker'" in app or "picker.className=\"combo-picker\"" in app
     assert "combo.type='hidden'" in app
     assert "input:not([type=checkbox])" in app
-    assert "tapOnly:true" not in app, 'no trigger should be locked out of holding'
+    tap_only = [line for line in app.splitlines() if 'tapOnly:true' in line]
+    assert len(tap_only) == 1 and "key:'motion.gunmouse_punch'" in tap_only[0]
     css = (ROOT / 'web' / 'app.css').read_text(encoding='utf-8')
     assert '.combo-picker' in css
 

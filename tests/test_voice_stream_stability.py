@@ -634,7 +634,7 @@ def test_disabled_system_override_and_keyboard_slot_keep_ordinary_dispatch(tmp_p
             item.configure_profile_bindings({"voice": {"game.profile_slot_01": {"phrase": "开输出", **binding}}})
             item.accept_phone_text("phone", "device", "开输出")
         assert queued == []
-        assert len(immediate) == 2  # The boundary still owns disabled/non-system mapping.
+        assert len(immediate) == 1  # 禁用的口令不派发，启用的游戏键交由原内核处理。
         assert all(action["type"] == "keyboard" for action in immediate)
     finally:
         item.close()

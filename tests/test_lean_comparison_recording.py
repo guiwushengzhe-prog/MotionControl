@@ -134,6 +134,10 @@ def test_worker_pairs_reference_after_prediction_without_sending_reference_to_mo
     runtime = tmp_path / "runtime.json"
     runtime.write_text(json.dumps({"python": "unused", "models": {"mocapnet_personal": {}}}), encoding="utf-8")
     engine._runtime = runtime
+    engine.resources = SimpleNamespace(
+        snapshot=lambda: ({'python': 'unused', 'models': {'mocapnet_personal': {}}}, '', 1),
+        diagnose=lambda *_args, **_kwargs: {'models': {'mocapnet_personal': {'available': True}}},
+    )
     stop = threading.Event()
     kernel.publish_monocular_lean = lambda *_: stop.set()
     indices = (0, 1, 2, 3, 4, 5, 16, 18, 20)

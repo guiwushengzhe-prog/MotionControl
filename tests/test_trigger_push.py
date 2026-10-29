@@ -95,12 +95,13 @@ def test_the_message_says_what_fired_and_what_it_presses():
 
 
 def test_the_key_shown_is_the_one_that_really_fires():
-    """区域有一层内置兜底：配置里没有 zone.headJump 时它照样按 A。推给手机的必须是
-    真正会按下去的那个，不然手机上会写「未映射」而游戏里明明有反应。"""
+    """手机反馈跟随实际绑定；没有绑定时不生成默认按键。"""
     kernel = ControlKernel(Output())
     kernel.configure_bindings({})
+    assert kernel._trigger_brief_locked('zone.headJump')['action'] is None
+    kernel.configure_bindings({'zones': {'headJump': {'action': {'type': 'gamepad', 'target': 'Y'}}}})
     brief = kernel._trigger_brief_locked("zone.headJump")
-    assert brief["action"] and brief["action"]["target"] == "A"
+    assert brief["action"] and brief["action"]["target"] == "Y"
     kernel.close()
 
 
@@ -157,7 +158,9 @@ def test_the_phone_is_told_what_really_fires():
     kernel = ControlKernel(Output())
     kernel.configure_bindings({})
     effective = kernel.effective_bindings()
-    assert effective["zone.headJump"]["action"]["target"] == "A"
+    assert effective == {}
+    kernel.configure_bindings({'zones': {'headJump': {'action': {'type': 'gamepad', 'target': 'Y'}}}})
+    assert kernel.effective_bindings()["zone.headJump"]["action"]["target"] == "Y"
     kernel.close()
 
 
@@ -207,14 +210,15 @@ def test_an_unmapped_action_does_not_hide_a_mapped_one():
 def test_an_unmapped_zone_does_not_light_up():
     """未映射区域不识别、不触发，也不在手机或网页上点亮。"""
     kernel = ControlKernel(Output())
-    kernel.configure_bindings({"zones": {"leftHand": {"disabled": True}}})
+    kernel.configure_bindings({"zones": {"leftHand": {"disabled": True},
+                                        "rightHand": {'action': {'type': 'gamepad', 'target': 'B'}}}})
     with kernel._lock:
         kernel.zone_state["leftHand"]["pressed"] = True
         kernel.zone_state["rightHand"]["pressed"] = True
     zones = kernel.runtime_zones()
     assert zones["leftHand"]["pressed"] is False
     assert zones["leftHand"]["recognized"] is False
-    assert zones["rightHand"]["pressed"] is True, "右手区有内置的 B，照常亮"
+    assert zones["rightHand"]["pressed"] is True, "右手区已绑定 B，照常亮"
     kernel.close()
 
 

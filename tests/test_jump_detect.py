@@ -138,7 +138,8 @@ def test_jump_is_a_built_in_motion_that_presses_its_key(monkeypatch):
 def test_an_unbound_zone_is_neither_judged_nor_drawn(monkeypatch):
     kernel = ControlKernel(KernelOutput())
     try:
-        kernel.configure_bindings({"zones": {"headJump": {"disabled": True}}})
+        kernel.configure_bindings({"zones": {"headJump": {"disabled": True},
+                                            "leftHand": {"action": {"type": "keyboard", "target": "Q", "behavior": "hold"}}}})
         feed = _zone_feeder(kernel, monkeypatch)
         feed(jumping_pose(0.0), 40)
         for dy in (-0.03, -0.06, -0.09, -0.10, -0.10, -0.10):

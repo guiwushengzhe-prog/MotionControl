@@ -54,13 +54,18 @@ def server(tmp_path_factory):
     from test_zone_fit import person
     (user / "body_reference.json").write_text(json.dumps(
         make_reference([person()], 640, 480, {"kind": "test"})), encoding="utf-8")
+    # 仅供模型目录和设置存取检查；不加载权重、不启动摄像头推理。
+    models = user / 'ui-models' / 'mediapipe'
+    models.mkdir(parents=True)
+    for name in ('pose_landmarker_full.task', 'pose_landmarker_heavy.task'):
+        (models / name).write_bytes(b'ui-test-model-metadata-only')
     port, admin = _free_port(), _free_port()
     env = {**os.environ, "MOTIONCONTROL_USER_DIR": str(user), "PYTHONUTF8": "1"}
     log_path = user / "server.log"
     log = open(log_path, "w", encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, "-X", "utf8", str(ROOT / "server.py"), "--host", "127.0.0.1",
-         "--port", str(port), "--admin-port", str(admin), "--no-browser"],
+         "--port", str(port), "--admin-port", str(admin), "--no-browser", "--model-root", str(models.parent)],
         cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
     base = f"http://127.0.0.1:{admin}"
     deadline = time.time() + 120
@@ -463,10 +468,15 @@ def test_custom_region_add_map_rename_and_reload(mode_ui):
     sync_api.expect(page.locator("#zoneActions")).to_be_visible()
     _go(page, "play")
     zone = page.locator(f'#viewer .zone[data-zone="{region["id"]}"]')
+    _fake_live_state(page, zones={region['id']: {
+        'rect': region['rect'], 'custom': True, 'name': '加速区域', 'mapped': True,
+    }}, effective_bindings={f"zone.{region['id']}": {'action': {'type': 'keyboard', 'target': 'K'}}})
+    page.evaluate("async()=>{await (await import('/js/play.js')).refreshKernel()}")
     sync_api.expect(zone).to_be_visible()
     sync_api.expect(zone.locator("small")).to_have_text("加速区域")
     page.click("#adjustZonesBtn")
     sync_api.expect(page.locator("#zoneEditBar")).to_be_visible()
+    page.select_option("#zoneEditSelection", region["id"])
     edit_zone = page.locator(f'#zoneReferenceZones .zone[data-zone="{region["id"]}"]')
     edit_zone.press("ArrowDown")
     with page.expect_response(lambda r: r.url.endswith("/api/zones/layout") and r.request.method == "POST"):
@@ -477,6 +487,7 @@ def test_custom_region_add_map_rename_and_reload(mode_ui):
     page.reload()
     page.wait_for_function("currentGameName.textContent === '界面模式测试'")
     page.click("#adjustZonesBtn")
+    page.select_option("#zoneEditSelection", region["id"])
     edit_zone.press("ArrowDown")
     page.click("#cancelLiveZonesBtn")
     restored = page.request.get(ui.base + "/api/game-profiles/selected").json()["profile"]["regions"][0]["rect"]
@@ -651,6 +662,7 @@ def test_settings_sections_and_contextual_groups(ui):
     # 小入口始终可用，二维码按需展开。
     assert page.locator("#phoneGroup").is_visible()
     assert page.locator("#phoneConnectPanel").is_hidden()
+    page.locator('#cameraSettings > summary').click()
     page.select_option("#poseSource", "phone")
     assert page.locator("#phoneGroup").is_visible()
     page.select_option("#poseSource", "computer")
@@ -671,9 +683,13 @@ def _fake_live_state(page, **kernel_fields) -> None:
         "left_knee": (.46, .78), "right_knee": (.54, .78), "left_ankle": (.46, .93), "right_ankle": (.54, .93),
     }.items()}
 
+    # 先读取真实状态；回调只派发快照，避免切换拦截规则时重复处理在途请求。
+    base = page.url.rstrip('/')
+    runtime = page.request.get(base + '/api/kernel/status').json()
+    perf = page.request.get(base + '/api/performance').json()
+
     def kernel(route):
-        response = route.fetch()
-        data = response.json()
+        data = json.loads(json.dumps(runtime))
         k = data.get("kernel", data)
         now = float(k.get("now") or 0)
         k["pose"] = pose
@@ -681,6 +697,11 @@ def _fake_live_state(page, **kernel_fields) -> None:
         k["zones"] = {"rightHand": {"rect": {"x1": .2, "y1": .3, "x2": .38, "y2": .55}, "pressed": True},
                       "leftHand": {"rect": {"x1": .62, "y1": .3, "x2": .8, "y2": .55}}}
         k["motions"] = []
+        k['effective_bindings'] = {
+            'zone.rightHand': {'action': {'type': 'gamepad', 'target': 'B'}},
+            'zone.leftHand': {'action': {'type': 'gamepad', 'target': 'X'}},
+            'motion.march': {'action': {'type': 'keyboard', 'target': 'W'}},
+        }
         k["recent_triggers"] = [{"trigger": "motion.march", "at": now - 0.3, "action": {"type": "keyboard", "target": "W"}}]
         k["head"] = {**k.get("head", {}), "output_x": 20, "sensitivity_x": 58, "calibrated": True,
                      "horizontal_calibrated": True, "enabled": True}
@@ -689,13 +710,12 @@ def _fake_live_state(page, **kernel_fields) -> None:
         data["camera"] = {**(data.get("camera") or {}), "running": True,
                           "frames": 1, "last_frame_age_ms": 0}
         k["pose_age_ms"] = 0
-        route.fulfill(response=response, json=data)
+        route.fulfill(json=data)
 
     def performance(route):
-        response = route.fetch()
-        data = response.json()
+        data = dict(perf)
         data["inference_fps"] = 29.8
-        route.fulfill(response=response, json=data)
+        route.fulfill(json=data)
 
     page.route("**/api/kernel/status", kernel)
     page.route("**/api/performance", performance)
