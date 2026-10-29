@@ -32,6 +32,26 @@ internal interface IMotionControlShellLink
 
 public static class MotionControlShortcut
 {
+    public static string[] Read(string file)
+    {
+        var link = (IMotionControlShellLink)new MotionControlShellLink();
+        try
+        {
+            ((IPersistFile)link).Load(file, 0);
+            var target = new StringBuilder(32768);
+            var directory = new StringBuilder(32768);
+            var icon = new StringBuilder(32768);
+            var arguments = new StringBuilder(32768);
+            int index;
+            link.GetPath(target, target.Capacity, IntPtr.Zero, 4);
+            link.GetWorkingDirectory(directory, directory.Capacity);
+            link.GetIconLocation(icon, icon.Capacity, out index);
+            link.GetArguments(arguments, arguments.Capacity);
+            return new[] { target.ToString(), directory.ToString(), icon + "," + index, arguments.ToString() };
+        }
+        finally { Marshal.FinalReleaseComObject(link); }
+    }
+
     public static void Save(string file, string target, string directory)
     {
         var link = (IMotionControlShellLink)new MotionControlShellLink();

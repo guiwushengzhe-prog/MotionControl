@@ -26,13 +26,13 @@ def test_installed_shortcuts_target_the_native_program_and_paths_with_spaces_wor
     assert raw[:2] == b"MZ" and raw[pe:pe + 4] == b"PE\0\0"
     assert struct.unpack_from("<H", raw, pe + 24 + 68)[0] == 2, "应为原生窗口程序，不能是控制台快捷方式"
     script = tmp_path / "inspect.ps1"
-    script.write_text("""param($Directory)
-$shell = New-Object -ComObject WScript.Shell
-$s = $shell.CreateShortcut((Join-Path $Directory 'MotionControl.lnk'))
-@{target=$s.TargetPath; icon=$s.IconLocation; directory=$s.WorkingDirectory; arguments=$s.Arguments} | ConvertTo-Json -Compress
+    script.write_text("""param($Directory,$Helper)
+Add-Type -Path $Helper
+$s = [MotionControlShortcut]::Read((Join-Path $Directory 'MotionControl.lnk'))
+@{target=$s[0]; directory=$s[1]; icon=$s[2]; arguments=$s[3]} | ConvertTo-Json -Compress
 """, encoding="utf-8")
     for directory in (desktop, programs):
-        check = subprocess.run([PWSH, "-NoProfile", "-File", str(script), str(directory)],
+        check = subprocess.run([PWSH, "-NoProfile", "-File", str(script), str(directory), str(ROOT / 'tools/windows/MotionControlShortcut.cs')],
                                capture_output=True, text=True, encoding="utf-8", timeout=15, check=True)
         shortcut = json.loads(check.stdout)
         assert Path(shortcut["target"]) == executable
@@ -134,8 +134,9 @@ def test_native_entry_finishes_while_a_background_process_keeps_output_open(tmp_
     root.mkdir(); data.mkdir()
     (root / "server.py").write_text("# isolated program")
     (root / "START.ps1").write_text("""param([switch]$Desktop,[switch]$NoBrowser)
+$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-$start = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'powershell.exe'))
+$start = [Diagnostics.ProcessStartInfo]::new([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
 $start.Arguments = '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30'
 $start.UseShellExecute = $false
 $start.CreateNoWindow = $true
