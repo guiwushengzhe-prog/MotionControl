@@ -1,21 +1,6 @@
 name: runtime-tests
 
 on:
-  push:
-    paths:
-      - 'motioncontrol/**'
-      - 'motioncontrol_shared/**'
-      - 'server.py'
-      - 'web/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'cloud/**'
-      - 'config/**'
-      - 'game_profiles/**'
-      - 'release/**'
-      - 'requirements-runtime.txt'
-      - '.github/workflows/runtime-tests.yml'
-  pull_request:
   workflow_dispatch:
 
 permissions:
