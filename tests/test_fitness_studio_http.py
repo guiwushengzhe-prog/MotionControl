@@ -109,7 +109,16 @@ def app_http(isolated_user_data, monkeypatch):
     app.OUTPUT.close()
 
 
-def test_real_studio_http_writes_playable_synthetic_video(browser, app_http):
+@pytest.mark.parametrize(("layout", "resolution", "expected"), [
+    ("landscape", "720", [1280, 720]),
+    ("landscape", "1080", [1920, 1080]),
+    ("portrait", "1080", [1080, 1920]),
+    ("classic", "1440", [1920, 1440]),
+    ("classic-portrait", "720", [720, 960]),
+    ("square", "1080", [1080, 1080]),
+    ("landscape", "2160", [3840, 2160]),
+])
+def test_real_studio_http_writes_playable_synthetic_video(browser, app_http, layout, resolution, expected):
     app, base, user_dir = app_http
     page = browser.new_page()
     errors, missing = [], []
@@ -118,8 +127,13 @@ def test_real_studio_http_writes_playable_synthetic_video(browser, app_http):
     page.add_init_script(FAKE_CAPTURE)
     page.goto(base + "/studio.html")
     page.wait_for_function("document.getElementById('studioFace')?.disabled===false")
+    for control, value in (("studioLayout", layout), ("studioResolution", resolution)):
+        with page.expect_response(lambda response: response.url.endswith('/api/studio/config')):
+            page.select_option("#" + control, value)
     page.click("#studioStartBtn")
     page.wait_for_selector("#studioRecordingBadge:not([hidden])")
+    assert page.locator("#studioLayout").is_disabled()
+    assert page.locator("#studioResolution").is_disabled()
     # 等片段真正落盘，不假定慢机器能在固定毫秒数内完成编码和上传。
     folder = user_dir / 'recordings' / 'studio'
     deadline = time.monotonic() + 10
@@ -146,7 +160,8 @@ def test_real_studio_http_writes_playable_synthetic_video(browser, app_http):
       await new Promise((resolve,reject)=>{video.onloadeddata=resolve;video.onerror=reject});
       await video.play();const result=[video.videoWidth,video.videoHeight];video.pause();URL.revokeObjectURL(url);return result;
     }""", encoded)
-    assert size == [1280, 720]
+    assert size == expected
+    assert app.STUDIO.config["layout"] == layout and app.STUDIO.config["resolution"] == resolution
     assert page.evaluate("syntheticTracks.every(track=>track.readyState==='ended')")
     assert errors == []
     assert missing == []

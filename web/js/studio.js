@@ -3,7 +3,7 @@ import {readStudioFrame} from './studio-frame.js';
 import {compose,FULL_CROP,containGeometry,portraitViewport,sourceSize} from './studio-compose.js';
 import {cropEditor} from './studio-crop.js';
 const root=document.querySelector('#studioRoot');
-const defaults={source:'computer',background:'original',face:'original',layout:'landscape',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false,mirror:true,avatar_preset:'',portrait_zoom:100,portrait_pan:{x:0,y:0},screen_crop:FULL_CROP,portrait_crop:FULL_CROP};
+const defaults={source:'computer',background:'original',face:'original',layout:'landscape',resolution:'720',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false,mirror:true,avatar_preset:'',portrait_zoom:100,portrait_pan:{x:0,y:0},screen_crop:FULL_CROP,portrait_crop:FULL_CROP};
 const $=id=>document.getElementById(id);
 const clientId=globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random();
 let config={...defaults},loaded=false,preview=false,starting=false,recording=false,saving=false;
@@ -39,8 +39,13 @@ function errorText(error){
 }
 
 function forgetFrame(){frameEpoch++;frame?.close();frame=null;frameAt=0;draw()}
+function recordingSize(layout,resolution){
+  const [rw,rh]={landscape:[16,9],portrait:[9,16],classic:[4,3],'classic-portrait':[3,4],square:[1,1]}[layout];
+  const scale=Number(resolution)/Math.min(rw,rh);
+  return [Math.round(rw*scale),Math.round(rh*scale)];
+}
 function renderControls(){
-  const fields={studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size',studioZoom:'portrait_zoom'};
+  const fields={studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioResolution:'resolution',studioPosition:'position',studioCapture:'capture',studioSize:'size',studioZoom:'portrait_zoom'};
   for(const [id,key] of Object.entries(fields))$(id).value=String(config[key]??defaults[key]);
   $('studioSystemAudio').checked=!!config.system_audio;
   $('studioMicrophone').checked=!!config.microphone;
@@ -49,9 +54,10 @@ function renderControls(){
   $('studioAvatarRow').hidden=config.face!=='avatar';
   $('studioAvatarStatus').textContent=config.avatar_data_url?'已保存面具；随人脸位置和侧倾移动':'选择下方面具；未选择时使用跟脸遮盖';
   for(const button of root.querySelectorAll('[data-avatar-preset]'))button.setAttribute('aria-pressed',String(button.dataset.avatarPreset===config.avatar_preset));
-  const canvas=$('studioCanvas'),portrait=config.layout==='portrait';
-  canvas.width=portrait?720:1280;canvas.height=portrait?1280:720;
-  $('studioPreviewBox').classList.toggle('portrait',portrait);
+  for(const option of $('studioResolution').options)option.textContent=recordingSize(config.layout,option.value).join(' × ');
+  const canvas=$('studioCanvas'),[width,height]=recordingSize(config.layout,config.resolution);
+  if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height}
+  $('studioPreviewBox').style.setProperty('--studio-ratio',String(width/height));
   draw();renderButtons();renderAudioStatus();
 }
 
@@ -70,7 +76,7 @@ function renderButtons(){
   $('studioStopBtn').disabled=saving;
   $('studioStopBtn').textContent=saving?'正在保存…':'停止并保存';
   $('studioRecordingBadge').hidden=!recording;
-  for(const id of ['studioLayout','studioCapture','studioSystemAudio','studioMicrophone'])$(id).disabled=!loaded||busy;
+  for(const id of ['studioLayout','studioResolution','studioCapture','studioSystemAudio','studioMicrophone'])$(id).disabled=!loaded||busy;
   $('studioSystemAudio').disabled=!loaded||busy||!!screenStream;
   for(const id of ['studioSource','studioBackground','studioFace','studioPosition','studioSize','studioZoom','studioAvatar'])$(id).disabled=!loaded||starting||saving;
   for(const button of root.querySelectorAll('[data-avatar-preset]'))button.disabled=!loaded||starting||saving;
@@ -312,7 +318,8 @@ async function startRecording(){
     renderAudioStatus();
     audioTracks.forEach(track=>{for(const type of ['ended','mute','unmute'])track.addEventListener(type,renderAudioStatus)});
     const mime=pickMime();
-    recorder=new MediaRecorder(canvasStream,{mimeType:mime,videoBitsPerSecond:4500000,audioBitsPerSecond:128000});
+    const canvas=$('studioCanvas'),videoBitsPerSecond=Math.round(4500000*canvas.width*canvas.height/(1280*720));
+    recorder=new MediaRecorder(canvasStream,{mimeType:mime,videoBitsPerSecond,audioBitsPerSecond:128000});
     const result=await request('/api/studio/recording/start',{mime_type:recorder.mimeType,layout:config.layout,width:$('studioCanvas').width,height:$('studioCanvas').height});
     recordingId=result.id;
     if(!recordingId)throw new Error('未能创建录制文件');
@@ -386,7 +393,7 @@ async function mount(){
     $('studioStartBtn').addEventListener('click',()=>void startRecording());
     $('studioStopBtn').addEventListener('click',stopRecording);
     bindTransformTools();
-    for(const [id,key] of Object.entries({studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioPosition:'position',studioCapture:'capture',studioSize:'size',studioZoom:'portrait_zoom'})){
+    for(const [id,key] of Object.entries({studioSource:'source',studioBackground:'background',studioFace:'face',studioLayout:'layout',studioResolution:'resolution',studioPosition:'position',studioCapture:'capture',studioSize:'size',studioZoom:'portrait_zoom'})){
       $(id).addEventListener('change',event=>{
         if(id==='studioFace'&&event.target.value==='avatar')$('studioAppearanceSettings').open=true;
         void persist({[key]:['size','portrait_zoom'].includes(key)?Number(event.target.value):event.target.value}).catch(()=>{});

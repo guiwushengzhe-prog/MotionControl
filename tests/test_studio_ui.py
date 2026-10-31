@@ -128,13 +128,13 @@ def ready(page, base):
     page.wait_for_function("!document.getElementById('studioFace').disabled")
 
 
-@pytest.mark.parametrize("layout", ["landscape", "portrait"])
+@pytest.mark.parametrize("layout", ["landscape", "portrait", "square"])
 def test_primary_settings_fit_first_screen_without_opening_capture(browser, studio_server, layout):
     base, state = studio_server
     state["config"]["layout"] = layout
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     ready(page, base)
-    for control in ("studioStartBtn", "studioCopyOverlayBtn", "studioLayout", "studioCapture",
+    for control in ("studioStartBtn", "studioCopyOverlayBtn", "studioLayout", "studioResolution", "studioCapture",
                     "studioSource", "studioFace", "studioBackground", "studioPosition",
                     "studioSize", "studioSystemAudio", "studioMicrophone"):
         assert page.locator("#" + control).evaluate("node=>{const r=node.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight}")
@@ -142,6 +142,36 @@ def test_primary_settings_fit_first_screen_without_opening_capture(browser, stud
     assert page.locator("#studioLiveSettings").get_attribute("open") is None
     assert page.evaluate("document.documentElement.scrollWidth<=innerWidth+1")
     assert not state["posts"]
+    page.close()
+
+
+def test_recording_ratios_and_resolutions_update_preview_and_survive_reload(browser, studio_server):
+    base, state = studio_server
+    page = browser.new_page()
+    ready(page, base)
+    sizes = {
+        "landscape": [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)],
+        "portrait": [(720, 1280), (1080, 1920), (1440, 2560), (2160, 3840)],
+        "classic": [(960, 720), (1440, 1080), (1920, 1440), (2880, 2160)],
+        "classic-portrait": [(720, 960), (1080, 1440), (1440, 1920), (2160, 2880)],
+        "square": [(720, 720), (1080, 1080), (1440, 1440), (2160, 2160)],
+    }
+    for layout, dimensions in sizes.items():
+        with page.expect_response(lambda response: response.url.endswith('/api/studio/config')):
+            page.select_option("#studioLayout", layout)
+        assert page.locator("#studioResolution option").all_text_contents() == [f"{w} × {h}" for w, h in dimensions]
+        for resolution, (width, height) in zip(("720", "1080", "1440", "2160"), dimensions):
+            with page.expect_response(lambda response: response.url.endswith('/api/studio/config')):
+                page.select_option("#studioResolution", resolution)
+            assert page.locator("#studioCanvas").evaluate("c=>[c.width,c.height]") == [width, height]
+            ratio = page.locator("#studioPreviewBox").evaluate("node=>{const r=node.getBoundingClientRect();return r.width/r.height}")
+            assert ratio == pytest.approx(width / height, abs=.002)
+            assert state["config"]["resolution"] == resolution
+    page.reload()
+    page.wait_for_function("!document.getElementById('studioResolution').disabled")
+    assert page.locator("#studioLayout").input_value() == "square"
+    assert page.locator("#studioResolution").input_value() == "2160"
+    assert page.locator("#studioCanvas").evaluate("c=>[c.width,c.height]") == [2160, 2160]
     page.close()
 
 

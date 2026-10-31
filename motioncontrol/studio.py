@@ -14,7 +14,7 @@ from motioncontrol.config_transaction import atomic_bytes
 from motioncontrol.studio_portrait import decode_avatar
 
 DEFAULT_CONFIG = {"source": "computer", "background": "original", "face": "original",
-                  "avatar_data_url": "", "layout": "landscape", "position": "bottom-right",
+                  "avatar_data_url": "", "layout": "landscape", "resolution": "720", "position": "bottom-right",
                   "size": 30, "capture": "window", "system_audio": True, "microphone": False,
                   "mirror": True, "avatar_preset": "", "portrait_zoom": 100,
                   "portrait_pan": {"x": 0, "y": 0},
@@ -54,7 +54,9 @@ class StudioService:
             raise ValueError("录制设置必须是一组设置")
         config = dict(self.config)
         choices = {"source": {"computer", "phone"}, "background": {"original", "green", "transparent"},
-                   "face": {"original", "mask", "avatar"}, "layout": {"landscape", "portrait"},
+                   "face": {"original", "mask", "avatar"},
+                   "layout": {"landscape", "portrait", "classic", "classic-portrait", "square"},
+                   "resolution": {"720", "1080", "1440", "2160"},
                    "position": {"bottom-right", "bottom-left", "top-right", "top-left"},
                    "capture": {"window", "monitor"}, "avatar_preset": {"", "cat", "fox", "robot"}}
         for key, allowed in choices.items():

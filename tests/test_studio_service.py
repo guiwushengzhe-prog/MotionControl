@@ -139,7 +139,7 @@ def test_saved_configuration_survives_restart_without_starting_video(factory):
     clock = Clock()
     service, _, _ = factory(clock)
     expected = {"source": "phone", "background": "transparent", "face": "mask",
-                "layout": "portrait", "size": 45, "system_audio": False, "microphone": True,
+                "layout": "classic-portrait", "resolution": "1440", "size": 45, "system_audio": False, "microphone": True,
                 "mirror": False, "portrait_zoom": 320, "portrait_pan": {"x": -.6, "y": .2},
                 "portrait_crop": {"x": .1, "y": .1, "width": .8, "height": .8}}
     service.update(expected)
@@ -150,6 +150,30 @@ def test_saved_configuration_survives_restart_without_starting_video(factory):
     assert all(state["config"][key] == value for key, value in expected.items())
     assert not portrait.enabled and not bridge.enabled
     assert restored.frame_png() is None
+
+
+@pytest.mark.parametrize("layout", ["landscape", "portrait"])
+def test_old_configuration_keeps_720_resolution(factory, tmp_path, layout):
+    import json
+
+    folder = tmp_path / "studio"
+    folder.mkdir()
+    (folder / "studio.json").write_text(json.dumps({"layout": layout, "face": "mask"}), encoding="utf-8")
+    service, portrait, bridge = factory(Clock())
+    config = service.state()["config"]
+    assert config["layout"] == layout and config["resolution"] == "720"
+    assert config["face"] == "mask"
+    assert not service.error and not portrait.enabled and not bridge.enabled
+
+
+def test_invalid_resolution_does_not_partially_save_layout(factory):
+    service, _, _ = factory(Clock())
+    before = service.update({"layout": "portrait", "resolution": "1080"})["config"]
+    saved = service.config_path.read_bytes()
+    with pytest.raises(ValueError, match="录制选项"):
+        service.update({"layout": "square", "resolution": "4320"})
+    assert service.state()["config"] == before
+    assert service.config_path.read_bytes() == saved
 
 
 @pytest.mark.parametrize("crop", [
