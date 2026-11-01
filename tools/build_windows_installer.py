@@ -33,6 +33,14 @@ def copy_file(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
+def payload_files(target: Path) -> list[dict]:
+    # 与安装向导的排除规则一致；依赖校验会生成缓存，缓存不参与安装文件完整性校验。
+    return [{'path': path.relative_to(target).as_posix(), 'size': path.stat().st_size,
+             'sha256': sha256(path)} for path in sorted(target.rglob('*'))
+            if path.is_file() and '__pycache__' not in path.parts
+            and path.suffix not in {'.pyc', '.pyo'} and path.name != 'installer-payload.json']
+
+
 def vc_runtime(directory: Path) -> list[dict]:
     required = ('concrt140.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
     optional = ('msvcp140_2.dll', 'msvcp140_atomic_wait.dll', 'msvcp140_codecvt_ids.dll', 'vcruntime140_threads.dll')
@@ -149,8 +157,7 @@ def stage(args: argparse.Namespace) -> Path:
         'python_archive_sha256': sha256(args.python_archive),
         'microsoft_runtime': runtime_records,
         'models': [{'path': relative, 'sha256': sha256(source)} for relative, source in models.items()],
-        'files': [{'path': path.relative_to(target).as_posix(), 'size': path.stat().st_size,
-                   'sha256': sha256(path)} for path in sorted(target.rglob('*')) if path.is_file()],
+        'files': payload_files(target),
     }
     (target / 'installer-payload.json').write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
