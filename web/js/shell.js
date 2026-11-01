@@ -74,6 +74,8 @@ function tutorialState(){
     modelOk:cameraInfo?!!cameraInfo.model_path:null,
     scan:cameraScan.state,scanCount:cameraScan.count,
     phoneStreaming:phoneLive||!!inputStatus.phone_ignored,usbTether:!!inputStatus.usb_tether?.present,
+    phoneConnected:!!(phoneLive||inputStatus.mobile_voice_connected||inputStatus.handheld_connected),
+    phoneCodeOpen:!$('#phoneConnectPanel')?.hidden,
     posed:!!currentPoseMap,headShoulders:seen('nose')&&seen('left_shoulder')&&seen('right_shoulder'),
     // 握拳控左右不需要头部中心，这一点和「视角控制」那块的判断保持一致。
     calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
@@ -99,6 +101,7 @@ function tutorialState(){
     // 「手忙不过来，想用嘴说」：听到几句用计数比（同一句说两遍文字不变）；老版本服务没有
     // 这个数，就退回比最后一句。
     voiceReady:voiceInputReady,voiceIssue,voiceHeard:String(vs.commands_heard??vs.last_command??''),
+    recognitionStarted:sessionStarted||cameraRunning||!!vs.connected,audioSource:$('#audioSource').value,
     stopPhrase:(vs.emergency_stop_phrases||[])[0]||'体感紧急停止',voiceListOpen:!!$('#voiceCommandsMask')?.open,
     gamePickerOpen:!$('#gamePicker')?.hidden,
   };
@@ -621,5 +624,8 @@ function revealTargets(elements){
     const group=el.closest?.('.binding-group');if(group?.hidden)showMapTab(group.dataset.group);
     if(el.closest?.('#libraryBody')&&$('#libraryBody').hidden)setLibraryOpen(true);
     if(el.closest?.('#gamePicker')&&$('#gamePicker').hidden){togglePanel('switchGameBtn','gamePicker',true);void runAction(searchProfiles)}
+    for(let parent=el.parentElement;parent;parent=parent.parentElement){
+      if(parent.tagName==='DETAILS')parent.open=true;
+    }
   }
 }

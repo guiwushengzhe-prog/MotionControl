@@ -85,7 +85,7 @@ def test_zone_teaching_uses_current_points_and_simultaneous_groups(lesson_page, 
     expect(page.locator('#tourSay')).to_contain_text(words)
     assert '手举过头' not in page.locator('#tourSay').inner_text()
     if len(groups[0]) > 1:
-        expect(page.locator('#tourHint')).to_contain_text('同时进圈')
+        expect(page.locator('#tourHint')).to_contain_text('同时进入区域')
 
 
 def test_old_threshold_only_record_does_not_skip_full_body_collection(lesson_page):

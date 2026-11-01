@@ -43,9 +43,14 @@ function connectGuide(s, memo, now) {
 
   if (s.sourcePick === 'phone') {
     if (s.source !== 'phone') return {target: NAV_PLAY, say: '回到开始页，点画面下方「开始识别」'};
+    if (!s.phoneConnected) {
+      return s.phoneCodeOpen
+        ? {target: '#phoneConnectPanel', say: '用手机扫码连接这台电脑', hint: '手机上点「扫码连接电脑」，手机和电脑连接同一个无线网络'}
+        : {target: '#phoneConnectBtn', say: '点手机卡片里的「扫码连接」'};
+    }
     return {
-      target: ['#poseSource', '#mobileStatus'], say: '打开手机上的 MotionControl',
-      hint: `选「固定摄像头」，点「连接并开始」 · ${s.usbTether ? '数据线已接通' : '手机和电脑连同一个 WiFi'}`,
+      target: '#mobileStatus', say: '手机选「固定摄像头」，点「连接并开始」',
+      hint: s.usbTether ? '数据线已接通' : '手机和电脑保持连接同一个无线网络',
     };
   }
 
@@ -72,7 +77,7 @@ function connectGuide(s, memo, now) {
       : {target: '#poseSource', say: '摄像头打不开', hint: '关掉占用摄像头的软件后到首页重试；没有摄像头就改用「手机摄像头」'};
   }
   if (s.scan === 'done' && s.scanCount === 0) {
-    return {target: ['#poseSource', '#cameraScanBtn'], say: '没找到摄像头', hint: '被别的软件占着就关掉它再点「扫描」；没有就改用「手机摄像头」'};
+    return {target: ['#poseSource', '#cameraScanBtn'], say: '没找到摄像头', hint: '关掉占用摄像头的软件，再点「查找摄像头」；没有就改用「手机摄像头」'};
   }
   if (s.scanCount > 1) {
     return {target: '#cameraDeviceRow', say: '选择一个摄像头，会自动开始识别', hint: `找到 ${s.scanCount} 个；画面里不是你就换一个`};
@@ -243,12 +248,12 @@ const STEPS = [
   {
     id: 'zone',
     name: '区域按键',
-    doneSay: '✓ 圈亮了，键就按下了',
+    doneSay: '✓ 区域亮了，动作已识别',
     guide(s, memo, now) {
       const before = connectGuide(s, memo, now) || standGuide(s, memo, now);
       if (before) return before;
       const shown = s.zones.filter(zone => zone.shown);
-      if (!shown.length) return {target: '#viewer', say: '站好，等画面里出现圆圈'};
+      if (!shown.length) return {target: '#viewer', say: '站好，等画面里出现触发区域'};
       // 先教手：最好够、最好看。挑一个真的绑了键的；一个都没绑，也照样教，但得说清楚。
       const pick = ['leftHand', 'rightHand', 'headJump', 'leftFoot', 'rightFoot']
         .map(id => shown.find(zone => zone.id === id && zone.key)).find(Boolean) || shown[0];
@@ -257,10 +262,10 @@ const STEPS = [
       const how = groups.length ? `让${groups.map(group => group.join('和')).join('，或')}进入` : defaultHow;
       return {
         target: '#viewer', mark: `.zone[data-zone="${pick.id}"]`, ready: true,
-        say: `${how}「${pick.key || pick.body}」圈`,
+        say: `${how}「${pick.key || pick.body}」区域`,
         // 没绑键的圈伸进去也不会亮（亮 = 按下了一个键），这一步只能跳过。
-        hint: !pick.key ? '这个游戏方案没给圈绑键，伸进去不会亮；这步可以跳过'
-          : groups.some(group => group.length > 1) ? '同一条连线上的点要同时进圈；不同组满足一组即可' : '',
+        hint: !pick.key ? '这个游戏没有给该区域绑键；到「本游戏 → 区域」设置按键'
+          : groups.some(group => group.length > 1) ? '同一条连线上的点要同时进入区域；不同组满足一组即可' : '',
       };
     },
     check: s => ({ok: s.zones.some(zone => zone.pressed)}),
@@ -295,16 +300,14 @@ const STEPS = [
 
 const NAV_GAMES = 'nav [data-view="games"]';
 
-// 基础之外的三课，不在第一遍里教：第一遍只管「能玩起来」。它们各自住在自己那一页，
+// 基础之外的课，不在第一遍里教：第一遍只管「能玩起来」。它们各自住在自己那一页，
 // 基础学完之后下次打开时让人挑。挑的时候看到的不是功能名，而是它解决的那个问题——
 // 人不会想「我要学动作测试」，只会想「我做了动作怎么没反应」。
-// 语音用不了时，人能做的只有这几件。发布包里带着语音模型，所以「模型不在」基本就是
-// 安装包没解压完整、或者被杀毒软件拿走了——重新解压一遍能好；弄不好也不要紧，语音
-// 不影响用身体玩，所以直说可以先跳过。中文路径读不了模型的问题程序自己会绕开，不用人管。
+// 语音未就绪时，定位当前界面里可以检查和操作的位置。
 const VOICE_FIX = {
-  model: {say: '重新解压一遍安装包', hint: '程序文件夹里少了语音模型。弄不好就点「换一个」，不影响用身体玩'},
-  mic: {say: '插上麦克风', hint: '插了还不行：Windows 设置 → 隐私 → 麦克风，允许桌面应用使用'},
-  silent: {say: '对着麦克风说句话', hint: '还是没反应：Windows 声音设置里换一个默认麦克风'},
+  model: {say: '查看语音模型状态', hint: '这里会显示缺失文件或加载失败的原因'},
+  mic: {say: '选择要用的麦克风', hint: '点「查找麦克风」，再选择输入设备'},
+  silent: {say: '对着麦克风说句话', hint: '没有声音就换一个输入设备，或检查系统麦克风音量'},
   starting: {say: '语音准备中，等几秒', hint: ''},
 };
 
@@ -423,7 +426,7 @@ const EXTRAS = [
     id: 'fit',
     name: '量身',
     manualDone: true,
-    problem: '动作圈不合适',
+    problem: '触发区域不合适',
     doneSay: s => fitDoneSay(s.fit),
     guide(s, memo, now) {
       const fit = s.fit || {};
@@ -526,6 +529,25 @@ const EXTRAS = [
     check: (s, memo) => ({ok: s.profileApplies > (memo.appliesBefore ?? s.profileApplies)}),
   },
   {
+    id: 'studio',
+    name: '录制画面',
+    problem: '录屏、选比例和分辨率',
+    manualDone: true,
+    doneSay: '✓ 点「选择画面并录制」开始，停止后自动保存',
+    guide(s, memo) {
+      if (s.view !== 'devices') return {target: NAV_DEVICES, say: '点「设置」'};
+      if (!$('studioLayout')) return {target: '#studioRoot', say: '正在打开录制设置…'};
+      if (!memo.formatPicked) return {
+        target: ['#studioLayout', '#studioResolution'],
+        say: '选择画幅比例和录制分辨率',
+        hint: '横屏视频可选 16:9、1920 × 1080；竖屏选 9:16',
+        choice: {label: '选好了，下一步', run: () => { memo.formatPicked = true; }},
+      };
+      return {target: '#studioStartBtn', ready: true};
+    },
+    check: (s, memo) => ({ok: !!memo.formatPicked}),
+  },
+  {
     id: 'voice',
     name: '语音口令',
     problem: '手忙不过来，想用嘴说',
@@ -533,10 +555,23 @@ const EXTRAS = [
     guide(s, memo) {
       if (memo.heardBefore === undefined) memo.heardBefore = s.voiceHeard;
       if (s.voiceHeard !== memo.heardBefore) memo.heard = true;
+      if (!s.voiceReady) {
+        if (s.recognitionStarted === false) return s.view !== 'play'
+          ? {target: NAV_PLAY, say: '回到「开始」页'}
+          : {target: '#sourceStartBtn', say: '点「开始识别」，开启麦克风'};
+        if (s.view !== 'devices') return {target: NAV_DEVICES, say: '点「设置」，检查语音输入'};
+        if (s.voiceIssue === 'model') return {target: '#voiceDiagnostic', ...VOICE_FIX.model};
+        if (s.audioSource === 'phone' && !s.phoneConnected) return s.phoneCodeOpen
+          ? {target: '#phoneConnectPanel', say: '用手机扫码连接这台电脑', hint: '连接后开启手机麦克风'}
+          : {target: '#phoneConnectBtn', say: '点手机卡片里的「扫码连接」'};
+        return {
+          target: s.audioSource === 'phone' ? '#audioSource' : ['#audioScanBtn', '#audioSource', '#audioDeviceRow'],
+          ...(VOICE_FIX[s.voiceIssue] || VOICE_FIX.starting),
+        };
+      }
       if (s.view !== 'play') return {target: NAV_PLAY, say: '回到「开始」页'};
-      if (!s.voiceReady) return {target: ['#voicePill', '#voiceStatus'], ...(VOICE_FIX[s.voiceIssue] || VOICE_FIX.starting)};
       // 先教急停那一句：它无害，而且是最该会的——手占着按不到 F9 的时候就靠它。
-      if (!memo.heard) return {target: ['#voicePill', '#voiceStatus'], say: `说「${s.stopPhrase}」`, hint: '一口气说完'};
+      if (!memo.heard) return {target: '#voiceCommandsBtn', say: `说「${s.stopPhrase}」`, hint: '一口气说完'};
       return {target: '#voiceCommandsBtn', ready: true, say: '点「查看口令」', hint: '还能说哪些，都在这'};
     },
     check: (s, memo) => ({ok: !!memo.heard && s.voiceListOpen}),
@@ -979,6 +1014,8 @@ export function createTutorial(actions = {}) {
       memo.repick = true;
       memo.repickFrom = state.cameraIndex;
       memo.lostSince = 0;
+    } else if (typeof choice.run === 'function') {
+      choice.run();
     } else {
       actions[choice.run]?.(choice.arg);
     }
