@@ -6,7 +6,8 @@ $env:PYTHONUTF8 = '1'
 Set-Location $PSScriptRoot
 
 $multicorePython = Join-Path $PSScriptRoot '.venv-multicore\Scripts\python.exe'
-$python = if (Test-Path -LiteralPath $multicorePython) { $multicorePython } else { 'python' }
+$bundledPython = Join-Path (Split-Path -Parent $PSScriptRoot) 'python\python.exe'
+$python = if (Test-Path -LiteralPath $bundledPython) { $bundledPython } elseif (Test-Path -LiteralPath $multicorePython) { $multicorePython } else { 'python' }
 $location = @(& $python -X utf8 -m motioncontrol.user_paths --locate --register 2>&1)
 if ($LASTEXITCODE -eq 2 -and $Desktop) {
     Add-Type -AssemblyName System.Windows.Forms
@@ -262,9 +263,5 @@ if ($Desktop) {
     exit 0
 }
 
-if (Test-Path -LiteralPath $multicorePython) {
-    if ($NoBrowser) { & $multicorePython -X utf8 server.py --no-browser } else { & $multicorePython -X utf8 server.py }
-} else {
-    if ($NoBrowser) { python -X utf8 server.py --no-browser } else { python -X utf8 server.py }
-}
+if ($NoBrowser) { & $python -X utf8 server.py --no-browser } else { & $python -X utf8 server.py }
 exit $LASTEXITCODE

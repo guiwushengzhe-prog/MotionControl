@@ -54,7 +54,7 @@ CONFIG_FILES = (
 # 语音识别直接使用随包的 Vosk 模型，不再打包 Windows 系统语音桥接脚本。
 # CHANGELOG.md 跟着 app/ 走：更新后界面靠它说「这次更新了什么」（update_status）。
 RUNTIME_FILES = ("motioncontrol/windows_firewall.ps1", "tools/kinect_camera/KinectCamera.cs",
-                 "tools/camera_devices/CameraDevices.cs", "CHANGELOG.md")
+                 "tools/camera_devices/CameraDevices.cs", "START.ps1", "CHANGELOG.md")
 
 # Configuration that belongs to the bundle, not to the repository: it points at
 # paths *inside* the release.  The repo's copies point at a developer's machine
@@ -66,6 +66,9 @@ RELEASE_LOCAL_CONFIG = (
     "vosk_model_path.txt",
     "vigemclient_dll.txt",
 )
+
+# 独立安装包构建器生成并管理；更新程序源码时保留原生入口及初始安装文件清单。
+GENERATED_BUNDLE_FILES = ("MotionControl.exe", "installer-payload.json")
 
 # Shipped by mistake in 2.0: it pointed at a developer's absolute path
 # (F:\MotionControl-App\models\sherpa-...) for a model the release does not
@@ -193,6 +196,7 @@ def plan(target: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
     # 改名成 README.txt 之后旧的还在，新手指南.html 不再随包发布之后旧的也还在。
     # 只看顶层文件：models/、python/、native/ 这些子目录不由这个脚本管。
     if target.is_dir():
+        wanted.update(target / name for name in GENERATED_BUNDLE_FILES)
         for existing in sorted(target.iterdir()):
             if existing.is_file() and existing not in wanted:
                 stale.append(existing)

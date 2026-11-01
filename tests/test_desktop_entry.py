@@ -84,6 +84,27 @@ def test_windows_builtin_shell_can_read_utf8_and_normalize_a_moved_data_alias(tm
     assert (ROOT / "START.ps1").read_bytes().startswith(b'\xef\xbb\xbf')
 
 
+def test_bundle_entry_finds_its_own_program_after_moving_without_installation_record(tmp_path):
+    bundle = tmp_path / "独立安装 带空格"
+    for name in ("python", "runtime", "app"):
+        (bundle / name).mkdir(parents=True)
+    for relative in ("python/python.exe", "runtime/launcher.py", "app/server.py", "app/START.ps1"):
+        (bundle / relative).write_text("test", encoding="utf-8")
+    compiler = Path(os.environ["SystemRoot"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+    executable = bundle / "MotionControl.exe"
+    subprocess.run([str(compiler), "/nologo", "/target:winexe", "/reference:System.Windows.Forms.dll",
+                    "/reference:System.Web.Extensions.dll", f"/out:{executable}",
+                    str(ROOT / "tools/windows/MotionControl.cs")], check=True, capture_output=True)
+    moved = tmp_path / "另一处 中文安装目录"
+    bundle.rename(moved)
+    report = tmp_path / "独立入口.json"
+    subprocess.run([str(moved / "MotionControl.exe"), "--diagnose", str(report)], check=True, timeout=10)
+    result = json.loads(report.read_text(encoding="utf-8"))
+    assert Path(result["program_root"]) == moved / "app"
+    assert result["program_ready"]
+    assert not (moved / "installation.json").exists()
+
+
 def test_optional_phone_tunnel_native_stderr_does_not_abort_windows_startup(tmp_path):
     legacy = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     source = (ROOT / "START.ps1").read_text(encoding="utf-8-sig")
@@ -104,7 +125,7 @@ def test_unknown_exit_code_waits_for_admin_handoff_instead_of_reporting_failure(
     legacy = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     source = (ROOT / "START.ps1").read_text(encoding="utf-8-sig")
     begin = source.rindex('if ($Desktop) {')
-    end = source.index('if (Test-Path -LiteralPath $multicorePython)', begin)
+    end = source.index('if ($NoBrowser) { & $python', begin)
     header = """[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $ErrorActionPreference='Stop'
 $Desktop=$true

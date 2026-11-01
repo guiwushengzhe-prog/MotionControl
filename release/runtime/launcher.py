@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import runpy
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,7 +42,7 @@ def main() -> int:
             except OSError as exc:
                 print(f"恢复失败：{exc}")
         if not (APP / "server.py").is_file():
-            print("找不到 app 目录下的 server.py。请重新解压一次发布包。")
+            print("找不到程序文件，请重新安装 MotionControl。")
             return 1
 
     sys.path.insert(0, str(APP))
@@ -50,6 +51,15 @@ def main() -> int:
         print("更新：", app_update.promote(APP))
     except Exception as exc:  # noqa: BLE001 - 更新出任何问题都不该拦住启动
         print(f"更新检查跳过：{exc}")
+
+    if "--desktop" in sys.argv[1:]:
+        modern = Path(os.environ["ProgramFiles"]) / "PowerShell/7/pwsh.exe"
+        shell = modern if modern.is_file() else Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        command = [str(shell), "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                   "-File", str(APP / "START.ps1"), "-Desktop"]
+        if "--no-browser" in sys.argv[1:]:
+            command.append("-NoBrowser")
+        return subprocess.run(command, cwd=ROOT).returncode
 
     # 交给 app/server.py。用 runpy 而不是 import，是因为它要以 __main__ 的身份
     # 跑——它底下有 if __name__ == "__main__" 的启动分支。

@@ -22,6 +22,10 @@ internal static class MotionControlDesktop
 
     private static Dictionary<string, object> Installation()
     {
+        string bundle = Path.GetDirectoryName(Application.ExecutablePath);
+        if (File.Exists(Path.Combine(bundle, "python", "python.exe")) &&
+            File.Exists(Path.Combine(bundle, "runtime", "launcher.py")))
+            return new Dictionary<string, object> { { "program_root", Path.Combine(bundle, "app") }, { "bundle", bundle } };
         string local = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "installation.json");
         if (File.Exists(local))
         {
@@ -48,6 +52,8 @@ internal static class MotionControlDesktop
 
     private static string DataRoot(Dictionary<string, object> settings)
     {
+        if (!String.IsNullOrEmpty(Value(settings, "bundle")))
+            return Environment.GetEnvironmentVariable("MOTIONCONTROL_USER_DIR");
         string root = Value(settings, "data_root"), identity = Value(settings, "data_id");
         if (!String.IsNullOrEmpty(identity))
         {
@@ -138,30 +144,41 @@ internal static class MotionControlDesktop
                 {
                     string root;
                     root = Value(installation, "program_root");
-                    if (!IsProgram(root)) using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RegistryPath))
-                        root = key == null ? null : key.GetValue("ProgramRoot") as string;
-                    if (!IsProgram(root))
+                    string bundle = Value(installation, "bundle");
+                    if (String.IsNullOrEmpty(bundle))
                     {
-                        if (noBrowser) throw new IOException("程序文件夹未找到，请重新安装桌面入口。");
-                        using (FolderBrowserDialog picker = new FolderBrowserDialog())
+                        if (!IsProgram(root)) using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RegistryPath))
+                            root = key == null ? null : key.GetValue("ProgramRoot") as string;
+                        if (!IsProgram(root))
                         {
-                            picker.Description = "请选择 MotionControl 程序文件夹，不需要寻找脚本文件。";
-                            picker.ShowNewFolderButton = false;
-                            if (picker.ShowDialog() != DialogResult.OK) return 2;
-                            root = picker.SelectedPath;
+                            if (noBrowser) throw new IOException("程序文件夹未找到，请重新安装桌面入口。");
+                            using (FolderBrowserDialog picker = new FolderBrowserDialog())
+                            {
+                                picker.Description = "请选择 MotionControl 程序文件夹，不需要寻找脚本文件。";
+                                picker.ShowNewFolderButton = false;
+                                if (picker.ShowDialog() != DialogResult.OK) return 2;
+                                root = picker.SelectedPath;
+                            }
+                            if (!IsProgram(root)) throw new IOException("所选目录不完整，需要同时包含 START.ps1 和 server.py。");
+                            using (RegistryKey key = Registry.CurrentUser.CreateSubKey(RegistryPath))
+                                key.SetValue("ProgramRoot", root);
                         }
-                        if (!IsProgram(root)) throw new IOException("所选目录不完整，需要同时包含 START.ps1 和 server.py。");
-                        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(RegistryPath))
-                            key.SetValue("ProgramRoot", root);
+                        Remember(installation, root);
                     }
-                    Remember(installation, root);
                     string shell = ShellPath();
-                    ProcessStartInfo start = new ProcessStartInfo(shell,
-                        "-NoLogo -NoProfile -ExecutionPolicy Bypass -File " + Quote(Path.Combine(root, "START.ps1")) + " -Desktop" + (noBrowser ? " -NoBrowser" : ""));
-                    start.WorkingDirectory = root;
+                    ProcessStartInfo start = String.IsNullOrEmpty(bundle)
+                        ? new ProcessStartInfo(shell, "-NoLogo -NoProfile -ExecutionPolicy Bypass -File " + Quote(Path.Combine(root, "START.ps1")) + " -Desktop" + (noBrowser ? " -NoBrowser" : ""))
+                        : new ProcessStartInfo(Path.Combine(bundle, "python", "python.exe"), "-X utf8 " + Quote(Path.Combine(bundle, "runtime", "launcher.py")) + " --desktop" + (noBrowser ? " --no-browser" : ""));
+                    start.WorkingDirectory = bundle ?? root;
                     start.UseShellExecute = false;
                     start.CreateNoWindow = true;
-                    start.EnvironmentVariables["MOTIONCONTROL_USER_DIR"] = DataRoot(installation);
+                    string dataRoot = DataRoot(installation);
+                    if (!String.IsNullOrEmpty(dataRoot)) start.EnvironmentVariables["MOTIONCONTROL_USER_DIR"] = dataRoot;
+                    if (!String.IsNullOrEmpty(bundle)) {
+                        start.EnvironmentVariables["PYTHONNOUSERSITE"] = "1";
+                        start.EnvironmentVariables.Remove("PYTHONPATH");
+                        start.EnvironmentVariables.Remove("PYTHONHOME");
+                    }
                     start.RedirectStandardOutput = true;
                     start.RedirectStandardError = true;
                     start.StandardOutputEncoding = Encoding.UTF8;
