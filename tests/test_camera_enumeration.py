@@ -121,3 +121,13 @@ def test_compatibility_backend_does_not_claim_an_unverified_numeric_name(camera,
     monkeypatch.setattr(camera, "_camera_catalog", lambda **_: {0: {"name": "直接采集设备"}})
     camera.selected_backend = "msmf"
     assert camera._camera_identity()["camera_name"] is None
+
+
+def test_native_catalog_and_selection_preserve_devices_after_five(camera, monkeypatch):
+    frame = np.full((8, 12, 3), 80, dtype=np.uint8)
+    devices, opened = scan(camera, monkeypatch, {8: {"index": 8, "name": "外接摄像头"}},
+                           {8: Capture([frame] * 3)})
+    assert opened == [8] and devices[0]['index'] == 8
+    monkeypatch.setattr(camera, '_remember', lambda *args: None)
+    camera.set_camera_index(8)
+    assert camera.camera_index == 8

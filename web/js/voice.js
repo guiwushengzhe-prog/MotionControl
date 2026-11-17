@@ -159,10 +159,12 @@ export function addVoiceRow(mapping={phrase:'',type:'keyboard',target:''}){
   const phraseBox=document.createElement('div');phraseBox.className='voice-phrase-wrap';
   const prefix=document.createElement('span');prefix.className='voice-prefix';prefix.textContent=currentVoiceWakeWord();prefix.hidden=!currentVoiceWakeWord();phraseBox.append(prefix,phrase);
   const type=makeTypeSelect({action:mapping},{allowNone:false});type.classList.add('voice-type');
+  type.setAttribute('aria-label','语音输出类型');
   const target=document.createElement('span');target.className='voice-target-cell binding-target-box';target.dataset.trigger=row.dataset.trigger;
   const fillVoiceTarget=(value='',lead=80,explicit=false)=>{
-    if(type.value==='keyboard'&&!gameProfile.actions?.keyboard){target.replaceChildren(makeKeyCaptureInput('binding-target',value||''));return}
-    fillTargetControl(target,type.value,value,lead,explicit);
+    if(type.value==='keyboard'&&!gameProfile.actions?.keyboard)target.replaceChildren(makeKeyCaptureInput('binding-target',value||''));
+    else fillTargetControl(target,type.value,value,lead,explicit);
+    target.querySelectorAll('input,select').forEach(control=>{if(!control.hasAttribute('aria-label'))control.setAttribute('aria-label','语音按键或动作')});
   };
   fillVoiceTarget(mapping.target||'',mapping.combo_stick_lead_ms??80,mapping.combo_stick_lead_ms!=null);
   const behavior=document.createElement('span');behavior.className='voice-behavior-box';

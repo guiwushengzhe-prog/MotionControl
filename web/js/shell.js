@@ -316,7 +316,8 @@ bind('poseRecordCancelBtn',cancelPoseRecord);
 bind('homePoseRecordCancelBtn',cancelPoseRecord);
 bind('openRecordingsBtn',async()=>{await post('/api/recordings/open',{})});
 
-$('#profileSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){clearTimeout(profileSearchTimer);void runAction(searchProfiles)}});
+const submitKey=event=>event.key==='Enter'&&!event.isComposing&&event.keyCode!==229;
+$('#profileSearch').addEventListener('keydown',e=>{if(submitKey(e)){e.preventDefault();clearTimeout(profileSearchTimer);void runAction(searchProfiles)}});
 
 let profileSearchTimer=0;
 
@@ -340,9 +341,9 @@ bind('customGameRenameBtn',renameCustomGame);
 
 bind('customGameRemoveBtn',removeCustomGame);
 
-$('#customGameName').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(addCustomGame)});
+$('#customGameName').addEventListener('keydown',e=>{if(submitKey(e)){e.preventDefault();void runAction(addCustomGame)}});
 
-$('#customGameAppid').addEventListener('keydown',e=>{if(e.key==='Enter')void runAction(addCustomGame)});
+$('#customGameAppid').addEventListener('keydown',e=>{if(submitKey(e)){e.preventDefault();void runAction(addCustomGame)}});
 
 bind('retryProfileSaveBtn',retryProfileBindings);
 
@@ -525,9 +526,11 @@ function showTipOnce(id,anchor,text){
   addEventListener('resize',place);addEventListener('scroll',place,true);
 }
 
-function closeMenus(except){
+function closeMenus(except,restoreFocus=false){
   document.querySelectorAll('.menu').forEach(menu=>{
     if(menu===except)return;
+    const trigger=menu.parentElement?.querySelector('[aria-haspopup]');
+    if(restoreFocus&&menu.contains(document.activeElement))trigger?.focus({preventScroll:true});
     menu.hidden=true;menu.parentElement?.querySelector('[aria-haspopup]')?.setAttribute('aria-expanded','false');
   });
 }
@@ -535,12 +538,46 @@ function closeMenus(except){
 for(const [buttonId,menuId] of [['helpBtn','helpMenu'],['gameMenuBtn','gameMenu'],['calMenuBtn','calMenu']]){
   const button=$('#'+buttonId),menu=$('#'+menuId);
   button.addEventListener('click',event=>{event.stopPropagation();const open=menu.hidden;closeMenus(menu);menu.hidden=!open;button.setAttribute('aria-expanded',String(open))});
-  menu.addEventListener('click',event=>{if(event.target.closest('.menu-item'))closeMenus()});
+  menu.addEventListener('click',event=>{if(event.target.closest('.menu-item'))closeMenus(null,true)});
+}
+
+// 保留现有菜单排布；原生焦点组不可用时提供同一套键盘操作。
+const nativeMenuFocus='focusGroup' in HTMLElement.prototype;
+for(const [triggerId,menuId] of [['helpBtn','helpMenu'],['gameMenuBtn','gameMenu'],['calMenuBtn','calMenu'],['modeMenuBtn','modeMenu']]){
+  const trigger=$('#'+triggerId),menu=$('#'+menuId);
+  trigger.setAttribute('aria-controls',menuId);menu.setAttribute('aria-labelledby',triggerId);
+  menu.setAttribute('focusgroup','menu nomemory');
+  if(nativeMenuFocus)menu.removeAttribute('role');
+  for(const item of menu.querySelectorAll('button,a[href]')){
+    if(!nativeMenuFocus&&!item.hasAttribute('role'))item.setAttribute('role','menuitem');
+    else if(nativeMenuFocus&&item.getAttribute('role')==='menuitem')item.removeAttribute('role');
+    if(!nativeMenuFocus)item.tabIndex=-1;
+  }
+  const items=()=>[...menu.querySelectorAll('button,a[href]')].filter(item=>!item.disabled&&!item.closest('[hidden]'));
+  const focusItem=item=>{if(!item)return;if(!nativeMenuFocus){items().forEach(node=>node.tabIndex=-1);item.tabIndex=0}item.focus({preventScroll:true})};
+  trigger.addEventListener('click',event=>{if(!menu.hidden&&event.detail===0)focusItem(items()[0])});
+  trigger.addEventListener('keydown',event=>{
+    if(!['ArrowDown','ArrowUp'].includes(event.key)||trigger.disabled)return;
+    event.preventDefault();if(menu.hidden)trigger.click();const list=items();focusItem(event.key==='ArrowUp'?list.at(-1):list[0]);
+  });
+  menu.addEventListener('keydown',event=>{
+    const list=items(),index=list.indexOf(document.activeElement);
+    if(!nativeMenuFocus&&['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+      event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?list.length-1:(index+(event.key==='ArrowUp'?-1:1)+list.length)%list.length;focusItem(list[next]);
+    }else if(event.key==='Escape'){
+      event.preventDefault();event.stopPropagation();closeMenus(null,true);
+    }else if(event.key==='Tab'){
+      const outside=[...document.querySelectorAll('button,a[href],input,select,textarea,[tabindex="0"]')].filter(node=>!node.disabled&&!node.closest('[hidden],.menu')&&node.getBoundingClientRect().width);
+      const next=event.shiftKey?trigger:outside[outside.indexOf(trigger)+1];
+      if(next){event.preventDefault();closeMenus();next.focus({preventScroll:true})}
+    }
+  });
 }
 
 document.addEventListener('click',event=>{if(!event.target.closest('.menu-wrap'))closeMenus()});
 
-document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMenus()});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMenus(null,true)});
+document.addEventListener('focusin',event=>{if(!event.target.closest('.menu-wrap'))closeMenus()});
 
 // 白天（月白）/ 夜间（石墨）。默认跟着系统；手动选的记在这台电脑的浏览器里。
 const THEME_KEY='motioncontrol_theme';

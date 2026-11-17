@@ -1,5 +1,6 @@
 """Exercise the real request handler with isolated service state."""
 import pytest
+from types import SimpleNamespace
 
 from motioncontrol_shared.profile_schema import flatten_bindings
 from test_configuration_coordination import application
@@ -9,6 +10,8 @@ def request_for(app, route, replies):
     request = object.__new__(app.AdminHandler)
     request._is_loopback = lambda: True
     request.path = route
+    request.headers = {}
+    request.server = SimpleNamespace(server_port=8766)
     request._send_json = lambda data, status=200: replies.append((status, data))
     return request
 

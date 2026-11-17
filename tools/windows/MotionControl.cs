@@ -8,6 +8,7 @@ using System.Threading;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("MotionControl")]
@@ -111,12 +112,55 @@ internal static class MotionControlDesktop
             && File.Exists(Path.Combine(root, "server.py"));
     }
 
+    private static void ExportDiagnostics(Dictionary<string, object> settings, string destination)
+    {
+        string entry = Path.GetDirectoryName(Application.ExecutablePath);
+        string program = Value(settings, "program_root") ?? Path.Combine(entry, "app");
+        string data = Environment.GetEnvironmentVariable("MOTIONCONTROL_USER_DIR") ?? Value(settings, "data_root");
+        if (String.IsNullOrEmpty(data)) {
+            try {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RegistryPath)) {
+                    string raw = key == null ? null : key.GetValue("DataLocation") as string;
+                    if (!String.IsNullOrEmpty(raw)) data = Value(Json.Deserialize<Dictionary<string, object>>(raw), "path");
+                }
+            } catch (Exception) { }
+        }
+        if (String.IsNullOrEmpty(data)) data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MotionControl");
+        StringBuilder report = new StringBuilder("MotionControl 启动诊断\r\n");
+        report.AppendLine("时间：" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        report.AppendLine("系统：" + Environment.OSVersion + "；64位：" + Environment.Is64BitOperatingSystem);
+        report.AppendLine("入口：" + Application.ExecutablePath);
+        report.AppendLine("程序：" + program);
+        report.AppendLine("数据：" + data);
+        foreach (string relative in new[] { "python\\python.exe", "python\\msvcp140.dll", "python\\vcruntime140.dll", "app\\server.py", "app\\START.ps1", "models\\mediapipe\\pose_landmarker_full.task" })
+            report.AppendLine(relative + "：" + (File.Exists(Path.Combine(entry, relative)) ? "存在" : "未找到"));
+        List<string> logs = new List<string> { Path.Combine(entry, "last-start.log") };
+        foreach (string name in new[] { "startup.stderr.log", "bootstrap.stderr.log", "startup.stdout.log", "bootstrap.stdout.log" })
+            logs.Add(Path.Combine(data, "logs", name));
+        foreach (string log in logs) {
+            report.AppendLine("\r\n记录：" + log);
+            try {
+                if (!File.Exists(log)) { report.AppendLine("暂无记录"); continue; }
+                using (FileStream stream = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+                    stream.Seek(Math.Max(0, stream.Length - 16384), SeekOrigin.Begin);
+                    using (StreamReader reader = new StreamReader(stream, Encoding.UTF8)) report.AppendLine(reader.ReadToEnd());
+                }
+            } catch (IOException error) { report.AppendLine("读取未完成：" + error.Message); }
+              catch (UnauthorizedAccessException) { report.AppendLine("当前用户无法读取此记录"); }
+        }
+        string text = Regex.Replace(report.ToString(), @"(?i)(Bearer\s+)[^\s""']+", "$1[已隐藏]");
+        text = Regex.Replace(text, @"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|pairing[_-]?key)\s*[""']?\s*[:=]\s*[""']?)[^\s,""'}]+", "$1[已隐藏]");
+        text = Regex.Replace(text, @"(?i)([?&]key=)[^&\s""']+", "$1[已隐藏]");
+        File.WriteAllText(destination, text, new UTF8Encoding(false));
+    }
+
     [STAThread]
     private static int Main(string[] args)
     {
         bool verify = args.Length == 3 && args[0] == "--verify";
         bool diagnose = args.Length == 2 && args[0] == "--diagnose";
         bool noBrowser = args.Length == 1 && args[0] == "--no-browser";
+        bool diagnostics = args.Length >= 1 && args.Length <= 2 && args[0] == "--diagnostics";
         try
         {
             if (verify)
@@ -125,8 +169,21 @@ internal static class MotionControlDesktop
                 File.WriteAllText(args[2], valid ? "ready" : "missing-program");
                 return valid ? 0 : 2;
             }
-            if (args.Length != 0 && !diagnose && !noBrowser) throw new ArgumentException("不支持这个启动参数。");
+            if (args.Length != 0 && !diagnose && !noBrowser && !diagnostics) throw new ArgumentException("不支持这个启动参数。");
             Dictionary<string, object> installation = Installation();
+            if (diagnostics) {
+                if (args.Length == 2) { ExportDiagnostics(installation, args[1]); return 0; }
+                Application.EnableVisualStyles();
+                using (SaveFileDialog picker = new SaveFileDialog()) {
+                    picker.Title = "保存启动诊断";
+                    picker.Filter = "诊断文本|*.txt";
+                    picker.FileName = "MotionControl-启动诊断-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt";
+                    picker.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                    if (picker.ShowDialog() != DialogResult.OK) return 0;
+                    ExportDiagnostics(installation, picker.FileName);
+                }
+                return 0;
+            }
             if (diagnose)
             {
                 string installed = Value(installation, "program_root");

@@ -84,7 +84,9 @@ def server(tmp_path_factory):
             time.sleep(0.5)
     yield base
     try:
-        _get(base + "/api/shutdown")
+        with urllib.request.urlopen(urllib.request.Request(base + "/api/shutdown", data=b'{}',
+                headers={'Content-Type': 'application/json'}), timeout=2):
+            pass
     except Exception:
         pass
     try:

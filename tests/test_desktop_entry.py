@@ -103,6 +103,13 @@ def test_bundle_entry_finds_its_own_program_after_moving_without_installation_re
     assert Path(result["program_root"]) == moved / "app"
     assert result["program_ready"]
     assert not (moved / "installation.json").exists()
+    # 解释器无法启动时，诊断仍由原生入口导出，不依赖后台或模型。
+    (moved / 'last-start.log').write_text('model_load_failed\nAuthorization: Bearer private-diagnostic-token\naccess_token=private-token-value', encoding='utf-8')
+    diagnostics = tmp_path / '启动诊断.txt'
+    subprocess.run([str(moved / 'MotionControl.exe'), '--diagnostics', str(diagnostics)], check=True, timeout=10)
+    content = diagnostics.read_text(encoding='utf-8')
+    assert 'model_load_failed' in content and str(moved) in content
+    assert 'private-diagnostic-token' not in content and 'private-token-value' not in content
 
 
 def test_optional_phone_tunnel_native_stderr_does_not_abort_windows_startup(tmp_path):

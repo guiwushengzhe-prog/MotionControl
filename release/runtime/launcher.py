@@ -59,7 +59,14 @@ def main() -> int:
                    "-File", str(APP / "START.ps1"), "-Desktop"]
         if "--no-browser" in sys.argv[1:]:
             command.append("-NoBrowser")
-        return subprocess.run(command, cwd=ROOT).returncode
+        environment = os.environ.copy()
+        if shell != modern:
+            # 内置命令行环境不能加载从新版进程继承的模块目录。
+            environment['PSModulePath'] = os.pathsep.join((
+                str(Path.home() / 'Documents/WindowsPowerShell/Modules'),
+                str(Path(os.environ['ProgramFiles']) / 'WindowsPowerShell/Modules'),
+                str(shell.parent / 'Modules')))
+        return subprocess.run(command, cwd=ROOT, env=environment).returncode
 
     # 交给 app/server.py。用 runpy 而不是 import，是因为它要以 __main__ 的身份
     # 跑——它底下有 if __name__ == "__main__" 的启动分支。

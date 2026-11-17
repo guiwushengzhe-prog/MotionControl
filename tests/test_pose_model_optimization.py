@@ -90,7 +90,7 @@ def test_detector_uses_original_for_masks_standard_model_and_incompatible_runtim
 
     def create(options):
         calls.append(options)
-        if fails and getattr(options.base_options, "model_asset_buffer", None):
+        if fails and getattr(options.base_options, "model_asset_buffer", None) == b"optimized model":
             raise ValueError("模拟不兼容的输出布局")
         return SimpleNamespace(close=lambda: None)
 
@@ -111,9 +111,7 @@ def test_detector_uses_original_for_masks_standard_model_and_incompatible_runtim
     assert camera.actual_model == choice
     assert camera.pose_model_optimization == ("skip_unused_mask" if expected else None)
     assert calls[-1].output_segmentation_masks is masks
-    assert getattr(calls[-1].base_options, "model_asset_buffer", None) == (b"optimized model" if expected else None)
-    if not expected:
-        assert calls[-1].base_options.model_asset_path == str(path)
+    assert calls[-1].base_options.model_asset_buffer == (b"optimized model" if expected else path.read_bytes())
     assert len(calls) == (2 if fails else 1)
 
 
@@ -139,4 +137,4 @@ def test_auto_uses_full_with_limited_memory_without_rewriting_user_preference(tm
     camera._create_detector()
     assert camera.actual_model == "full" and camera.model_preference == "auto"
     assert "内存" in camera._auto_pose.reason
-    assert calls[0].base_options.model_asset_path == str(path)
+    assert calls[0].base_options.model_asset_buffer == path.read_bytes()

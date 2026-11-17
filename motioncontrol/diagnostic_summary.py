@@ -47,6 +47,10 @@ def build_summary(*, version, source_revision, program_root, data_root, performa
         "backend": camera.get("backend") if camera.get("backend") in {"kinect", "dshow", "msmf", "opencv"} else "other",
         "resolution": _numbers(camera.get("resolution") or {}, ("width", "height")),
         "has_error": bool(camera.get("last_error") or camera.get("depth_error"))}
+    devices['error_code'] = camera.get('error_code') if camera.get('error_code') in {
+        'camera_open_failed', 'model_load_failed', 'runtime_missing', 'camera_cancelled', 'camera_worker_failed'} else None
+    devices['lifecycle'] = camera.get('lifecycle') if camera.get('lifecycle') in {
+        'stopped', 'starting', 'running', 'stopping', 'failed'} else 'unknown'
     return {"schema": "motioncontrol.diagnostic-summary.v1", "created_at": datetime.now(timezone.utc).isoformat(),
         "version": version, "source_revision": source_revision, "program_root": str(Path(program_root)),
         "user_data_root": str(Path(data_root)), "windows": platform.platform(), "python": sys.version.split()[0],

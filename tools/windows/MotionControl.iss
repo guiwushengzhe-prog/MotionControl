@@ -49,6 +49,7 @@ Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 [Icons]
 Name: "{userdesktop}\MotionControl"; Filename: "{app}\MotionControl.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{group}\MotionControl"; Filename: "{app}\MotionControl.exe"; WorkingDir: "{app}"
+Name: "{group}\MotionControl 故障诊断"; Filename: "{app}\MotionControl.exe"; Parameters: "--diagnostics"; WorkingDir: "{app}"
 Name: "{group}\卸载 MotionControl"; Filename: "{uninstallexe}"
 
 [Run]

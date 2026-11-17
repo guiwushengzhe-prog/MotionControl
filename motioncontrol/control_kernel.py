@@ -4263,7 +4263,7 @@ class NativeCameraService:
         explicit_camera_index = camera_index is not None
         if camera_index is None:
             camera_index = self._remembered("camera_index", 0)
-        self.camera_index = max(0, min(self.MAX_CAMERA_INDEX, int(camera_index)))
+        self.camera_index = max(0, int(camera_index))
         self.camera_device = str(self.camera_index if explicit_camera_index else self._remembered("camera_device", self.camera_index))
         if not self.camera_device.startswith(kinect_camera.PREFIX):
             self.camera_device = str(self.camera_index)
@@ -4302,6 +4302,7 @@ class NativeCameraService:
         self._condition = threading.Condition(self._lock)
         self._stop = threading.Event()
         self._start_cancel = threading.Event()
+        self._initializing = False
         self._opening_capture = None
         self.picture_black = None
         self._session: _CameraSession | None = None
@@ -4315,6 +4316,7 @@ class NativeCameraService:
         self._detector = None
         self.running = False
         self.last_error: str | None = None
+        self.last_error_code: str | None = None
         self.last_frame_at = 0.0
         self.frames = 0
         self.capture_width = 0
@@ -4463,8 +4465,10 @@ class NativeCameraService:
             index = int(index)
         except (TypeError, ValueError):
             raise CameraUnavailable("摄像头序号必须是数字") from None
-        if not 0 <= index <= self.MAX_CAMERA_INDEX:
-            raise CameraUnavailable(f"摄像头序号只能是 0 到 {self.MAX_CAMERA_INDEX}")
+        if not 0 <= index <= 2147483647:
+            raise CameraUnavailable("摄像头序号必须是非负整数")
+        if index > self.MAX_CAMERA_INDEX and index not in (self._camera_catalog() or {}):
+            raise CameraUnavailable("系统没有找到这个摄像头，请重新查找设备")
         with self._lock:
             if self._session is not None and (index != self.camera_index or self.depth_supported):
                 raise CameraUnavailable("摄像头运行中不能换摄像头，请先停止识别")
@@ -4669,7 +4673,7 @@ class NativeCameraService:
         正在使用的相机不重复打开。原生枚举失败才退回数字探测；
         没画面、虚拟源未启动和画面全黑都保留设备，明确说明当前状态。
         """
-        limit = self.MAX_CAMERA_INDEX if limit is None else max(0, min(self.MAX_CAMERA_INDEX, int(limit)))
+        explicit_limit = None if limit is None else max(0, int(limit))
         with self._lock:
             running, current = self._session is not None, self.camera_index
         try:
@@ -4680,7 +4684,9 @@ class NativeCameraService:
         api = self._backend_api(cv2, self.BACKEND_DSHOW)
         catalog = self._camera_catalog(refresh=True)
         # 按系统实际枚举结果探测，不再盲开不存在的 0～5 号设备。
-        indices = sorted(index for index in catalog if index <= limit) if catalog is not None else range(limit + 1)
+        indices = (sorted(index for index in catalog if explicit_limit is None or index <= explicit_limit)
+                   if catalog is not None else range(min(self.MAX_CAMERA_INDEX, explicit_limit
+                       if explicit_limit is not None else self.MAX_CAMERA_INDEX) + 1))
         native_kinect = []
         if running and self.depth_supported:
             native_kinect = [{"id": self.camera_device, "name": "微软 Kinect", "depth_supported": True,
@@ -4851,7 +4857,7 @@ class NativeCameraService:
         optimized = pose_model_without_mask(self.model_path) if choice == "heavy" and not segmentation_enabled else None
         options = vision.PoseLandmarkerOptions(
             base_options=(python.BaseOptions(model_asset_buffer=optimized) if optimized else
-                          python.BaseOptions(model_asset_path=str(self.model_path))),
+                          python.BaseOptions(model_asset_buffer=self.model_path.read_bytes())),
             running_mode=vision.RunningMode.VIDEO,
             num_poses=1,
             min_pose_detection_confidence=0.35,
@@ -4866,7 +4872,7 @@ class NativeCameraService:
             if not optimized:
                 raise
             # 不支持这种输出布局的运行库直接回退，不影响摄像头连接。
-            options.base_options = python.BaseOptions(model_asset_path=str(self.model_path))
+            options.base_options = python.BaseOptions(model_asset_buffer=self.model_path.read_bytes())
             detector, self.pose_cpu_threads, self.pose_thread_error = create_cpu_task(vision.PoseLandmarker, options, threads=cpu_threads)
             optimized = None
         self.pose_model_optimization = "skip_unused_mask" if optimized else None
@@ -5141,91 +5147,103 @@ class NativeCameraService:
         with self._lock:
             if self.running:
                 return self.status()
-            if self._session is not None:
+            if self._session is not None or self._initializing:
                 raise CameraUnavailable("摄像头上一轮尚未退出，请等待设备停止后再启动")
+            self._initializing = True
             self._start_cancel.clear()
             self.lifecycle = "starting"
+            self.last_error = self.last_error_code = None
+        # 原生设备及模型可能长时间等待，状态读取和停止不等待这部分工作。
+        capture = detector = None
+        published = False
+        stage = "runtime"
+        try:
             try:
                 import cv2
             except Exception as exc:
-                self.last_error = "本地 Python 未安装 opencv-python；电脑摄像头内核无法启动"
-                self.lifecycle = "failed"
-                raise CameraUnavailable(self.last_error) from exc
-            capture = detector = None
+                raise CameraUnavailable("本地 Python 未安装 opencv-python；电脑摄像头内核无法启动") from exc
+            stage = "capture"
+            self._auto_pose = AutoPoseChoice()
+            self._cpu_budget = FrameThreadBudget()
+            self._shortage = ResourceShortage()
+            from motioncontrol.cpu_inference import thread_budget
+            self._thread_ceiling = thread_budget()
+            if self.process_priority is None:
+                # 游戏在前台时识别仍优先拿到处理器，以跟上摄像头供帧为目标。
+                self.process_priority = prioritize_process()
+            # 先确认设备实际供帧。设备离线时不加载模型，避免白占内存。
+            capture, first_frame = self._select_capture(cv2)
+            stage = "model"
+            if self._start_cancel.is_set():
+                raise CameraUnavailable("摄像头启动已取消")
             try:
-                self._auto_pose = AutoPoseChoice()
-                self._cpu_budget = FrameThreadBudget()
-                self._shortage = ResourceShortage()
-                from motioncontrol.cpu_inference import thread_budget
-                self._thread_ceiling = thread_budget()
-                if self.process_priority is None:
-                    # 游戏在前台时识别仍优先拿到处理器，以跟上摄像头供帧为目标。
-                    self.process_priority = prioritize_process()
-                # 先确认设备实际供帧。设备离线时不加载模型，避免白占内存。
-                capture, first_frame = self._select_capture(cv2)
+                mp, detector = self._create_detector()
+            except Exception:
+                if self.model_preference != "auto" or self.actual_model != "heavy" or not self.model_paths.get("full"):
+                    raise
+                mp, detector = self._create_detector("full")
+                self._auto_pose.reason = "高精度模型无法加载，继续使用标准模型"
+            if self._start_cancel.is_set():
+                raise CameraUnavailable("摄像头启动已取消")
+            with self._lock:
                 if self._start_cancel.is_set():
                     raise CameraUnavailable("摄像头启动已取消")
+                self._capture, self._detector, self._mp = capture, detector, mp
+                self._reset_runtime_locked()
+                self.picture_black = self._picture_is_black(first_frame)
+                # The first frame was consumed only for backend validation.  It is
+                # intentionally not pushed into the inference path so all timing
+                # starts at the same boundary for every backend.
+                self._generation += 1
+                session = _CameraSession(self._generation, capture, detector, mp)
+                self._session = session
+                published = True
+                self._stop = session.stop
+                self.running = True
+                self.lifecycle = "running"
+                self.last_error = None
+                self._capture_thread = threading.Thread(target=self._capture_loop, args=(session,), name="motion-camera-capture", daemon=True)
+                self._inference_thread = threading.Thread(target=self._inference_loop, args=(session,), name="motion-camera-inference", daemon=True)
+                self._preview_thread = threading.Thread(target=self._preview_loop, args=(session,), name="motion-camera-preview", daemon=True)
+                self._thread = self._inference_thread
+                session.threads = [self._capture_thread, self._inference_thread, self._preview_thread]
+                started = 0
                 try:
-                    mp, detector = self._create_detector()
-                except Exception:
-                    if self.model_preference != "auto" or self.actual_model != "heavy" or not self.model_paths.get("full"):
-                        raise
-                    mp, detector = self._create_detector("full")
-                    self._auto_pose.reason = "高精度模型无法加载，继续使用标准模型"
-                if self._start_cancel.is_set():
-                    raise CameraUnavailable("摄像头启动已取消")
-            except CameraUnavailable as exc:
+                    for thread in session.threads:
+                        thread.start()
+                        started += 1
+                except Exception as exc:
+                    self._fail_session(session, str(exc))
+                    for _ in session.threads[started:]:
+                        self._worker_finished(session)
+                    raise CameraUnavailable(f"摄像头工作线程启动失败：{exc}") from exc
+                if self.selected_backend == "kinect" and (self.boost_always or self.boost_games):
+                    self.request_boost_for_game_async()
+                return self.status()
+        except Exception as exc:
+            if not published:
                 if capture is not None:
-                    capture.release()
+                    try:
+                        capture.release()
+                    except Exception:
+                        pass
                 if detector is not None:
                     try:
                         detector.close()
                     except Exception:
                         pass
-                self.last_error = str(exc)
-                self.lifecycle = "failed"
+                with self._lock:
+                    self.last_error = str(exc)
+                    self.last_error_code = ("camera_cancelled" if self._start_cancel.is_set() else
+                        {"runtime": "runtime_missing", "capture": "camera_open_failed", "model": "model_load_failed"}[stage])
+                    self.lifecycle = "stopped" if self._start_cancel.is_set() else "failed"
+            if isinstance(exc, CameraUnavailable):
                 raise
-            except Exception as exc:
-                if capture is not None:
-                    capture.release()
-                self.last_error = str(exc)
-                self.lifecycle = "failed"
-                try:
-                    detector.close()
-                except Exception:
-                    pass
-                raise CameraUnavailable(f"电脑摄像头内核初始化失败：{exc}") from exc
-            self._capture, self._detector, self._mp = capture, detector, mp
-            self._reset_runtime_locked()
-            self.picture_black = self._picture_is_black(first_frame)
-            # The first frame was consumed only for backend validation.  It is
-            # intentionally not pushed into the inference path so all timing
-            # starts at the same boundary for every backend.
-            self._generation += 1
-            session = _CameraSession(self._generation, capture, detector, mp)
-            self._session = session
-            self._stop = session.stop
-            self.running = True
-            self.lifecycle = "running"
-            self.last_error = None
-            self._capture_thread = threading.Thread(target=self._capture_loop, args=(session,), name="motion-camera-capture", daemon=True)
-            self._inference_thread = threading.Thread(target=self._inference_loop, args=(session,), name="motion-camera-inference", daemon=True)
-            self._preview_thread = threading.Thread(target=self._preview_loop, args=(session,), name="motion-camera-preview", daemon=True)
-            self._thread = self._inference_thread
-            session.threads = [self._capture_thread, self._inference_thread, self._preview_thread]
-            started = 0
-            try:
-                for thread in session.threads:
-                    thread.start()
-                    started += 1
-            except Exception as exc:
-                self._fail_session(session, str(exc))
-                for _ in session.threads[started:]:
-                    self._worker_finished(session)
-                raise CameraUnavailable(f"摄像头工作线程启动失败：{exc}") from exc
-            if self.selected_backend == "kinect" and (self.boost_always or self.boost_games):
-                self.request_boost_for_game_async()
-            return self.status()
+            raise CameraUnavailable(f"电脑摄像头内核初始化失败：{exc}") from exc
+        finally:
+            with self._condition:
+                self._initializing = False
+                self._condition.notify_all()
 
     def _current_game(self):
         try:
@@ -5302,6 +5320,7 @@ class NativeCameraService:
         with self._condition:
             if self._session is session and not session.stop.is_set():
                 self.last_error = error
+                self.last_error_code = "camera_worker_failed"
                 self.running = False
                 self.lifecycle = "failed"
                 session.stop.set()
@@ -5767,7 +5786,7 @@ class NativeCameraService:
         deadline = time.monotonic() + timeout_s
         self.stop()
         with self._condition:
-            if not self._condition.wait_for(lambda: self._session is None,
+            if not self._condition.wait_for(lambda: self._session is None and not self._initializing,
                                             timeout=max(0.0, deadline - time.monotonic())):
                 raise CameraUnavailable("上一台摄像头还在释放，请稍后重试")
             return self.status()
@@ -5779,7 +5798,9 @@ class NativeCameraService:
             session = self._session
             if session is None:
                 self.running = False
-                if self.lifecycle != "failed":
+                if self._initializing:
+                    self.lifecycle = "stopping"
+                elif self.lifecycle != "failed":
                     self.lifecycle = "stopped"
                 return self.status()
             session.stop.set()
@@ -5802,6 +5823,7 @@ class NativeCameraService:
         with self._lock:
             return {
                 "running": self.running, "lifecycle": self.lifecycle,
+                "error_code": self.last_error_code,
                 "camera_index": self.camera_index,
                 "camera_device": self.camera_device,
                 **self._camera_identity(),
@@ -6145,18 +6167,16 @@ class LocalControlRuntime:
         self.kernel.configure_motions(items)
 
     def status(self) -> dict:
-        with self._lock:
-            camera, kernel = self.camera.status(), self.kernel.status()
-            if kernel.get("head", {}).get("horizontal_algorithm") in {"hfhpe", "hfhpe_simple"}:
-                if self.body_mode != "computer":
-                    camera["hfhpe"] = {"state": "unavailable", "message": "模型转头需要彩色画面，请将人体来源切到电脑摄像头"}
-                elif not camera.get("running"):
-                    camera["hfhpe"] = {"state": "unavailable", "message": "请先在开始页启动电脑摄像头识别"}
-            return {"body_mode": self.body_mode, "camera": camera, "kernel": kernel}
+        camera, kernel = self.camera.status(), self.kernel.status()
+        if kernel.get("head", {}).get("horizontal_algorithm") in {"hfhpe", "hfhpe_simple"}:
+            if self.body_mode != "computer":
+                camera["hfhpe"] = {"state": "unavailable", "message": "模型转头需要彩色画面，请将人体来源切到电脑摄像头"}
+            elif not camera.get("running"):
+                camera["hfhpe"] = {"state": "unavailable", "message": "请先在开始页启动电脑摄像头识别"}
+        return {"body_mode": self.body_mode, "camera": camera, "kernel": kernel}
 
     def performance(self) -> dict:
-        with self._lock:
-            return self.camera.performance()
+        return self.camera.performance()
 
     def latest_preview(self) -> bytes | None:
         return self.camera.latest_preview()

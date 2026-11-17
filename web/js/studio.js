@@ -11,6 +11,7 @@ let frame=null,frameAt=0,frameEpoch=0,frameBusy=false,frameBlocked=0,frameTimer=
 let screenStream=null,micStream=null,canvasStream=null,audioContext=null,audioSources=[];
 let screenVideo=null,recorder=null,recordingId=null,uploadTail=Promise.resolve(),pendingBytes=0,uploadError='',startedAt=0,drawTimer=0;
 let saveTail=Promise.resolve(),liveState={},configSaveError='';
+const unsavedConfig={};
 let panDrag=null;
 let pageClosing=false;
 
@@ -87,12 +88,17 @@ function screenCaptureSupported(){return !!navigator.mediaDevices?.getDisplayMed
 
 function persist(patch){
   config={...config,...patch};frameBlocked++;forgetFrame();renderControls();
-  const snapshot={...patch};
+  Object.assign(unsavedConfig,patch);
+  const snapshot={...unsavedConfig};
   const result=saveTail.then(()=>request('/api/studio/config',snapshot));
   saveTail=result.catch(error=>{status('设置未保存：'+errorText(error));throw error});
   // 保存失败不能让之后的设置一直卡住；本次帧继续隐藏，直到下次成功保存。
   saveTail=saveTail.catch(()=>{});
-  result.then(()=>{configSaveError='';frameBlocked--;if(!frameBlocked)void getFrame()},error=>{configSaveError=errorText(error);frameBlocked--;forgetFrame();preview=false;void demand(false).catch(()=>{});if(recording){uploadError='人物设置保存失败，已停止录制';stopRecording()}renderButtons()});
+  result.then(()=>{
+    for(const [key,value] of Object.entries(snapshot))if(unsavedConfig[key]===value)delete unsavedConfig[key];
+    configSaveError='';frameBlocked--;if(!Object.keys(unsavedConfig).length)status('设置已保存');
+    if(!frameBlocked)void getFrame();
+  },error=>{configSaveError=errorText(error);frameBlocked--;forgetFrame();preview=false;void demand(false).catch(()=>{});if(recording){uploadError='人物设置保存失败，已停止录制';stopRecording()}renderButtons()});
   return result;
 }
 
@@ -301,7 +307,7 @@ async function startRecording(){
     const videoTrack=screenStream.getVideoTracks()[0];
     if(!videoTrack)throw new Error('没有取得屏幕画面');
     if(config.microphone)micStream=await navigator.mediaDevices.getUserMedia({video:false,audio:{echoCancellation:true,noiseSuppression:true}});
-    await saveTail;if(configSaveError)throw new Error('请先重新保存人物设置：'+configSaveError);await demand(true);
+    await saveTail;if(configSaveError||Object.keys(unsavedConfig).length)throw new Error('请先重新保存人物设置：'+(configSaveError||'仍有设置等待保存'));await demand(true);
     if(videoTrack.readyState==='ended')throw new Error('屏幕共享已结束，没有开始录制');
     draw();canvasStream=$('studioCanvas').captureStream(30);
     const audioTracks=[];

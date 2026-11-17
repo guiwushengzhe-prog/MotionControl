@@ -347,7 +347,9 @@ def stop_recognition_all() -> dict:
     RUNTIME.camera.cancel_start()
     INPUT_BRIDGE.set_body_enabled(False)
     INPUT_BRIDGE.set_body_mode("computer")
-    with INPUT_SOURCE_LOCK:
+    if not INPUT_SOURCE_LOCK.acquire(timeout=8):
+        raise CameraUnavailable("摄像头仍在初始化，控制已暂停；请稍后重试停止，或退出程序")
+    try:
         try:
             RUNTIME.stop_body()
         finally:
@@ -358,6 +360,8 @@ def stop_recognition_all() -> dict:
         if not status["recognition_stopped"]:
             raise CameraUnavailable("识别设备仍在释放，请稍后重试停止")
         return {**status, "stop_error": "", "output": result}
+    finally:
+        INPUT_SOURCE_LOCK.release()
 
 
 def _recognition_stop_status() -> dict:
@@ -1921,6 +1925,13 @@ class AdminHandler(_BaseHandler):
     class is the second, and those checks are the third.
     """
 
+    def _management_request_allowed(self):
+        origin = self.headers.get("Origin")
+        own = {f"http://127.0.0.1:{self.server.server_port}", f"http://localhost:{self.server.server_port}"}
+        host = self.headers.get("Host")
+        return (self._is_loopback() and (not host or 'http://' + host in own) and (not origin or origin in own)
+                and self.headers.get("Sec-Fetch-Site") != "cross-site")
+
     def do_OPTIONS(self):
         route = urlparse(self.path).path
         method = "POST" if route == "/api/gunmouse/config" else "GET"
@@ -1943,6 +1954,11 @@ class AdminHandler(_BaseHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
+        shared_model = route == '/api/models' or route.startswith('/api/model/')
+        portal_read = route in PORTAL_ROUTES and self._gunmouse_request_allowed()
+        if not shared_model and not portal_read and not self._management_request_allowed():
+            self._send_json({"ok": False, "error": "请从本机控制页面查看"}, 403)
+            return
         if route == "/api/cloud/account":
             # 只给本机控制页：里面没有凭证，但登录这件事只该在本机发起。
             if not self._is_loopback():
@@ -1984,15 +2000,7 @@ class AdminHandler(_BaseHandler):
             self._send_json({**code, "firewall": FIREWALL.status()})
             return
         if route == "/api/shutdown":
-            if not self._is_loopback():
-                self._send_json({"ok": False, "error": "shutdown is loopback-only"}, 403)
-                return
-            first = _begin_shutdown()
-            self._send_json({"ok": True, "version": VERSION, "pid": os.getpid(), "shutting_down": True})
-            # HTTPServer.shutdown must be called from another thread so this
-            # request can finish sending its acknowledgement first.
-            if first:
-                threading.Thread(target=self.server.shutdown, name="motion-shutdown", daemon=True).start()
+            self._send_json({"ok": False, "error": "请通过退出按钮关闭程序"}, 405)
             return
         if route == "/api/health":
             if not self._is_loopback():
@@ -2256,8 +2264,14 @@ class AdminHandler(_BaseHandler):
 
     def do_POST(self):
         global CONFIG_REVISION
-        KERNEL.begin_settings_request()
         route = urlparse(self.path).path
+        # 枪型飞鼠门户使用已有的专用授权；其余管理写入只能由本机页面或本机工具发起。
+        portal_write = route == "/api/gunmouse/config" and self.headers.get("Origin") == PORTAL_ORIGIN
+        if not self._management_request_allowed() and not (portal_write and self._gunmouse_request_allowed()):
+            self.close_connection = True
+            self._send_json({"ok": False, "error": "请从本机控制页面操作"}, 403)
+            return
+        KERNEL.begin_settings_request()
         if route == "/api/shutdown":
             origin = self.headers.get("Origin")
             if not self._is_loopback() or (origin and origin not in {
