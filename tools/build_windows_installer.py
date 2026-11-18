@@ -17,8 +17,11 @@ sys.path.insert(0, str(ROOT))
 from motioncontrol.app_update import verify
 from motioncontrol.version import VERSION
 from motioncontrol_shared.model_share import ModelShare, SIGNATURE_NAME
-from tools.release_paths import PC_DIR, RELEASE_DIR
+from tools.release_paths import RELEASE_DIR
 from tools import stage_release
+
+PROGRAM_FILES = '程序文件'
+ENTRY_NAME = '启动 MotionControl.exe'
 
 
 def run(*arguments: str | Path) -> None:
@@ -124,7 +127,8 @@ def stage(args: argparse.Namespace) -> Path:
             raise ValueError(f'缺少构建输入：{source}')
     if not (args.vosk_model / 'am/final.mdl').is_file():
         raise ValueError('语音模型目录不完整')
-    python = target / 'python'
+    bundle = target / PROGRAM_FILES
+    python = bundle / 'python'
     python.mkdir(parents=True)
     with zipfile.ZipFile(args.python_archive) as archive:
         if f'python{major}{minor}.dll' not in archive.namelist():
@@ -139,11 +143,11 @@ def stage(args: argparse.Namespace) -> Path:
     shutil.copytree(packages, python / 'Lib/site-packages', ignore=shutil.ignore_patterns(
         '__pycache__', '*.pyc', '*.pyo', '_virtualenv.py', '_virtualenv.pth'))
     for relative, source in models.items():
-        copy_file(source, target / 'models' / relative)
+        copy_file(source, bundle / 'models' / relative)
     speech_name = args.vosk_model.name
-    shutil.copytree(args.vosk_model, target / 'models' / speech_name)
-    copy_file(args.vigem_client, target / 'native/ViGEmClient.dll')
-    config = target / 'app/config'
+    shutil.copytree(args.vosk_model, bundle / 'models' / speech_name)
+    copy_file(args.vigem_client, bundle / 'native/ViGEmClient.dll')
+    config = bundle / 'app/config'
     config.mkdir(parents=True)
     for name, value in {
         'model_root.txt': '../models', 'vosk_model_path.txt': '../models/' + speech_name,
@@ -151,33 +155,35 @@ def stage(args: argparse.Namespace) -> Path:
     }.items():
         (config / name).write_text(value + '\n', encoding='utf-8')
     run(sys.executable, '-X', 'utf8', ROOT / 'tools/stage_release.py',
-        '--target', target, '--phone-web', phone_web)
-    phone_bundle = target / 'app/phone_web'
+        '--target', bundle, '--phone-web', phone_web)
+    (bundle / '启动.bat').unlink()
+    copy_file(ROOT / 'tools/windows/README.txt', bundle / 'README.txt')
+    phone_bundle = bundle / 'app/phone_web'
     if args.phone_web_signature:
         reuse_phone_web_signature(args.phone_web_signature, phone_bundle)
     else:
         run(sys.executable, '-X', 'utf8', ROOT / 'tools/sign_phone_web.py',
             '--bundle', phone_bundle, '--key', args.phone_signing_key)
-    stage_release.verify_release_provenance(target / 'app', check_sources=True)
+    stage_release.verify_release_provenance(bundle / 'app', check_sources=True)
     run(sys.executable, '-X', 'utf8', ROOT / 'tools/check_runtime_deps.py', '--bundle', python)
     compiler = Path(os.environ['SystemRoot']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     run(compiler, '/nologo', '/target:winexe', '/optimize+',
         '/reference:System.Windows.Forms.dll', '/reference:System.Web.Extensions.dll',
         '/win32icon:' + str(ROOT / 'web/assets/motioncontrol.ico'),
-        '/out:' + str(target / 'MotionControl.exe'), ROOT / 'tools/windows/MotionControl.cs')
+        '/out:' + str(target / ENTRY_NAME), ROOT / 'tools/windows/MotionControl.cs')
     # 对应入口及安装向导的构建源码随包保留，不含本机签名密钥或用户配置。
     for relative in ('tools/windows/MotionControl.cs', 'tools/windows/MotionControl.iss',
                      'tools/build_windows_installer.py', 'tools/stage_release.py',
                      'tools/release_paths.py', 'requirements-runtime.txt', 'requirements-multicore-runtime.txt'):
-        copy_file(ROOT / relative, target / 'source' / relative)
+        copy_file(ROOT / relative, bundle / 'source' / relative)
     manifest = {
-        'schema': 'motioncontrol.windows_installer.v1', 'version': VERSION,
+        'schema': 'motioncontrol.windows_installer.v2', 'version': VERSION,
         'python_archive_sha256': sha256(args.python_archive),
         'microsoft_runtime': runtime_records,
         'models': [{'path': relative, 'sha256': sha256(source)} for relative, source in models.items()],
         'files': payload_files(target),
     }
-    (target / 'installer-payload.json').write_text(
+    (bundle / 'installer-payload.json').write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return target
 
@@ -192,7 +198,7 @@ def main() -> int:
     signature.add_argument('--phone-web-signature', type=Path, help='复用内容未变的手机网页的公开签名文件')
     parser.add_argument('--python-sha256', required=True, help='官方运行环境压缩包的 SHA-256 摘要')
     parser.add_argument('--head-model', type=Path)
-    parser.add_argument('--target', type=Path, default=PC_DIR)
+    parser.add_argument('--target', type=Path, default=ROOT / 'build' / 'windows-installer' / VERSION)
     parser.add_argument('--output-dir', type=Path, default=RELEASE_DIR / '安装包')
     args = parser.parse_args()
     try:

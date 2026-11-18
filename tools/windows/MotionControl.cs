@@ -21,11 +21,18 @@ internal static class MotionControlDesktop
     private const string RegistryPath = @"Software\MotionControl";
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
 
+    private static string PackageFiles(string entry)
+    {
+        string files = Path.Combine(entry, "程序文件");
+        return File.Exists(Path.Combine(files, "installer-payload.json")) ||
+               File.Exists(Path.Combine(files, "runtime", "launcher.py")) ? files : entry;
+    }
+
     private static Dictionary<string, object> Installation()
     {
-        string bundle = Path.GetDirectoryName(Application.ExecutablePath);
-        if (File.Exists(Path.Combine(bundle, "python", "python.exe")) &&
-            File.Exists(Path.Combine(bundle, "runtime", "launcher.py")))
+        string bundle = PackageFiles(Path.GetDirectoryName(Application.ExecutablePath));
+        if (File.Exists(Path.Combine(bundle, "runtime", "launcher.py")) ||
+            File.Exists(Path.Combine(bundle, "installer-payload.json")))
             return new Dictionary<string, object> { { "program_root", Path.Combine(bundle, "app") }, { "bundle", bundle } };
         string local = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "installation.json");
         if (File.Exists(local))
@@ -114,7 +121,7 @@ internal static class MotionControlDesktop
 
     private static void ExportDiagnostics(Dictionary<string, object> settings, string destination)
     {
-        string entry = Path.GetDirectoryName(Application.ExecutablePath);
+        string entry = PackageFiles(Path.GetDirectoryName(Application.ExecutablePath));
         string program = Value(settings, "program_root") ?? Path.Combine(entry, "app");
         string data = Environment.GetEnvironmentVariable("MOTIONCONTROL_USER_DIR") ?? Value(settings, "data_root");
         if (String.IsNullOrEmpty(data)) {
@@ -225,7 +232,7 @@ internal static class MotionControlDesktop
                     string shell = ShellPath();
                     ProcessStartInfo start = String.IsNullOrEmpty(bundle)
                         ? new ProcessStartInfo(shell, "-NoLogo -NoProfile -ExecutionPolicy Bypass -File " + Quote(Path.Combine(root, "START.ps1")) + " -Desktop" + (noBrowser ? " -NoBrowser" : ""))
-                        : new ProcessStartInfo(Path.Combine(bundle, "python", "python.exe"), "-X utf8 " + Quote(Path.Combine(bundle, "runtime", "launcher.py")) + " --desktop" + (noBrowser ? " --no-browser" : ""));
+                        : new ProcessStartInfo(Path.Combine(bundle, "python", "python.exe"), "-B -X utf8 " + Quote(Path.Combine(bundle, "runtime", "launcher.py")) + " --desktop" + (noBrowser ? " --no-browser" : ""));
                     start.WorkingDirectory = bundle ?? root;
                     start.UseShellExecute = false;
                     start.CreateNoWindow = true;
@@ -270,7 +277,7 @@ internal static class MotionControlDesktop
                         try { child.CancelErrorRead(); } catch (InvalidOperationException) { }
                         string startupMessages;
                         lock (messages) startupMessages = messages.ToString();
-                        string log = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "last-start.log");
+                        string log = Path.Combine(bundle ?? Path.GetDirectoryName(Application.ExecutablePath), "last-start.log");
                         try {
                             for (int i = 2; i >= 0; i--) {
                                 string from = i == 0 ? log : log + "." + i;

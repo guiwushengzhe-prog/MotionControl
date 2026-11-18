@@ -8,7 +8,7 @@ Set-Location $PSScriptRoot
 $multicorePython = Join-Path $PSScriptRoot '.venv-multicore\Scripts\python.exe'
 $bundledPython = Join-Path (Split-Path -Parent $PSScriptRoot) 'python\python.exe'
 $python = if (Test-Path -LiteralPath $bundledPython) { $bundledPython } elseif (Test-Path -LiteralPath $multicorePython) { $multicorePython } else { 'python' }
-$location = @(& $python -X utf8 -m motioncontrol.user_paths --locate --register 2>&1)
+$location = @(& $python -B -X utf8 -m motioncontrol.user_paths --locate --register 2>&1)
 if ($LASTEXITCODE -eq 2 -and $Desktop) {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show(($location -join "`n"), '请定位原数据目录') | Out-Null
@@ -16,7 +16,7 @@ if ($LASTEXITCODE -eq 2 -and $Desktop) {
     try {
         $picker.Description = '请选择迁移后的 MotionControl 原数据文件夹，里面应有游戏配置、动作或校准文件。'
         if ($picker.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 2 }
-        $location = @(& $python -X utf8 -m motioncontrol.user_paths --remember $picker.SelectedPath 2>&1)
+        $location = @(& $python -B -X utf8 -m motioncontrol.user_paths --remember $picker.SelectedPath 2>&1)
     } finally { $picker.Dispose() }
 }
 if ($LASTEXITCODE -ne 0) {
@@ -24,7 +24,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 2
 }
 $env:MOTIONCONTROL_USER_DIR = [string]$location[-1]
-$snapshot = @(& $python -X utf8 -m motioncontrol.startup_identity --root $PSScriptRoot 2>&1)
+$snapshot = @(& $python -B -X utf8 -m motioncontrol.startup_identity --root $PSScriptRoot 2>&1)
 if ($LASTEXITCODE -ne 0) {
     Write-Host ($snapshot -join "`n")
     exit 2
@@ -242,9 +242,9 @@ if ($running -and $running.StatusCode -eq 200) {
 if ($Desktop) {
     $logs = Join-Path $env:MOTIONCONTROL_USER_DIR 'logs'
     New-Item -ItemType Directory -Path $logs -Force | Out-Null
-    & $python -X utf8 -m motioncontrol.startup_logs --prepare $logs
+    & $python -B -X utf8 -m motioncontrol.startup_logs --prepare $logs
     $service = Start-Process -FilePath $python -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru `
-        -ArgumentList @('-X', 'utf8', 'server.py', '--no-browser', '--desktop-logs') `
+        -ArgumentList @('-B', '-X', 'utf8', 'server.py', '--no-browser', '--desktop-logs') `
         -RedirectStandardOutput (Join-Path $logs 'bootstrap.stdout.log') `
         -RedirectStandardError (Join-Path $logs 'bootstrap.stderr.log')
     $deadline = (Get-Date).AddSeconds(75)
@@ -263,5 +263,5 @@ if ($Desktop) {
     exit 0
 }
 
-if ($NoBrowser) { & $python -X utf8 server.py --no-browser } else { & $python -X utf8 server.py }
+if ($NoBrowser) { & $python -B -X utf8 server.py --no-browser } else { & $python -B -X utf8 server.py }
 exit $LASTEXITCODE

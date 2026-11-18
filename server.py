@@ -3587,6 +3587,17 @@ def main():
         from motioncontrol.startup_logs import install as install_startup_logs
         install_startup_logs(user_data_root() / "logs")
     ensure_lifetime_job()
+    if os.name == "nt" and (ROOT.parent / "installer-payload.json").is_file():
+        import ctypes
+        from ctypes import wintypes
+
+        # 卸载向导用这个互斥标记判断随包后台是否仍在运行，进程退出时系统释放句柄。
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_mutex = kernel32.CreateMutexW
+        create_mutex.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        create_mutex.restype = wintypes.HANDLE
+        if not create_mutex(None, False, r"Local\MotionControl.Installed.Backend"):
+            print("未能登记运行状态，请先退出 MotionControl 再卸载。", flush=True)
 
     MODEL_ROOT = choose_model_root(args.model_root)
     try:

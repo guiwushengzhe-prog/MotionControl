@@ -1,6 +1,21 @@
 {
   "releases": [
     {
+      "version": "2.4.4",
+      "channel": "app",
+      "date": "2026-11-18",
+      "sections": [
+        {
+          "title": "修复",
+          "intro": "",
+          "items": [
+            "安装目录直接显示「启动 MotionControl」和「卸载 MotionControl」，其余运行文件集中放在「程序文件」。",
+            "卸载清除启动日志和软件更新产生的程序文件，保留个人配置。"
+          ]
+        }
+      ]
+    },
+    {
       "version": "2.4.3",
       "channel": "app",
       "date": "2026-11-18",
