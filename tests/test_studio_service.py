@@ -101,7 +101,7 @@ def test_recording_validates_first_fragment_appends_in_order_and_rejects_after_f
     item = service.start_recording({"mime_type": "video/webm;codecs=vp8,opus"})
     with pytest.raises(ValueError, match="首段"):
         service.append_recording(item["id"], b"invalid first fragment")
-    assert Path(item["path"]).read_bytes() == b""
+    assert not Path(item["path"]).exists()
     first, second = b"\x1a\x45\xdf\xa3header", b"following media bytes"
     service.append_recording(item["id"], first)
     result = service.append_recording(item["id"], second)

@@ -179,7 +179,6 @@ class StudioService:
             extension = ".mp4" if mime.startswith("video/mp4") else ".webm"
             name = "MotionControl-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + ident[:6] + extension
             path = self.folder / name
-            path.touch(exist_ok=False)
             item = {"id": ident, "file_name": name, "path": str(path), "bytes": 0,
                     "mime_type": mime, "finished": False, "interrupted": False}
             self._recordings[ident] = item
@@ -193,10 +192,14 @@ class StudioService:
             item = self._recordings.get(ident)
             if item is None or item["finished"]:
                 raise ValueError("录像已经结束，请重新开始录制")
-            if not item["bytes"] and item["mime_type"].startswith("video/webm") and not chunk.startswith(b"\x1a\x45\xdf\xa3"):
-                raise ValueError("录像首段不是有效的视频文件")
-            with Path(item["path"]).open("ab") as stream:
-                stream.write(chunk)
+            path = Path(item["path"])
+            if item["bytes"]:
+                with path.open("ab") as stream:
+                    stream.write(chunk)
+            else:
+                if item["mime_type"].startswith("video/webm") and not chunk.startswith(b"\x1a\x45\xdf\xa3"):
+                    raise ValueError("录像首段不是有效的视频文件")
+                atomic_bytes(path, chunk)
             item["bytes"] += len(chunk)
             self._recording_seen[ident] = self.clock()
             return {"id": ident, "bytes": item["bytes"]}
@@ -206,8 +209,9 @@ class StudioService:
             item = self._recordings.get(ident)
             if item is None:
                 raise ValueError("找不到这段录像")
-            item["finished"] = True
-            item["interrupted"] = bool(interrupted)
+            if not item["finished"]:
+                item["finished"] = True
+                item["interrupted"] = bool(interrupted or not item["bytes"])
             return dict(item)
 
     def close(self):

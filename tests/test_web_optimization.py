@@ -335,8 +335,11 @@ def test_cloud_install_waits_for_mapping_draft_to_finish_saving(desktop):
 
 def test_emergency_stop_wins_over_late_output_settings_response(desktop):
     page, api = desktop.page, desktop.api
+    assert page.locator("#controlPauseKey").is_hidden()
     api.output["enabled"] = True
     page.evaluate("async()=>{const d=await import('/js/devices.js');await d.refreshOutput()}")
+    assert page.locator("#controlPauseKey").is_visible()
+    assert page.locator("#mainActionBtn").get_attribute("aria-keyshortcuts") == "F9"
     page.click('[data-view="devices"]')
     page.click('#settingsNav [data-pane="view"]')
     api.hold_output = True
@@ -351,6 +354,7 @@ def test_emergency_stop_wins_over_late_output_settings_response(desktop):
     api.fulfill(route, old_data)
     page.wait_for_function("notice.textContent.includes('中断')")
     assert "暂停" not in page.locator("#mainActionBtn").inner_text()
+    assert page.locator("#controlPauseKey").is_hidden()
     assert api.output["enabled"] is False
 
 
@@ -721,6 +725,11 @@ def test_touch_narrow_windows_and_all_settings_panes_stay_within_width(mock_brow
                     page.evaluate("stereoViews.hidden=false;for(const c of stereoViews.querySelectorAll('canvas')){c.width=640;c.height=360}")
                 measured = page.evaluate("({width:document.documentElement.scrollWidth,inner:innerWidth})")
                 assert measured["width"] <= width + 1 and measured["inner"] <= width + 1, (width, view, pane, measured)
+                if pane:
+                    assert page.locator("#settingsNav button").evaluate_all("""buttons => buttons.every(button => {
+                        const bounds = button.getBoundingClientRect();
+                        return bounds.left >= 0 && bounds.right <= innerWidth && button.scrollWidth <= button.clientWidth;
+                    })"""), (width, pane)
     assert page.evaluate("getComputedStyle(mainActionBtn).minHeight") == "44px"
     context.close()
 

@@ -269,7 +269,7 @@ nav { display: flex; gap: .125rem; padding: .125rem; border-radius: .5625rem; ba
 .game-chip-label { flex: none; color: var(--text-2); font-size: .75rem; }
 .mode-chip > [aria-hidden] { flex: none; }
 #currentGameName, #currentModeName { min-width: 0; overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.btn.cta { min-height: 2.125rem; padding: 0 1.125rem; border-radius: 1.0625rem; }
+.btn.cta { min-height: 2.125rem; min-width: 7.75rem; padding: 0 1.125rem; border-radius: 1.0625rem; }
 /* 正在控制时按钮变成「暂停」：灰底加一个绿点，一眼看得出现在是开着的。 */
 .btn.cta.running { background: var(--danger-tint); color: var(--danger); }
 @keyframes live { 0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, .6) } 70% { box-shadow: 0 0 0 .4375rem rgba(52, 199, 89, 0) } 100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0) } }
@@ -1173,7 +1173,7 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
   .layout { grid-template-columns: 1fr; }
   .side { position: static; }
   .page.settings { grid-template-columns: 1fr; gap: 1rem; padding-inline-start:0; }
-  .settings-nav { position: static; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; padding-bottom: .125rem; }
+  .settings-nav { position: static; display: flex; flex-wrap: wrap; padding-bottom: .125rem; }
   .settings-nav-heading { display: none; }
   .binding-main { grid-template-columns: minmax(0, 1fr) 2.125rem; }
   .binding-main > .trigger-name { grid-column: 1; }
@@ -1187,6 +1187,7 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
   .command-dock nav { grid-row: 3; }
   #serviceStatus { width: calc(100% - 2rem); }
   .game-chip-label { display: none; }
+  .settings-nav button { flex: 1 1 max(7.75rem, 30%); }
   .voice-command-grid { grid-template-columns: 1fr 1fr; }
   .binding-rule-controls, .binding-sequence-action { grid-template-columns: 1fr; }
   .range-in { width: 100%; }

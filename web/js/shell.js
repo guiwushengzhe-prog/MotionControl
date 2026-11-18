@@ -133,6 +133,7 @@ export function showView(view){
   // 「动作测试」已经并进开始页：画面上大字显示触发，右边列最近触发。
   if(view==='range')view='play';
   if(zoneEditMode&&view!=='play'){notice('先保存或取消区域调整');return}
+  if(view!==currentView)dismissActiveTip?.();
   currentView=view;
   document.querySelectorAll('[data-panel]').forEach(el=>el.hidden=el.dataset.panel!==view);
   document.querySelectorAll('[data-view]').forEach(el=>{
@@ -140,7 +141,9 @@ export function showView(view){
   });
   closeMenus();
   renderVisibleState();
-  if(view==='games')setTimeout(()=>showTipOnce('gameMenu',$('#gameMenuBtn'),'恢复默认按键、管理员权限启动在这里'),400);
+  if(view==='games')setTimeout(()=>{
+    if(currentView==='games'&&$('#gamePicker').hidden)showTipOnce('gameMenu',$('#gameMenuBtn'),'恢复默认按键、管理员权限启动在这里');
+  },400);
   if(view==='devices'){void refreshXinput();void refreshHandMouse();void refreshPoseRecord()}
   if(view==='games')loadCloudEndpoint().catch(()=>{});
   window.scrollTo(0,0);
@@ -209,7 +212,9 @@ export async function init(){
   const results=await firstReads;
   if(results.some(result=>result.status==='rejected'))notice('部分设备信息尚未读取，可继续使用已连接的输入');
   if(!voiceSaver.pending())renderVoiceRows(voiceRowsFromStatus(voice.status));renderBodyDescs();
-  if(currentView==='play')setTimeout(()=>showTipOnce('help',$('#helpBtn'),'新手教学、白天 / 夜间在这里'),1200);
+  if(currentView==='play')setTimeout(()=>{
+    if(currentView==='play')showTipOnce('help',$('#helpBtn'),'新手教学、白天 / 夜间在这里');
+  },1200);
 }
 
 export async function loadProfiles(){
@@ -508,10 +513,10 @@ function tipsSeen(){try{return new Set(JSON.parse(localStorage.getItem(TIPS_KEY)
 
 function markTipSeen(id){try{const seen=tipsSeen();seen.add(id);localStorage.setItem(TIPS_KEY,JSON.stringify([...seen]))}catch{}}
 
-let activeTip=null;
+let dismissActiveTip=null;
 
 function showTipOnce(id,anchor,text){
-  if(activeTip||tipsSeen().has(id)||!anchor||!$('#tour').hidden)return;
+  if(dismissActiveTip||tipsSeen().has(id)||!anchor||!$('#tour').hidden)return;
   if(!anchor.getBoundingClientRect().width)return;
   const tip=document.createElement('div');tip.className='coach-tip';tip.setAttribute('role','status');
   const words=document.createElement('span');words.textContent=text;
@@ -523,9 +528,16 @@ function showTipOnce(id,anchor,text){
     tip.style.top=`${box.bottom+10}px`;tip.style.left=`${left}px`;
     tip.style.setProperty('--arrow-x',`${box.left+box.width/2-left}px`);
   };
-  const close=()=>{markTipSeen(id);tip.remove();activeTip=null;removeEventListener('resize',place);removeEventListener('scroll',place,true);anchor.removeEventListener('click',close)};
-  place();activeTip={id,close};
-  ok.addEventListener('click',close);anchor.addEventListener('click',close);
+  const dismiss=()=>{
+    tip.remove();
+    dismissActiveTip=null;
+    removeEventListener('resize',place);
+    removeEventListener('scroll',place,true);
+    anchor.removeEventListener('click',acknowledge);
+  };
+  const acknowledge=()=>{markTipSeen(id);dismiss()};
+  place();dismissActiveTip=dismiss;
+  ok.addEventListener('click',acknowledge);anchor.addEventListener('click',acknowledge);
   addEventListener('resize',place);addEventListener('scroll',place,true);
 }
 
@@ -642,6 +654,7 @@ export function togglePanel(buttonId,panelId,open){
 }
 
 function openGamePicker(){
+  dismissActiveTip?.();
   togglePanel('switchGameBtn','gamePicker',true);
   togglePanel('cloudOpenBtn','cloudPanel',false);$('#profileSearch').focus();void runAction(searchProfiles);
 }

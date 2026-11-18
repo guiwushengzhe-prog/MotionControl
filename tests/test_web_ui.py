@@ -823,6 +823,10 @@ def test_first_use_tips_point_at_the_small_menus(browser, server):
         page.click('nav [data-view="games"]')
         page.locator(".coach-tip").wait_for(timeout=5000)
         assert "恢复默认按键" in page.locator(".coach-tip").inner_text()
+        page.click('nav [data-view="devices"]')
+        assert tip.count() == 0, "切页时收起当前提示"
+        page.click('nav [data-view="games"]')
+        tip.wait_for(timeout=5000)
         page.click(".coach-tip .btn")
         page.reload()
         page.click('nav [data-view="games"]')

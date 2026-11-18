@@ -4,6 +4,7 @@ import {compose,FULL_CROP,containGeometry,portraitViewport,sourceSize} from './s
 import {cropEditor} from './studio-crop.js';
 const root=document.querySelector('#studioRoot');
 const defaults={source:'computer',background:'original',face:'original',layout:'landscape',resolution:'720',position:'bottom-right',size:30,capture:'window',system_audio:true,microphone:false,mirror:true,avatar_preset:'',portrait_zoom:100,portrait_pan:{x:0,y:0},screen_crop:FULL_CROP,portrait_crop:FULL_CROP};
+const UPLOAD_BACKLOG='保存速度跟不上录制';
 const $=id=>document.getElementById(id);
 const clientId=globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random();
 let config={...defaults},loaded=false,preview=false,starting=false,recording=false,saving=false;
@@ -267,24 +268,29 @@ function enqueueChunk(blob){
   // 定时切片可能受系统休眠影响变大。拆分网络块，服务器仍顺序拼成同一视频。
   if(blob.size>16*1024*1024){for(let offset=0;offset<blob.size;offset+=8*1024*1024)enqueueChunk(blob.slice(offset,offset+8*1024*1024));return}
   pendingBytes+=blob.size;
-  if(pendingBytes>16*1024*1024){uploadError='保存速度跟不上录制，已停止并保留收到的视频片段';pendingBytes-=blob.size;stopRecording();return}
+  if(pendingBytes>16*1024*1024){uploadError=UPLOAD_BACKLOG;pendingBytes-=blob.size;stopRecording();return}
   const id=recordingId;
   uploadTail=uploadTail.then(async()=>{
-    if(uploadError&&uploadError!=='保存速度跟不上录制，已停止并保留收到的视频片段')return;
-    const response=await fetch('/api/studio/recording/chunk?id='+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:blob,signal:AbortSignal.timeout(15000)});
-    if(!response.ok)throw new Error('视频片段未能保存');
+    if(uploadError&&uploadError!==UPLOAD_BACKLOG)return;
+    await request('/api/studio/recording/chunk?id='+encodeURIComponent(id),undefined,{
+      method:'POST',headers:{'Content-Type':'application/octet-stream'},body:blob,signal:AbortSignal.timeout(15000)
+    });
   }).catch(error=>{uploadError=errorText(error);stopRecording()}).finally(()=>{pendingBytes-=blob.size});
 }
 
 async function finishRecording(){
   if(saving)return;
-  recording=false;saving=true;renderButtons();releaseRecordingSources();status('正在保存已经收到的视频…');
+  recording=false;saving=true;renderButtons();releaseRecordingSources();status('正在保存视频…');
   try{
     await uploadTail;
     const result=await request('/api/studio/recording/finish',{id:recordingId,interrupted:!!uploadError});
-    $('studioSavedFile').textContent=result.path||result.file_name||'录制文件已保存';
-    status(uploadError?'录制中断，已保存收到的视频：'+uploadError:'录制完成，已保存到本机');
-  }catch(error){status('保存未完成：'+errorText(error)+'。已写入的文件仍保留在输出文件夹。')}
+    if(result.bytes>0){
+      $('studioSavedFile').textContent=result.path||result.file_name;
+      status(result.interrupted?'录制中断，已保留收到的视频'+(uploadError?'：'+uploadError:''):'录制完成，已保存到本机');
+    }else{
+      status('未保存视频：'+(uploadError||'录制期间没有收到视频片段'));
+    }
+  }catch(error){status('未能确认保存结果：'+errorText(error)+'。可在输出文件夹查看。')}
   finally{
     recorder=null;recordingId=null;saving=false;pendingBytes=0;
     if(!preview){forgetFrame();void demand(false).catch(()=>{})}
@@ -334,6 +340,7 @@ async function startRecording(){
     recorder.addEventListener('stop',()=>void finishRecording());
     recorder.addEventListener('error',()=>{uploadError='视频编码失败';stopRecording()});
     recorder.start(1000);recording=true;startedAt=Date.now();
+    $('studioSavedFile').textContent='';
     clearInterval(drawTimer);drawTimer=setInterval(draw,1000/30);void getFrame();
     status('正在录制。停止后自动保存，体感控制可以继续使用。');
   }catch(error){

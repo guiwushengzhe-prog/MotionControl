@@ -185,6 +185,11 @@ function renderCalibrationOverlay(hs={}){
 export function renderMainStatus(){
   serviceReady=kernelConnected&&outputConnected;
   const main=$('#mainActionBtn');
+  const canPause=output.enabled&&!S.shutdown;
+  setProperty($('#controlPauseKey'),'hidden',!canPause);
+  setProperty(main,'title',canPause?'暂停控制，松开按键并保留识别':'开始控制');
+  if(canPause)setAttribute(main,'aria-keyshortcuts','F9');
+  else main.removeAttribute('aria-keyshortcuts');
   if(S.shutdown){
     setProperty(main,'disabled',true);
     setText($('#mainActionLabel'),S.shutdown==='stopping'?'正在退出…':'程序已退出');

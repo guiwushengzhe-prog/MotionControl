@@ -121,9 +121,16 @@ def app_http(isolated_user_data, monkeypatch):
 def test_real_studio_http_writes_playable_synthetic_video(browser, app_http, layout, resolution, expected):
     app, base, user_dir = app_http
     page = browser.new_page()
-    errors, missing = [], []
+    errors, missing, failed_chunks = [], [], []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.on("response", lambda response: missing.append(response.url) if response.status == 404 else None)
+
+    def capture_response(response):
+        if response.status == 404:
+            missing.append(response.url)
+        if "/api/studio/recording/chunk?" in response.url and not response.ok:
+            failed_chunks.append((response.status, response.text()))
+
+    page.on("response", capture_response)
     page.add_init_script(FAKE_CAPTURE)
     page.goto(base + "/studio.html")
     page.wait_for_function("document.getElementById('studioFace')?.disabled===false")
@@ -146,6 +153,7 @@ def test_real_studio_http_writes_playable_synthetic_video(browser, app_http, lay
     assert len(files) == 1 and files[0].stat().st_size > 0, {
         "status": page.locator("#studioStatus").inner_text(),
         "errors": errors,
+        "片段写入错误": failed_chunks,
         "recordings": app.STUDIO.state()["recordings"],
         "config": app.STUDIO.config,
     }
@@ -166,6 +174,28 @@ def test_real_studio_http_writes_playable_synthetic_video(browser, app_http, lay
     assert errors == []
     assert missing == []
     page.close()
+
+
+def test_recording_reports_first_write_failure_without_leaving_an_empty_video(browser, app_http, monkeypatch):
+    app, base, user_dir = app_http
+
+    def fail_write(path, content):
+        raise OSError("无法写入输出文件夹")
+
+    monkeypatch.setattr("motioncontrol.studio.atomic_bytes", fail_write)
+    page = browser.new_page()
+    try:
+        page.add_init_script(FAKE_CAPTURE)
+        page.goto(base + "/studio.html")
+        page.click("#studioStartBtn")
+        page.wait_for_function("studioStatus.textContent === '未保存视频：无法写入输出文件夹'")
+        assert page.locator("#studioSavedFile").inner_text() == ""
+        assert page.locator("#studioStartBtn").is_enabled()
+        saved = app.STUDIO.state()["recordings"][0]
+        assert saved["finished"] and saved["interrupted"] and saved["bytes"] == 0
+        assert not list((user_dir / "recordings" / "studio").glob("*.webm"))
+    finally:
+        page.close()
 
 
 def test_real_main_page_fitness_controls_and_imports(browser, app_http):

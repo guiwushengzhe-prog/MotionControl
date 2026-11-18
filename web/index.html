@@ -13,12 +13,13 @@
 <div class="top-actions">
 <button class="game-chip" data-go="games" data-open-game-picker="true" aria-controls="gamePicker" aria-expanded="false" title="换游戏"><span class="game-chip-label">游戏</span><strong id="currentGameName">正在读取…</strong></button>
 <button class="game-chip mode-chip" id="playModeBtn" type="button" title="切到下一个模式" disabled=""><span class="game-chip-label">模式</span><strong id="currentModeName">默认</strong><span aria-hidden="true">⇄</span></button>
-<button class="btn primary cta" disabled="" id="mainActionBtn" title="开始／暂停控制；F9 随时暂停控制并松开输出，保留识别"><span id="mainActionLabel">开始控制</span> <kbd>F9</kbd></button>
+<button class="btn primary cta" disabled="" id="mainActionBtn" title="开始控制"><span id="mainActionLabel">开始控制</span> <kbd id="controlPauseKey" aria-hidden="true" hidden>F9</kbd></button>
 <div class="menu-wrap"><button aria-expanded="false" aria-haspopup="menu" aria-label="帮助与外观" class="icon-btn" id="helpBtn" title="帮助与外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.5M12 16.8h.01"></path></svg></button>
 <div class="menu" hidden="" id="helpMenu" role="menu">
 <button class="menu-item" id="tutorialBtn" role="menuitem">新手教学</button>
 <div class="menu-row"><span>外观</span><div aria-label="外观" class="seg small" id="themeSeg"><button data-theme-choice="auto" type="button">自动</button><button data-theme-choice="light" type="button">白天</button><button data-theme-choice="dark" type="button">夜间</button></div></div>
 <hr/>
+<button class="menu-item" id="helpDiagnosticExportBtn" role="menuitem" type="button">导出故障诊断</button>
 <a class="menu-item" href="https://motioncontrol.guiwu-aware.icu/feedback" rel="noopener" target="_blank">问题反馈</a>
 <a class="menu-item" href="https://github.com/guiwushengzhe-prog/MotionControl" rel="noopener" target="_blank">源码 · AGPL-3.0</a>
 <hr/>
@@ -81,7 +82,7 @@
 <li class="step" data-step="voice" hidden><span class="dot"></span><div class="step-main"><b>麦克风</b><span class="step-sub" id="voiceStepSub"></span></div><button class="btn link" id="voiceStepGo">检查麦克风</button></li>
 <li class="step" data-step="phone" hidden=""><span class="dot"></span><div class="step-main"><b>手机</b><span class="step-sub" id="phoneStepSub"></span></div></li>
 <li class="step" data-step="pose"><span class="dot"></span><div class="step-main"><b>人体</b><span class="step-sub" id="poseStepSub"></span></div></li>
-<li class="step" data-step="game"><span class="dot"></span><div class="step-main"><b>游戏</b><span class="step-sub" id="gameStepSub"></span></div><button class="btn link" data-go="games">更换</button></li>
+<li class="step" data-step="game"><span class="dot"></span><div class="step-main"><b>游戏</b><span class="step-sub" id="gameStepSub"></span></div><button class="btn link" data-go="games" data-open-game-picker="true" aria-controls="gamePicker" aria-expanded="false">更换</button></li>
 <li class="step" data-step="cal"><span class="dot"></span><div class="step-main"><b>校准</b><span class="step-sub" id="calStatus">首次定位只需头部和双肩入镜</span></div><div id="calibrationActionsHost"><div class="menu-wrap calibration-actions"><button class="btn" id="calBtn">站好并校准</button><button class="btn calibration-more" id="calMenuBtn" type="button" aria-label="更多校准操作" aria-expanded="false" aria-haspopup="menu" aria-controls="calMenu" disabled>⌄</button><div class="menu" id="calMenu" role="menu" hidden><button class="menu-item" id="centerBtn" role="menuitem" title="只更新正前方，保留已测量的防抖参数" disabled>重设正前方</button></div></div></div></li>
 </ol>
 <div class="conflicts" hidden="" id="setupConflicts"></div>
