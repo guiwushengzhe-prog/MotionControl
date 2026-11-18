@@ -36,6 +36,7 @@ ALLOWED = {
     "motioncontrol/version.py",          # 唯一那一处
     "tests/test_version_is_single_sourced.py",
     "CHANGELOG.md",                      # 更新日志当然要写版本号
+    "runtime-lock-2026-08-21.txt",       # 历史依赖快照独立保留其原始版本
     # 从 CHANGELOG.md 生成的，不是手改的地方。它和源文件同步没同步，由下面
     # test_the_website_copy_is_in_sync 管。
     "cloud/web/public/changelog.json",
