@@ -109,7 +109,7 @@ def test_browser_direct_heart_rate_lifecycle_and_standard_packets(browser, app_h
     page.wait_for_function("async()=>!(await (await fetch('/api/fitness/state')).json()).heart_rate_reader")
     assert page.locator("#fitnessHeartAvg").inner_text() == "130"
     page.click("#fitnessPhoneConnect")
-    page.wait_for_function("!phoneConnectPanel.hidden")
+    page.wait_for_selector("#phoneConnectPanel[open]")
     assert app.FITNESS.state()["heart_rate_source"] == "phone"
     assert not app.RUNTIME.camera.running
     assert errors == []

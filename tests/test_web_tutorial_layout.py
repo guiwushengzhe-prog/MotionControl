@@ -36,9 +36,10 @@ def test_phone_teaching_uses_scan_button_then_visible_connection_code(desktop):
     open_lesson(page, 'fit')
     expect(page.locator('#tourSay')).to_contain_text('扫码连接')
     page.click('#phoneConnectBtn')
-    expect(page.locator('#tourSay')).to_contain_text('用手机扫码')
     expect(page.locator('#phoneConnectPanel')).to_be_visible()
-    assert page.locator('#phoneGroup').evaluate('node=>node.open')
+    expect(page.locator('#tour')).to_be_hidden()
+    page.click('#closePhoneConnectBtn')
+    expect(page.locator('#tourSay')).to_be_visible()
     page.click('#tourCloseBtn')
     assert not any(path == '/api/output/config' and body.get('enabled') is True for path, body in api.requests)
 

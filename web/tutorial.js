@@ -35,8 +35,14 @@ function connectGuide(s, memo, now) {
   if (s.cameraReady && !repick) { memo.noFrameSince = 0; return null; }
 
   if (s.view !== 'devices') {
-    if (s.view === 'play' && s.sourcePick !== 'phone' && !s.cameraError && !s.cameraRunning && !repick) {
-      return {target: '#sourceStartBtn', say: '点画面下方「开始识别」'};
+    if (s.view === 'play' && !repick) {
+      if (s.sourcePick === 'phone') {
+        return {target: ['#homePhoneConnectBtn', '#cameraStepGo'], say: '点「连接手机」'};
+      }
+      if (!s.cameraError && !s.cameraRunning) {
+        return {target: ['#sourceStartBtn', '#homePhoneConnectBtn'], say: '选择用电脑还是手机摄像头',
+          hint: '点「开始识别」或「连接手机」'};
+      }
     }
     return {target: NAV_DEVICES, say: repick ? '点「设置」，换一个摄像头' : '点「设置」'};
   }
@@ -44,12 +50,10 @@ function connectGuide(s, memo, now) {
   if (s.sourcePick === 'phone') {
     if (s.source !== 'phone') return {target: NAV_PLAY, say: '回到开始页，点画面下方「开始识别」'};
     if (!s.phoneConnected) {
-      return s.phoneCodeOpen
-        ? {target: '#phoneConnectPanel', say: '用手机扫码连接这台电脑', hint: '手机上点「扫码连接电脑」，手机和电脑连接同一个无线网络'}
-        : {target: '#phoneConnectBtn', say: '点手机卡片里的「扫码连接」'};
+      return {target: '#phoneConnectBtn', say: '点手机卡片里的「扫码连接」'};
     }
     return {
-      target: '#mobileStatus', say: '手机选「固定摄像头」，点「连接并开始」',
+      target: '#mobileStatus', say: '手机选「身体识别」，点「连接并开始」',
       hint: s.usbTether ? '数据线已接通' : '手机和电脑保持连接同一个无线网络',
     };
   }
@@ -561,9 +565,8 @@ const EXTRAS = [
           : {target: '#sourceStartBtn', say: '点「开始识别」，开启麦克风'};
         if (s.view !== 'devices') return {target: NAV_DEVICES, say: '点「设置」，检查语音输入'};
         if (s.voiceIssue === 'model') return {target: '#voiceDiagnostic', ...VOICE_FIX.model};
-        if (s.audioSource === 'phone' && !s.phoneConnected) return s.phoneCodeOpen
-          ? {target: '#phoneConnectPanel', say: '用手机扫码连接这台电脑', hint: '连接后开启手机麦克风'}
-          : {target: '#phoneConnectBtn', say: '点手机卡片里的「扫码连接」'};
+        if (s.audioSource === 'phone' && !s.phoneConnected)
+          return {target: '#phoneConnectBtn', say: '点手机卡片里的「扫码连接」'};
         return {
           target: s.audioSource === 'phone' ? '#audioSource' : ['#audioScanBtn', '#audioSource', '#audioDeviceRow'],
           ...(VOICE_FIX[s.voiceIssue] || VOICE_FIX.starting),
@@ -859,10 +862,11 @@ export function createTutorial(actions = {}) {
 
   function tick() {
     if (!active) return;
+    const state = actions.state?.();
+    if (state?.phoneCodeOpen) return;
     if (mode === 'menu') { renderMenu(); return; }
     if (mode === 'finish') { renderFinish(); return; }
     const step = mode === 'main' ? STEPS[index] : extra;
-    const state = actions.state?.();
     if (!step || !state) return;
     const memo = memos[step.id] || (memos[step.id] = {});
     const now = performance.now();

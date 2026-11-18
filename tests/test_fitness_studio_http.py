@@ -220,11 +220,13 @@ def test_real_main_page_fitness_controls_and_imports(browser, app_http):
     assert app.FITNESS.state()["profile"]["weight_kg"] == 63
     assert (user_dir / "fitness.json").is_file()
     page.click("#fitnessPhoneConnect")
-    page.wait_for_function("!document.getElementById('phoneConnectPanel').hidden")
+    page.wait_for_selector("#phoneConnectPanel[open]")
     assert page.locator('#phoneConnectPanel').is_visible()
-    assert page.locator('#phoneConnectPanel').evaluate("el=>el===document.activeElement")
+    assert page.locator('#closePhoneConnectBtn').evaluate("el=>el===document.activeElement")
+    assert page.locator('#phoneUseCameraBtn').is_hidden()
     assert app.RUNTIME.body_mode == "phone"
     assert not app.RUNTIME.camera.running
+    page.click('#closePhoneConnectBtn')
     page.click('#settingsNav [data-pane="studio"]')
     page.wait_for_selector("#studioStartBtn")
     assert page.locator("#studioRoot").is_visible()

@@ -260,8 +260,10 @@ function renderReadiness(){
   setStep('camera',cameraOk?'done':stopped||busy||sourceWaitingForFirstFrame()?'':'warn',deviceText);
   setProperty($('#cameraStepSub'),'title',cameraOk&&voiceInputReady?'摄像头和麦克风已就绪':deviceText);
   const go=$('#cameraStepGo');setProperty(go,'hidden',cameraOk||busy);
+  const connectPhone=phoneMode&&!cameraOk&&!busy&&phase!=='stop_failed';
+  if(connectPhone)setAttribute(go,'aria-haspopup','dialog');else go.removeAttribute('aria-haspopup');
   setAttribute(go,'data-resolve','camera');
-  setText(go,phase==='stop_failed'?'重试停止':stopped?'开始识别':phoneMode?'连接手机':'重试识别');
+  setText(go,phase==='stop_failed'?'重试停止':connectPhone?'连接手机':stopped?'开始识别':'重试识别');
   const voiceStep=document.querySelector('.checklist [data-step="voice"]');
   setProperty(voiceStep,'hidden',!cameraOk||voiceInputReady);
   setStep('voice','warn',voiceInputIssue);

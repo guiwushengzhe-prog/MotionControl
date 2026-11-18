@@ -1214,11 +1214,14 @@ dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(.125r
   .pose-drop { opacity: 1; width: 2.5rem; height: 2.5rem; }
 }
 /* 连接二维码只在首次需要或用户主动展开时显示。 */
-.phone-code[hidden],.phone-permission[hidden]{display:none}
-.phone-code{padding:16px;text-align:center;scroll-margin-top:5rem}
-.phone-code-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
-.phone-code img{display:block;margin:auto;background:#fff;width:288px;max-width:100%;height:auto}
-.phone-permission{padding:8px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.phone-code{box-sizing:border-box;width:min(28rem,calc(100vw - 1.5rem));max-height:calc(100dvh - 1.5rem);overflow:auto}
+.phone-code:modal{overscroll-behavior:contain}
+.phone-code::backdrop{overflow:hidden;overscroll-behavior:contain}
+.phone-code p{margin:.75rem 0;text-align:center}
+.phone-code img:not([hidden]){display:block;margin:auto;background:#fff;width:min(18rem,100%,max(9rem,calc(100dvh - 17rem)));height:auto}
+.phone-connect-status{font-weight:var(--weight-heading)}
+.phone-permission:not([hidden]){display:flex;align-items:center;justify-content:center;gap:.625rem;flex-wrap:wrap}
+body:has(.phone-code[open]) #tour{visibility:hidden}
 .experiment-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;padding:.8rem 1.25rem;border-top:1px solid var(--line)}
 .experiment-comparison[hidden]{display:none}
 .experiment-comparison>div{display:flex;flex-direction:column;gap:.3rem;min-width:0;font-size:.85rem;color:var(--text-2);overflow-wrap:anywhere}

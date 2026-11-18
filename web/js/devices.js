@@ -6,7 +6,7 @@ import {cameraInfo,cameraRunning,kernelState,recognitionState,renderKernelState,
 import {runAction} from './shell.js';
 import {S,gameProfile,output} from './state.js';
 import {handMouseConfig} from './view-control.js';
-import {syncPhoneCode} from './phone-connect.js';
+import {phoneCameraConnected,syncPhoneCode} from './phone-connect.js';
 import {renderSpeedSummary} from './view-speed.js';
 import {renderDepthComparison} from './depth-comparison.js';
 import {renderRuntimeDiagnostics} from './runtime-diagnostics.js';
@@ -53,11 +53,12 @@ export function renderInputStatus(status){
     const ok=S.audioMode===S.audioSource&&voice.connected;
     audioStatus.textContent=ok?'':(S.audioSource==='phone'?'等手机连上，用手机的麦克风':'电脑麦克风还没打开');
   }
-  const connected=!!(status.mobile_pose_connected||status.handheld_connected||status.mobile_voice_connected);
+  const cameraConnected=phoneCameraConnected(status);
+  const connected=!!(cameraConnected||status.handheld_connected||status.mobile_voice_connected);
   const phone=(status.mobile_pose_sources||[]).find(item=>item.active)||(status.mobile_pose_sources||[])[0];
-  renderPeripheralState('phone',connected?'已连接':'等待手机连接',{
-    device:connected?(phone?.device_name||'手机 MotionControl'):'扫码连接手机上的 MotionControl',
-    camera:status.mobile_pose_connected?'已连接':'未连接',
+  renderPeripheralState('phone',connected?'已连接':status.unpaired_phone?'手机待配对':'等待手机连接',{
+    device:connected?(phone?.device_name||'手机 MotionControl'):'摄像头、麦克风和手持输入',
+    camera:status.mobile_pose_connected?'已连接':cameraConnected?'已连接 · 未使用':'未连接',
     audio:status.mobile_voice_connected?'已连接':'未连接',
     handheld:status.handheld_connected?'已连接':'未连接',
   });
@@ -70,12 +71,10 @@ export function renderInputStatus(status){
   });
   renderPhoneModelState(status);
   const mobile=$('#mobileStatus');
-  mobile.textContent=connected?(status.mobile_pose_connected?'已连接':status.handheld_connected?'手持端已连接':'手机麦克风已连接'):'没连上';
+  mobile.textContent=connected?(cameraConnected?'已连接':status.handheld_connected?'手持端已连接':'手机麦克风已连接'):'等待连接';
   mobile.className='tag '+(connected?'ok':'warn');
   // 保留一个轻量入口，未选择手机时也能连接新设备。
-  const phoneGroup=$('#phoneGroup');
-  if(phoneGroup)phoneGroup.hidden=false;
-  syncPhoneCode(status,($('#poseSource')?.value||sourceMode)==='phone'||S.audioSource==='phone');
+  syncPhoneCode(status);
   // 手机慢下来只有两种可能：模型退回了 CPU，或者这台机器就这么快。退回 CPU 才值得说。
   const perf=$('#phonePerf');
   if(perf)perf.textContent=phone?.delegate==='CPU'?'手机在用 CPU 识别，比 GPU 慢一倍':'';
@@ -533,5 +532,5 @@ export async function setSource(source,enabled=true){
   ++kernelEpoch;++S.inputEpoch;S.desiredSource=source;
   S.recognitionStopError='';
   renderKernelState(result);await refreshInput();
-  notice(enabled?(source==='phone'?'已切到手机摄像头，等手机连上':sourceHasFreshFrame()?'识别已开始':'识别已启动，正在等待摄像头画面'):'识别已停止');
+  notice(enabled?(source==='phone'?(inputStatus.mobile_pose_connected?'已切到手机摄像头':'等待手机摄像头连接'):sourceHasFreshFrame()?'识别已开始':'识别已启动，正在等待摄像头画面'):'识别已停止');
 }

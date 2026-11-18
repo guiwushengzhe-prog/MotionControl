@@ -58,7 +58,7 @@
 </div>
 <div class="viewer-foot">
 <div aria-label="身体动作" class="range-targets" id="rangeTargets"></div>
-<div class="viewer-tools"><button class="btn link" id="sourceStartBtn" title="开启所选摄像头和麦克风的识别">开始识别</button><button class="btn link" hidden="" id="sourceStopBtn" title="停止识别，释放摄像头和麦克风，同时暂停控制">停止识别</button><button class="btn link" id="adjustZonesBtn">调整区域</button><button class="btn link" id="followZonesBtn">固定触发框</button><button class="btn link" id="voiceCommandsBtn">查看口令</button><button class="btn link" id="overlayBtn" title="在游戏画面上叠一个小窗">悬浮窗</button></div>
+<div class="viewer-tools"><button class="btn link" id="sourceStartBtn" title="开启所选摄像头和麦克风的识别">开始识别</button><button class="btn link" hidden="" id="sourceStopBtn" title="停止识别，释放摄像头和麦克风，同时暂停控制">停止识别</button><button class="btn link" id="homePhoneConnectBtn" type="button" aria-haspopup="dialog">连接手机</button><button class="btn link" id="adjustZonesBtn">调整区域</button><button class="btn link" id="followZonesBtn">固定触发框</button><button class="btn link" id="voiceCommandsBtn">查看口令</button><button class="btn link" id="overlayBtn" title="在游戏画面上叠一个小窗">悬浮窗</button></div>
 </div>
 </section>
 <p class="banner warn" hidden="" id="misfireHint" role="status"><span></span><button class="btn" id="misfireHintGo" type="button">去录一下</button><button class="btn link" id="misfireHintDismiss" type="button">先不用</button></p>
@@ -281,23 +281,17 @@
 <div><dt>麦克风</dt><dd data-peripheral-value="audio">未连接</dd></div>
 <div><dt>手持输入</dt><dd data-peripheral-value="handheld">未连接</dd></div>
 </dl>
-<div class="peripheral-actions"><button class="btn" id="phoneConnectBtn" type="button">扫码连接</button></div>
+<div class="peripheral-actions"><button class="btn" id="phoneConnectBtn" type="button" aria-haspopup="dialog">扫码连接</button></div>
 <details class="peripheral-settings" id="phoneGroup">
 <summary>手机设置</summary>
 <div class="list">
 <div class="row"><div class="row-main"><span class="name">连接</span><span class="sub warn" id="phonePerf"></span></div><span class="tag" id="mobileStatus">手机未连接</span></div>
-<div class="phone-code" id="phoneConnectPanel" tabindex="-1" hidden>
-<div class="phone-code-heading"><span>手机上点「扫码连接电脑」</span><button class="btn" id="closePhoneConnectBtn" type="button">关闭</button></div>
-<img id="phoneConnectImage" alt="连接这台电脑的二维码" width="288" height="288">
-<p class="statusline" id="phoneConnectHint">扫码后记住这台电脑，下次自动连接。</p>
-</div>
-<div class="phone-permission" id="phoneFirewallRow" hidden><span class="statusline warn" id="phoneFirewallStatus"></span><button class="btn" id="phoneFirewallRetry" type="button" hidden>配置连接权限</button></div>
 <details class="row-details" id="phoneModelDetails"><summary>可选模型</summary>
 <p class="fineprint">手机默认使用标准模型。高精度模型按需添加，保存在手机上；不放进默认安装包，也不会自动切换模型。</p>
 <div class="row"><div class="row-main"><span class="name">高精度模型</span><span class="sub" id="phoneModelStatus">连接手机后可添加</span></div><button class="btn" id="sendHeavyModelBtn" disabled>添加到手机</button></div>
 </details>
 <details class="row-details" id="phoneGuide"><summary>连不上？</summary>
-<ol class="steps-text"><li>手机上打开 MotionControl，选「固定摄像头」，点「连接并开始」</li><li>手机和电脑连同一个 Wi-Fi；用数据线时要在手机上打开「USB 网络共享」</li></ol>
+<p class="statusline">手机和电脑连接同一无线网络。用数据线时，在手机上打开「USB 网络共享」。</p>
 <p class="statusline" id="usbTetherStatus"></p>
 <div class="inline-form"><span class="sel grow"><select aria-label="可用连接地址" id="phoneWsUrl"></select></span><button class="btn" id="copyPhoneUrlBtn">复制地址</button></div>
 </details>
@@ -568,4 +562,12 @@
 <dialog aria-labelledby="exitTitle" aria-describedby="exitStatus" id="exitDialog"><div class="dialog-head"><h2 id="exitTitle">正在退出 MotionControl</h2></div><p id="exitStatus" role="status">正在释放设备，请稍候…</p><button class="btn" id="exitCheckBtn" type="button" hidden>重新核对</button></dialog>
 <dialog aria-labelledby="backupPreviewTitle" id="backupPreviewDialog"><div class="dialog-head"><h2 id="backupPreviewTitle">恢复配置备份</h2><button class="btn" id="backupPreviewClose" type="button">取消</button></div><p id="backupPreviewSummary"></p><p class="sub" id="backupPreviewDate"></p><div class="row"><label class="row-main" for="backupRestoreMode">恢复方式</label><select class="sel" id="backupRestoreMode"><option value="full">本机恢复 · 包含校准与模型登记</option><option value="portable">跨电脑恢复 · 保留目标设备与校准</option></select></div><details class="diag-detail"><summary>查看包含的文件</summary><ul id="backupPreviewFiles"></ul></details><p class="sub">确认后程序退出；再次打开时恢复备份。恢复前配置会保存在用户目录的 backups 文件夹。账户与手机配对保持当前电脑的状态。</p><p class="statusline" id="backupPreviewStatus" role="status"></p><button class="btn" id="backupRestoreBtn" type="button">保留当前副本并恢复</button></dialog>
 <dialog aria-labelledby="addPeripheralTitle" id="addPeripheralDialog"><div class="dialog-head"><h2 id="addPeripheralTitle">添加设备</h2><button class="btn" id="addPeripheralClose" type="button">取消</button></div><div class="row"><label class="row-main" for="addPeripheralType">设备类型</label><span class="sel"><select id="addPeripheralType"></select></span></div><p class="statusline" id="addPeripheralGuide"></p><p class="statusline" id="addPeripheralStatus" role="status"></p><div class="dialog-actions"><a class="btn" id="addPeripheralBluetooth" href="ms-settings:bluetooth" hidden>打开蓝牙设置</a><button class="btn" id="addPeripheralContinue" type="button">继续</button></div></dialog>
+<dialog class="phone-code" id="phoneConnectPanel" aria-labelledby="phoneConnectTitle">
+<div class="dialog-head"><h2 id="phoneConnectTitle">连接手机</h2><form method="dialog"><button class="btn" id="closePhoneConnectBtn" autofocus>关闭</button></form></div>
+<p id="phoneConnectHint">在手机端 MotionControl 点「扫码连接电脑」</p>
+<img id="phoneConnectImage" alt="连接这台电脑的二维码" width="288" height="288" hidden>
+<p class="phone-connect-status" id="phoneConnectStatus" role="status"></p>
+<div class="phone-permission" id="phoneFirewallRow" hidden><span class="statusline warn" id="phoneFirewallStatus" role="status"></span><button class="btn" id="phoneFirewallRetry" type="button" hidden>配置连接权限</button></div>
+<div class="dialog-actions"><button class="btn" id="phoneConnectRetry" type="button" hidden>重新加载二维码</button><button class="btn" id="phoneUseCameraBtn" type="button">用手机摄像头</button></div>
+</dialog>
 </div><script src="/app.js" type="module"></script></body></html>

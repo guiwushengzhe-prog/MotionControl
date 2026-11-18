@@ -70,6 +70,8 @@ $('#addPeripheralType').addEventListener('change',selection);
 $('#addPeripheralContinue').addEventListener('click',()=>{
   const id=$('#addPeripheralType').value;
   const type=types.find(item=>item.id===id);
-  $('#addPeripheralDialog').close();openPeripheral(id);
-  if(type?.add_control)document.getElementById(type.add_control)?.click();
+  const control=type?.add_control&&document.getElementById(type.add_control);
+  $('#addPeripheralDialog').close();
+  if(control?.getAttribute('aria-haspopup')!=='dialog')openPeripheral(id);
+  control?.click();
 });

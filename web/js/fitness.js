@@ -1,6 +1,7 @@
 // 电脑与手机读取同一份绝对累计；轮询不会重新累计或产生重复步数。
 import {api, notice, setText, isVisible} from './core.js';
 import {ComputerHeartRate} from './heart-rate.js';
+import {openPhoneCode} from './phone-connect.js';
 
 const pane=document.getElementById('pane-fitness');
 if(pane){
@@ -93,13 +94,7 @@ if(pane){
       const data=await api('/api/fitness/heart-rate-input',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'phone'})});
       heart.disconnect();render(data);
     }catch(error){notice(error.message);return}
-    document.querySelector('nav [data-view="devices"]')?.click();
-    document.querySelector('#settingsNav [data-pane="devices"]')?.click();
-    const button=document.getElementById('phoneConnectBtn');
-    if(!isVisible(button))return;
-    button.click();
-    const panel=document.getElementById('phoneConnectPanel');
-    panel.focus({preventScroll:true});panel.scrollIntoView({block:'start',behavior:'instant'});
+    openPhoneCode({offerCameraAction:false});
   };
   el('homeFitnessGo')?.addEventListener('click',()=>{
     document.querySelector('[data-view="devices"]')?.click();

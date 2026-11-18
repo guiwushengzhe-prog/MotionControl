@@ -163,6 +163,7 @@ class LocalApi:
             data = {**self.runtime, "output": self.output, "recognition_stopped": True, "stop_error": ""}
         elif path == "/api/input/source":
             self.runtime["body_mode"] = body["source"]
+            self.input["body_mode"] = body["source"]
             self.runtime["camera"]["running"] = body["source"] == "computer" and body.get("enabled", True)
             self.input["body_enabled"] = body.get("enabled", True)
             self.output["enabled"] = False
@@ -380,6 +381,19 @@ def test_canvas_budget_and_popup_fit_the_visible_viewport(desktop):
     assert geometry["right"] <= 382
     assert geometry["top"] >= 8
     assert geometry["bottom"] <= 692
+
+
+def test_keyboard_binding_prompts_for_key_before_saving(desktop):
+    page, api = desktop.page, desktop.api
+    page.click('[data-view="games"]')
+    row = page.locator('.binding-row[data-trigger="zone.leftHand"]')
+    row.locator('.binding-type').select_option("keyboard")
+    page.wait_for_function("profileSaveStatus.textContent.includes('请按下要绑定的键')")
+    assert page.locator("#retryProfileSaveBtn").is_hidden()
+    assert not any(path == "/api/game-profiles/overrides" for path, _ in api.requests)
+    row.locator('input.binding-target').press("k")
+    page.wait_for_function("profileSaveStatus.textContent === '已保存'")
+    assert api.profile["bindings"]["zones"]["leftHand"]["action"]["target"] == "K"
 
 
 def test_failed_draft_blocks_install_without_poisoning_the_operation_queue(desktop):

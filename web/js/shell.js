@@ -9,7 +9,7 @@ import {cancelPoseRecord,refreshPoseRecord,refreshRecordings,refreshTriggerRecor
 import {BODY_ZONES,actionKeyText,profileTriggers,zoneKeyLabel} from './labels.js';
 import {refreshCustomPoses,refreshPoseLibrary} from './library.js';
 import {refreshMacros} from './macros.js';
-import {openPhoneCode} from './phone-connect.js';
+import {offerPhoneCode,openPhoneCode} from './phone-connect.js';
 import {refreshPeripheralCatalog} from './peripherals.js';
 import {addCustomGame,addGameVoiceRow,applySelectedProfile,changeGameLaunchMode,lastProfileQuery,profileApplies,profileSwitching,refreshProfile,renderProfileBindingRows,removeCustomGame,renameCustomGame,resetProfileBindings,retryProfileBindings,scheduleProfileAutoSave,searchProfiles,showMapTab,syncMotionConflictChoices,syncVoiceReleaseChoices,toggleGameLaunchMode,updateMapCounts} from './mapping.js';
 import {cameraInfo,cameraRunning,cancelLiveZones,centerHead,currentPoseMap,endLiveZoneDrag,followZones,kernelState,moveLiveZoneDrag,nudgeRect,openLiveZoneEditor,overlay,recognitionState,rectEdit,refreshKernel,refreshPreview,renderKernelState,renderMainStatus,renderVisibleState,saveLiveZones,selectEditorRegion,sessionStarted,setEditorRegionMode,sourceHasFreshFrame,sourceMode,startCalibration,startLiveZoneDrag,toggleOverlay,zoneEditMode} from './play.js';
@@ -75,7 +75,7 @@ function tutorialState(){
     scan:cameraScan.state,scanCount:cameraScan.count,
     phoneStreaming:phoneLive||!!inputStatus.phone_ignored,usbTether:!!inputStatus.usb_tether?.present,
     phoneConnected:!!(phoneLive||inputStatus.mobile_voice_connected||inputStatus.handheld_connected),
-    phoneCodeOpen:!$('#phoneConnectPanel')?.hidden,
+    phoneCodeOpen:$('#phoneConnectPanel').open,
     posed:!!currentPoseMap,headShoulders:seen('nose')&&seen('left_shoulder')&&seen('right_shoulder'),
     // 握拳控左右不需要头部中心，这一点和「视角控制」那块的判断保持一致。
     calibrated:horizontalHand?true:!!(hs.horizontal_calibrated??hs.calibrated),
@@ -236,15 +236,16 @@ function showRecognitionControl(){
 bind('recognitionHomeBtn',showRecognitionControl);
 function resolveDeviceIssue(button){
   const issue=button.dataset.resolve||'camera';
-  if(issue==='camera'&&$('#poseSource').value!=='phone'){
-    showView('play');return recognitionState()==='stop_failed'?stopRecognition():startRecognition();
+  if(issue==='camera'){
+    if(recognitionState()==='stop_failed')return stopRecognition();
+    if($('#poseSource').value==='phone')return openPhoneCode();
+    showView('play');return startRecognition();
   }
   showView('devices');if(currentView!=='devices')return;
   // 模型问题到现有语音诊断查看准确错误和模型路径；设备问题定位来源与输入设备。
   showSettingsPane(issue==='voice'?'lab':'devices');
-  if(issue==='camera')openPhoneCode();
   if(issue==='audio')$('#microphoneSettings').open=true;
-  const target=issue==='voice'?$('#voiceDiagnostic'):issue==='audio'?($('#audioDeviceRow').hidden?$('#audioSource'):$('#audioDevice')):$('#phoneConnectPanel');
+  const target=issue==='voice'?$('#voiceDiagnostic'):($('#audioDeviceRow').hidden?$('#audioSource'):$('#audioDevice'));
   if(!target.matches('input,select,button,a[href]')&&!target.hasAttribute('tabindex'))target.setAttribute('tabindex','-1');
   target.focus({preventScroll:true});target.scrollIntoView({block:'center',behavior:'instant'});
 }
@@ -265,6 +266,7 @@ $('#audioSource').addEventListener('change',e=>runAction(async()=>{
   const value=e.target.value;
   await updateInputConfig('/api/input/source',{audio_source:value});
   notice(value==='phone'?'已选择手机麦克风，等待手机连接':'已选择电脑麦克风');
+  if(value==='phone'&&isVisible($('#audioSource')))offerPhoneCode({offerCameraAction:false});
 }));
 
 $('#audioDevice').addEventListener('change',e=>runAction(async()=>{
@@ -384,9 +386,10 @@ bind('voiceCommandsBtn',async()=>{await refreshVoice();await refreshVoiceCommand
 $('#closeVoiceCommandsBtn').addEventListener('click',()=>$('#voiceCommandsMask').close());
 
 $('#poseSource').addEventListener('change',()=>void runAction(async()=>{
-  S.desiredSource=$('#poseSource').value;$('#phoneGuide').open=S.desiredSource==='phone';
+  S.desiredSource=$('#poseSource').value;
   syncCameraDeviceRow();renderInputStatus(inputStatus);
   await setSource(S.desiredSource,true);
+  if(sourceMode==='phone'&&isVisible($('#poseSource')))offerPhoneCode();
 }));
 
 $('#poseModelSelect').addEventListener('change',e=>void runAction(()=>selectPoseModel(e.target.value)));

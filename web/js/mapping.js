@@ -1382,6 +1382,8 @@ export function renderProfileBindingRows(){
   paintPoseMissingNotice();
 }
 
+class IncompleteBinding extends Error {}
+
 export function readBindingAction(container,trigger,ordinal=''){
   const type=container.querySelector('.binding-type')?.value||'';
   if(!type)return null;
@@ -1394,7 +1396,11 @@ export function readBindingAction(container,trigger,ordinal=''){
     target=type==='macro'||(type==='mode'&&!['NEXT','DEFAULT'].includes(raw.toUpperCase()))?raw.toLowerCase():raw.toUpperCase();
   }
   const name=trigger.name+(ordinal?`（${ordinal}）`:'');
-  if(!target||(Array.isArray(target)&&!target.length))throw new Error(type==='macro'?`${name} 还没有选择要跑哪条宏`:type==='voice_release'?`${name} 还没有选择要停住哪条口令`:`${name} 还没有选择具体键位`);
+  if(!target||(Array.isArray(target)&&!target.length)){
+    const next=type==='keyboard'?'请按下要绑定的键':type==='macro'?'请选择要运行的宏':
+      type==='voice_release'?'请选择要松开的口令':'请选择键位';
+    throw new IncompleteBinding(`${name} · ${next}`);
+  }
   const behavior=trigger.tapOnly||['mouse_wheel','voice_release','system','mode'].includes(type)?'tap':(container.querySelector('select.binding-behavior')?.value||container.querySelector('.binding-behavior')?.dataset.value||'hold');
   const action={type,target,behavior};
   const comboLead=container.querySelector('.combo-lead-ms');
@@ -1495,9 +1501,11 @@ export async function saveProfileBindings(){
   catch(error){
     profileConflict=error.status===409;
     clearTimeout(profileSavedTimer);
-    $('#profileSaveStatus').textContent='没保存上：'+error.message;$('#profileSaveStatus').classList.add('error');
+    const incomplete=error instanceof IncompleteBinding;
+    $('#profileSaveStatus').textContent=incomplete?error.message:'没保存上：'+error.message;
+    $('#profileSaveStatus').classList.toggle('error',!incomplete);
     $('#retryProfileSaveBtn').textContent=profileConflict?'合并我的修改再保存':'重试保存';
-    $('#retryProfileSaveBtn').hidden=false;throw error;
+    $('#retryProfileSaveBtn').hidden=incomplete;throw error;
   }finally{profileFlight=null}
   if(profileDirty.size)return saveProfileBindings();
   profileConflict=false;
@@ -1538,7 +1546,6 @@ export function scheduleProfileAutoSave(event){
     $('#profileSaveStatus').textContent='先选好配合的动作，才能保存';
     return;
   }
-  $('#profileSaveStatus').textContent='正在保存…';
   profileAutoSaveTimer=setTimeout(()=>saveProfileBindings().catch(()=>{}),350);
 }
 
