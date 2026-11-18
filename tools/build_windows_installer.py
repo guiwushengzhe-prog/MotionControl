@@ -14,7 +14,9 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from motioncontrol.app_update import verify
 from motioncontrol.version import VERSION
+from motioncontrol_shared.model_share import ModelShare, SIGNATURE_NAME
 from tools.release_paths import PC_DIR, RELEASE_DIR
 from tools import stage_release
 
@@ -31,6 +33,18 @@ def sha256(path: Path) -> str:
 def copy_file(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+
+
+def reuse_phone_web_signature(source: Path, bundle: Path) -> None:
+    document = json.loads(source.read_text(encoding='utf-8'))
+    if not isinstance(document, dict):
+        raise ValueError('手机网页签名格式无效')
+    signed = {key: document.get(key) for key in ('payload', 'signature')}
+    manifest = ModelShare('phone-web', bundle, skip=('models/', 'wasm/')).manifest()
+    digest = manifest.get('digest')
+    if not (digest and verify({**signed, 'digest': digest}, 0) > 0):
+        raise ValueError('已有手机网页签名与待打包内容不一致，或发布者签名无效')
+    (bundle / SIGNATURE_NAME).write_text(json.dumps(signed) + '\n', encoding='utf-8')
 
 
 def payload_files(target: Path) -> list[dict]:
@@ -105,7 +119,7 @@ def stage(args: argparse.Namespace) -> Path:
     }
     if args.head_model:
         models['hfhpe/' + args.head_model.name] = args.head_model
-    for source in [*models.values(), args.vigem_client, args.phone_signing_key]:
+    for source in [*models.values(), args.vigem_client, args.phone_web_signature or args.phone_signing_key]:
         if not source.is_file():
             raise ValueError(f'缺少构建输入：{source}')
     if not (args.vosk_model / 'am/final.mdl').is_file():
@@ -138,8 +152,12 @@ def stage(args: argparse.Namespace) -> Path:
         (config / name).write_text(value + '\n', encoding='utf-8')
     run(sys.executable, '-X', 'utf8', ROOT / 'tools/stage_release.py',
         '--target', target, '--phone-web', phone_web)
-    run(sys.executable, '-X', 'utf8', ROOT / 'tools/sign_phone_web.py',
-        '--bundle', target / 'app/phone_web', '--key', args.phone_signing_key)
+    phone_bundle = target / 'app/phone_web'
+    if args.phone_web_signature:
+        reuse_phone_web_signature(args.phone_web_signature, phone_bundle)
+    else:
+        run(sys.executable, '-X', 'utf8', ROOT / 'tools/sign_phone_web.py',
+            '--bundle', phone_bundle, '--key', args.phone_signing_key)
     stage_release.verify_release_provenance(target / 'app', check_sources=True)
     run(sys.executable, '-X', 'utf8', ROOT / 'tools/check_runtime_deps.py', '--bundle', python)
     compiler = Path(os.environ['SystemRoot']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
@@ -167,8 +185,11 @@ def stage(args: argparse.Namespace) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('python-archive', 'python-env', 'vc-runtime-dir', 'model-root', 'gesture-model', 'vosk-model',
-                 'vigem-client', 'phone-web', 'phone-signing-key', 'iscc'):
+                 'vigem-client', 'phone-web', 'iscc'):
         parser.add_argument('--' + name, type=Path, required=True)
+    signature = parser.add_mutually_exclusive_group(required=True)
+    signature.add_argument('--phone-signing-key', type=Path)
+    signature.add_argument('--phone-web-signature', type=Path, help='复用内容未变的手机网页的公开签名文件')
     parser.add_argument('--python-sha256', required=True, help='官方运行环境压缩包的 SHA-256 摘要')
     parser.add_argument('--head-model', type=Path)
     parser.add_argument('--target', type=Path, default=PC_DIR)
