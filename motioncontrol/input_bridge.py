@@ -1344,6 +1344,14 @@ class InputBridge:
 
     def _handle_pose(self, peer: WebSocketPeer, message: dict) -> None:
         _validate_pose_frame(message)
+        self._process_pose_frame(peer, message)
+
+    def _handle_pose_features(self, peer: WebSocketPeer, message: dict) -> None:
+        # Expansion validates the packed wire format, including optional hands
+        # and world points, before constructing the canonical frame.
+        self._process_pose_frame(peer, _expand_pose_features(message))
+
+    def _process_pose_frame(self, peer: WebSocketPeer, message: dict) -> None:
         peer._mobile_role = "camera"
         device_id = message["device_id"].strip()
         source_id = POSE_SOURCE_PREFIX + device_id
@@ -1436,11 +1444,6 @@ class InputBridge:
             self._broadcast_pose_state(source_id, True, "source_active")
         self._broadcast_pose(forwarded)
         self._accept_input(peer)
-
-    def _handle_pose_features(self, peer: WebSocketPeer, message: dict) -> None:
-        # Keep exactly one downstream control path: compact phone payloads are
-        # expanded locally and then pass through the existing pose handler.
-        self._handle_pose(peer, _expand_pose_features(message))
 
     def _handle_sensor(self, peer: WebSocketPeer, message: dict) -> None:
         buttons, left_trigger, right_trigger, stick_x, stick_y, player_slot = _validate_sensor_frame(message)

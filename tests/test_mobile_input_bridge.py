@@ -1,8 +1,10 @@
 import time
+from unittest.mock import patch
 
 import pytest
 from web_source import read_web_js
 
+from motioncontrol import input_bridge
 from motioncontrol.input_bridge import (
     InputBridge,
     MOBILE_POSE_FEATURE_INDICES,
@@ -254,6 +256,31 @@ def test_compact_phone_pose_expands_locally_without_world_pose():
         assert forwarded["wire_protocol"] == "pose_features_v1"
         assert forwarded["pose_count"] if "pose_count" in forwarded else True
         assert bridge.status()["mobile_pose_source_id"] == "mobile_pose:camera-compact"
+    finally:
+        bridge.close()
+
+
+def test_bridge_validates_the_received_pose_format_once():
+    bridge = InputBridge(FakeOutput())
+    phone = FakePeer()
+    try:
+        with patch.object(input_bridge, "_validate_pose_frame",
+                          wraps=input_bridge._validate_pose_frame) as validate_full:
+            bridge.handle_message(phone, pose_features("phone"))
+            assert phone.accepted_inputs == 1
+            incomplete = pose_features("phone", 1)
+            incomplete["points"].pop()
+            bridge.handle_message(phone, incomplete)
+            assert phone.messages[-1]["type"] == "error"
+            assert phone.accepted_inputs == 1
+            validate_full.assert_not_called()
+
+            full = pose_frame("phone", 1)
+            full["poses"][0]["pose"].pop()
+            bridge.handle_message(phone, full)
+            validate_full.assert_called_once_with(full)
+            assert phone.messages[-1]["type"] == "error"
+            assert phone.accepted_inputs == 1
     finally:
         bridge.close()
 
